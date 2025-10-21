@@ -33,13 +33,11 @@ This repository hosts a feature-rich fork of **RPCEmu**, the open-source emulato
 - Qt front-end reworked for stability with modern Qt 5 deployments.
 - In-depth machine inspector and debugger tooling not present upstream.
 - Dynarec pause logic patched so debugger operations are consistent across cores.
-- Additional utilities and dialogs for networking configuration.
  
 ## Troubleshooting
 | Symptom | Remedy |
 | --- | --- |
 | Emulator launches without a window | Ensure Qt 5 runtime libs are discoverable; this fork delays snapshot requests to avoid deadlock, so missing Qt plugins are the usual culprit. |
-| Debugger stuck on “Pausing…” | Verify you built this fork (includes dynarec hooks) and that `debugger_requires_instruction_hook` changes are present. |
 | No network connectivity | Confirm SLiRP support was compiled in (`CONFIG_SLIRP`) and NAT rules are configured. |
 
 ## Contributing
