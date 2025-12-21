@@ -7,7 +7,7 @@ The project remains distributed under the GNU GPL v2.
 
 ---
 
-## 🌐 Access/ShareFS Networking (MAT support)
+## 🌐 Access/ShareFS Networking (NAT support)
 
 **RPCEmu can discover and connect to network shares using Access+ and ShareFS using NAT setups!**
 
