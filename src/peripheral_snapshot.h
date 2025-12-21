@@ -1,3 +1,31 @@
+/*
+  RPCEmu - An Acorn system emulator
+
+  Copyright (C) 2025 Andrew Timmins
+
+  This program is free software; you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation; either version 2 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program; if not, write to the Free Software
+  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * peripheral_snapshot.h - Peripheral state snapshot structures
+ *
+ * Defines structures for capturing the state of emulated hardware
+ * peripherals for use by the machine inspector debugging window.
+ * Includes snapshots for VIDC, SuperIO, IDE and podules.
+ */
+
 #ifndef PERIPHERAL_SNAPSHOT_H
 #define PERIPHERAL_SNAPSHOT_H
 

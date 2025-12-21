@@ -31,6 +31,7 @@ HEADERS =	../superio.h \
 		../vidc20.h \
 		../arm_common.h \
 		../arm.h \
+		../arm_disasm.h \
 		../disc.h \
 		../disc_adf.h \
 		../disc_hfe.h \
@@ -63,6 +64,7 @@ SOURCES =	../superio.c \
 		../icside.c \
 		../rpc-machdep.c \
 		../arm_common.c \
+		../arm_disasm.c \
 		../i8042.c \
 		../disc.c \
 		../disc_adf.c \
@@ -79,9 +81,11 @@ SOURCES =	../superio.c \
 # NAT Networking
 linux | win32 {
 	HEADERS +=	../network-nat.h \
+			../broadcast_relay.h \
 			nat_edit_dialog.h \
 			nat_list_dialog.h
 	SOURCES += 	../network-nat.c \
+			../broadcast_relay.c \
 			nat_edit_dialog.cpp \
 			nat_list_dialog.cpp
 

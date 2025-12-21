@@ -32,7 +32,7 @@ MOVE          = mv -f
 TAR           = tar -cf
 COMPRESS      = gzip -9f
 DISTNAME      = rpcemu-recompiler1.0.0
-DISTDIR = /home/atimmins/Apps/RPCEmu/src/qt5/.tmp/rpcemu-recompiler1.0.0
+DISTDIR = /home/atimmins/Apps/RPCEmu/RPCEmuOS5/src/qt5/.tmp/rpcemu-recompiler1.0.0
 SUBTARGETS    =  \
 		release \
 		debug

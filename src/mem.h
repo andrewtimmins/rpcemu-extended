@@ -26,6 +26,7 @@
 #include "rpcemu.h"
 
 extern uint32_t mem_phys_read32(uint32_t addr);
+extern uint32_t mem_phys_read8_debug(uint32_t addr);
 
 extern uint32_t readmemfl(uint32_t addr);
 extern uint32_t readmemfb(uint32_t addr);

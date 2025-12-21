@@ -20,6 +20,9 @@ extern void network_nat_forward_add(PortForwardRule rule);
 extern void network_nat_forward_remove(PortForwardRule rule);
 extern void network_nat_forward_edit(PortForwardRule old_rule, PortForwardRule new_rule);
 
+extern void network_nat_close(void);
+extern int network_nat_inject_packet(const uint8_t *pkt, int pkt_len);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif /* __cplusplus */

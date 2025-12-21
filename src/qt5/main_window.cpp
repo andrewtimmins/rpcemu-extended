@@ -1614,6 +1614,9 @@ MainWindow::mips_timer_timeout()
 	// Calculate Average
 	const double average = (double) mips_total_instructions / ((double) mips_seconds * 1000000.0);
 
+	// Update global perf structure for Machine Inspector
+	perf.mips = (float) mips;
+
 	if(!pconfig_copy->mousehackon) {
 		if(mouse_captured) {
 			capture_text = " Press CTRL-END to release mouse";

@@ -13,12 +13,22 @@
 #include "network.h"
 #include "network-nat.h"
 #include "podules.h"
+#include "broadcast_relay.h"
 
 #include "slirp/libslirp.h"
 
 #define PIPE_PATH	"/tmp/rpcemu_net_nat"
 
 #define HEADERLEN	14
+
+/* Packet queue for incoming packets from broadcast relay */
+#define PKT_QUEUE_SIZE  32      /* Number of packets in queue */
+#define PKT_MAX_SIZE    2048    /* Max size of each packet */
+
+typedef struct {
+	uint8_t  data[PKT_MAX_SIZE];
+	size_t   len;
+} queued_packet_t;
 
 static struct {
 	Slirp		*slirp;
@@ -32,7 +42,16 @@ static struct {
 	FILE		*capture;	///< Handle for debug capture file, or NULL if not in use
 
 	struct in_addr	forward_addr;	///< Which IP address to apply NAT forward rules to
+
+	/* Packet queue for relay-injected packets */
+	queued_packet_t pkt_queue[PKT_QUEUE_SIZE];
+	int             pkt_queue_head;  /* Next slot to write */
+	int             pkt_queue_tail;  /* Next slot to read */
+	int             pkt_queue_count; /* Number of packets in queue */
 } nat;
+
+/* Forward declarations */
+static void deliver_queued_packet(void);
 
 static void
 write16(FILE *f, uint16_t x)
@@ -195,6 +214,11 @@ network_nat_init(void)
 {
 	//nat.buffer_len = 0;
 
+	// Initialize packet queue
+	nat.pkt_queue_head = 0;
+	nat.pkt_queue_tail = 0;
+	nat.pkt_queue_count = 0;
+
 	// MAC address
 	network_nat_init_mac_address();
 
@@ -210,6 +234,9 @@ network_nat_init(void)
 		}
 	}
 
+	// Initialize broadcast relay for Access+ support
+	broadcast_relay_init();
+
 	return 1;
 }
 
@@ -218,6 +245,11 @@ network_nat_reset(void)
 {
 	network_irq_lower();
 	nat.buffer_len = 0;
+
+	// Clear packet queue
+	nat.pkt_queue_head = 0;
+	nat.pkt_queue_tail = 0;
+	nat.pkt_queue_count = 0;
 }
 
 void
@@ -246,6 +278,9 @@ network_nat_poll(void)
 	}
 
 	slirp_select_poll(nat.slirp, &rfds, &wfds, &efds, ret <= 0);
+
+	// Poll for incoming broadcasts from host network
+	broadcast_relay_poll();
 }
 
 /**
@@ -296,6 +331,9 @@ network_nat_tx(uint32_t errbuf, uint32_t mbufs, uint32_t dest, uint32_t src, uin
 
 	// Write to capture file for debug
 	write_packet(nat.capture, nat.buffer, packet_length);
+
+	// Check if this is a broadcast to relay to host network
+	broadcast_relay_tx(nat.buffer, packet_length);
 
 	slirp_input(nat.slirp, nat.buffer, packet_length);
 
@@ -358,6 +396,9 @@ network_nat_rx(uint32_t errbuf, uint32_t mbuf, uint32_t rxhdr, uint32_t *data_av
 		*data_avail = 1;
 
 		nat.buffer_len = 0;
+
+		// Try to deliver next queued packet
+		deliver_queued_packet();
 	}
 
 	return 0;
@@ -419,4 +460,102 @@ network_nat_forward_edit(PortForwardRule old_rule, PortForwardRule new_rule)
 {
 	network_nat_forward_remove(old_rule);
 	network_nat_forward_add(new_rule);
+}
+
+/**
+ * Shutdown NAT networking and release resources.
+ */
+void
+network_nat_close(void)
+{
+	broadcast_relay_close();
+
+	if (nat.capture != NULL) {
+		fclose(nat.capture);
+		nat.capture = NULL;
+	}
+
+	// Note: SLiRP cleanup would go here if needed
+}
+
+/**
+ * Try to deliver a queued packet to the guest.
+ * Called when the main buffer becomes available.
+ */
+static void
+deliver_queued_packet(void)
+{
+	queued_packet_t *pkt;
+
+	if (nat.pkt_queue_count == 0) {
+		return;  // No packets queued
+	}
+
+	if (nat.buffer_len != 0) {
+		return;  // Buffer still busy
+	}
+
+	// Get packet from queue
+	pkt = &nat.pkt_queue[nat.pkt_queue_tail];
+
+	// Copy to main buffer
+	memcpy(nat.buffer, pkt->data, pkt->len);
+	nat.buffer_len = pkt->len;
+
+	// Write to capture file for debug
+	write_packet(nat.capture, pkt->data, pkt->len);
+
+	// Advance tail
+	nat.pkt_queue_tail = (nat.pkt_queue_tail + 1) % PKT_QUEUE_SIZE;
+	nat.pkt_queue_count--;
+
+	network_irq_raise();
+}
+
+/**
+ * Inject a packet into the guest network.
+ * Used by broadcast relay to deliver packets from host network.
+ * Packets are queued if the main buffer is busy.
+ *
+ * @param pkt     Complete Ethernet frame
+ * @param pkt_len Length of frame in bytes
+ *
+ * @return 1 if packet was queued, 0 if queue was full
+ */
+int
+network_nat_inject_packet(const uint8_t *pkt, int pkt_len)
+{
+	queued_packet_t *slot;
+
+	// Check if networking is ready
+	if (nat.irq_status == 0 || network_poduleinfo == NULL) {
+		return 0;
+	}
+
+	// Check packet fits
+	if (pkt_len > PKT_MAX_SIZE) {
+		return 0;
+	}
+
+	// If main buffer is empty and queue is empty, deliver directly
+	if (nat.buffer_len == 0 && nat.pkt_queue_count == 0) {
+		memcpy(nat.buffer, pkt, pkt_len);
+		nat.buffer_len = pkt_len;
+		write_packet(nat.capture, pkt, pkt_len);
+		network_irq_raise();
+		return 1;
+	}
+
+	// Queue the packet
+	if (nat.pkt_queue_count >= PKT_QUEUE_SIZE) {
+		return 0;  // Queue full
+	}
+
+	slot = &nat.pkt_queue[nat.pkt_queue_head];
+	memcpy(slot->data, pkt, pkt_len);
+	slot->len = pkt_len;
+	nat.pkt_queue_head = (nat.pkt_queue_head + 1) % PKT_QUEUE_SIZE;
+	nat.pkt_queue_count++;
+
+	return 1;
 }

@@ -1,10 +1,40 @@
+/*
+  RPCEmu - An Acorn system emulator
+
+  Copyright (C) 2025 Andrew Timmins
+
+  This program is free software; you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation; either version 2 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program; if not, write to the Free Software
+  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * machine_inspector_window.cpp - Machine Inspector debugging window
+ *
+ * Implements the MachineInspectorWindow class providing a Qt-based
+ * debugging interface with tabs for CPU registers, disassembly, memory
+ * viewing, peripheral state, and breakpoint/watchpoint management.
+ */
+
 #include "machine_inspector_window.h"
 
 #include <QCheckBox>
+#include <QClipboard>
 #include <QComboBox>
 #include <QAbstractItemView>
 #include <QtGlobal>
 #include <QFontDatabase>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QGroupBox>
 #include <QLabel>
@@ -14,6 +44,8 @@
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRegExp>
+#include <QSpinBox>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QStringList>
@@ -133,7 +165,29 @@ MachineInspectorWindow::MachineInspectorWindow(Emulator &emulator, QWidget *pare
 	watchpoint_read_checkbox(nullptr),
 	watchpoint_write_checkbox(nullptr),
 	watchpoint_add_button(nullptr),
-	watchpoint_remove_button(nullptr)
+	watchpoint_remove_button(nullptr),
+	disasm_view(new QPlainTextEdit(this)),
+	disasm_address_input(nullptr),
+	disasm_go_button(nullptr),
+	disasm_follow_pc_checkbox(nullptr),
+	disasm_current_address(0),
+	memory_view(new QPlainTextEdit(this)),
+	memory_address_input(nullptr),
+	memory_bytes_spin(nullptr),
+	memory_go_button(nullptr),
+	memory_refresh_button(nullptr),
+	memory_prev_button(nullptr),
+	memory_next_button(nullptr),
+	memory_word_size_combo(nullptr),
+	memory_jump_rom_button(nullptr),
+	memory_jump_ram_button(nullptr),
+	memory_jump_sp_button(nullptr),
+	memory_jump_pc_button(nullptr),
+	memory_search_input(nullptr),
+	memory_search_button(nullptr),
+	memory_copy_button(nullptr),
+	memory_current_address(0),
+	memory_word_size(1)
 {
 	setWindowTitle(tr("Machine Inspector"));
 	setAttribute(Qt::WA_DeleteOnClose, false);
@@ -225,6 +279,113 @@ MachineInspectorWindow::MachineInspectorWindow(Emulator &emulator, QWidget *pare
 	pipeline_tab->setLayout(pipeline_layout);
 	tabs->addTab(pipeline_tab, tr("Pipeline"));
 
+	/* Disassembly tab */
+	QWidget *disasm_tab = new QWidget(this);
+	QVBoxLayout *disasm_layout = new QVBoxLayout(disasm_tab);
+
+	disasm_view->setFont(mono);
+	disasm_view->setReadOnly(true);
+	disasm_view->setLineWrapMode(QPlainTextEdit::NoWrap);
+
+	disasm_address_input = new QLineEdit(this);
+	disasm_address_input->setPlaceholderText(tr("Address (hex)"));
+	disasm_address_input->setMaximumWidth(150);
+	disasm_go_button = new QPushButton(tr("Go"), this);
+	disasm_follow_pc_checkbox = new QCheckBox(tr("Follow PC"), this);
+	disasm_follow_pc_checkbox->setChecked(true);
+
+	QHBoxLayout *disasm_controls = new QHBoxLayout;
+	disasm_controls->addWidget(new QLabel(tr("Address:"), this));
+	disasm_controls->addWidget(disasm_address_input);
+	disasm_controls->addWidget(disasm_go_button);
+	disasm_controls->addWidget(disasm_follow_pc_checkbox);
+	disasm_controls->addStretch(1);
+
+	disasm_layout->addLayout(disasm_controls);
+	disasm_layout->addWidget(disasm_view);
+	disasm_tab->setLayout(disasm_layout);
+	tabs->addTab(disasm_tab, tr("Disassembly"));
+
+	/* Memory viewer tab */
+	QWidget *memory_tab = new QWidget(this);
+	QVBoxLayout *memory_layout = new QVBoxLayout(memory_tab);
+
+	memory_view->setFont(mono);
+	memory_view->setReadOnly(true);
+	memory_view->setLineWrapMode(QPlainTextEdit::NoWrap);
+
+	/* First row: Address, bytes, go, refresh, prev/next */
+	memory_address_input = new QLineEdit(this);
+	memory_address_input->setPlaceholderText(tr("Address (hex)"));
+	memory_address_input->setMaximumWidth(150);
+	memory_bytes_spin = new QSpinBox(this);
+	memory_bytes_spin->setRange(16, 4096);
+	memory_bytes_spin->setValue(256);
+	memory_bytes_spin->setSingleStep(16);
+	memory_bytes_spin->setToolTip(tr("Number of bytes to display"));
+	memory_go_button = new QPushButton(tr("Go"), this);
+	memory_refresh_button = new QPushButton(tr("Refresh"), this);
+	memory_prev_button = new QPushButton(tr("◀ Prev"), this);
+	memory_next_button = new QPushButton(tr("Next ▶"), this);
+	memory_prev_button->setToolTip(tr("Previous page (Page Up)"));
+	memory_next_button->setToolTip(tr("Next page (Page Down)"));
+
+	QHBoxLayout *memory_controls = new QHBoxLayout;
+	memory_controls->addWidget(new QLabel(tr("Address:"), this));
+	memory_controls->addWidget(memory_address_input);
+	memory_controls->addWidget(new QLabel(tr("Bytes:"), this));
+	memory_controls->addWidget(memory_bytes_spin);
+	memory_controls->addWidget(memory_go_button);
+	memory_controls->addWidget(memory_refresh_button);
+	memory_controls->addWidget(memory_prev_button);
+	memory_controls->addWidget(memory_next_button);
+	memory_controls->addStretch(1);
+
+	/* Second row: Word size, quick jumps, search, copy */
+	memory_word_size_combo = new QComboBox(this);
+	memory_word_size_combo->addItem(tr("Bytes"), 1);
+	memory_word_size_combo->addItem(tr("16-bit"), 2);
+	memory_word_size_combo->addItem(tr("32-bit"), 4);
+	memory_word_size_combo->setToolTip(tr("Display word size"));
+
+	memory_jump_rom_button = new QPushButton(tr("ROM"), this);
+	memory_jump_ram_button = new QPushButton(tr("RAM"), this);
+	memory_jump_sp_button = new QPushButton(tr("SP"), this);
+	memory_jump_pc_button = new QPushButton(tr("PC"), this);
+	memory_jump_rom_button->setToolTip(tr("Jump to ROM base (0x03800000)"));
+	memory_jump_ram_button->setToolTip(tr("Jump to RAM base (0x10000000)"));
+	memory_jump_sp_button->setToolTip(tr("Jump to current stack pointer"));
+	memory_jump_pc_button->setToolTip(tr("Jump to current program counter"));
+
+	memory_search_input = new QLineEdit(this);
+	memory_search_input->setPlaceholderText(tr("Search hex bytes..."));
+	memory_search_input->setMaximumWidth(150);
+	memory_search_input->setToolTip(tr("Enter hex bytes to find (e.g., 'EF 00 00 00')"));
+	memory_search_button = new QPushButton(tr("Find"), this);
+	memory_copy_button = new QPushButton(tr("Copy"), this);
+	memory_copy_button->setToolTip(tr("Copy memory view to clipboard"));
+
+	QHBoxLayout *memory_controls2 = new QHBoxLayout;
+	memory_controls2->addWidget(new QLabel(tr("View:"), this));
+	memory_controls2->addWidget(memory_word_size_combo);
+	memory_controls2->addSpacing(10);
+	memory_controls2->addWidget(new QLabel(tr("Jump:"), this));
+	memory_controls2->addWidget(memory_jump_rom_button);
+	memory_controls2->addWidget(memory_jump_ram_button);
+	memory_controls2->addWidget(memory_jump_sp_button);
+	memory_controls2->addWidget(memory_jump_pc_button);
+	memory_controls2->addSpacing(10);
+	memory_controls2->addWidget(memory_search_input);
+	memory_controls2->addWidget(memory_search_button);
+	memory_controls2->addWidget(memory_copy_button);
+	memory_controls2->addStretch(1);
+
+	memory_layout->addLayout(memory_controls);
+	memory_layout->addLayout(memory_controls2);
+	memory_layout->addWidget(memory_view);
+	memory_tab->setLayout(memory_layout);
+	tabs->addTab(memory_tab, tr("Memory"));
+
 	QWidget *peripheral_tab = new QWidget(this);
 	QVBoxLayout *peripheral_layout = new QVBoxLayout(peripheral_tab);
 	peripheral_tabs->addTab(peripheral_summary_view, tr("Summary"));
@@ -310,6 +471,27 @@ MachineInspectorWindow::MachineInspectorWindow(Emulator &emulator, QWidget *pare
 		watchpoint_remove_button->setEnabled(!watchpoint_list->selectedItems().isEmpty());
 	});
 
+	/* Disassembly connections */
+	connect(disasm_go_button, &QPushButton::clicked, this, &MachineInspectorWindow::onDisasmGoToAddress);
+	connect(disasm_address_input, &QLineEdit::returnPressed, this, &MachineInspectorWindow::onDisasmGoToAddress);
+	connect(disasm_follow_pc_checkbox, &QCheckBox::toggled, this, &MachineInspectorWindow::onDisasmFollowPC);
+
+	/* Memory viewer connections */
+	connect(memory_go_button, &QPushButton::clicked, this, &MachineInspectorWindow::onMemoryGoToAddress);
+	connect(memory_address_input, &QLineEdit::returnPressed, this, &MachineInspectorWindow::onMemoryGoToAddress);
+	connect(memory_refresh_button, &QPushButton::clicked, this, &MachineInspectorWindow::onMemoryRefresh);
+	connect(memory_prev_button, &QPushButton::clicked, this, &MachineInspectorWindow::onMemoryPrevPage);
+	connect(memory_next_button, &QPushButton::clicked, this, &MachineInspectorWindow::onMemoryNextPage);
+	connect(memory_word_size_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+	        this, &MachineInspectorWindow::onMemoryWordSizeChanged);
+	connect(memory_jump_rom_button, &QPushButton::clicked, this, &MachineInspectorWindow::onMemoryJumpROM);
+	connect(memory_jump_ram_button, &QPushButton::clicked, this, &MachineInspectorWindow::onMemoryJumpRAM);
+	connect(memory_jump_sp_button, &QPushButton::clicked, this, &MachineInspectorWindow::onMemoryJumpSP);
+	connect(memory_jump_pc_button, &QPushButton::clicked, this, &MachineInspectorWindow::onMemoryJumpPC);
+	connect(memory_search_input, &QLineEdit::returnPressed, this, &MachineInspectorWindow::onMemorySearch);
+	connect(memory_search_button, &QPushButton::clicked, this, &MachineInspectorWindow::onMemorySearch);
+	connect(memory_copy_button, &QPushButton::clicked, this, &MachineInspectorWindow::onMemoryCopy);
+
 	refresh_timer.start();
 }
 
@@ -355,6 +537,9 @@ MachineInspectorWindow::setAutoRefresh(bool enabled)
 void
 MachineInspectorWindow::applySnapshot(const MachineSnapshot &snapshot)
 {
+	/* Cache snapshot for quick jump buttons */
+	last_snapshot = snapshot;
+
 	summary_label->setText(makeSummary(snapshot));
 	cpu_view->setPlainText(formatRegisters(snapshot));
 	pipeline_view->setPlainText(formatPipeline(snapshot));
@@ -366,6 +551,11 @@ MachineInspectorWindow::applySnapshot(const MachineSnapshot &snapshot)
 	populateBreakpointList(snapshot);
 	populateWatchpointList(snapshot);
 	updateDebuggerUi(snapshot);
+
+	/* Update disassembly if following PC */
+	if (disasm_follow_pc_checkbox->isChecked()) {
+		refreshDisassembly(snapshot.pc);
+	}
 }
 
 QString
@@ -394,11 +584,8 @@ MachineInspectorWindow::formatRegisters(const MachineSnapshot &snapshot) const
 	            .arg(snapshot.dynarec ? tr("Dynarec") : tr("Interpreter"))
 	            .arg(snapshot.cpu_idle_enabled ? tr("enabled") : tr("disabled"));
 
-	lines << tr("Performance: MIPS=%1  MHz=%2  TLB=%3 sec  Flush=%4 sec")
-	            .arg(snapshot.perf_mips, 0, 'f', 2)
-	            .arg(snapshot.perf_mhz, 0, 'f', 2)
-	            .arg(snapshot.perf_tlb_sec, 0, 'f', 3)
-	            .arg(snapshot.perf_flush_sec, 0, 'f', 3);
+	lines << tr("Performance: MIPS=%1")
+	            .arg(snapshot.perf_mips, 0, 'f', 2);
 	return lines.join(QLatin1Char('\n'));
 }
 
@@ -649,11 +836,10 @@ MachineInspectorWindow::makeSummary(const MachineSnapshot &snapshot) const
 	const QString debug_state = snapshot.debug_paused
 	    ? tr("Paused")
 	    : (snapshot.debug_pause_requested ? tr("Pausing…") : tr("Running"));
-	return tr("%1 | %2 (%3) | MIPS %4 | Network %5 | Debug %6")
+	return tr("%1 | %2 (%3) | Network %4 | Debug %5")
 	        .arg(QString::fromUtf8(snapshot.model_name))
 	        .arg(QString::fromUtf8(snapshot.cpu_name))
 	        .arg(core)
-	        .arg(snapshot.perf_mips, 0, 'f', 1)
 	        .arg(networkTypeToString(snapshot.network_type))
 	        .arg(debug_state);
 }
@@ -986,4 +1172,336 @@ MachineInspectorWindow::onRemoveWatchpoint()
 		                         Q_ARG(bool, on_write));
 	}
 	QTimer::singleShot(0, this, &MachineInspectorWindow::refreshSnapshot);
+}
+
+void
+MachineInspectorWindow::refreshDisassembly(uint32_t address)
+{
+	disasm_current_address = address;
+
+	QString disasm_text;
+	bool ok = QMetaObject::invokeMethod(&emulator,
+	                                   "disassembleAt",
+	                                   Qt::BlockingQueuedConnection,
+	                                   Q_RETURN_ARG(QString, disasm_text),
+	                                   Q_ARG(quint32, address),
+	                                   Q_ARG(int, 32));
+	if (ok) {
+		disasm_view->setPlainText(disasm_text);
+	} else {
+		disasm_view->setPlainText(tr("Failed to disassemble"));
+	}
+}
+
+void
+MachineInspectorWindow::refreshMemoryView(uint32_t address)
+{
+	memory_current_address = address;
+
+	/* Update address input to show current address */
+	memory_address_input->setText(QStringLiteral("%1").arg(address, 8, 16, QLatin1Char('0')));
+
+	int num_bytes = memory_bytes_spin->value();
+	if (num_bytes < 16) {
+		num_bytes = 16;
+	}
+
+	QByteArray data;
+	bool ok = QMetaObject::invokeMethod(&emulator,
+	                                   "readMemory",
+	                                   Qt::BlockingQueuedConnection,
+	                                   Q_RETURN_ARG(QByteArray, data),
+	                                   Q_ARG(quint32, address),
+	                                   Q_ARG(quint32, static_cast<quint32>(num_bytes)));
+	if (!ok) {
+		memory_view->setPlainText(tr("Failed to read memory"));
+		return;
+	}
+
+	QStringList lines;
+	const int word_size = memory_word_size;
+
+	if (word_size == 1) {
+		/* Byte view - original format */
+		const int bytes_per_line = 16;
+		for (int offset = 0; offset < data.size(); offset += bytes_per_line) {
+			QString hex_part;
+			QString ascii_part;
+
+			for (int i = 0; i < bytes_per_line; i++) {
+				if (offset + i < data.size()) {
+					uint8_t byte = static_cast<uint8_t>(data.at(offset + i));
+					hex_part += QStringLiteral("%1 ").arg(byte, 2, 16, QLatin1Char('0'));
+					ascii_part += (byte >= 32 && byte < 127) ? QChar(byte) : QLatin1Char('.');
+				} else {
+					hex_part += QStringLiteral("   ");
+					ascii_part += QLatin1Char(' ');
+				}
+				if (i == 7) {
+					hex_part += QLatin1Char(' ');
+				}
+			}
+
+			lines << QStringLiteral("%1: %2 |%3|")
+			            .arg(address + static_cast<uint32_t>(offset), 8, 16, QLatin1Char('0'))
+			            .arg(hex_part)
+			            .arg(ascii_part);
+		}
+	} else if (word_size == 2) {
+		/* 16-bit word view */
+		const int words_per_line = 8;
+		const int bytes_per_line = words_per_line * 2;
+		for (int offset = 0; offset < data.size(); offset += bytes_per_line) {
+			QString hex_part;
+			for (int i = 0; i < words_per_line; i++) {
+				int byte_off = offset + i * 2;
+				if (byte_off + 1 < data.size()) {
+					uint16_t word = static_cast<uint8_t>(data.at(byte_off)) |
+					                (static_cast<uint8_t>(data.at(byte_off + 1)) << 8);
+					hex_part += QStringLiteral("%1 ").arg(word, 4, 16, QLatin1Char('0'));
+				} else if (byte_off < data.size()) {
+					hex_part += QStringLiteral("%1   ").arg(static_cast<uint8_t>(data.at(byte_off)), 2, 16, QLatin1Char('0'));
+				}
+				if (i == 3) {
+					hex_part += QLatin1Char(' ');
+				}
+			}
+			lines << QStringLiteral("%1: %2")
+			            .arg(address + static_cast<uint32_t>(offset), 8, 16, QLatin1Char('0'))
+			            .arg(hex_part);
+		}
+	} else {
+		/* 32-bit word view */
+		const int words_per_line = 4;
+		const int bytes_per_line = words_per_line * 4;
+		for (int offset = 0; offset < data.size(); offset += bytes_per_line) {
+			QString hex_part;
+			for (int i = 0; i < words_per_line; i++) {
+				int byte_off = offset + i * 4;
+				if (byte_off + 3 < data.size()) {
+					uint32_t word = static_cast<uint8_t>(data.at(byte_off)) |
+					                (static_cast<uint8_t>(data.at(byte_off + 1)) << 8) |
+					                (static_cast<uint8_t>(data.at(byte_off + 2)) << 16) |
+					                (static_cast<uint8_t>(data.at(byte_off + 3)) << 24);
+					hex_part += QStringLiteral("%1 ").arg(word, 8, 16, QLatin1Char('0'));
+				}
+				if (i == 1) {
+					hex_part += QLatin1Char(' ');
+				}
+			}
+			lines << QStringLiteral("%1: %2")
+			            .arg(address + static_cast<uint32_t>(offset), 8, 16, QLatin1Char('0'))
+			            .arg(hex_part);
+		}
+	}
+
+	memory_view->setPlainText(lines.join(QLatin1Char('\n')));
+}
+
+void
+MachineInspectorWindow::onDisasmGoToAddress()
+{
+	bool ok = false;
+	const uint32_t address = parseAddress(disasm_address_input->text(), &ok);
+	if (!ok) {
+		QMessageBox::warning(this, tr("Invalid address"), tr("Please enter a valid hexadecimal address."));
+		return;
+	}
+
+	/* Uncheck follow PC when manually navigating */
+	disasm_follow_pc_checkbox->setChecked(false);
+	refreshDisassembly(address);
+}
+
+void
+MachineInspectorWindow::onDisasmFollowPC(bool checked)
+{
+	if (checked) {
+		/* Refresh now to jump to current PC */
+		refreshSnapshot();
+	}
+}
+
+void
+MachineInspectorWindow::onMemoryGoToAddress()
+{
+	bool ok = false;
+	const uint32_t address = parseAddress(memory_address_input->text(), &ok);
+	if (!ok) {
+		QMessageBox::warning(this, tr("Invalid address"), tr("Please enter a valid hexadecimal address."));
+		return;
+	}
+
+	refreshMemoryView(address);
+}
+
+void
+MachineInspectorWindow::onMemoryRefresh()
+{
+	if (memory_current_address != 0 || !memory_address_input->text().isEmpty()) {
+		bool ok = false;
+		uint32_t address = memory_current_address;
+		if (!memory_address_input->text().isEmpty()) {
+			address = parseAddress(memory_address_input->text(), &ok);
+			if (!ok) {
+				address = memory_current_address;
+			}
+		}
+		refreshMemoryView(address);
+	}
+}
+
+QString
+MachineInspectorWindow::formatDisassembly(uint32_t address, int count)
+{
+	QString result;
+	bool ok = QMetaObject::invokeMethod(&emulator,
+	                                   "disassembleAt",
+	                                   Qt::BlockingQueuedConnection,
+	                                   Q_RETURN_ARG(QString, result),
+	                                   Q_ARG(quint32, address),
+	                                   Q_ARG(int, count));
+	if (!ok) {
+		return tr("Failed to disassemble");
+	}
+	return result;
+}
+
+void
+MachineInspectorWindow::onMemoryPrevPage()
+{
+	if (memory_current_address == 0) {
+		return;
+	}
+	uint32_t page_size = static_cast<uint32_t>(memory_bytes_spin->value());
+	uint32_t new_address = (memory_current_address > page_size)
+	                       ? memory_current_address - page_size
+	                       : 0;
+	refreshMemoryView(new_address);
+}
+
+void
+MachineInspectorWindow::onMemoryNextPage()
+{
+	uint32_t page_size = static_cast<uint32_t>(memory_bytes_spin->value());
+	uint32_t new_address = memory_current_address + page_size;
+	/* Wrap-around check */
+	if (new_address < memory_current_address) {
+		new_address = 0xFFFFFFFF - page_size + 1;
+	}
+	refreshMemoryView(new_address);
+}
+
+void
+MachineInspectorWindow::onMemoryWordSizeChanged(int index)
+{
+	int word_size = memory_word_size_combo->itemData(index).toInt();
+	if (word_size == 1 || word_size == 2 || word_size == 4) {
+		memory_word_size = word_size;
+		if (memory_current_address != 0) {
+			refreshMemoryView(memory_current_address);
+		}
+	}
+}
+
+void
+MachineInspectorWindow::onMemoryJumpROM()
+{
+	refreshMemoryView(0x03800000);
+}
+
+void
+MachineInspectorWindow::onMemoryJumpRAM()
+{
+	refreshMemoryView(0x10000000);
+}
+
+void
+MachineInspectorWindow::onMemoryJumpSP()
+{
+	/* R13 is the stack pointer */
+	uint32_t sp = last_snapshot.regs[13];
+	if (sp != 0) {
+		refreshMemoryView(sp);
+	} else {
+		QMessageBox::information(this, tr("Jump to SP"),
+		                        tr("Stack pointer is 0. Try refreshing the snapshot first."));
+	}
+}
+
+void
+MachineInspectorWindow::onMemoryJumpPC()
+{
+	uint32_t pc = last_snapshot.pc;
+	if (pc != 0) {
+		refreshMemoryView(pc);
+	} else {
+		QMessageBox::information(this, tr("Jump to PC"),
+		                        tr("PC is 0. Try refreshing the snapshot first."));
+	}
+}
+
+void
+MachineInspectorWindow::onMemorySearch()
+{
+	QString search_text = memory_search_input->text().trimmed();
+	if (search_text.isEmpty()) {
+		QMessageBox::warning(this, tr("Search"), tr("Please enter a hex pattern to search for."));
+		return;
+	}
+
+	/* Parse hex string into bytes */
+	QByteArray pattern;
+	QStringList parts = search_text.split(QRegExp(QStringLiteral("[\\s,]+")), Qt::SkipEmptyParts);
+	for (const QString &part : parts) {
+		bool ok = false;
+		int byte_val = part.toInt(&ok, 16);
+		if (!ok || byte_val < 0 || byte_val > 255) {
+			QMessageBox::warning(this, tr("Search"),
+			                    tr("Invalid hex byte: %1").arg(part));
+			return;
+		}
+		pattern.append(static_cast<char>(byte_val));
+	}
+
+	if (pattern.isEmpty()) {
+		QMessageBox::warning(this, tr("Search"), tr("No valid bytes to search for."));
+		return;
+	}
+
+	/* Search from current address + 1 */
+	uint32_t search_start = memory_current_address + 1;
+	const uint32_t search_size = 0x100000; /* Search 1MB at a time */
+
+	QByteArray data;
+	bool ok = QMetaObject::invokeMethod(&emulator,
+	                                   "readMemory",
+	                                   Qt::BlockingQueuedConnection,
+	                                   Q_RETURN_ARG(QByteArray, data),
+	                                   Q_ARG(quint32, search_start),
+	                                   Q_ARG(quint32, search_size));
+	if (!ok || data.isEmpty()) {
+		QMessageBox::warning(this, tr("Search"), tr("Failed to read memory for search."));
+		return;
+	}
+
+	int found_offset = data.indexOf(pattern);
+	if (found_offset >= 0) {
+		uint32_t found_address = search_start + static_cast<uint32_t>(found_offset);
+		refreshMemoryView(found_address);
+		QMessageBox::information(this, tr("Search"),
+		                        tr("Found at address 0x%1").arg(found_address, 8, 16, QLatin1Char('0')));
+	} else {
+		QMessageBox::information(this, tr("Search"),
+		                        tr("Pattern not found in the next %1 bytes.").arg(search_size));
+	}
+}
+
+void
+MachineInspectorWindow::onMemoryCopy()
+{
+	QString text = memory_view->toPlainText();
+	if (!text.isEmpty()) {
+		QGuiApplication::clipboard()->setText(text);
+	}
 }

@@ -47,6 +47,8 @@ public:
 	int64_t get_elapsed_timer() const { return elapsed_timer.nsecsElapsed(); }
 
 	Q_INVOKABLE MachineSnapshot takeSnapshot();
+	Q_INVOKABLE QByteArray readMemory(quint32 address, quint32 length);
+	Q_INVOKABLE QString disassembleAt(quint32 address, int count);
 
 signals:
 	void finished();

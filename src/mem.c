@@ -371,6 +371,77 @@ mem_phys_read8(uint32_t addr)
 }
 
 /**
+ * Read a byte from a physical address for debugging.
+ *
+ * This function is safe to call from the debugger - it only reads
+ * RAM, ROM, and VRAM directly without triggering I/O side effects
+ * or data aborts. IO space returns 0.
+ *
+ * @param addr Physical address
+ * @return Byte read from given physical address, or 0 for unmapped/IO
+ */
+uint32_t
+mem_phys_read8_debug(uint32_t addr)
+{
+	addr &= phys_space_mask;
+
+	switch (addr & (phys_space_mask & 0xff000000)) {
+	case 0x00000000: /* ROM */
+#ifdef _RPCEMU_BIG_ENDIAN
+		addr ^= 3;
+#endif
+		return romb[addr & 0x7fffff];
+
+	case 0x02000000: /* VRAM */
+		if (mem_vrammask == 0)
+			return 0;
+#ifdef _RPCEMU_BIG_ENDIAN
+		addr ^= 3;
+#endif
+		return vramb[addr & mem_vrammask];
+
+	case 0x10000000: /* SIMM 0 bank 0 */
+	case 0x11000000:
+	case 0x12000000:
+	case 0x13000000:
+#ifdef _RPCEMU_BIG_ENDIAN
+		addr ^= 3;
+#endif
+		return ramb00[addr & mem_rammask];
+
+	case 0x14000000: /* SIMM 0 bank 1 */
+	case 0x15000000:
+	case 0x16000000:
+	case 0x17000000:
+#ifdef _RPCEMU_BIG_ENDIAN
+		addr ^= 3;
+#endif
+		return ramb01[addr & mem_rammask];
+
+	case 0x18000000: /* SIMM 1 bank 0 */
+	case 0x19000000:
+	case 0x1a000000:
+	case 0x1b000000:
+	case 0x1c000000: /* SIMM 1 bank 1 */
+	case 0x1d000000:
+	case 0x1e000000:
+	case 0x1f000000:
+		if (ramb1 != NULL) {
+#ifdef _RPCEMU_BIG_ENDIAN
+			addr ^= 3;
+#endif
+			return ramb1[addr & 0x7ffffff];
+		}
+		break;
+
+	default:
+		/* IO space or unmapped - return 0 without side effects */
+		break;
+	}
+	return 0;
+}
+
+/**
  * Write a 32-bit word to a physical address.
  *
  * @param addr Physical address

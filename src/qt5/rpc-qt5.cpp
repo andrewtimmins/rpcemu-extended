@@ -40,6 +40,7 @@
 extern "C" {
 #include "rpcemu.h"
 #include "arm.h"
+#include "arm_disasm.h"
 #include "mem.h"
 #include "sound.h"
 #include "vidc20.h"
@@ -680,6 +681,71 @@ Emulator::takeSnapshot()
 	podules_get_snapshot(&snapshot.podules);
 
 	return snapshot;
+}
+
+/**
+ * Read a block of memory from the emulated system.
+ *
+ * Uses mem_phys_read8_debug() to safely read physical memory without
+ * triggering data aborts or I/O side effects. The address is treated
+ * as a physical address for direct RAM/ROM/VRAM access.
+ *
+ * @param address Starting physical address to read from
+ * @param length  Number of bytes to read (capped to 4KB for safety)
+ * @return QByteArray containing the memory contents
+ */
+QByteArray
+Emulator::readMemory(quint32 address, quint32 length)
+{
+	/* Cap length to prevent huge reads */
+	if (length > 4096) {
+		length = 4096;
+	}
+
+	QByteArray data;
+	data.reserve(static_cast<int>(length));
+
+	for (quint32 i = 0; i < length; i++) {
+		uint8_t byte = mem_phys_read8_debug(address + i);
+		data.append(static_cast<char>(byte));
+	}
+
+	return data;
+}
+
+/**
+ * Disassemble instructions at the given address.
+ *
+ * @param address Starting address to disassemble
+ * @param count   Number of instructions to disassemble
+ * @return QString containing the disassembly listing
+ */
+QString
+Emulator::disassembleAt(quint32 address, int count)
+{
+	if (count <= 0) {
+		count = 1;
+	}
+	if (count > 256) {
+		count = 256;
+	}
+
+	QStringList lines;
+	char disasm_buf[128];
+
+	for (int i = 0; i < count; i++) {
+		uint32_t addr = address + static_cast<uint32_t>(i * 4);
+		uint32_t opcode = mem_read32(addr);
+
+		arm_disasm(opcode, addr, disasm_buf, sizeof(disasm_buf));
+
+		lines << QStringLiteral("%1: %2  %3")
+		            .arg(addr, 8, 16, QLatin1Char('0'))
+		            .arg(opcode, 8, 16, QLatin1Char('0'))
+		            .arg(QString::fromLatin1(disasm_buf));
+	}
+
+	return lines.join(QLatin1Char('\n'));
 }
 
 /**
