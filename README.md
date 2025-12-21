@@ -1,50 +1,133 @@
-# RPCEmu – Debugger & Inspector Edition
+# RPCEmu – Network & Debugger Edition
 
 ## Overview
-This repository hosts a feature-rich fork of **RPCEmu**, the open-source emulator for Acorn Risc PC and A7000 machines. Alongside the standard emulator core, this edition layers in a modern Qt 5 front-end, a live machine inspector, integrated debugger controls. The project remains distributed under the GNU GPL v2.
+This repository hosts a feature-rich fork of **RPCEmu**, the open-source emulator for Acorn Risc PC and A7000 machines. This edition brings **ground-breaking Access+/ShareFS networking support**, a powerful live machine inspector, integrated debugger controls, and a comprehensive ARM disassembler with full SWI name lookup. The project remains distributed under the GNU GPL v2.
+
+---
+
+## 🌐 Access+ & ShareFS Networking – A Game Changer
+
+**For the first time, RISC OS running in RPCEmu can discover and connect to network file shares using Access+ and ShareFS!**
+
+This is a massive leap forward for the emulator. Previously, RISC OS network file sharing was effectively broken in emulation because the broadcast-based discovery protocol used by ShareFS couldn't traverse the NAT boundary of SLiRP networking. This fork solves that problem with a dedicated **broadcast relay** implementation.
+
+### What this means for you:
+- 🖥️ **Browse network shares from the RISC OS Filer** – Open the Access+ or OmniClient filer and see real network shares appear, just like on physical hardware
+- 📁 **Drag-and-drop file transfers** – Copy files between your host machine's shared folders and RISC OS with native Filer operations
+- 🔄 **Seamless integration** – No complex setup required; shares are discovered automatically via the broadcast relay
+- 🏢 **Connect to NAS devices and servers** – Any SMB/Access+ compatible share on your network is accessible
+
+### How it works:
+The new `broadcast_relay.c` module captures ShareFS/Freeway discovery broadcasts from the emulated machine, relays them to the real network, and routes responses back. Combined with configurable NAT port forwarding rules (via the new **Settings → Network → NAT Rules…** dialog), full bidirectional Access+ connectivity is achieved.
+
+### Network configuration:
+1. Enable **NAT (SLiRP)** networking in **Settings → Configure → Network**
+2. Open **Settings → Network → NAT Rules…** to add any required port forwards
+3. Inside RISC OS, configure Access+ or ShareFS with your network credentials
+4. Open the network filer – shares appear automatically!
+
+---
 
 ## Fork highlights
-- **Machine Inspector window** – Inspect CPU registers, pipeline state, MMU flags, performance counters, and key peripheral snapshots (VIDC, SuperIO, IDE, podules) with optional auto-refresh.
-- **Integrated debugger** – Pause/resume execution, single-step (×1/×5), and manage breakpoints and watchpoints directly in the GUI, with clear status readouts for the last halt reason.
-- **Dynarec-aware instrumentation** – The ARM dynamic recompiler honours debugger pause requests, breakpoints, and watchpoints via shared hooks (`debugger_requires_instruction_hook`) so that interpreter and dynarec stay in sync.
-- **Snapshot plumbing** – Thread-safe `MachineSnapshot` and peripheral snapshot structs marshal detailed state off the emulator thread for UI consumption without stalls.
 
+### 🌐 Networking
+- **Access+/ShareFS broadcast relay** – Revolutionary support for RISC OS network file sharing over emulated NAT
+- **NAT port forwarding UI** – Full GUI for managing inbound/outbound port mappings with add/edit/delete dialogs
+- **Configurable network rules** – Persistent NAT rule configuration saved to settings
+
+### 🔍 Machine Inspector & Debugger
+- **Machine Inspector window** – Six comprehensive tabs for deep system introspection:
+  - **CPU** – Registers R0–R15, CPSR/mode breakdown, real-time MIPS performance counter
+  - **Pipeline** – Instruction fetch/decode/execute pipeline visualisation
+  - **Disassembly** – Live disassembly around PC with full SWI name resolution
+  - **Memory** – Hex viewer with Prev/Next navigation, word size toggle (8/16/32-bit), quick jumps to ROM/RAM/SP/PC, byte pattern search, and copy-to-clipboard
+  - **Peripherals** – VIDC, SuperIO, IDE, and podule state snapshots
+  - **Debugger** – Run/Pause, Step ×1/×5, breakpoint & watchpoint management
+
+- **Safe debug memory access** – Memory viewer reads physical memory without triggering MMU faults or crashing the guest OS
+
+- **Integrated debugger** – Pause/resume execution, single-step, and manage breakpoints/watchpoints directly in the GUI
+
+- **Dynarec-aware instrumentation** – The ARM dynamic recompiler honours debugger requests via shared hooks so interpreter and dynarec stay in sync
+
+### 📖 ARM Disassembler
+- **400+ SWI name entries** – Comprehensive lookup table covering:
+  - Core OS SWIs (OS_WriteC through OS_LeaveOS)
+  - Wimp, Font, Draw, Sprite, ColourTrans, Sound
+  - FileCore, ADFS, RAMFS, CDFS, DOSFS, ResourceFS
+  - MessageTrans, Territory, Hourglass, Debugger
+  - Full Toolbox suite (Window, Menu, Iconbar, all gadgets)
+  - DeviceFS, PDriver, ScreenModes, DMA, JPEG, Freeway, ShareFS
+  - And many more from the official RISC OS PRM
+
+### 🧵 Thread-safe architecture
+- **Snapshot plumbing** – Thread-safe `MachineSnapshot` and peripheral snapshot structs marshal detailed state off the emulator thread for UI consumption without stalls
+
+---
 
 ## Project layout
 | Path | Purpose |
 | --- | --- |
-| `src/` | Core emulator engine (ARM interpreter, dynarec, hardware devices, debugger plumbing). |
-| `src/qt5/` | Qt 5 GUI, machine inspector, debugger controls, configuration & networking dialogs. |
-| `slirp/` | Bundled SLiRP networking library for NAT mode. |
-| `hostfs/`, `poduleroms/`, `riscos-progs/` | Support utilities, ROM stubs, and example binaries for HostFS/podule integration. |
-| `roms/` | Place your licensed RISC OS ROM images here (see [official instructions](http://www.marutan.net/rpcemu/manual/romimage.html)). |
+| `src/` | Core emulator engine (ARM interpreter, dynarec, hardware devices, networking, debugger plumbing) |
+| `src/qt5/` | Qt 5 GUI, machine inspector, debugger controls, NAT configuration dialogs |
+| `src/slirp/` | Bundled SLiRP networking library for NAT mode |
+| `hostfs/`, `poduleroms/`, `riscos-progs/` | Support utilities, ROM stubs, and example binaries |
+| `roms/` | Place your licensed RISC OS ROM images here ([instructions](http://www.marutan.net/rpcemu/manual/romimage.html)) |
 
-## Using the debugger & machine inspector
-1. Open **Debug → Machine Inspector…** to reveal the inspector window.
-2. Tabs provide:
-   - **CPU** – Registers R0–R15, CPSR/mode, performance counters, interpreter vs dynarec state.
-   - **Pipeline** – Upcoming instruction addresses and opcodes for easy tracing.
-   - **Peripherals** – VIDC palette & doublescan mode, SuperIO registers, IDE channel state, podule IRQ mapping.
-   - **Debugger** – Run/Pause, Step, Step ×5 buttons, breakpoint & watchpoint lists, last hit summaries.
-3. Auto-refresh every 500 ms keeps the view current; toggle it or hit **Refresh now** for manual polling.
-4. Breakpoints and watchpoints entered in the inspector apply even while the dynarec is active, thanks to the shared debugger hooks in `ArmDynarec.c`.
+---
+
+## Using the Machine Inspector
+
+1. Open **Debug → Machine Inspector…** to reveal the inspector window
+2. **Tabs provide:**
+   - **CPU** – Registers, flags, mode, live MIPS counter, interpreter/dynarec state
+   - **Pipeline** – Instruction addresses and opcodes in the ARM pipeline
+   - **Disassembly** – Disassembled instructions around PC with SWI names resolved
+   - **Memory** – Navigate physical memory, change word sizes, search for byte patterns, jump to key addresses
+   - **Peripherals** – VIDC palette & timing, SuperIO registers, IDE channel state, podule mapping
+   - **Debugger** – Execution control, breakpoint/watchpoint lists, halt reason display
+3. Auto-refresh (500 ms) keeps the view current; toggle it or click **Refresh** for manual polling
+4. Breakpoints and watchpoints work even while the dynarec is active
+
+---
 
 ## Differences versus upstream RPCEmu
-- Qt front-end reworked for stability with modern Qt 5 deployments.
-- In-depth machine inspector and debugger tooling not present upstream.
-- Dynarec pause logic patched so debugger operations are consistent across cores.
- 
+
+| Feature | Upstream | This Fork |
+| --- | --- | --- |
+| Access+/ShareFS networking | ❌ Not functional | ✅ Full broadcast relay support |
+| NAT port forwarding UI | ❌ Manual config only | ✅ Complete GUI with add/edit/delete |
+| Machine Inspector | ❌ None | ✅ 6-tab deep inspection window |
+| Memory viewer | ❌ None | ✅ With search, word sizes, quick jumps |
+| SWI name lookup | ❌ Basic/none | ✅ 400+ entries from official PRM |
+| Debugger integration | ❌ Limited | ✅ Full breakpoint/watchpoint/step support |
+| Dynarec debug hooks | ❌ None | ✅ Consistent debugging across cores |
+
+---
+
 ## Troubleshooting
+
 | Symptom | Remedy |
 | --- | --- |
-| Emulator launches without a window | Ensure Qt 5 runtime libs are discoverable; this fork delays snapshot requests to avoid deadlock, so missing Qt plugins are the usual culprit. |
-| No network connectivity | Confirm SLiRP support was compiled in (`CONFIG_SLIRP`) and NAT rules are configured. |
+| Emulator launches without a window | Ensure Qt 5 runtime libs are discoverable; check for missing Qt plugins |
+| No network connectivity | Confirm SLiRP support compiled in (`CONFIG_SLIRP`) and NAT mode enabled |
+| ShareFS shows no shares | Check broadcast relay is active; verify Access+ credentials in RISC OS |
+| Memory viewer causes crash | Fixed in this fork – now uses safe physical memory reads |
+| Debugger doesn't break in dynarec | Ensure `debugger_requires_instruction_hook` is enabled (automatic) |
+
+---
+
+## Building
+
+```bash
+cd src/qt5
+qmake rpcemu.pro
+make -j$(nproc)
+```
+
+The resulting `rpcemu-recompiler` binary will be placed in the parent directory.
+
+---
 
 ## Contributing
-Issues and pull requests are welcome, especially around debugger/inspector features.
-
-## License & credits
-- Licensed under the **GNU General Public License v2**. See `COPYING` for details.
-- Original emulator by the RPCEmu contributors.
-- Debugger, inspector, and stability enhancements developed within this fork to support modern RISC OS development workflows.
- 
+Issues and pull requests are welcome, especially around networking, debugger, and inspector features.
