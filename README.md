@@ -1,39 +1,36 @@
-# RPCEmu – Network & Debugger Edition
+# RPCEmu – Access/ShareFS & Debugger Edition
 
 ## Overview
-This repository hosts a feature-rich fork of **RPCEmu**, the open-source emulator for Acorn Risc PC and A7000 machines. This edition brings **ground-breaking Access+/ShareFS networking support**, a powerful live machine inspector, integrated debugger controls, and a comprehensive ARM disassembler with full SWI name lookup. The project remains distributed under the GNU GPL v2.
+This repository hosts a feature-rich fork of **RPCEmu**, the open-source emulator for Acorn Risc PC and A7000 machines. This edition brings **Access+/ShareFS networking support**, a powerful live machine inspector, integrated debugger controls, and a comprehensive ARM disassembler with full SWI name lookup. 
+
+The project remains distributed under the GNU GPL v2.
 
 ---
 
-## 🌐 Access+ & ShareFS Networking – A Game Changer
+## 🌐 Access/ShareFS Networking (MAT support)
 
-**For the first time, RISC OS running in RPCEmu can discover and connect to network file shares using Access+ and ShareFS!**
+**RPCEmu can discover and connect to network shares using Access+ and ShareFS using NAT setups!**
 
-This is a massive leap forward for the emulator. Previously, RISC OS network file sharing was effectively broken in emulation because the broadcast-based discovery protocol used by ShareFS couldn't traverse the NAT boundary of SLiRP networking. This fork solves that problem with a dedicated **broadcast relay** implementation.
+**Access+** and **ShareFS** are RISC OS's native network file sharing protocols—the Acorn equivalent of Windows file sharing or NFS. ShareFS uses **Freeway**, a broadcast-based service discovery protocol that lets RISC OS machines automatically find and advertise shared discs on the local network. Previously, this was completely non-functional in emulation because Freeway broadcasts couldn't escape SLiRP's NAT boundary. This fork implements a dedicated **broadcast relay** that bridges Freeway traffic between the emulated network and your real LAN, finally bringing full Access+ connectivity to RPCEmu using NAT.
 
 ### What this means for you:
 - 🖥️ **Browse network shares from the RISC OS Filer** – Open the Access+ or OmniClient filer and see real network shares appear, just like on physical hardware
-- 📁 **Drag-and-drop file transfers** – Copy files between your host machine's shared folders and RISC OS with native Filer operations
 - 🔄 **Seamless integration** – No complex setup required; shares are discovered automatically via the broadcast relay
-- 🏢 **Connect to NAS devices and servers** – Any SMB/Access+ compatible share on your network is accessible
 
 ### How it works:
-The new `broadcast_relay.c` module captures ShareFS/Freeway discovery broadcasts from the emulated machine, relays them to the real network, and routes responses back. Combined with configurable NAT port forwarding rules (via the new **Settings → Network → NAT Rules…** dialog), full bidirectional Access+ connectivity is achieved.
+The new `broadcast_relay.c` module captures ShareFS/Freeway discovery broadcasts from the emulated machine, relays them to the real network, and routes responses back. 
 
 ### Network configuration:
-1. Enable **NAT (SLiRP)** networking in **Settings → Configure → Network**
-2. Open **Settings → Network → NAT Rules…** to add any required port forwards
-3. Inside RISC OS, configure Access+ or ShareFS with your network credentials
-4. Open the network filer – shares appear automatically!
+1. Enable **NAT** networking in **Settings → Networking**
+2. Share folders using *Share command in RISC OS
+3. Open the network filer – shares appear automatically!
 
 ---
 
 ## Fork highlights
 
 ### 🌐 Networking
-- **Access+/ShareFS broadcast relay** – Revolutionary support for RISC OS network file sharing over emulated NAT
-- **NAT port forwarding UI** – Full GUI for managing inbound/outbound port mappings with add/edit/delete dialogs
-- **Configurable network rules** – Persistent NAT rule configuration saved to settings
+- **Access+/ShareFS broadcast relay** – Support for RISC OS network file sharing over NAT.
 
 ### 🔍 Machine Inspector & Debugger
 - **Machine Inspector window** – Six comprehensive tabs for deep system introspection:
@@ -96,7 +93,6 @@ The new `broadcast_relay.c` module captures ShareFS/Freeway discovery broadcasts
 | Feature | Upstream | This Fork |
 | --- | --- | --- |
 | Access+/ShareFS networking | ❌ Not functional | ✅ Full broadcast relay support |
-| NAT port forwarding UI | ❌ Manual config only | ✅ Complete GUI with add/edit/delete |
 | Machine Inspector | ❌ None | ✅ 6-tab deep inspection window |
 | Memory viewer | ❌ None | ✅ With search, word sizes, quick jumps |
 | SWI name lookup | ❌ Basic/none | ✅ 400+ entries from official PRM |
