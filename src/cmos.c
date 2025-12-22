@@ -174,8 +174,8 @@ cmos_init(void)
         char fn[512];
         FILE *cmosf;
 
-        /* Append "cmos.ram" to the given executable path */
-	snprintf(fn, sizeof(fn), "%scmos.ram", rpcemu_get_datadir());
+        /* Load cmos.ram from machine-specific directory */
+	snprintf(fn, sizeof(fn), "%scmos.ram", rpcemu_get_machine_datadir());
         cmosf = fopen(fn, "rb");
 
         if (cmosf) {
@@ -221,7 +221,8 @@ savecmos(void)
         char fn[512];
         FILE *cmosf;
 
-	snprintf(fn, sizeof(fn), "%scmos.ram", rpcemu_get_datadir());
+	/* Save cmos.ram to machine-specific directory */
+	snprintf(fn, sizeof(fn), "%scmos.ram", rpcemu_get_machine_datadir());
         cmosf = fopen(fn, "wb");
 
         if (cmosf) {

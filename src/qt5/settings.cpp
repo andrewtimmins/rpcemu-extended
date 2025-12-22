@@ -18,8 +18,39 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 #include <QSettings>
+#include <QFileInfo>
+#include <string.h>
 
 #include "rpcemu.h"
+
+/* Current config file path - can be overridden by config selector */
+static char current_config_path[512] = "";
+
+/**
+ * Set the path to the config file to use.
+ * Must be called before config_load() if you want to use a non-default path.
+ */
+void
+config_set_path(const char *path)
+{
+	if (path && strlen(path) < sizeof(current_config_path)) {
+		strncpy(current_config_path, path, sizeof(current_config_path) - 1);
+		current_config_path[sizeof(current_config_path) - 1] = '\0';
+	}
+}
+
+/**
+ * Get the current config file path.
+ * Returns the path set by config_set_path, or the default if not set.
+ */
+const char *
+config_get_path(void)
+{
+	if (current_config_path[0] != '\0') {
+		return current_config_path;
+	}
+	return "configs/Default.cfg";
+}
 
 /**
  * Parse and load NAT port forwarding rules into the global list
@@ -97,22 +128,67 @@ config_nat_rules_save(QSettings &settings)
 void
 config_load(Config * config)
 {
-	char filename[512];
+	/* Use the path set by config_set_path, or default */
+	config_load_from_path(config, config_get_path());
+}
+
+/**
+ * Load configuration from a specific file path.
+ *
+ * @param config Pointer to Config structure to fill
+ * @param path   Path to the configuration file
+ */
+void
+config_load_from_path(Config *config, const char *path)
+{
 	const char *p;
 	Model model;
 	int i;
 	QString sText;
 	QByteArray ba;
 
-	snprintf(filename, sizeof(filename), "%srpc.cfg", rpcemu_get_datadir());
-
-	QSettings settings("rpc.cfg", QSettings::IniFormat);
+	QSettings settings(QString::fromUtf8(path), QSettings::IniFormat);
 
 	/* Copy the contents of the configfile to the log */
 	QStringList keys = settings.childKeys();
 	foreach (const QString &key, settings.childKeys()) {
 		sText = QString("config_load: %1 = \"%2\"\n").arg(key, settings.value(key).toString());
 		rpclog("%s", sText.toLocal8Bit().constData());
+	}
+
+	/* Load configuration name */
+	sText = settings.value("name", "").toString();
+	ba = sText.toUtf8();
+	if (snprintf(config->name, sizeof(config->name), "%s", ba.constData()) >= (int) sizeof(config->name)) {
+		rpclog("config_load: name too long - truncated\n");
+	}
+
+	/* Set machine-specific data directory based on config name */
+	if (config->name[0] != '\0') {
+		rpcemu_set_machine_datadir(config->name);
+	} else {
+		/* Extract name from config file path if name not set */
+		QString configPath = QString::fromUtf8(path);
+		QString baseName = QFileInfo(configPath).baseName();
+		strncpy(config->name, baseName.toUtf8().constData(), sizeof(config->name) - 1);
+		config->name[sizeof(config->name) - 1] = '\0';
+		rpcemu_set_machine_datadir(config->name);
+	}
+
+	/* Load hard disk path (optional override - normally uses machine directory) */
+	sText = settings.value("hd4_path", "").toString();
+	ba = sText.toUtf8();
+	if (snprintf(config->hd4_path, sizeof(config->hd4_path), "%s", ba.constData()) >= (int) sizeof(config->hd4_path)) {
+		rpclog("config_load: hd4_path too long - truncated\n");
+		config->hd4_path[0] = '\0';
+	}
+
+	/* Load ROM directory (subfolder within roms/) */
+	sText = settings.value("rom_dir", "").toString();
+	ba = sText.toUtf8();
+	if (snprintf(config->rom_dir, sizeof(config->rom_dir), "%s", ba.constData()) >= (int) sizeof(config->rom_dir)) {
+		rpclog("config_load: rom_dir too long - truncated\n");
+		config->rom_dir[0] = '\0';
 	}
 
 	sText = settings.value("mem_size", "16").toString();
@@ -260,15 +336,32 @@ config_load(Config * config)
 void
 config_save(Config *config)
 {
-	char filename[512];
-	QString sText;
+	/* Use the path set by config_set_path, or default */
+	config_save_to_path(config, config_get_path());
+}
 
-	snprintf(filename, sizeof(filename), "%srpc.cfg", rpcemu_get_datadir());
-
-	QSettings settings("rpc.cfg", QSettings::IniFormat);
+/**
+ * Save configuration to a specific file path.
+ *
+ * @param config Pointer to Config structure to save
+ * @param path   Path to the configuration file
+ */
+void
+config_save_to_path(Config *config, const char *path)
+{
+	QSettings settings(QString::fromUtf8(path), QSettings::IniFormat);
 	settings.clear();
 
 	char s[256];
+
+	/* Save configuration name */
+	settings.setValue("name", config->name);
+
+	/* Save hard disk path */
+	settings.setValue("hd4_path", config->hd4_path);
+
+	/* Save ROM directory */
+	settings.setValue("rom_dir", config->rom_dir);
 
 	sprintf(s, "%u", config->mem_size);
 	settings.setValue("mem_size", s);

@@ -155,6 +155,9 @@ typedef enum {
 
 /** The user's configuration of the emulator */
 typedef struct {
+	char name[256];		/**< User-defined name for this configuration */
+	char hd4_path[512];	/**< Path to the hard disk image file (optional override) */
+	char rom_dir[256];	/**< ROM directory name within roms/ folder */
 	unsigned mem_size;	/**< Amount of RAM in megabytes */
 	unsigned vram_size;	/**< Amount of VRAM in megabytes */
 	char *username;
@@ -226,6 +229,8 @@ extern uint32_t inscount;
 /* These functions can optionally be overridden by a platform. If not
    needed to be overridden, there is a generic version in rpc-machdep.c */
 extern const char *rpcemu_get_datadir(void);
+extern const char *rpcemu_get_machine_datadir(void);
+extern void rpcemu_set_machine_datadir(const char *machine_name);
 extern const char *rpcemu_get_log_path(void);
 
 /* rpc-[linux|win].c */
@@ -346,7 +351,11 @@ extern void fpaopcode(uint32_t opcode);
 
 /* settings.cpp */
 extern void config_load(Config *config);
+extern void config_load_from_path(Config *config, const char *path);
 extern void config_save(Config *config);
+extern void config_save_to_path(Config *config, const char *path);
+extern void config_set_path(const char *path);
+extern const char *config_get_path(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -33,6 +33,7 @@
 
 #include "main_window.h"
 #include "rpc-qt5.h"
+#include "config_selector_dialog.h"
 
 #include <pthread.h>
 #include <sys/types.h>
@@ -468,6 +469,18 @@ int main (int argc, char ** argv)
 
 	// Add a program icon
 	QApplication::setWindowIcon(QIcon(":/rpcemu_icon.png"));
+
+	// Show configuration selector dialog
+	ConfigSelectorDialog configSelector;
+	if (configSelector.exec() != QDialog::Accepted) {
+		// User cancelled - exit cleanly
+		return 0;
+	}
+
+	// Set the selected config path before loading
+	QString selectedPath = configSelector.getSelectedConfigPath();
+	QByteArray pathBytes = selectedPath.toUtf8();
+	config_set_path(pathBytes.constData());
 	
 	// start enough of the emulator system to allow
 	// the GUI to initialise (e.g. load the config to init

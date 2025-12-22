@@ -469,6 +469,7 @@ loadhd(int d, const char *filename)
 void resetide(void)
 {
         int d;
+        char hd_path[1024];
 
         /* Close hard disk image files (if previously open) */
         for (d = 0; d < 2; d++) {
@@ -480,9 +481,21 @@ void resetide(void)
 
         ide.atastat = READY_STAT;
         idecallback = 0;
-	loadhd(0, "hd4.hdf");
+
+	/* Load HD4: Use config override path if set, otherwise use machine directory */
+	if (config.hd4_path[0] != '\0' && config.hd4_path[0] == '/') {
+		/* Absolute path specified in config - use it directly */
+		loadhd(0, config.hd4_path);
+	} else {
+		/* Use machine-specific directory */
+		snprintf(hd_path, sizeof(hd_path), "%shd4.hdf", rpcemu_get_machine_datadir());
+		loadhd(0, hd_path);
+	}
+
+	/* Load HD5: Only if CD-ROM is disabled */
 	if (!config.cdromenabled) {
-		loadhd(1, "hd5.hdf");
+		snprintf(hd_path, sizeof(hd_path), "%shd5.hdf", rpcemu_get_machine_datadir());
+		loadhd(1, hd_path);
 	}
 }
 

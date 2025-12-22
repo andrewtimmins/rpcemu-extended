@@ -38,6 +38,7 @@ HEADERS =	../superio.h \
 		../disc_mfm_common.h \
 		main_window.h \
 		configure_dialog.h \
+		config_selector_dialog.h \
 		about_dialog.h \
 		rpc-qt5.h \
 		plt_sound.h \
@@ -74,6 +75,7 @@ SOURCES =	../superio.c \
 		rpc-qt5.cpp \
 		main_window.cpp \
 		configure_dialog.cpp \
+		config_selector_dialog.cpp \
 		about_dialog.cpp \
 		plt_sound.cpp \
 		machine_inspector_window.cpp

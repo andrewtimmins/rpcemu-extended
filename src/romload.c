@@ -119,40 +119,52 @@ void loadroms(void)
         int number_of_files = 0;
         int c;
         int pos = 0;
-        const char *dirname = "roms";
+        char dirname[280];
         char *romfilenames[MAXROMS];
 	char romdirectory[512];
 	DIR *dir;
 	const struct dirent *d;
 
 	/* Build rom directory path */
-	snprintf(romdirectory, sizeof(romdirectory), "%s%s/", rpcemu_get_datadir(), dirname);
+	snprintf(romdirectory, sizeof(romdirectory), "%sroms/", rpcemu_get_datadir());
 
-	/* Scan directory for ROM files */
-	dir = opendir(romdirectory);
-	if (dir != NULL) {
-		while ((d = readdir(dir)) != NULL && number_of_files < MAXROMS) {
-			const char *ext = rpcemu_file_get_extension(d->d_name);
-			char filepath[512];
-			struct stat buf;
+	/* If a specific ROM file is set, load just that file */
+	if (config.rom_dir[0] != '\0') {
+		romfilenames[0] = strdup(config.rom_dir);
+		if (romfilenames[0] == NULL) {
+			fatal("Out of memory in loadroms()");
+		}
+		number_of_files = 1;
+		snprintf(dirname, sizeof(dirname), "roms");
+	} else {
+		snprintf(dirname, sizeof(dirname), "roms");
 
-			snprintf(filepath, sizeof(filepath), "%s%s", romdirectory, d->d_name);
+		/* Scan directory for ROM files */
+		dir = opendir(romdirectory);
+		if (dir != NULL) {
+			while ((d = readdir(dir)) != NULL && number_of_files < MAXROMS) {
+				const char *ext = rpcemu_file_get_extension(d->d_name);
+				char filepath[512];
+				struct stat buf;
 
-			if (stat(filepath, &buf) == 0) {
-				/* Skip directories or files with a .txt extension or starting with '.' */
-				if (S_ISREG(buf.st_mode) && (strcasecmp(ext, "txt") != 0) && d->d_name[0] != '.') {
-					romfilenames[number_of_files] = strdup(d->d_name);
-					if (romfilenames[number_of_files] == NULL) {
-						fatal("Out of memory in loadroms()");
+				snprintf(filepath, sizeof(filepath), "%s%s", romdirectory, d->d_name);
+
+				if (stat(filepath, &buf) == 0) {
+					/* Skip directories or files with a .txt extension or starting with '.' */
+					if (S_ISREG(buf.st_mode) && (strcasecmp(ext, "txt") != 0) && d->d_name[0] != '.') {
+						romfilenames[number_of_files] = strdup(d->d_name);
+						if (romfilenames[number_of_files] == NULL) {
+							fatal("Out of memory in loadroms()");
+						}
+						number_of_files++;
 					}
-					number_of_files++;
 				}
 			}
+			closedir(dir);
+		} else {
+			fatal("Could not open ROM files directory '%s': %s\n",
+			      romdirectory, strerror(errno));
 		}
-		closedir(dir);
-	} else {
-		fatal("Could not open ROM files directory '%s': %s\n",
-		      romdirectory, strerror(errno));
 	}
 
         /* Empty directory? or only .txt files? */

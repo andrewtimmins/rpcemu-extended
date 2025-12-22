@@ -81,6 +81,7 @@ SOURCES       = ../superio.c \
 		rpc-qt5.cpp \
 		main_window.cpp \
 		configure_dialog.cpp \
+		config_selector_dialog.cpp \
 		about_dialog.cpp \
 		plt_sound.cpp \
 		machine_inspector_window.cpp \
@@ -117,6 +118,7 @@ SOURCES       = ../superio.c \
 		debug/qrc_resources.cpp \
 		debug/moc_main_window.cpp \
 		debug/moc_configure_dialog.cpp \
+		debug/moc_config_selector_dialog.cpp \
 		debug/moc_about_dialog.cpp \
 		debug/moc_rpc-qt5.cpp \
 		debug/moc_plt_sound.cpp \
@@ -154,6 +156,7 @@ OBJECTS       = debug/superio.o \
 		debug/rpc-qt5.o \
 		debug/main_window.o \
 		debug/configure_dialog.o \
+		debug/config_selector_dialog.o \
 		debug/about_dialog.o \
 		debug/plt_sound.o \
 		debug/machine_inspector_window.o \
@@ -191,6 +194,7 @@ OBJECTS       = debug/superio.o \
 		debug/qrc_resources.o \
 		debug/moc_main_window.o \
 		debug/moc_configure_dialog.o \
+		debug/moc_config_selector_dialog.o \
 		debug/moc_about_dialog.o \
 		debug/moc_rpc-qt5.o \
 		debug/moc_plt_sound.o \
@@ -301,6 +305,7 @@ DIST          = /usr/lib/x86_64-linux-gnu/qt5/mkspecs/features/spec_pre.prf \
 		../disc_mfm_common.h \
 		main_window.h \
 		configure_dialog.h \
+		config_selector_dialog.h \
 		about_dialog.h \
 		rpc-qt5.h \
 		plt_sound.h \
@@ -364,6 +369,7 @@ DIST          = /usr/lib/x86_64-linux-gnu/qt5/mkspecs/features/spec_pre.prf \
 		rpc-qt5.cpp \
 		main_window.cpp \
 		configure_dialog.cpp \
+		config_selector_dialog.cpp \
 		about_dialog.cpp \
 		plt_sound.cpp \
 		machine_inspector_window.cpp \
@@ -425,8 +431,8 @@ distdir: FORCE
 	$(COPY_FILE) --parents $(DIST) $(DISTDIR)/
 	$(COPY_FILE) --parents icon.qrc resources.qrc $(DISTDIR)/
 	$(COPY_FILE) --parents /usr/lib/x86_64-linux-gnu/qt5/mkspecs/features/data/dummy.cpp $(DISTDIR)/
-	$(COPY_FILE) --parents ../superio.h ../cdrom-iso.h ../cmos.h ../cp15.h ../fdc.h ../hostfs.h ../hostfs_internal.h ../ide.h ../iomd.h ../keyboard.h ../mem.h ../sound.h ../vidc20.h ../arm_common.h ../arm.h ../arm_disasm.h ../disc.h ../disc_adf.h ../disc_hfe.h ../disc_mfm_common.h main_window.h configure_dialog.h about_dialog.h rpc-qt5.h plt_sound.h machine_snapshot.h machine_inspector_window.h ../network-nat.h ../broadcast_relay.h nat_edit_dialog.h nat_list_dialog.h ../slirp/bootp.h ../slirp/cutils.h ../slirp/debug.h ../slirp/if.h ../slirp/ip.h ../slirp/ip_icmp.h ../slirp/libslirp.h ../slirp/main.h ../slirp/mbuf.h ../slirp/misc.h ../slirp/sbuf.h ../slirp/slirp_config.h ../slirp/slirp.h ../slirp/socket.h ../slirp/tcp.h ../slirp/tcpip.h ../slirp/tcp_timer.h ../slirp/tcp_var.h ../slirp/tftp.h ../slirp/udp.h ../network.h network_dialog.h ../ArmDynarecOps.h ../codegen_x86_common.h ../codegen_amd64.h $(DISTDIR)/
-	$(COPY_FILE) --parents ../superio.c ../cdrom-iso.c ../cmos.c ../cp15.c ../fdc.c ../fpa.c ../hostfs.c ../ide.c ../iomd.c ../keyboard.c ../mem.c ../romload.c ../rpcemu.c ../sound.c ../vidc20.c ../podules.c ../podulerom.c ../icside.c ../rpc-machdep.c ../arm_common.c ../arm_disasm.c ../i8042.c ../disc.c ../disc_adf.c ../disc_hfe.c ../disc_mfm_common.c settings.cpp rpc-qt5.cpp main_window.cpp configure_dialog.cpp about_dialog.cpp plt_sound.cpp machine_inspector_window.cpp ../network-nat.c ../broadcast_relay.c nat_edit_dialog.cpp nat_list_dialog.cpp ../slirp/bootp.c ../slirp/cksum.c ../slirp/cutils.c ../slirp/if.c ../slirp/ip_icmp.c ../slirp/ip_input.c ../slirp/ip_output.c ../slirp/mbuf.c ../slirp/misc.c ../slirp/sbuf.c ../slirp/slirp.c ../slirp/socket.c ../slirp/tcp_input.c ../slirp/tcp_output.c ../slirp/tcp_subr.c ../slirp/tcp_timer.c ../slirp/udp.c ../cdrom-linuxioctl.c ../network-linux.c ../network.c network_dialog.cpp keyboard_x.c ../hostfs-unix.c ../rpc-linux.c ../ArmDynarec.c ../codegen_amd64.c $(DISTDIR)/
+	$(COPY_FILE) --parents ../superio.h ../cdrom-iso.h ../cmos.h ../cp15.h ../fdc.h ../hostfs.h ../hostfs_internal.h ../ide.h ../iomd.h ../keyboard.h ../mem.h ../sound.h ../vidc20.h ../arm_common.h ../arm.h ../arm_disasm.h ../disc.h ../disc_adf.h ../disc_hfe.h ../disc_mfm_common.h main_window.h configure_dialog.h config_selector_dialog.h about_dialog.h rpc-qt5.h plt_sound.h machine_snapshot.h machine_inspector_window.h ../network-nat.h ../broadcast_relay.h nat_edit_dialog.h nat_list_dialog.h ../slirp/bootp.h ../slirp/cutils.h ../slirp/debug.h ../slirp/if.h ../slirp/ip.h ../slirp/ip_icmp.h ../slirp/libslirp.h ../slirp/main.h ../slirp/mbuf.h ../slirp/misc.h ../slirp/sbuf.h ../slirp/slirp_config.h ../slirp/slirp.h ../slirp/socket.h ../slirp/tcp.h ../slirp/tcpip.h ../slirp/tcp_timer.h ../slirp/tcp_var.h ../slirp/tftp.h ../slirp/udp.h ../network.h network_dialog.h ../ArmDynarecOps.h ../codegen_x86_common.h ../codegen_amd64.h $(DISTDIR)/
+	$(COPY_FILE) --parents ../superio.c ../cdrom-iso.c ../cmos.c ../cp15.c ../fdc.c ../fpa.c ../hostfs.c ../ide.c ../iomd.c ../keyboard.c ../mem.c ../romload.c ../rpcemu.c ../sound.c ../vidc20.c ../podules.c ../podulerom.c ../icside.c ../rpc-machdep.c ../arm_common.c ../arm_disasm.c ../i8042.c ../disc.c ../disc_adf.c ../disc_hfe.c ../disc_mfm_common.c settings.cpp rpc-qt5.cpp main_window.cpp configure_dialog.cpp config_selector_dialog.cpp about_dialog.cpp plt_sound.cpp machine_inspector_window.cpp ../network-nat.c ../broadcast_relay.c nat_edit_dialog.cpp nat_list_dialog.cpp ../slirp/bootp.c ../slirp/cksum.c ../slirp/cutils.c ../slirp/if.c ../slirp/ip_icmp.c ../slirp/ip_input.c ../slirp/ip_output.c ../slirp/mbuf.c ../slirp/misc.c ../slirp/sbuf.c ../slirp/slirp.c ../slirp/socket.c ../slirp/tcp_input.c ../slirp/tcp_output.c ../slirp/tcp_subr.c ../slirp/tcp_timer.c ../slirp/udp.c ../cdrom-linuxioctl.c ../network-linux.c ../network.c network_dialog.cpp keyboard_x.c ../hostfs-unix.c ../rpc-linux.c ../ArmDynarec.c ../codegen_amd64.c $(DISTDIR)/
 
 
 clean: compiler_clean 
@@ -473,9 +479,9 @@ compiler_moc_predefs_clean:
 debug/moc_predefs.h: /usr/lib/x86_64-linux-gnu/qt5/mkspecs/features/data/dummy.cpp
 	g++ -pipe -Werror=switch -fno-common -g -Wall -Wextra -dM -E -o debug/moc_predefs.h /usr/lib/x86_64-linux-gnu/qt5/mkspecs/features/data/dummy.cpp
 
-compiler_moc_header_make_all: debug/moc_main_window.cpp debug/moc_configure_dialog.cpp debug/moc_about_dialog.cpp debug/moc_rpc-qt5.cpp debug/moc_plt_sound.cpp debug/moc_machine_inspector_window.cpp debug/moc_nat_edit_dialog.cpp debug/moc_nat_list_dialog.cpp debug/moc_network_dialog.cpp
+compiler_moc_header_make_all: debug/moc_main_window.cpp debug/moc_configure_dialog.cpp debug/moc_config_selector_dialog.cpp debug/moc_about_dialog.cpp debug/moc_rpc-qt5.cpp debug/moc_plt_sound.cpp debug/moc_machine_inspector_window.cpp debug/moc_nat_edit_dialog.cpp debug/moc_nat_list_dialog.cpp debug/moc_network_dialog.cpp
 compiler_moc_header_clean:
-	-$(DEL_FILE) debug/moc_main_window.cpp debug/moc_configure_dialog.cpp debug/moc_about_dialog.cpp debug/moc_rpc-qt5.cpp debug/moc_plt_sound.cpp debug/moc_machine_inspector_window.cpp debug/moc_nat_edit_dialog.cpp debug/moc_nat_list_dialog.cpp debug/moc_network_dialog.cpp
+	-$(DEL_FILE) debug/moc_main_window.cpp debug/moc_configure_dialog.cpp debug/moc_config_selector_dialog.cpp debug/moc_about_dialog.cpp debug/moc_rpc-qt5.cpp debug/moc_plt_sound.cpp debug/moc_machine_inspector_window.cpp debug/moc_nat_edit_dialog.cpp debug/moc_nat_list_dialog.cpp debug/moc_network_dialog.cpp
 debug/moc_main_window.cpp: main_window.h \
 		configure_dialog.h \
 		rpc-qt5.h \
@@ -501,6 +507,11 @@ debug/moc_configure_dialog.cpp: configure_dialog.h \
 		debug/moc_predefs.h \
 		/usr/lib/qt5/bin/moc
 	/usr/lib/qt5/bin/moc $(DEFINES) --include /home/atimmins/Apps/RPCEmu/src/qt5/debug/moc_predefs.h -I/usr/lib/x86_64-linux-gnu/qt5/mkspecs/linux-g++ -I/home/atimmins/Apps/RPCEmu/src/qt5 -I/home/atimmins/Apps/RPCEmu/src -I/usr/include/x86_64-linux-gnu/qt5 -I/usr/include/x86_64-linux-gnu/qt5/QtWidgets -I/usr/include/x86_64-linux-gnu/qt5/QtMultimedia -I/usr/include/x86_64-linux-gnu/qt5/QtGui -I/usr/include/x86_64-linux-gnu/qt5/QtNetwork -I/usr/include/x86_64-linux-gnu/qt5/QtCore -I/usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -I/usr/include/c++/11/backward -I/usr/lib/gcc/x86_64-linux-gnu/11/include -I/usr/local/include -I/usr/include/x86_64-linux-gnu -I/usr/include configure_dialog.h -o debug/moc_configure_dialog.cpp
+
+debug/moc_config_selector_dialog.cpp: config_selector_dialog.h \
+		debug/moc_predefs.h \
+		/usr/lib/qt5/bin/moc
+	/usr/lib/qt5/bin/moc $(DEFINES) --include /home/atimmins/Apps/RPCEmu/src/qt5/debug/moc_predefs.h -I/usr/lib/x86_64-linux-gnu/qt5/mkspecs/linux-g++ -I/home/atimmins/Apps/RPCEmu/src/qt5 -I/home/atimmins/Apps/RPCEmu/src -I/usr/include/x86_64-linux-gnu/qt5 -I/usr/include/x86_64-linux-gnu/qt5/QtWidgets -I/usr/include/x86_64-linux-gnu/qt5/QtMultimedia -I/usr/include/x86_64-linux-gnu/qt5/QtGui -I/usr/include/x86_64-linux-gnu/qt5/QtNetwork -I/usr/include/x86_64-linux-gnu/qt5/QtCore -I/usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -I/usr/include/c++/11/backward -I/usr/lib/gcc/x86_64-linux-gnu/11/include -I/usr/local/include -I/usr/include/x86_64-linux-gnu -I/usr/include config_selector_dialog.h -o debug/moc_config_selector_dialog.cpp
 
 debug/moc_about_dialog.cpp: about_dialog.h \
 		debug/moc_predefs.h \
@@ -851,6 +862,7 @@ debug/rpc-qt5.o: rpc-qt5.cpp main_window.h \
 		network_dialog.h \
 		nat_list_dialog.h \
 		about_dialog.h \
+		config_selector_dialog.h \
 		../arm.h \
 		../arm_disasm.h \
 		../mem.h \
@@ -894,6 +906,13 @@ debug/configure_dialog.o: configure_dialog.cpp main_window.h \
 		nat_list_dialog.h \
 		about_dialog.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o debug/configure_dialog.o configure_dialog.cpp
+
+debug/config_selector_dialog.o: config_selector_dialog.cpp config_selector_dialog.h \
+		../rpcemu.h \
+		../iomd.h \
+		../superio.h \
+		../peripheral_snapshot.h
+	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o debug/config_selector_dialog.o config_selector_dialog.cpp
 
 debug/about_dialog.o: about_dialog.cpp about_dialog.h \
 		../rpcemu.h \
@@ -1404,6 +1423,9 @@ debug/moc_main_window.o: debug/moc_main_window.cpp
 
 debug/moc_configure_dialog.o: debug/moc_configure_dialog.cpp 
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o debug/moc_configure_dialog.o debug/moc_configure_dialog.cpp
+
+debug/moc_config_selector_dialog.o: debug/moc_config_selector_dialog.cpp 
+	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o debug/moc_config_selector_dialog.o debug/moc_config_selector_dialog.cpp
 
 debug/moc_about_dialog.o: debug/moc_about_dialog.cpp 
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o debug/moc_about_dialog.o debug/moc_about_dialog.cpp
