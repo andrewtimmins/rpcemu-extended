@@ -5,6 +5,7 @@ This repository hosts a feature-rich fork of **RPCEmu**, the open-source emulato
 
 ## Fork highlights
 - **Multi-machine configuration** – Create, edit, clone and manage multiple machine configurations from a startup selector dialog. Each machine has isolated CMOS, HostFS and hard disc storage.
+- **Access/ShareFS networking** – Full support for Acorn Access and ShareFS file sharing between emulated machines via NAT networking.
 - **Machine Inspector window** – Inspect CPU registers, pipeline state, MMU flags, performance counters, and key peripheral snapshots (VIDC, SuperIO, IDE, podules) with optional auto-refresh.
 - **Integrated debugger** – Pause/resume execution, single-step (×1/×5), and manage breakpoints and watchpoints directly in the GUI, with clear status readouts for the last halt reason.
 - **Dynarec-aware instrumentation** – The ARM dynamic recompiler honours debugger pause requests, breakpoints, and watchpoints via shared hooks (`debugger_requires_instruction_hook`) so that interpreter and dynarec stay in sync.
@@ -63,6 +64,7 @@ Each machine configuration supports:
 - Qt front-end reworked for stability with modern Qt 5 deployments.
 - Multi-machine configuration system with isolated per-machine storage.
 - ROM selection per configuration.
+- Access/ShareFS networking support for file sharing between emulated machines.
 - In-depth machine inspector and debugger tooling not present upstream.
 - Dynarec pause logic patched so debugger operations are consistent across cores.
  
