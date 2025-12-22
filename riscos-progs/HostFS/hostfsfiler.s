@@ -50,8 +50,12 @@
         WS_MY_TASK_HANDLE      = 0
         WS_FILER_TASK_HANDLE   = 4
         WS_WIMP_VERSION        = 8
-        WS_ICON_BAR_BLOCK      = 12
-        WS_WIMP_BLOCK          = 48 @ must be last
+        WS_ICON_BAR_BLOCK      = 12	@ 9 words = 36 bytes (12-47)
+        WS_ICON_BAR_BLOCK2     = 48	@ 9 words = 36 bytes (48-83)
+        WS_HOSTFS_ICON_HANDLE  = 84
+        WS_SHARED_ICON_HANDLE  = 88
+        WS_CURRENT_MENU        = 92	@ 0 = HostFS, 1 = Shared
+        WS_WIMP_BLOCK          = 96 @ must be last
 
 
 
@@ -279,10 +283,49 @@ icon_bar_icon_name:
 
 	.align
 
+@ Second icon data for Shared drive
+icon_bar_block2:
+	.int	-5		@ Left side of icon bar, scan from left (RO3+)
+	.int	0		@ Minimum X
+	.int	-16		@ Minimum Y
+	.int	96		@ Maximum X
+	.int	20		@ Maximum Y (excludes Sprite - added later)
+	.int	0x1700310b	@ Flags (includes Indirected Text and Sprite)
+	.int	0		@ Gap for pointer to Text
+	.int	0		@ Gap for pointer to Validation String
+	.int	6		@ Length of Text buffer
+
+icon_bar_text2:
+	.string	"Shared"
+
+icon_bar_validation2:
+	.ascii	"S"		@ Unterminated - continues below...
+icon_bar_icon_name2:
+	.string	"harddisc"
+
+	.align
 
 
-menu:
+
+menu_hostfs:
 	.string	"HostFS"	@ Menu Title, padded to 12 bytes
+	.align
+	.int	0
+
+	.byte	7, 2, 7, 0	@ Title colours
+	.int	16 * 6		@ Width
+	.int	44		@ Height
+	.int	0		@ Vertical gap
+	@ Menu items
+	.int	(1 << 7)	@ Flags: last item
+	.int	-1		@ Submenu pointer
+	.int	0x07000001	@ Menu item icon flags, Text
+	.string	"Free"		@ Menu item icon data, padded to 12 bytes
+	.align
+	.int	0
+
+menu_shared:
+	.string	"Shared"	@ Menu Title, padded to 12 bytes
 	.align
 	.int	0
 
@@ -329,8 +372,8 @@ start_skipclosedown:
 	add	r1, wp, #WS_ICON_BAR_BLOCK
 
 	ldmia	r0, {r2-r10}
-	adr	r8, icon_bar_text		@ Fill in pointers
-	adr	r9, icon_bar_validation
+	adrl	r8, icon_bar_text		@ Fill in pointers
+	adrl	r9, icon_bar_validation
 	stmia	r1, {r2-r10}
 
 	@ Calculate size of Icon Bar Icon
@@ -347,11 +390,43 @@ start_skipclosedown:
 	add	r0, r0, r4, lsl r2	@ += Pixels << YEig
 	str	r0, [r12, #WS_ICON_BAR_BLOCK + 16]
 
-	@ Create Icon on Icon Bar
+	@ Create HostFS Icon on Icon Bar
 	mov	r0, #0x71000000		@ Priority higher than ADFS Hard Disc but lower than CD-ROM discs
 	add	r1, wp, #WS_ICON_BAR_BLOCK
 	swi	XWimp_CreateIcon
 	bvs	close_down
+	str	r0, [wp, #WS_HOSTFS_ICON_HANDLE]	@ Save icon handle
+
+	@ Prepare block for second Icon Bar icon (Shared)
+	adr	r0, icon_bar_block2
+	add	r1, wp, #WS_ICON_BAR_BLOCK2
+
+	ldmia	r0, {r2-r10}
+	adrl	r8, icon_bar_text2		@ Fill in pointers
+	adrl	r9, icon_bar_validation2
+	stmia	r1, {r2-r10}
+
+	@ Calculate size of second Icon Bar Icon
+	mov	r0, #SpriteOp_ReadSpriteInfo
+	adr	r2, icon_bar_icon_name2
+	swi	XWimp_SpriteOp
+	movvc	r0, r6
+	movvc	r1, #ModeVariable_YEig
+	swivc	XOS_ReadModeVariable
+	bvs	close_down
+
+	@ Add sprite height to Maximum Y of second icon's Bounding Box
+	ldr	r0, [r12, #WS_ICON_BAR_BLOCK2 + 16]
+	add	r0, r0, r4, lsl r2	@ += Pixels << YEig
+	str	r0, [r12, #WS_ICON_BAR_BLOCK2 + 16]
+
+	@ Create Shared Icon on Icon Bar
+	mov	r0, #0x71000000		@ Priority just after HostFS icon
+	add	r0, r0, #1
+	add	r1, wp, #WS_ICON_BAR_BLOCK2
+	swi	XWimp_CreateIcon
+	bvs	close_down
+	str	r0, [wp, #WS_SHARED_ICON_HANDLE]	@ Save icon handle
 
 
 	@ Main poll loop
@@ -374,42 +449,94 @@ re_poll:
 
 
 mouse_click:
-	ldr	r0, [r1, #12]		@ Icon handle
-	cmp	r0, #-2
+	@ Check if click is on icon bar (window handle -2)
+	ldr	r2, [r1, #12]		@ Window handle
+	cmp	r2, #-2
 	bne	re_poll
 
+	@ Check which icon was clicked
+	ldr	r3, [r1, #16]		@ Icon handle from click
+	ldr	r4, [wp, #WS_SHARED_ICON_HANDLE]
+	cmp	r3, r4
+	beq	mouse_click_shared
+
+	ldr	r4, [wp, #WS_HOSTFS_ICON_HANDLE]
+	cmp	r3, r4
+	beq	mouse_click_hostfs
+
+	b	re_poll
+
+mouse_click_hostfs:
 	ldr	r0, [r1, #8]		@ Buttons
 
 	cmp	r0, #4			@ Select
 	cmpne	r0, #1			@ Adjust
-	adreq	r0, cli_command
+	adreq	r0, cli_command_hostfs
 	swieq	XOS_CLI
 	beq	re_poll
 
 	cmp	r0, #2			@ Menu
 	bne	re_poll
 
+	mov	r0, #0			@ Flag: HostFS menu
+	str	r0, [wp, #WS_CURRENT_MENU]
+
 	ldr	r2, [r1, #0]		@ X coordinate of click
 	sub	r2, r2, #64
 	mov	r3, #(96 + 44)
-	adr	r1, menu
+	adr	r1, menu_hostfs
 	swi	XWimp_CreateMenu
 
 	b	re_poll
 
-cli_command:
+mouse_click_shared:
+	ldr	r0, [r1, #8]		@ Buttons
+
+	cmp	r0, #4			@ Select
+	cmpne	r0, #1			@ Adjust
+	adreq	r0, cli_command_shared
+	swieq	XOS_CLI
+	beq	re_poll
+
+	cmp	r0, #2			@ Menu
+	bne	re_poll
+
+	mov	r0, #1			@ Flag: Shared menu
+	str	r0, [wp, #WS_CURRENT_MENU]
+
+	ldr	r2, [r1, #0]		@ X coordinate of click
+	sub	r2, r2, #64
+	mov	r3, #(96 + 44)
+	adr	r1, menu_shared
+	swi	XWimp_CreateMenu
+
+	b	re_poll
+
+cli_command_hostfs:
 	.string	"Filer_OpenDir HostFS::HostFS.$"
+	.align
+
+cli_command_shared:
+	.string	"Filer_OpenDir HostFS::Shared.$"
 	.align
 
 
 menu_selection:
-	adr	r0, free_cli_command
+	@ Check which menu is open and run appropriate free command
+	ldr	r0, [wp, #WS_CURRENT_MENU]
+	cmp	r0, #1
+	adreq	r0, free_cli_command_shared
+	adrne	r0, free_cli_command_hostfs
 	swi	XOS_CLI
 
 	b	re_poll
 
-free_cli_command:
+free_cli_command_hostfs:
 	.string	"ShowFree -fs HostFS HostFS"
+	.align
+
+free_cli_command_shared:
+	.string	"ShowFree -fs HostFS Shared"
 	.align
 
 

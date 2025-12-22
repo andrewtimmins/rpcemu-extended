@@ -123,7 +123,11 @@ typedef struct {
 /** Disc name of default disc or if no disc name is present */
 static const char *disc_name_default = "HostFS";
 
+/** Disc name of shared disc */
+static const char *disc_name_shared = "Shared";
+
 static char HOSTFS_ROOT[512];
+static char SHARED_ROOT[512];
 
 static FILE *open_file[MAX_OPEN_FILES + 1]; /* array subscript 0 is never used */
 
@@ -152,8 +156,8 @@ dbug_hostfs(const char *format, ...)
 #endif
 
 /**
- * Verify that the disc name is valid - currently match with the
- * default name only.
+ * Verify that the disc name is valid.
+ * Accepts both "HostFS" (per-machine) and "Shared" (common) disc names.
  *
  * @param disc_name Disc name
  * @return 1 if disc name is valid, 0 otherwise
@@ -161,10 +165,25 @@ dbug_hostfs(const char *format, ...)
 static int
 hostfs_disc_name_valid(const char *disc_name)
 {
-  if (!STRCASEEQ(disc_name, disc_name_default)) {
-    return 0;
+  if (STRCASEEQ(disc_name, disc_name_default) || STRCASEEQ(disc_name, disc_name_shared)) {
+    return 1;
   }
-  return 1;
+  return 0;
+}
+
+/**
+ * Get the host root path for a given disc name.
+ *
+ * @param disc_name Disc name ("HostFS" or "Shared")
+ * @return Pointer to the appropriate root path
+ */
+static const char *
+hostfs_get_root_for_disc(const char *disc_name)
+{
+  if (STRCASEEQ(disc_name, disc_name_shared)) {
+    return SHARED_ROOT;
+  }
+  return HOSTFS_ROOT;
 }
 
 /**
@@ -592,10 +611,14 @@ hostfs_path_process(const char *ro_path,
 {
   char component_name[PATH_MAX]; /* working Host component */
   char *component;
+  const char *root_path = HOSTFS_ROOT; /* Default to HostFS root */
 
   assert(ro_path);
   assert(host_pathname);
   assert(object_info);
+
+  /* Debug: log incoming path */
+  rpclog("HostFS: path_process incoming path: '%s'\n", ro_path);
 
   assert(ro_path[0] == '$' || ro_path[0] == ':');
 
@@ -636,11 +659,20 @@ hostfs_path_process(const char *ro_path,
     memcpy(disc_name, ro_path + 1, disc_name_len);
     disc_name[disc_name_len] = '\0';
 
+    /* Debug: log extracted disc name */
+    rpclog("HostFS: extracted disc name: '%s'\n", disc_name);
+
     /* Identify the disc from the disc name */
     if (!hostfs_disc_name_valid(disc_name)) {
       object_info->type = OBJECT_TYPE_NOT_FOUND;
       return FILECORE_ERROR_DISCNOTFOUND;
     }
+
+    /* Select the appropriate root path for this disc */
+    root_path = hostfs_get_root_for_disc(disc_name);
+
+    /* Debug: log selected root path */
+    rpclog("HostFS: selected root path: '%s'\n", root_path);
 
     /* Now process the path from '$' onwards */
     ro_path = c + 1;
@@ -649,7 +681,7 @@ hostfs_path_process(const char *ro_path,
   while (*ro_path) {
     switch (*ro_path) {
     case '$':
-      strcat(host_pathname, HOSTFS_ROOT);
+      strcat(host_pathname, root_path);
 
       hostfs_read_object_info(host_pathname, NULL, object_info);
       if (object_info->type == OBJECT_TYPE_NOT_FOUND) {
@@ -1871,7 +1903,8 @@ hostfs_func_19_read_dir_info_timestamp(ARMul_State *state)
 /**
  * FSEntry_Func 23 - Canonicalise special field and disc name.
  *
- * Canonicalise the disc name by returning the default disc name.
+ * Canonicalise the disc name. If a valid disc name is provided, preserve it;
+ * otherwise return the default disc name.
  *
  * @param state Emulator state
  */
@@ -1879,35 +1912,41 @@ static void
 hostfs_func_23_canonicalise_disc_name(ARMul_State *state)
 {
   char disc_name[1024];
+  const char *canonical_name = disc_name_default;
+  int have_valid_disc_name = 0;
 
   dbug_hostfs("\tCanonicalise special field and disc name\n");
   dbug_hostfs("\tr2 = 0x%08x (ptr to disc name if present)\n", state->Reg[2]);
   if (state->Reg[2] != 0) {
     get_string(state, state->Reg[2], disc_name, sizeof(disc_name));
     dbug_hostfs("\t   = \'%s\'\n", disc_name);
+    if (hostfs_disc_name_valid(disc_name)) {
+      canonical_name = disc_name;
+      have_valid_disc_name = 1;
+    }
   }
   dbug_hostfs("\tr4 = 0x%08x (ptr to canonical disc name to fill in)\n", state->Reg[4]);
   if (state->Reg[4] != 0) {
     dbug_hostfs("\tr6 = %10u (length of buffer for canonical disc name)\n", state->Reg[6]);
   }
 
-  /* Check disc name if provided */
-  if (state->Reg[2] != 0) {
-    if (!hostfs_disc_name_valid(disc_name)) {
-      state->Reg[9] = FILECORE_ERROR_DISCNOTFOUND;
-      state->Reg[2] = state->Reg[4];
-      state->Reg[4] = 0;
-      return;
-    }
+  /* Check disc name if provided - return error if invalid */
+  if (state->Reg[2] != 0 && !have_valid_disc_name) {
+    state->Reg[9] = FILECORE_ERROR_DISCNOTFOUND;
+    state->Reg[2] = state->Reg[4];
+    state->Reg[4] = 0;
+    return;
   }
+
+  dbug_hostfs("\tCanonical disc name: '%s'\n", canonical_name);
 
   if (state->Reg[4] == 0) {
     /* Request for buffer size needed for canonical disc name */
     state->Reg[2] = state->Reg[4];
-    state->Reg[4] = (uint32_t) strlen(disc_name_default);
+    state->Reg[4] = (uint32_t) strlen(canonical_name);
   } else {
     /* Request for canonical disc name */
-    put_string(state, state->Reg[4], disc_name_default);
+    put_string(state, state->Reg[4], canonical_name);
     state->Reg[2] = state->Reg[4];
     state->Reg[4] = 0;
   }
@@ -2098,6 +2137,14 @@ hostfs_init(void)
   for (c = 0; c < 511; c++) {
     if (HOSTFS_ROOT[c] == '\\') {
       HOSTFS_ROOT[c] = '/';
+    }
+  }
+
+  /* Use common shared directory in main data folder */
+  snprintf(SHARED_ROOT, sizeof(SHARED_ROOT), "%sshared", rpcemu_get_datadir());
+  for (c = 0; c < 511; c++) {
+    if (SHARED_ROOT[c] == '\\') {
+      SHARED_ROOT[c] = '/';
     }
   }
 }

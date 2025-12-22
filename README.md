@@ -5,6 +5,7 @@ This repository hosts a feature-rich fork of **RPCEmu**, the open-source emulato
 
 ## Fork highlights
 - **Multi-machine configuration** – Create, edit, clone and manage multiple machine configurations from a startup selector dialog. Each machine has isolated CMOS, HostFS and hard disc storage.
+- **Shared HostFS drive** – A second "Shared" drive icon on the RISC OS icon bar provides access to a common `shared/` folder visible to all machine instances, enabling easy file sharing between configurations.
 - **Access/ShareFS networking** – Full support for Acorn Access and ShareFS file sharing between emulated machines via NAT networking.
 - **Machine Inspector window** – Inspect CPU registers, pipeline state, MMU flags, performance counters, and key peripheral snapshots (VIDC, SuperIO, IDE, podules) with optional auto-refresh.
 - **Integrated debugger** – Pause/resume execution, single-step (×1/×5), and manage breakpoints and watchpoints directly in the GUI, with clear status readouts for the last halt reason.
@@ -18,6 +19,7 @@ The emulator now supports multiple isolated machine configurations:
 | --- | --- |
 | `configs/` | Machine configuration files (`.cfg`). Each file defines model, RAM, VRAM, ROM, refresh rate, and networking settings. |
 | `machines/<name>/` | Per-machine runtime data: `cmos.ram`, `hostfs/`, `hd4.hdf`, `hd5.hdf`. Fully isolated between configurations. |
+| `shared/` | Common shared folder accessible from all machine instances via the Shared drive icon. |
 | `roms/` | Shared ROM images. Select which ROM to use per-machine in the Edit dialog. |
 
 ### Configuration options
@@ -37,10 +39,26 @@ Each machine configuration supports:
 | `src/` | Core emulator engine (ARM interpreter, dynarec, hardware devices, debugger plumbing). |
 | `src/qt5/` | Qt 5 GUI, machine inspector, debugger controls, configuration selector & networking dialogs. |
 | `slirp/` | Bundled SLiRP networking library for NAT mode. |
-| `hostfs/`, `poduleroms/`, `riscos-progs/` | Support utilities, ROM stubs, and example binaries for HostFS/podule integration. |
+| `riscos-progs/` | RISC OS module source code (HostFS, HostFSFiler, ScrollWheel, EtherRPCEm). |
+| `poduleroms/` | Compiled podule ROM images loaded by the emulator. |
+| `hostfs/` | Default HostFS content (legacy location, now per-machine in `machines/<name>/hostfs/`). |
+| `shared/` | Common shared folder accessible from all RISC OS instances. |
 | `roms/` | Place your licensed RISC OS ROM images here (see [official instructions](http://www.marutan.net/rpcemu/manual/romimage.html)). |
 | `configs/` | Machine configuration files. |
 | `machines/` | Per-machine data directories (auto-created). |
+
+## HostFS and Shared drives
+The emulator provides two filing system icons on the RISC OS icon bar:
+
+| Icon | RISC OS Path | Host Path | Purpose |
+| --- | --- | --- | --- |
+| **HostFS** | `HostFS::HostFS.$` | `machines/<name>/hostfs/` | Per-machine storage, isolated between configurations. |
+| **Shared** | `HostFS::Shared.$` | `shared/` | Common storage visible to all machine instances. |
+
+This allows you to:
+- Keep machine-specific files (applications, settings) isolated in each machine's HostFS
+- Share common files, utilities, or applications between all machines via the Shared drive
+- Transfer files between different machine configurations without network setup
 
 ## Using the machine selector
 1. On startup, the **Machine Selector** dialog appears listing all available configurations.
@@ -64,9 +82,11 @@ Each machine configuration supports:
 - Qt front-end reworked for stability with modern Qt 5 deployments.
 - Multi-machine configuration system with isolated per-machine storage.
 - ROM selection per configuration.
+- **Dual HostFS drives** – Per-machine HostFS plus a common Shared drive for cross-machine file sharing.
 - Access/ShareFS networking support for file sharing between emulated machines.
 - In-depth machine inspector and debugger tooling not present upstream.
 - Dynarec pause logic patched so debugger operations are consistent across cores.
+- Custom ARM cross-assembler toolchain support for building RISC OS modules.
  
 ## Troubleshooting
 | Symptom | Remedy |
