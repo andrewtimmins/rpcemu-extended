@@ -40,14 +40,47 @@
 #include <string.h>
 #include <time.h>
 
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <ifaddrs.h>
-#include <net/if.h>
+#ifdef _WIN32
+  /* Windows / MinGW */
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+  #include <iphlpapi.h>
+  #include <windows.h>
+
+  /* Compatibility definitions */
+  typedef SOCKET relay_socket_t;
+  #define RELAY_INVALID_SOCKET INVALID_SOCKET
+  #define RELAY_SOCKET_ERROR   SOCKET_ERROR
+  #define relay_closesocket(s) closesocket(s)
+  #define RELAY_WOULDBLOCK     WSAEWOULDBLOCK
+
+  /* Windows doesn't have ssize_t in all cases */
+  #ifndef ssize_t
+    typedef int ssize_t;
+  #endif
+
+  /* Winsock initialization tracking */
+  static int winsock_initialized = 0;
+
+#else
+  /* POSIX / Linux / macOS */
+  #include <sys/types.h>
+  #include <sys/socket.h>
+  #include <netinet/in.h>
+  #include <arpa/inet.h>
+  #include <unistd.h>
+  #include <fcntl.h>
+  #include <ifaddrs.h>
+  #include <net/if.h>
+
+  /* Compatibility definitions */
+  typedef int relay_socket_t;
+  #define RELAY_INVALID_SOCKET (-1)
+  #define RELAY_SOCKET_ERROR   (-1)
+  #define relay_closesocket(s) close(s)
+  #define RELAY_WOULDBLOCK     EWOULDBLOCK
+
+#endif
 
 #include "broadcast_relay.h"
 #include "rpcemu.h"
@@ -99,7 +132,7 @@ static const uint16_t access_ports[NUM_ACCESS_SOCKETS] = {
 
 /* Relay state */
 typedef struct {
-    int sockets[NUM_ACCESS_SOCKETS]; /* UDP sockets, -1 if disabled */
+    relay_socket_t sockets[NUM_ACCESS_SOCKETS]; /* UDP sockets, RELAY_INVALID_SOCKET if disabled */
     int enabled;                     /* Runtime enable flag */
 
     struct sockaddr_in host_addr;    /* Host's IP address */
@@ -119,7 +152,7 @@ typedef struct {
 } relay_state_t;
 
 static relay_state_t relay = {
-    .sockets = {-1, -1, -1},
+    .sockets = {RELAY_INVALID_SOCKET, RELAY_INVALID_SOCKET, RELAY_INVALID_SOCKET},
     .enabled = 0
 };
 
@@ -143,6 +176,105 @@ find_socket_for_port(uint16_t port)
  * Find the broadcast address for the first suitable network interface.
  * Skips loopback and interfaces without broadcast capability.
  */
+#ifdef _WIN32
+
+static int
+get_broadcast_address(struct in_addr *bcast, struct in_addr *host)
+{
+    PIP_ADAPTER_ADDRESSES pAddresses = NULL;
+    PIP_ADAPTER_ADDRESSES pCurrAddresses = NULL;
+    PIP_ADAPTER_UNICAST_ADDRESS pUnicast = NULL;
+    ULONG outBufLen = 15000;
+    ULONG flags = GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_SKIP_ANYCAST | 
+                  GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    DWORD dwRetVal;
+    int found = 0;
+    int attempts = 0;
+
+    /* Allocate buffer for adapter addresses */
+    do {
+        pAddresses = (IP_ADAPTER_ADDRESSES *)malloc(outBufLen);
+        if (pAddresses == NULL) {
+            rpclog("broadcast_relay: malloc failed for adapter addresses\n");
+            return -1;
+        }
+
+        dwRetVal = GetAdaptersAddresses(AF_INET, flags, NULL, pAddresses, &outBufLen);
+        if (dwRetVal == ERROR_BUFFER_OVERFLOW) {
+            free(pAddresses);
+            pAddresses = NULL;
+        }
+        attempts++;
+    } while (dwRetVal == ERROR_BUFFER_OVERFLOW && attempts < 3);
+
+    if (dwRetVal != NO_ERROR) {
+        rpclog("broadcast_relay: GetAdaptersAddresses failed with error %lu\n", dwRetVal);
+        if (pAddresses) free(pAddresses);
+        return -1;
+    }
+
+    /* Iterate through adapters */
+    for (pCurrAddresses = pAddresses; pCurrAddresses != NULL; 
+         pCurrAddresses = pCurrAddresses->Next) {
+
+        /* Skip loopback adapters */
+        if (pCurrAddresses->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+            continue;
+        }
+
+        /* Skip adapters that aren't up */
+        if (pCurrAddresses->OperStatus != IfOperStatusUp) {
+            continue;
+        }
+
+        /* Look for IPv4 unicast addresses */
+        for (pUnicast = pCurrAddresses->FirstUnicastAddress; pUnicast != NULL;
+             pUnicast = pUnicast->Next) {
+
+            if (pUnicast->Address.lpSockaddr->sa_family == AF_INET) {
+                struct sockaddr_in *sa_in = (struct sockaddr_in *)pUnicast->Address.lpSockaddr;
+                ULONG prefixLength = pUnicast->OnLinkPrefixLength;
+                uint32_t ip_addr = ntohl(sa_in->sin_addr.s_addr);
+                uint32_t netmask;
+                uint32_t broadcast_addr;
+
+                /* Skip link-local addresses (169.254.x.x) */
+                if ((ip_addr & 0xFFFF0000) == 0xA9FE0000) {
+                    continue;
+                }
+
+                /* Calculate netmask from prefix length */
+                if (prefixLength == 0) {
+                    netmask = 0;
+                } else if (prefixLength >= 32) {
+                    netmask = 0xFFFFFFFF;
+                } else {
+                    netmask = 0xFFFFFFFF << (32 - prefixLength);
+                }
+
+                /* Calculate broadcast address */
+                broadcast_addr = (ip_addr & netmask) | (~netmask);
+
+                host->s_addr = sa_in->sin_addr.s_addr;
+                bcast->s_addr = htonl(broadcast_addr);
+                found = 1;
+
+                rpclog("broadcast_relay: using adapter %S, host %s, ",
+                       pCurrAddresses->FriendlyName, inet_ntoa(*host));
+                rpclog("broadcast %s\n", inet_ntoa(*bcast));
+                break;
+            }
+        }
+
+        if (found) break;
+    }
+
+    free(pAddresses);
+    return found ? 0 : -1;
+}
+
+#else /* POSIX */
+
 static int
 get_broadcast_address(struct in_addr *bcast, struct in_addr *host)
 {
@@ -199,18 +331,60 @@ get_broadcast_address(struct in_addr *bcast, struct in_addr *host)
     return found ? 0 : -1;
 }
 
+#endif /* _WIN32 */
+
+/**
+ * Get the last socket error message for logging.
+ */
+#ifdef _WIN32
+static const char *
+sock_strerror(void)
+{
+    static char buf[256];
+    int err = WSAGetLastError();
+    FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                   NULL, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                   buf, sizeof(buf), NULL);
+    /* Remove trailing newline if present */
+    size_t len = strlen(buf);
+    while (len > 0 && (buf[len-1] == '\n' || buf[len-1] == '\r')) {
+        buf[--len] = '\0';
+    }
+    return buf;
+}
+#else
+#define sock_strerror() strerror(errno)
+#endif
+
 /**
  * Initialize the broadcast relay.
  */
 int
 broadcast_relay_init(void)
 {
+#ifdef _WIN32
+    WSADATA wsaData;
+    char optval = 1;  /* Windows setsockopt uses char* for BOOL options */
+    u_long nonblock = 1;
+#else
     int optval = 1;
-    struct sockaddr_in bind_addr;
     int flags;
+#endif
+    struct sockaddr_in bind_addr;
     struct in_addr bcast, host;
     int i;
     int success_count = 0;
+
+#ifdef _WIN32
+    /* Initialize Winsock if not already done */
+    if (!winsock_initialized) {
+        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+            rpclog("broadcast_relay: WSAStartup failed: %s\n", sock_strerror());
+            return -1;
+        }
+        winsock_initialized = 1;
+    }
+#endif
 
     /* Find host's broadcast address */
     if (get_broadcast_address(&bcast, &host) < 0) {
@@ -221,29 +395,29 @@ broadcast_relay_init(void)
     /* Create UDP sockets for each Access+ port */
     for (i = 0; i < NUM_ACCESS_SOCKETS; i++) {
         relay.sockets[i] = socket(AF_INET, SOCK_DGRAM, 0);
-        if (relay.sockets[i] < 0) {
+        if (relay.sockets[i] == RELAY_INVALID_SOCKET) {
             rpclog("broadcast_relay: socket() for port %d failed: %s\n",
-                   access_ports[i], strerror(errno));
+                   access_ports[i], sock_strerror());
             continue;
         }
 
         /* Enable broadcast */
         if (setsockopt(relay.sockets[i], SOL_SOCKET, SO_BROADCAST,
-                       &optval, sizeof(optval)) < 0) {
+                       &optval, sizeof(optval)) == RELAY_SOCKET_ERROR) {
             rpclog("broadcast_relay: SO_BROADCAST for port %d failed: %s\n",
-                   access_ports[i], strerror(errno));
-            close(relay.sockets[i]);
-            relay.sockets[i] = -1;
+                   access_ports[i], sock_strerror());
+            relay_closesocket(relay.sockets[i]);
+            relay.sockets[i] = RELAY_INVALID_SOCKET;
             continue;
         }
 
         /* Allow address reuse (in case of restart) */
         if (setsockopt(relay.sockets[i], SOL_SOCKET, SO_REUSEADDR,
-                       &optval, sizeof(optval)) < 0) {
+                       &optval, sizeof(optval)) == RELAY_SOCKET_ERROR) {
             rpclog("broadcast_relay: SO_REUSEADDR for port %d failed: %s\n",
-                   access_ports[i], strerror(errno));
-            close(relay.sockets[i]);
-            relay.sockets[i] = -1;
+                   access_ports[i], sock_strerror());
+            relay_closesocket(relay.sockets[i]);
+            relay.sockets[i] = RELAY_INVALID_SOCKET;
             continue;
         }
 
@@ -253,23 +427,33 @@ broadcast_relay_init(void)
         bind_addr.sin_port = htons(access_ports[i]);
         bind_addr.sin_addr.s_addr = INADDR_ANY;
 
-        if (bind(relay.sockets[i], (struct sockaddr *)&bind_addr, sizeof(bind_addr)) < 0) {
+        if (bind(relay.sockets[i], (struct sockaddr *)&bind_addr, sizeof(bind_addr)) == RELAY_SOCKET_ERROR) {
             rpclog("broadcast_relay: bind() for port %d failed: %s\n",
-                   access_ports[i], strerror(errno));
-            close(relay.sockets[i]);
-            relay.sockets[i] = -1;
+                   access_ports[i], sock_strerror());
+            relay_closesocket(relay.sockets[i]);
+            relay.sockets[i] = RELAY_INVALID_SOCKET;
             continue;
         }
 
         /* Set non-blocking */
+#ifdef _WIN32
+        if (ioctlsocket(relay.sockets[i], FIONBIO, &nonblock) == RELAY_SOCKET_ERROR) {
+            rpclog("broadcast_relay: ioctlsocket() for port %d failed: %s\n",
+                   access_ports[i], sock_strerror());
+            relay_closesocket(relay.sockets[i]);
+            relay.sockets[i] = RELAY_INVALID_SOCKET;
+            continue;
+        }
+#else
         flags = fcntl(relay.sockets[i], F_GETFL, 0);
         if (flags < 0 || fcntl(relay.sockets[i], F_SETFL, flags | O_NONBLOCK) < 0) {
             rpclog("broadcast_relay: fcntl() for port %d failed: %s\n",
-                   access_ports[i], strerror(errno));
-            close(relay.sockets[i]);
-            relay.sockets[i] = -1;
+                   access_ports[i], sock_strerror());
+            relay_closesocket(relay.sockets[i]);
+            relay.sockets[i] = RELAY_INVALID_SOCKET;
             continue;
         }
+#endif
 
         success_count++;
     }
@@ -310,9 +494,9 @@ broadcast_relay_close(void)
 {
     int i;
     for (i = 0; i < NUM_ACCESS_SOCKETS; i++) {
-        if (relay.sockets[i] >= 0) {
-            close(relay.sockets[i]);
-            relay.sockets[i] = -1;
+        if (relay.sockets[i] != RELAY_INVALID_SOCKET) {
+            relay_closesocket(relay.sockets[i]);
+            relay.sockets[i] = RELAY_INVALID_SOCKET;
         }
     }
     relay.enabled = 0;
@@ -607,23 +791,33 @@ poll_socket(int sock_idx)
     static uint8_t udp_payload[8192];  /* Static to avoid stack overflow */
     uint8_t frame[2048];
     struct sockaddr_in from;
+#ifdef _WIN32
+    int fromlen;
+    int n;
+#else
     socklen_t fromlen;
     ssize_t n;
+#endif
     int frame_len;
     uint16_t port;
     int is_broadcast;
     time_t now;
 
-    if (relay.sockets[sock_idx] < 0) {
+    if (relay.sockets[sock_idx] == RELAY_INVALID_SOCKET) {
         return 0;
     }
 
     port = access_ports[sock_idx];
 
-    /* Non-blocking receive */
+    /* Non-blocking receive (socket is already set non-blocking) */
     fromlen = sizeof(from);
+#ifdef _WIN32
+    n = recvfrom(relay.sockets[sock_idx], (char *)udp_payload, sizeof(udp_payload), 0,
+                 (struct sockaddr *)&from, &fromlen);
+#else
     n = recvfrom(relay.sockets[sock_idx], udp_payload, sizeof(udp_payload), MSG_DONTWAIT,
                  (struct sockaddr *)&from, &fromlen);
+#endif
 
     if (n <= 0) {
         return 0;  /* No data or error */
@@ -723,7 +917,7 @@ broadcast_relay_tx(const uint8_t *pkt, int pkt_len)
     int payload_len;
     const uint8_t *payload;
     struct sockaddr_in dest;
-    ssize_t sent;
+    int sent;
     time_t now;
     int sock_idx;
     int is_broadcast;
@@ -800,7 +994,7 @@ broadcast_relay_tx(const uint8_t *pkt, int pkt_len)
     }
 
     /* Make sure we have a socket for this port */
-    if (relay.sockets[sock_idx] < 0) {
+    if (relay.sockets[sock_idx] == RELAY_INVALID_SOCKET) {
         return 0;
     }
 
@@ -839,8 +1033,13 @@ broadcast_relay_tx(const uint8_t *pkt, int pkt_len)
     }
 
     /* Send from the appropriate socket (bound to correct source port) */
+#ifdef _WIN32
+    sent = sendto(relay.sockets[sock_idx], (const char *)payload, payload_len, 0,
+                  (struct sockaddr *)&dest, sizeof(dest));
+#else
     sent = sendto(relay.sockets[sock_idx], payload, payload_len, 0,
                   (struct sockaddr *)&dest, sizeof(dest));
+#endif
 
     if (sent < 0) {
         relay.dropped++;
