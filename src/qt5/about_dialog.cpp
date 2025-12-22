@@ -40,8 +40,8 @@ AboutDialog::AboutDialog(QWidget *parent)
 	const char *datestr = __DATE__; // Format is 08 Nov 2013
 
 	// Text label string containing year from __DATE__
-	QString str = QString("<h1>RPCEmu</h1>"
-	    "<h2>" VERSION "</h2>"
+	QString str = QString("<h1>RPCEmu - Spork Edition</h1>"
+	    "<h2>v" VERSION "</h2>"
 	    "<p>Copyright 2005-%1 RPCEmu Developers</p>"
 	    "<p>RPCEmu is released under the terms of the "
 	    "GNU General Public License, Version 2. Please see the file "

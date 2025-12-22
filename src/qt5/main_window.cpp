@@ -23,7 +23,9 @@
 
 #include <QGuiApplication>
 #include <QDesktopServices>
+#include <QDir>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPainter>
@@ -40,6 +42,7 @@
 #include "vidc20.h"
 #include "machine_inspector_window.h"
 #include "machine_snapshot.h"
+#include "config_selector_dialog.h"
 
 #define URL_MANUAL	"http://www.marutan.net/rpcemu/manual/"
 #define URL_WEBSITE	"http://www.marutan.net/rpcemu/"
@@ -374,9 +377,6 @@ MainWindow::MainWindow(Emulator &emulator)
 	}
 
 	configure_dialog = new ConfigureDialog(emulator, &config_copy, &model_copy, this);
-#ifdef RPCEMU_NETWORKING
-	network_dialog = new NetworkDialog(emulator, &config_copy, this);
-#endif /* RPCEMU_NETWORKING */
 	nat_list_dialog = new NatListDialog(emulator, this);
 	about_dialog = new AboutDialog(this);
 
@@ -440,7 +440,6 @@ MainWindow::menu_debug_step5()
 MainWindow::~MainWindow()
 {
 #ifdef RPCEMU_NETWORKING
-	delete network_dialog;
 	delete nat_list_dialog;
 #endif /* RPCEMU_NETWORKING */
 	delete configure_dialog;
@@ -902,23 +901,21 @@ MainWindow::menu_create_disc1()
 void
 MainWindow::menu_configure()
 {
-	configure_dialog->exec(); // Modal
-}
-
-#ifdef RPCEMU_NETWORKING
-void
-MainWindow::menu_networking()
-{
-	network_dialog->exec(); // Modal
-
-	// Update the NAT Port Forwarding Rules menu item based on choice
-	if (config_copy.network_type == NetworkType_NAT) {
-		nat_list_action->setEnabled(true);
-	} else {
-		nat_list_action->setEnabled(false);
+	// Get current config path and make it absolute for QSettings
+	QString configPath = QString::fromUtf8(config_get_path());
+	QFileInfo fi(configPath);
+	if (fi.isRelative()) {
+		configPath = QDir::currentPath() + "/" + configPath;
+	}
+	MachineEditDialog dialog(configPath, this);
+	if (dialog.exec() == QDialog::Accepted) {
+		// Configuration was changed - show message that restart is needed
+		QMessageBox::information(this, tr("Configuration Changed"),
+			tr("Configuration changes will take effect after restarting the emulator."));
 	}
 }
 
+#ifdef RPCEMU_NETWORKING
 void
 MainWindow::menu_nat_list()
 {
@@ -1293,8 +1290,6 @@ MainWindow::create_actions()
 	configure_action = new QAction(tr("Configure..."), this);
 	connect(configure_action, &QAction::triggered, this, &MainWindow::menu_configure);
 #ifdef RPCEMU_NETWORKING
-	networking_action = new QAction(tr("Networking..."), this);
-	connect(networking_action, &QAction::triggered, this, &MainWindow::menu_networking);
 	nat_list_action = new QAction(tr("NAT Port Forwarding Rules..."), this);
 	connect(nat_list_action, &QAction::triggered, this, &MainWindow::menu_nat_list);
 #endif /* RPCEMU_NETWORKING */
@@ -1394,7 +1389,6 @@ MainWindow::create_menus()
 	settings_menu = menuBar()->addMenu(tr("Settings"));
 	settings_menu->addAction(configure_action);
 #ifdef RPCEMU_NETWORKING
-	settings_menu->addAction(networking_action);
 	settings_menu->addAction(nat_list_action);
 	if (this->config_copy.network_type != NetworkType_NAT) {
 		nat_list_action->setEnabled(false);

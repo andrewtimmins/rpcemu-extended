@@ -92,8 +92,8 @@ int MainDisplay::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     return _id;
 }
 struct qt_meta_stringdata_MainWindow_t {
-    QByteArrayData data[49];
-    char stringdata0[785];
+    QByteArrayData data[48];
+    char stringdata0[769];
 };
 #define QT_MOC_LITERAL(idx, ofs, len) \
     Q_STATIC_BYTE_ARRAY_DATA_HEADER_INITIALIZER_WITH_OFFSET(len, \
@@ -128,29 +128,28 @@ QT_MOC_LITERAL(22, 320, 14), // "menu_cdrom_iso"
 QT_MOC_LITERAL(23, 335, 16), // "menu_cdrom_ioctl"
 QT_MOC_LITERAL(24, 352, 20), // "menu_cdrom_win_ioctl"
 QT_MOC_LITERAL(25, 373, 14), // "menu_configure"
-QT_MOC_LITERAL(26, 388, 15), // "menu_networking"
-QT_MOC_LITERAL(27, 404, 13), // "menu_nat_list"
-QT_MOC_LITERAL(28, 418, 15), // "menu_fullscreen"
-QT_MOC_LITERAL(29, 434, 13), // "menu_cpu_idle"
-QT_MOC_LITERAL(30, 448, 15), // "menu_mouse_hack"
-QT_MOC_LITERAL(31, 464, 20), // "menu_mouse_twobutton"
-QT_MOC_LITERAL(32, 485, 18), // "menu_online_manual"
-QT_MOC_LITERAL(33, 504, 18), // "menu_visit_website"
-QT_MOC_LITERAL(34, 523, 10), // "menu_about"
-QT_MOC_LITERAL(35, 534, 22), // "menu_machine_inspector"
-QT_MOC_LITERAL(36, 557, 14), // "menu_debug_run"
-QT_MOC_LITERAL(37, 572, 16), // "menu_debug_pause"
-QT_MOC_LITERAL(38, 589, 15), // "menu_debug_step"
-QT_MOC_LITERAL(39, 605, 16), // "menu_debug_step5"
-QT_MOC_LITERAL(40, 622, 16), // "menu_aboutToShow"
-QT_MOC_LITERAL(41, 639, 16), // "menu_aboutToHide"
-QT_MOC_LITERAL(42, 656, 19), // "main_display_update"
-QT_MOC_LITERAL(43, 676, 15), // "move_host_mouse"
-QT_MOC_LITERAL(44, 692, 20), // "send_nat_rule_to_gui"
-QT_MOC_LITERAL(45, 713, 18), // "mips_timer_timeout"
-QT_MOC_LITERAL(46, 732, 25), // "application_state_changed"
-QT_MOC_LITERAL(47, 758, 20), // "Qt::ApplicationState"
-QT_MOC_LITERAL(48, 779, 5) // "state"
+QT_MOC_LITERAL(26, 388, 13), // "menu_nat_list"
+QT_MOC_LITERAL(27, 402, 15), // "menu_fullscreen"
+QT_MOC_LITERAL(28, 418, 13), // "menu_cpu_idle"
+QT_MOC_LITERAL(29, 432, 15), // "menu_mouse_hack"
+QT_MOC_LITERAL(30, 448, 20), // "menu_mouse_twobutton"
+QT_MOC_LITERAL(31, 469, 18), // "menu_online_manual"
+QT_MOC_LITERAL(32, 488, 18), // "menu_visit_website"
+QT_MOC_LITERAL(33, 507, 10), // "menu_about"
+QT_MOC_LITERAL(34, 518, 22), // "menu_machine_inspector"
+QT_MOC_LITERAL(35, 541, 14), // "menu_debug_run"
+QT_MOC_LITERAL(36, 556, 16), // "menu_debug_pause"
+QT_MOC_LITERAL(37, 573, 15), // "menu_debug_step"
+QT_MOC_LITERAL(38, 589, 16), // "menu_debug_step5"
+QT_MOC_LITERAL(39, 606, 16), // "menu_aboutToShow"
+QT_MOC_LITERAL(40, 623, 16), // "menu_aboutToHide"
+QT_MOC_LITERAL(41, 640, 19), // "main_display_update"
+QT_MOC_LITERAL(42, 660, 15), // "move_host_mouse"
+QT_MOC_LITERAL(43, 676, 20), // "send_nat_rule_to_gui"
+QT_MOC_LITERAL(44, 697, 18), // "mips_timer_timeout"
+QT_MOC_LITERAL(45, 716, 25), // "application_state_changed"
+QT_MOC_LITERAL(46, 742, 20), // "Qt::ApplicationState"
+QT_MOC_LITERAL(47, 763, 5) // "state"
 
     },
     "MainWindow\0main_display_signal\0\0"
@@ -164,17 +163,16 @@ QT_MOC_LITERAL(48, 779, 5) // "state"
     "menu_cdrom_disabled\0menu_cdrom_empty\0"
     "menu_cdrom_iso\0menu_cdrom_ioctl\0"
     "menu_cdrom_win_ioctl\0menu_configure\0"
-    "menu_networking\0menu_nat_list\0"
-    "menu_fullscreen\0menu_cpu_idle\0"
-    "menu_mouse_hack\0menu_mouse_twobutton\0"
-    "menu_online_manual\0menu_visit_website\0"
-    "menu_about\0menu_machine_inspector\0"
-    "menu_debug_run\0menu_debug_pause\0"
-    "menu_debug_step\0menu_debug_step5\0"
-    "menu_aboutToShow\0menu_aboutToHide\0"
-    "main_display_update\0move_host_mouse\0"
-    "send_nat_rule_to_gui\0mips_timer_timeout\0"
-    "application_state_changed\0"
+    "menu_nat_list\0menu_fullscreen\0"
+    "menu_cpu_idle\0menu_mouse_hack\0"
+    "menu_mouse_twobutton\0menu_online_manual\0"
+    "menu_visit_website\0menu_about\0"
+    "menu_machine_inspector\0menu_debug_run\0"
+    "menu_debug_pause\0menu_debug_step\0"
+    "menu_debug_step5\0menu_aboutToShow\0"
+    "menu_aboutToHide\0main_display_update\0"
+    "move_host_mouse\0send_nat_rule_to_gui\0"
+    "mips_timer_timeout\0application_state_changed\0"
     "Qt::ApplicationState\0state"
 };
 #undef QT_MOC_LITERAL
@@ -185,7 +183,7 @@ static const uint qt_meta_data_MainWindow[] = {
        8,       // revision
        0,       // classname
        0,    0, // classinfo
-      38,   14, // methods
+      37,   14, // methods
        0,    0, // properties
        0,    0, // enums/sets
        0,    0, // constructors
@@ -193,46 +191,45 @@ static const uint qt_meta_data_MainWindow[] = {
        5,       // signalCount
 
  // signals: name, argc, parameters, tag, flags
-       1,    1,  204,    2, 0x06 /* Public */,
-       5,    1,  207,    2, 0x06 /* Public */,
-       8,    1,  210,    2, 0x06 /* Public */,
-      11,    1,  213,    2, 0x06 /* Public */,
-      13,    1,  216,    2, 0x06 /* Public */,
+       1,    1,  199,    2, 0x06 /* Public */,
+       5,    1,  202,    2, 0x06 /* Public */,
+       8,    1,  205,    2, 0x06 /* Public */,
+      11,    1,  208,    2, 0x06 /* Public */,
+      13,    1,  211,    2, 0x06 /* Public */,
 
  // slots: name, argc, parameters, tag, flags
-      14,    0,  219,    2, 0x08 /* Private */,
-      15,    0,  220,    2, 0x08 /* Private */,
-      16,    0,  221,    2, 0x08 /* Private */,
-      17,    0,  222,    2, 0x08 /* Private */,
-      18,    0,  223,    2, 0x08 /* Private */,
-      19,    0,  224,    2, 0x08 /* Private */,
-      20,    0,  225,    2, 0x08 /* Private */,
-      21,    0,  226,    2, 0x08 /* Private */,
-      22,    0,  227,    2, 0x08 /* Private */,
-      23,    0,  228,    2, 0x08 /* Private */,
-      24,    0,  229,    2, 0x08 /* Private */,
-      25,    0,  230,    2, 0x08 /* Private */,
-      26,    0,  231,    2, 0x08 /* Private */,
-      27,    0,  232,    2, 0x08 /* Private */,
-      28,    0,  233,    2, 0x08 /* Private */,
-      29,    0,  234,    2, 0x08 /* Private */,
-      30,    0,  235,    2, 0x08 /* Private */,
-      31,    0,  236,    2, 0x08 /* Private */,
-      32,    0,  237,    2, 0x08 /* Private */,
-      33,    0,  238,    2, 0x08 /* Private */,
-      34,    0,  239,    2, 0x08 /* Private */,
-      35,    0,  240,    2, 0x08 /* Private */,
-      36,    0,  241,    2, 0x08 /* Private */,
-      37,    0,  242,    2, 0x08 /* Private */,
-      38,    0,  243,    2, 0x08 /* Private */,
-      39,    0,  244,    2, 0x08 /* Private */,
-      40,    0,  245,    2, 0x08 /* Private */,
-      41,    0,  246,    2, 0x08 /* Private */,
-      42,    1,  247,    2, 0x08 /* Private */,
-      43,    1,  250,    2, 0x08 /* Private */,
-      44,    1,  253,    2, 0x08 /* Private */,
-      45,    0,  256,    2, 0x08 /* Private */,
-      46,    1,  257,    2, 0x08 /* Private */,
+      14,    0,  214,    2, 0x08 /* Private */,
+      15,    0,  215,    2, 0x08 /* Private */,
+      16,    0,  216,    2, 0x08 /* Private */,
+      17,    0,  217,    2, 0x08 /* Private */,
+      18,    0,  218,    2, 0x08 /* Private */,
+      19,    0,  219,    2, 0x08 /* Private */,
+      20,    0,  220,    2, 0x08 /* Private */,
+      21,    0,  221,    2, 0x08 /* Private */,
+      22,    0,  222,    2, 0x08 /* Private */,
+      23,    0,  223,    2, 0x08 /* Private */,
+      24,    0,  224,    2, 0x08 /* Private */,
+      25,    0,  225,    2, 0x08 /* Private */,
+      26,    0,  226,    2, 0x08 /* Private */,
+      27,    0,  227,    2, 0x08 /* Private */,
+      28,    0,  228,    2, 0x08 /* Private */,
+      29,    0,  229,    2, 0x08 /* Private */,
+      30,    0,  230,    2, 0x08 /* Private */,
+      31,    0,  231,    2, 0x08 /* Private */,
+      32,    0,  232,    2, 0x08 /* Private */,
+      33,    0,  233,    2, 0x08 /* Private */,
+      34,    0,  234,    2, 0x08 /* Private */,
+      35,    0,  235,    2, 0x08 /* Private */,
+      36,    0,  236,    2, 0x08 /* Private */,
+      37,    0,  237,    2, 0x08 /* Private */,
+      38,    0,  238,    2, 0x08 /* Private */,
+      39,    0,  239,    2, 0x08 /* Private */,
+      40,    0,  240,    2, 0x08 /* Private */,
+      41,    1,  241,    2, 0x08 /* Private */,
+      42,    1,  244,    2, 0x08 /* Private */,
+      43,    1,  247,    2, 0x08 /* Private */,
+      44,    0,  250,    2, 0x08 /* Private */,
+      45,    1,  251,    2, 0x08 /* Private */,
 
  // signals: parameters
     QMetaType::Void, 0x80000000 | 3,    4,
@@ -269,12 +266,11 @@ static const uint qt_meta_data_MainWindow[] = {
     QMetaType::Void,
     QMetaType::Void,
     QMetaType::Void,
-    QMetaType::Void,
     QMetaType::Void, 0x80000000 | 3,    4,
     QMetaType::Void, 0x80000000 | 6,    7,
     QMetaType::Void, 0x80000000 | 9,   10,
     QMetaType::Void,
-    QMetaType::Void, 0x80000000 | 47,   48,
+    QMetaType::Void, 0x80000000 | 46,   47,
 
        0        // eod
 };
@@ -302,27 +298,26 @@ void MainWindow::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id, 
         case 14: _t->menu_cdrom_ioctl(); break;
         case 15: _t->menu_cdrom_win_ioctl(); break;
         case 16: _t->menu_configure(); break;
-        case 17: _t->menu_networking(); break;
-        case 18: _t->menu_nat_list(); break;
-        case 19: _t->menu_fullscreen(); break;
-        case 20: _t->menu_cpu_idle(); break;
-        case 21: _t->menu_mouse_hack(); break;
-        case 22: _t->menu_mouse_twobutton(); break;
-        case 23: _t->menu_online_manual(); break;
-        case 24: _t->menu_visit_website(); break;
-        case 25: _t->menu_about(); break;
-        case 26: _t->menu_machine_inspector(); break;
-        case 27: _t->menu_debug_run(); break;
-        case 28: _t->menu_debug_pause(); break;
-        case 29: _t->menu_debug_step(); break;
-        case 30: _t->menu_debug_step5(); break;
-        case 31: _t->menu_aboutToShow(); break;
-        case 32: _t->menu_aboutToHide(); break;
-        case 33: _t->main_display_update((*reinterpret_cast< VideoUpdate(*)>(_a[1]))); break;
-        case 34: _t->move_host_mouse((*reinterpret_cast< MouseMoveUpdate(*)>(_a[1]))); break;
-        case 35: _t->send_nat_rule_to_gui((*reinterpret_cast< PortForwardRule(*)>(_a[1]))); break;
-        case 36: _t->mips_timer_timeout(); break;
-        case 37: _t->application_state_changed((*reinterpret_cast< Qt::ApplicationState(*)>(_a[1]))); break;
+        case 17: _t->menu_nat_list(); break;
+        case 18: _t->menu_fullscreen(); break;
+        case 19: _t->menu_cpu_idle(); break;
+        case 20: _t->menu_mouse_hack(); break;
+        case 21: _t->menu_mouse_twobutton(); break;
+        case 22: _t->menu_online_manual(); break;
+        case 23: _t->menu_visit_website(); break;
+        case 24: _t->menu_about(); break;
+        case 25: _t->menu_machine_inspector(); break;
+        case 26: _t->menu_debug_run(); break;
+        case 27: _t->menu_debug_pause(); break;
+        case 28: _t->menu_debug_step(); break;
+        case 29: _t->menu_debug_step5(); break;
+        case 30: _t->menu_aboutToShow(); break;
+        case 31: _t->menu_aboutToHide(); break;
+        case 32: _t->main_display_update((*reinterpret_cast< VideoUpdate(*)>(_a[1]))); break;
+        case 33: _t->move_host_mouse((*reinterpret_cast< MouseMoveUpdate(*)>(_a[1]))); break;
+        case 34: _t->send_nat_rule_to_gui((*reinterpret_cast< PortForwardRule(*)>(_a[1]))); break;
+        case 35: _t->mips_timer_timeout(); break;
+        case 36: _t->application_state_changed((*reinterpret_cast< Qt::ApplicationState(*)>(_a[1]))); break;
         default: ;
         }
     } else if (_c == QMetaObject::IndexOfMethod) {
@@ -394,13 +389,13 @@ int MainWindow::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     if (_id < 0)
         return _id;
     if (_c == QMetaObject::InvokeMetaMethod) {
-        if (_id < 38)
+        if (_id < 37)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 38;
+        _id -= 37;
     } else if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
-        if (_id < 38)
+        if (_id < 37)
             *reinterpret_cast<int*>(_a[0]) = -1;
-        _id -= 38;
+        _id -= 37;
     }
     return _id;
 }

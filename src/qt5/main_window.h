@@ -26,7 +26,6 @@
 #include <QMenu>
 
 #include "configure_dialog.h"
-#include "network_dialog.h"
 #include "nat_list_dialog.h"
 #include "about_dialog.h"
 #include "rpc-qt5.h"
@@ -131,7 +130,6 @@ private slots:
 	void menu_cdrom_win_ioctl();
 	void menu_configure();
 #ifdef RPCEMU_NETWORKING
-	void menu_networking();
 	void menu_nat_list();
 #endif /* RPCEMU_NETWORKING */
 	void menu_fullscreen();
@@ -227,7 +225,6 @@ private:
 	// Actions on Settings menu (and submenus)
 	QAction *configure_action;
 #ifdef RPCEMU_NETWORKING
-	QAction *networking_action;
 	QAction *nat_list_action;
 #endif /* RPCEMU_NETWORKING */
 	QAction *fullscreen_action;
@@ -247,7 +244,6 @@ private:
 
 	// Dialogs
 	ConfigureDialog *configure_dialog;
-	NetworkDialog *network_dialog;
 	NatListDialog *nat_list_dialog;
 	AboutDialog *about_dialog;
  	MachineInspectorWindow *machine_inspector_window;

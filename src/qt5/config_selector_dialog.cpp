@@ -606,9 +606,9 @@ void MachineEditDialog::setupUI()
     networkCombo = new QComboBox(this);
     networkCombo->addItem("Off", "off");
     networkCombo->addItem("NAT", "nat");
-    networkCombo->addItem("Ethernet Bridging", "bridging");
+    networkCombo->addItem("Ethernet Bridging", "ethernetbridging");
 #if defined(Q_OS_LINUX)
-    networkCombo->addItem("IP Tunnelling", "tunnelling");
+    networkCombo->addItem("IP Tunnelling", "iptunnelling");
 #endif
     
     // Bridge name field (for Ethernet Bridging)
@@ -746,14 +746,14 @@ void MachineEditDialog::loadSettings()
     }
     
     // Bridge name
-    QString bridgeName = settings.value("bridge_name", "rpcemu").toString();
+    QString bridgeName = settings.value("bridgename", "rpcemu").toString();
     if (!bridgeName.isEmpty()) {
         bridgeEdit->setText(bridgeName);
     }
     
 #if defined(Q_OS_LINUX)
     // IP Tunnelling address
-    QString ipAddress = settings.value("ip_address", "172.31.0.1").toString();
+    QString ipAddress = settings.value("ipaddress", "172.31.0.1").toString();
     if (!ipAddress.isEmpty()) {
         tunnelEdit->setText(ipAddress);
     }
@@ -772,19 +772,69 @@ void MachineEditDialog::saveSettings()
         newName = originalName;
     }
     
-    settings.setValue("name", newName);
-    settings.setValue("rom_dir", romCombo->currentData().toString());
-    settings.setValue("model", modelCombo->currentData().toString());
-    settings.setValue("mem_size", memCombo->currentData().toInt());
-    settings.setValue("vram_size", vramCombo->currentData().toInt());
-    settings.setValue("refresh_rate", refreshSlider->value());
-    settings.setValue("network_type", networkCombo->currentData().toString());
-    settings.setValue("bridge_name", bridgeEdit->text());
+    int memValue = memCombo->currentData().toInt();
+    int vramValue = vramCombo->currentData().toInt();
+    int refreshValue = refreshSlider->value();
+    QString romDir = romCombo->currentData().toString();
+    QString model = modelCombo->currentData().toString();
+    QString networkType = networkCombo->currentData().toString();
+    QString bridgeName = bridgeEdit->text();
 #if defined(Q_OS_LINUX)
-    settings.setValue("ip_address", tunnelEdit->text());
+    QString ipAddress = tunnelEdit->text();
+#endif
+    
+    // Write settings to file
+    settings.setValue("name", newName);
+    settings.setValue("rom_dir", romDir);
+    settings.setValue("model", model);
+    settings.setValue("mem_size", memValue);
+    settings.setValue("vram_size", vramValue);
+    settings.setValue("refresh_rate", refreshValue);
+    settings.setValue("network_type", networkType);
+    settings.setValue("bridgename", bridgeName);
+#if defined(Q_OS_LINUX)
+    settings.setValue("ipaddress", ipAddress);
 #endif
     
     settings.sync();
+    
+    // ALSO update the global config struct so that when the emulator 
+    // exits and calls config_save(), it writes the new values
+    config.mem_size = memValue;
+    config.vram_size = vramValue;
+    config.refresh = refreshValue;
+    
+    // Update rom_dir (fixed-size array)
+    QByteArray romDirUtf8 = romDir.toUtf8();
+    strncpy(config.rom_dir, romDirUtf8.constData(), sizeof(config.rom_dir) - 1);
+    config.rom_dir[sizeof(config.rom_dir) - 1] = '\0';
+    
+    // Update bridgename (dynamically allocated)
+    if (config.bridgename) {
+        free(config.bridgename);
+    }
+    QByteArray bridgeUtf8 = bridgeName.toUtf8();
+    config.bridgename = strdup(bridgeUtf8.constData());
+    
+#if defined(Q_OS_LINUX)
+    // Update ipaddress (dynamically allocated)
+    if (config.ipaddress) {
+        free(config.ipaddress);
+    }
+    QByteArray ipUtf8 = ipAddress.toUtf8();
+    config.ipaddress = strdup(ipUtf8.constData());
+#endif
+    
+    // Update network type
+    if (networkType == "off") {
+        config.network_type = NetworkType_Off;
+    } else if (networkType == "nat") {
+        config.network_type = NetworkType_NAT;
+    } else if (networkType == "ethernetbridging") {
+        config.network_type = NetworkType_EthernetBridging;
+    } else if (networkType == "iptunnelling") {
+        config.network_type = NetworkType_IPTunnelling;
+    }
     
     renamed = (newName != originalName);
 }
@@ -981,13 +1031,13 @@ void MachineEditDialog::onNetworkChanged(int index)
     QString networkType = networkCombo->currentData().toString();
     
     // Enable bridge fields only for Ethernet Bridging
-    bool bridgingEnabled = (networkType == "bridging");
+    bool bridgingEnabled = (networkType == "ethernetbridging");
     bridgeLabel->setEnabled(bridgingEnabled);
     bridgeEdit->setEnabled(bridgingEnabled);
     
 #if defined(Q_OS_LINUX)
     // Enable tunnel fields only for IP Tunnelling
-    bool tunnelEnabled = (networkType == "tunnelling");
+    bool tunnelEnabled = (networkType == "iptunnelling");
     tunnelLabel->setEnabled(tunnelEnabled);
     tunnelEdit->setEnabled(tunnelEnabled);
 #endif
