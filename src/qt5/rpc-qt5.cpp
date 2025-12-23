@@ -53,6 +53,9 @@ extern "C" {
 #include "network-nat.h"
 #include "fdc.h"
 #include "podules.h"
+#include "cmos.h"
+#include "romload.h"
+#include "hostfs.h"
 }
 
 #ifdef RPCEMU_VNC
@@ -606,6 +609,9 @@ Emulator::Emulator()
 	connect(this, &Emulator::exit_signal, this, &Emulator::exit);
 	connect(this, &Emulator::load_disc_0_signal, this, &Emulator::load_disc_0);
 	connect(this, &Emulator::load_disc_1_signal, this, &Emulator::load_disc_1);
+	connect(this, &Emulator::eject_disc_0_signal, this, &Emulator::eject_disc_0);
+	connect(this, &Emulator::eject_disc_1_signal, this, &Emulator::eject_disc_1);
+	connect(this, &Emulator::switch_machine_signal, this, &Emulator::switch_machine);
 	connect(this, &Emulator::cpu_idle_signal, this, &Emulator::cpu_idle);
 	connect(this, &Emulator::integer_scaling_signal, this, &Emulator::integer_scaling);
 	connect(this, &Emulator::cdrom_disabled_signal, this, &Emulator::cdrom_disabled);
@@ -1096,6 +1102,78 @@ Emulator::load_disc_1(QString discname)
 	p = ba.data();
 
 	rpcemu_floppy_load(1, p);
+}
+
+/**
+ * GUI wants to eject disc from floppy drive 0
+ */
+void
+Emulator::eject_disc_0()
+{
+	rpcemu_floppy_eject(0);
+}
+
+/**
+ * GUI wants to eject disc from floppy drive 1
+ */
+void
+Emulator::eject_disc_1()
+{
+	rpcemu_floppy_eject(1);
+}
+
+/**
+ * GUI is requesting to switch to a different machine configuration.
+ * This performs a full machine switch including:
+ * - Saving current CMOS
+ * - Loading new config
+ * - Reinitializing HostFS paths
+ * - Reloading CMOS for new machine
+ * - Reloading ROMs if different
+ * - Full system reset
+ *
+ * @param config_path Path to the new machine's config file
+ */
+void
+Emulator::switch_machine(QString config_path)
+{
+	char old_rom_dir[512];
+	
+	rpclog("RPCEmu: Switching machine to: %s\n", config_path.toUtf8().constData());
+	
+	// Save current CMOS before switching
+	savecmos();
+	
+	// Remember old ROM directory to check if we need to reload ROMs
+	strncpy(old_rom_dir, config.rom_dir, sizeof(old_rom_dir) - 1);
+	old_rom_dir[sizeof(old_rom_dir) - 1] = '\0';
+	
+	// Set the new config path
+	QByteArray pathBytes = config_path.toUtf8();
+	config_set_path(pathBytes.constData());
+	
+	// Load the new configuration (this also calls rpcemu_model_changed and sets machine datadir)
+	config_load(&config);
+	
+	// Reinitialize HostFS with new machine's paths
+	hostfs_init();
+	
+	// Reload CMOS for the new machine (must be after config_load sets machine datadir)
+	cmos_init();
+	
+	// Check if ROM directory changed - if so, reload ROMs
+	if (strcmp(old_rom_dir, config.rom_dir) != 0) {
+		rpclog("RPCEmu: ROM directory changed, reloading ROMs\n");
+		loadroms();
+	}
+	
+	// Full system reset with new configuration
+	resetrpc();
+	
+	// Notify GUI of the machine switch so it can update window title etc.
+	emit machine_switched_signal(QString::fromUtf8(config.name));
+	
+	rpclog("RPCEmu: Machine switch complete\n");
 }
 
 /**

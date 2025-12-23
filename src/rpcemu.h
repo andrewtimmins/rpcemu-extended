@@ -261,6 +261,8 @@ extern void updateirqs(void);
 extern void sound_thread_wakeup(void);
 extern void sound_thread_start(void);
 extern void sound_thread_close(void);
+extern void plt_sound_set_muted(int muted);
+extern int plt_sound_is_muted(void);
 
 /* Additional logging functions (optional) */
 extern void rpcemu_log_os(void);
@@ -274,6 +276,7 @@ extern void rpcemu_idle(void);
 extern void endrpcemu(void);
 extern void resetrpc(void);
 extern void rpcemu_floppy_load(int drive, const char *filename);
+extern void rpcemu_floppy_eject(int drive);
 extern void rpclog(const char *format, ...)
 	__attribute__((format(printf, 1, 2)));
 extern void rpcemu_model_changed(Model model);

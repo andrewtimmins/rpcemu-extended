@@ -130,6 +130,8 @@ private slots:
 	void menu_reset();
 	void menu_loaddisc0();
 	void menu_loaddisc1();
+	void menu_ejectdisc0();
+	void menu_ejectdisc1();
 	void menu_create_disc0();
 	void menu_create_disc1();
 	void menu_cdrom_disabled();
@@ -141,6 +143,7 @@ private slots:
 #ifdef RPCEMU_NETWORKING
 	void menu_nat_list();
 #endif /* RPCEMU_NETWORKING */
+	void menu_mute_sound();
 	void menu_fullscreen();
 	void menu_integer_scaling();
 #ifdef RPCEMU_VNC
@@ -158,6 +161,11 @@ private slots:
 	void menu_debug_step();
 	void menu_debug_step5();
 	void menu_recent_machine_triggered();
+	void menu_clear_recent_machines();
+	void menu_recent_floppy_triggered();
+	void menu_clear_recent_floppies();
+	void menu_recent_cdrom_triggered();
+	void menu_clear_recent_cdroms();
 	void fdc_led_timeout();
 	void ide_led_timeout();
 	void hostfs_led_timeout();
@@ -170,6 +178,7 @@ private slots:
 	void main_display_update(VideoUpdate video_update);
 	void move_host_mouse(MouseMoveUpdate mouse_update);
 	void send_nat_rule_to_gui(PortForwardRule rule);
+	void on_machine_switched(QString machine_name);
 
 	// MIPS counting
 	void mips_timer_timeout();
@@ -193,6 +202,10 @@ private:
 	void update_debugger_action_states();
 	void update_recent_machines_menu();
 	void add_to_recent_machines(const QString &machineName);
+	void update_recent_floppies_menu();
+	void add_to_recent_floppies(const QString &floppyPath);
+	void update_recent_cdroms_menu();
+	void add_to_recent_cdroms(const QString &cdromPath);
 
 	void readSettings();
 	void writeSettings();
@@ -217,8 +230,10 @@ private:
 	QMenu *file_menu;
 	QMenu *recent_machines_menu;
 	QMenu *disc_menu;
+	QMenu *recent_floppies_menu;
 	QMenu *floppy_menu;
 	QMenu *cdrom_menu;
+	QMenu *recent_cdroms_menu;
 	QMenu *settings_menu;
 	QMenu *mouse_menu;
 	QMenu *debug_menu;
@@ -232,6 +247,8 @@ private:
 	// Actions on Disc menu (and submenus)
 	QAction *loaddisc0_action;
 	QAction *loaddisc1_action;
+	QAction *ejectdisc0_action;
+	QAction *ejectdisc1_action;
 	QAction *create_disc0_action;
 	QAction *create_disc1_action;
 	QAction *cdrom_disabled_action;
@@ -249,6 +266,7 @@ private:
 #ifdef RPCEMU_NETWORKING
 	QAction *nat_list_action;
 #endif /* RPCEMU_NETWORKING */
+	QAction *mute_sound_action;
 	QAction *fullscreen_action;
 	QAction *integer_scaling_action;
 #ifdef RPCEMU_VNC
@@ -320,6 +338,17 @@ private:
 	// Recent machines
 	static const int MaxRecentMachines = 5;
 	QList<QAction*> recent_machine_actions;
+	QAction *clear_recent_machines_action;
+	
+	// Recent floppies
+	static const int MaxRecentFloppies = 10;
+	QList<QAction*> recent_floppy_actions;
+	QAction *clear_recent_floppies_action;
+	
+	// Recent CD-ROMs
+	static const int MaxRecentCDROMs = 10;
+	QList<QAction*> recent_cdrom_actions;
+	QAction *clear_recent_cdroms_action;
 };
 
 #endif

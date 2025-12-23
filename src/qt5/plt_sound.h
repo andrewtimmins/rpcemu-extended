@@ -36,11 +36,14 @@ public:
 	AudioOut(uint32_t bufferlen);
 	virtual ~AudioOut();
 	void changeSampleRate(uint32_t samplerate);
+	void setMuted(bool muted);
+	bool isMuted() const { return muted; }
 
 	QAudioOutput *audio_output;
 	QIODevice *audio_io;
 	uint32_t samplerate;
 	uint32_t bufferlen;
+	bool muted;
 };
 
 #endif // PLT_SOUND_H

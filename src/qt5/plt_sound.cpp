@@ -37,6 +37,8 @@ extern "C" void plt_sound_restart(void);
 extern "C" void plt_sound_pause(void);
 extern "C" int32_t plt_sound_buffer_free(void);
 extern "C" void plt_sound_buffer_play(uint32_t samplerate, const char *buffer, uint32_t length);
+extern "C" void plt_sound_set_muted(int muted);
+extern "C" int plt_sound_is_muted(void);
 
 AudioOut *audio_out; /**< Our class used to hold QT sound variables */
 
@@ -52,6 +54,7 @@ AudioOut::AudioOut(uint32_t bufferlen)
 
 	this->bufferlen = bufferlen;
 	this->samplerate = 0;
+	this->muted = false;
 
 	// Output some information to the log
 	QAudioDeviceInfo info(QAudioDeviceInfo::defaultOutputDevice());
@@ -72,6 +75,24 @@ AudioOut::AudioOut(uint32_t bufferlen)
 
 AudioOut::~AudioOut()
 {
+}
+
+/**
+ * Set the mute state of the audio output
+ *
+ * @param muted true to mute, false to unmute
+ */
+void
+AudioOut::setMuted(bool muted)
+{
+	this->muted = muted;
+	if (audio_output) {
+		if (muted) {
+			audio_output->setVolume(0.0f);
+		} else if (config.soundenabled) {
+			audio_output->setVolume(1.0f);
+		}
+	}
 }
 
 /**
@@ -219,3 +240,29 @@ plt_sound_buffer_play(uint32_t samplerate, const char *buffer, uint32_t length)
 	}
 }
 
+/**
+ * Set the mute state of the audio output
+ *
+ * @param muted 1 to mute, 0 to unmute
+ */
+void
+plt_sound_set_muted(int muted)
+{
+	if (audio_out) {
+		audio_out->setMuted(muted != 0);
+	}
+}
+
+/**
+ * Get the current mute state
+ *
+ * @returns 1 if muted, 0 if not
+ */
+int
+plt_sound_is_muted(void)
+{
+	if (audio_out) {
+		return audio_out->isMuted() ? 1 : 0;
+	}
+	return 0;
+}

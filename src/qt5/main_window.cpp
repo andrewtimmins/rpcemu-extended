@@ -803,6 +803,9 @@ MainWindow::load_disc(int drive)
 		return;
 	}
 
+	// Add to recent floppies list
+	add_to_recent_floppies(fileName);
+
 	// Inform Emulator thread of disc change
 	if (drive == 0) {
 		emit this->emulator.load_disc_0_signal(fileName);
@@ -821,6 +824,18 @@ void
 MainWindow::menu_loaddisc1()
 {
 	load_disc(1);
+}
+
+void
+MainWindow::menu_ejectdisc0()
+{
+	emit this->emulator.eject_disc_0_signal();
+}
+
+void
+MainWindow::menu_ejectdisc1()
+{
+	emit this->emulator.eject_disc_1_signal();
 }
 
 static const struct discTypeFileMap {
@@ -1002,6 +1017,16 @@ MainWindow::menu_nat_list()
 	nat_list_dialog->exec(); // Modal
 }
 #endif /* RPCEMU_NETWORKING */
+
+/**
+ * Handle clicking on the Settings->Mute Sound option
+ */
+void
+MainWindow::menu_mute_sound()
+{
+	bool muted = mute_sound_action->isChecked();
+	plt_sound_set_muted(muted ? 1 : 0);
+}
 
 /**
  * Handle clicking on the Settings->Fullscreen option
@@ -1209,6 +1234,9 @@ MainWindow::menu_cdrom_iso()
 
 		/* we now have either no need to reboot or an agreement to reboot */
 
+		// Add to recent CD-ROMs list
+		add_to_recent_cdroms(fileName);
+
 		emit this->emulator.cdrom_load_iso_signal(fileName);
 		config_copy.cdromenabled = 1;
 
@@ -1353,18 +1381,29 @@ MainWindow::create_actions()
 {
 	// Actions on File menu
 	screenshot_action = new QAction(tr("Take Screenshot..."), this);
+	screenshot_action->setShortcut(QKeySequence(Qt::Key_F12));
 	connect(screenshot_action, &QAction::triggered, this, &MainWindow::menu_screenshot);
 	reset_action = new QAction(tr("Reset"), this);
+	reset_action->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_R));
 	connect(reset_action, &QAction::triggered, this, &MainWindow::menu_reset);
 	exit_action = new QAction(tr("Exit"), this);
+	exit_action->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_Q));
 	exit_action->setStatusTip(tr("Exit the application"));
 	connect(exit_action, &QAction::triggered, this, &QMainWindow::close);
 
 	// Actions on Disc->Floppy menu
 	loaddisc0_action = new QAction(tr("Load Drive :0..."), this);
+	loaddisc0_action->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_1));
 	connect(loaddisc0_action, &QAction::triggered, this, &MainWindow::menu_loaddisc0);
 	loaddisc1_action = new QAction(tr("Load Drive :1..."), this);
+	loaddisc1_action->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_2));
 	connect(loaddisc1_action, &QAction::triggered, this, &MainWindow::menu_loaddisc1);
+	ejectdisc0_action = new QAction(tr("Eject Drive :0"), this);
+	ejectdisc0_action->setShortcut(QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_1));
+	connect(ejectdisc0_action, &QAction::triggered, this, &MainWindow::menu_ejectdisc0);
+	ejectdisc1_action = new QAction(tr("Eject Drive :1"), this);
+	ejectdisc1_action->setShortcut(QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_2));
+	connect(ejectdisc1_action, &QAction::triggered, this, &MainWindow::menu_ejectdisc1);
 	create_disc0_action = new QAction(tr("Create Blank Drive :0..."), this);
 	connect(create_disc0_action, &QAction::triggered, this, &MainWindow::menu_create_disc0);
 	create_disc1_action = new QAction(tr("Create Blank Drive :1..."), this);
@@ -1413,8 +1452,13 @@ MainWindow::create_actions()
 	nat_list_action = new QAction(tr("NAT Port Forwarding Rules..."), this);
 	connect(nat_list_action, &QAction::triggered, this, &MainWindow::menu_nat_list);
 #endif /* RPCEMU_NETWORKING */
+	mute_sound_action = new QAction(tr("Mute Sound"), this);
+	mute_sound_action->setCheckable(true);
+	mute_sound_action->setShortcut(QKeySequence(Qt::Key_F10));
+	connect(mute_sound_action, &QAction::triggered, this, &MainWindow::menu_mute_sound);
 	fullscreen_action = new QAction(tr("Full-screen Mode"), this);
 	fullscreen_action->setCheckable(true);
+	fullscreen_action->setShortcut(QKeySequence(Qt::Key_F11));
 	connect(fullscreen_action, &QAction::triggered, this, &MainWindow::menu_fullscreen);
 	integer_scaling_action = new QAction(tr("Pixel Perfect"), this);
 	integer_scaling_action->setCheckable(true);
@@ -1431,6 +1475,7 @@ MainWindow::create_actions()
 	// Actions on the Settings->Mouse menu
 	mouse_hack_action = new QAction(tr("Follow Host Mouse"), this);
 	mouse_hack_action->setCheckable(true);
+	mouse_hack_action->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_M));
 	connect(mouse_hack_action, &QAction::triggered, this, &MainWindow::menu_mouse_hack);
 
 	mouse_twobutton_action = new QAction(tr("Two-button Mouse Mode"), this);
@@ -1439,6 +1484,7 @@ MainWindow::create_actions()
 
 	// Actions on About menu
 	online_manual_action = new QAction(tr("Online Manual..."), this);
+	online_manual_action->setShortcut(QKeySequence(Qt::Key_F1));
 	connect(online_manual_action, &QAction::triggered, this, &MainWindow::menu_online_manual);
 	visit_website_action = new QAction(tr("Visit Website..."), this);
 	connect(visit_website_action, &QAction::triggered, this, &MainWindow::menu_visit_website);
@@ -1448,15 +1494,20 @@ MainWindow::create_actions()
 	connect(about_action, &QAction::triggered, this, &MainWindow::menu_about);
 
 	machine_inspector_action = new QAction(tr("Machine Inspector..."), this);
+	machine_inspector_action->setShortcut(QKeySequence(Qt::Key_F9));
 	connect(machine_inspector_action, &QAction::triggered, this, &MainWindow::menu_machine_inspector);
 
 	debug_run_action = new QAction(tr("Run"), this);
+	debug_run_action->setShortcut(QKeySequence(Qt::Key_F5));
 	connect(debug_run_action, &QAction::triggered, this, &MainWindow::menu_debug_run);
 	debug_pause_action = new QAction(tr("Pause"), this);
+	debug_pause_action->setShortcut(QKeySequence(Qt::Key_F6));
 	connect(debug_pause_action, &QAction::triggered, this, &MainWindow::menu_debug_pause);
 	debug_step_action = new QAction(tr("Step"), this);
+	debug_step_action->setShortcut(QKeySequence(Qt::Key_F7));
 	connect(debug_step_action, &QAction::triggered, this, &MainWindow::menu_debug_step);
 	debug_step5_action = new QAction(tr("Step ×5"), this);
+	debug_step5_action->setShortcut(QKeySequence(Qt::Key_F8));
 	connect(debug_step5_action, &QAction::triggered, this, &MainWindow::menu_debug_step5);
 
 	connect(this, &MainWindow::main_display_signal, this, &MainWindow::main_display_update, Qt::BlockingQueuedConnection);
@@ -1468,6 +1519,7 @@ MainWindow::create_actions()
 	connect(this, &MainWindow::error_signal, this, &MainWindow::error);
 	connect(this, &MainWindow::fatal_signal, this, &MainWindow::fatal);
 	connect(&emulator, &Emulator::debugger_state_changed_signal, this, &MainWindow::update_debugger_action_states);
+	connect(&emulator, &Emulator::machine_switched_signal, this, &MainWindow::on_machine_switched);
 
 	// Initialise debugger action state optimistically; a real snapshot will
 	// be requested once the emulator thread is running and emits an update.
@@ -1494,6 +1546,10 @@ MainWindow::create_menus()
 		recent_machines_menu->addAction(action);
 		recent_machine_actions.append(action);
 	}
+	recent_machines_menu->addSeparator();
+	clear_recent_machines_action = new QAction(tr("Clear Recent Machines"), this);
+	connect(clear_recent_machines_action, &QAction::triggered, this, &MainWindow::menu_clear_recent_machines);
+	recent_machines_menu->addAction(clear_recent_machines_action);
 	update_recent_machines_menu();
 	
 	file_menu->addSeparator();
@@ -1510,8 +1566,27 @@ MainWindow::create_menus()
 	floppy_menu->addAction(loaddisc0_action);
 	floppy_menu->addAction(loaddisc1_action);
 	floppy_menu->addSeparator();
+	floppy_menu->addAction(ejectdisc0_action);
+	floppy_menu->addAction(ejectdisc1_action);
+	floppy_menu->addSeparator();
 	floppy_menu->addAction(create_disc0_action);
 	floppy_menu->addAction(create_disc1_action);
+	floppy_menu->addSeparator();
+	
+	// Recent Floppies submenu
+	recent_floppies_menu = floppy_menu->addMenu(tr("Recent Images"));
+	for (int i = 0; i < MaxRecentFloppies; i++) {
+		QAction *action = new QAction(this);
+		action->setVisible(false);
+		connect(action, &QAction::triggered, this, &MainWindow::menu_recent_floppy_triggered);
+		recent_floppies_menu->addAction(action);
+		recent_floppy_actions.append(action);
+	}
+	recent_floppies_menu->addSeparator();
+	clear_recent_floppies_action = new QAction(tr("Clear Recent Images"), this);
+	connect(clear_recent_floppies_action, &QAction::triggered, this, &MainWindow::menu_clear_recent_floppies);
+	recent_floppies_menu->addAction(clear_recent_floppies_action);
+	update_recent_floppies_menu();
 
 	// Disc->CD-ROM menu
 	cdrom_menu->addAction(cdrom_disabled_action);
@@ -1525,6 +1600,22 @@ MainWindow::create_menus()
 		cdrom_menu->addAction(cdrom_win_ioctl_actions[i]);
 	}
 #endif
+	cdrom_menu->addSeparator();
+	
+	// Recent CD-ROMs submenu
+	recent_cdroms_menu = cdrom_menu->addMenu(tr("Recent Images"));
+	for (int i = 0; i < MaxRecentCDROMs; i++) {
+		QAction *action = new QAction(this);
+		action->setVisible(false);
+		connect(action, &QAction::triggered, this, &MainWindow::menu_recent_cdrom_triggered);
+		recent_cdroms_menu->addAction(action);
+		recent_cdrom_actions.append(action);
+	}
+	recent_cdroms_menu->addSeparator();
+	clear_recent_cdroms_action = new QAction(tr("Clear Recent Images"), this);
+	connect(clear_recent_cdroms_action, &QAction::triggered, this, &MainWindow::menu_clear_recent_cdroms);
+	recent_cdroms_menu->addAction(clear_recent_cdroms_action);
+	update_recent_cdroms_menu();
 
 	// Settings menu
 	settings_menu = menuBar()->addMenu(tr("Settings"));
@@ -1535,6 +1626,8 @@ MainWindow::create_menus()
 		nat_list_action->setEnabled(false);
 	}
 #endif /* RPCEMU_NETWORKING */
+	settings_menu->addSeparator();
+	settings_menu->addAction(mute_sound_action);
 	settings_menu->addSeparator();
 	settings_menu->addAction(fullscreen_action);
 	settings_menu->addAction(integer_scaling_action);
@@ -1721,12 +1814,269 @@ MainWindow::menu_recent_machine_triggered()
 	QAction *action = qobject_cast<QAction *>(sender());
 	if (action) {
 		QString machine_name = action->data().toString();
-		// Currently just informational - can't switch machines mid-session
-		// Could show a dialog telling user to restart with this machine
-		QMessageBox::information(this, tr("Recent Machine"),
-			tr("To switch to '%1', please restart RPCEmu and select it from the machine list.")
-			.arg(machine_name));
+		
+		// Check if config file exists
+		QString config_path = QCoreApplication::applicationDirPath() + "/configs/" + machine_name + ".cfg";
+		if (!QFile::exists(config_path)) {
+			QMessageBox::warning(this, tr("Machine Not Found"),
+				tr("The configuration for '%1' no longer exists.").arg(machine_name));
+			return;
+		}
+		
+		// Prompt user to confirm switch
+		int ret = QMessageBox::question(this, tr("Switch Machine"),
+			tr("Are you sure you want to switch to '%1'?\n\n"
+			   "Any unsaved data in the current machine will be lost.")
+			.arg(machine_name),
+			QMessageBox::Yes | QMessageBox::No,
+			QMessageBox::No);
+		
+		if (ret == QMessageBox::Yes) {
+			// Add to recent (moves to top)
+			add_to_recent_machines(machine_name);
+			
+			// Update window title immediately
+			setWindowTitle(QString("RPCEmu - %1").arg(machine_name));
+			
+			// Emit signal to switch machine on emulator thread
+			emit this->emulator.switch_machine_signal(config_path);
+		}
 	}
+}
+
+/**
+ * Handler for clearing the recent machines list.
+ */
+void
+MainWindow::menu_clear_recent_machines()
+{
+	QSettings settings("RPCEmu", "RPCEmu");
+	settings.setValue("recentMachines", QStringList());
+	update_recent_machines_menu();
+}
+
+/**
+ * Handle the machine switched signal from the emulator thread.
+ * Updates the GUI to reflect the new machine configuration.
+ */
+void
+MainWindow::on_machine_switched(QString machine_name)
+{
+	// Update window title
+	setWindowTitle(QString("RPCEmu - %1").arg(machine_name));
+	
+	// Update local config copy from global config
+	memcpy(&config_copy, &config, sizeof(Config));
+	model_copy = machine.model;
+	
+	rpclog("MainWindow: Machine switched to '%s'\n", machine_name.toUtf8().constData());
+}
+
+/**
+ * Update the Recent Floppies menu from saved settings.
+ */
+void
+MainWindow::update_recent_floppies_menu()
+{
+	QSettings settings("RPCEmu", "RPCEmu");
+	QStringList recent = settings.value("recentFloppies").toStringList();
+
+	// Clear existing actions
+	for (int i = 0; i < recent_floppy_actions.size(); i++) {
+		recent_floppy_actions[i]->setVisible(false);
+	}
+
+	// Populate with recent floppies
+	int num_recent = qMin(recent.size(), MaxRecentFloppies);
+	for (int i = 0; i < num_recent; i++) {
+		// Show just the filename, store full path in data
+		QFileInfo fi(recent[i]);
+		QString text = QString("&%1 %2").arg(i < 9 ? QString::number(i + 1) : "0").arg(fi.fileName());
+		recent_floppy_actions[i]->setText(text);
+		recent_floppy_actions[i]->setData(recent[i]);
+		recent_floppy_actions[i]->setVisible(true);
+	}
+
+	// Show/hide the menu based on whether there are entries
+	recent_floppies_menu->setEnabled(num_recent > 0);
+}
+
+/**
+ * Add a floppy image to the recent floppies list.
+ *
+ * @param floppy_path Full path to the floppy image
+ */
+void
+MainWindow::add_to_recent_floppies(const QString &floppy_path)
+{
+	if (floppy_path.isEmpty()) {
+		return;
+	}
+
+	QSettings settings("RPCEmu", "RPCEmu");
+	QStringList recent = settings.value("recentFloppies").toStringList();
+
+	// Remove if already in list (to move to top)
+	recent.removeAll(floppy_path);
+
+	// Add to front
+	recent.prepend(floppy_path);
+
+	// Limit size
+	while (recent.size() > MaxRecentFloppies) {
+		recent.removeLast();
+	}
+
+	settings.setValue("recentFloppies", recent);
+
+	update_recent_floppies_menu();
+}
+
+/**
+ * Handler for when user clicks a recent floppy entry.
+ */
+void
+MainWindow::menu_recent_floppy_triggered()
+{
+	QAction *action = qobject_cast<QAction *>(sender());
+	if (action) {
+		QString floppy_path = action->data().toString();
+		
+		// Check if file still exists
+		if (!QFile::exists(floppy_path)) {
+			QMessageBox::warning(this, tr("File Not Found"),
+				tr("The disc image '%1' no longer exists.").arg(floppy_path));
+			return;
+		}
+		
+		// Add to recent (moves to top)
+		add_to_recent_floppies(floppy_path);
+		
+		// Load into drive :0 by default
+		emit this->emulator.load_disc_0_signal(floppy_path);
+	}
+}
+
+/**
+ * Handler for clearing the recent floppies list.
+ */
+void
+MainWindow::menu_clear_recent_floppies()
+{
+	QSettings settings("RPCEmu", "RPCEmu");
+	settings.setValue("recentFloppies", QStringList());
+	update_recent_floppies_menu();
+}
+
+/**
+ * Update the Recent CD-ROMs menu from saved settings.
+ */
+void
+MainWindow::update_recent_cdroms_menu()
+{
+	QSettings settings("RPCEmu", "RPCEmu");
+	QStringList recent = settings.value("recentCDROMs").toStringList();
+
+	// Clear existing actions
+	for (int i = 0; i < recent_cdrom_actions.size(); i++) {
+		recent_cdrom_actions[i]->setVisible(false);
+	}
+
+	// Populate with recent CD-ROMs
+	int num_recent = qMin(recent.size(), MaxRecentCDROMs);
+	for (int i = 0; i < num_recent; i++) {
+		// Show just the filename, store full path in data
+		QFileInfo fi(recent[i]);
+		QString text = QString("&%1 %2").arg(i < 9 ? QString::number(i + 1) : "0").arg(fi.fileName());
+		recent_cdrom_actions[i]->setText(text);
+		recent_cdrom_actions[i]->setData(recent[i]);
+		recent_cdrom_actions[i]->setVisible(true);
+	}
+
+	// Show/hide the menu based on whether there are entries
+	recent_cdroms_menu->setEnabled(num_recent > 0);
+}
+
+/**
+ * Add a CD-ROM image to the recent CD-ROMs list.
+ *
+ * @param cdrom_path Full path to the CD-ROM image
+ */
+void
+MainWindow::add_to_recent_cdroms(const QString &cdrom_path)
+{
+	if (cdrom_path.isEmpty()) {
+		return;
+	}
+
+	QSettings settings("RPCEmu", "RPCEmu");
+	QStringList recent = settings.value("recentCDROMs").toStringList();
+
+	// Remove if already in list (to move to top)
+	recent.removeAll(cdrom_path);
+
+	// Add to front
+	recent.prepend(cdrom_path);
+
+	// Limit size
+	while (recent.size() > MaxRecentCDROMs) {
+		recent.removeLast();
+	}
+
+	settings.setValue("recentCDROMs", recent);
+
+	update_recent_cdroms_menu();
+}
+
+/**
+ * Handler for when user clicks a recent CD-ROM entry.
+ */
+void
+MainWindow::menu_recent_cdrom_triggered()
+{
+	QAction *action = qobject_cast<QAction *>(sender());
+	if (action) {
+		QString cdrom_path = action->data().toString();
+		
+		// Check if file still exists
+		if (!QFile::exists(cdrom_path)) {
+			QMessageBox::warning(this, tr("File Not Found"),
+				tr("The CD-ROM image '%1' no longer exists.").arg(cdrom_path));
+			return;
+		}
+		
+		// Handle enabling CD-ROM if disabled (same logic as menu_cdrom_iso)
+		if (!config_copy.cdromenabled) {
+			int ret = MainWindow::reset_question(this);
+			switch (ret) {
+			case QMessageBox::Ok:
+				break;
+			case QMessageBox::Cancel:
+			default:
+				return;
+			}
+		}
+		
+		// Add to recent (moves to top)
+		add_to_recent_cdroms(cdrom_path);
+		
+		// Load the ISO
+		emit this->emulator.cdrom_load_iso_signal(cdrom_path);
+		config_copy.cdromenabled = 1;
+		
+		cdrom_menu_selection_update(cdrom_iso_action);
+	}
+}
+
+/**
+ * Handler for clearing the recent CD-ROMs list.
+ */
+void
+MainWindow::menu_clear_recent_cdroms()
+{
+	QSettings settings("RPCEmu", "RPCEmu");
+	settings.setValue("recentCDROMs", QStringList());
+	update_recent_cdroms_menu();
 }
 
 /**

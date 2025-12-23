@@ -890,6 +890,20 @@ rpcemu_floppy_load(int drive, const char *filename)
 }
 
 /**
+ * Eject (unload) the disc from the specified drive
+ *
+ * @param drive    RPC Drive number, 0 or 1
+ */
+void
+rpcemu_floppy_eject(int drive)
+{
+	assert(drive == 0 || drive == 1);
+
+	fdc_image_save(discname[drive], drive);
+	discname[drive][0] = '\0';
+}
+
+/**
  * Find a filename's extension (bit after the .)
  *
  * @param filename string to check

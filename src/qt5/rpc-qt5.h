@@ -74,6 +74,8 @@ signals:
 	void exit_signal();
 	void load_disc_0_signal(QString discname);
 	void load_disc_1_signal(QString discname);
+	void eject_disc_0_signal();
+	void eject_disc_1_signal();
 	void cpu_idle_signal();
 	void integer_scaling_signal();
 	void cdrom_disabled_signal();
@@ -86,6 +88,8 @@ signals:
 	void config_updated_signal(Config *new_config, Model new_model);
 	void network_config_updated_signal(NetworkType network_type, QString bridgename, QString ipaddress);
 	void show_fullscreen_message_off_signal();
+	void switch_machine_signal(QString config_path);
+	void machine_switched_signal(QString machine_name);
 	void nat_rule_add_signal(PortForwardRule rule);
 	void nat_rule_edit_signal(PortForwardRule old_rule, PortForwardRule new_rule);
 	void nat_rule_remove_signal(PortForwardRule rule);
@@ -111,6 +115,9 @@ public slots:
 	void exit();
 	void load_disc_0(QString discname);
 	void load_disc_1(QString discname);
+	void eject_disc_0();
+	void eject_disc_1();
+	void switch_machine(QString config_path);
 	void cpu_idle();
 	void integer_scaling();
 	void cdrom_disabled();
