@@ -596,6 +596,7 @@ Emulator::Emulator()
 	connect(this, &Emulator::load_disc_0_signal, this, &Emulator::load_disc_0);
 	connect(this, &Emulator::load_disc_1_signal, this, &Emulator::load_disc_1);
 	connect(this, &Emulator::cpu_idle_signal, this, &Emulator::cpu_idle);
+	connect(this, &Emulator::integer_scaling_signal, this, &Emulator::integer_scaling);
 	connect(this, &Emulator::cdrom_disabled_signal, this, &Emulator::cdrom_disabled);
 	connect(this, &Emulator::cdrom_empty_signal, this, &Emulator::cdrom_empty);
 	connect(this, &Emulator::cdrom_load_iso_signal, this, &Emulator::cdrom_load_iso);
@@ -1098,6 +1099,18 @@ Emulator::cpu_idle()
 	config_save(&config);
 
 	resetrpc();
+}
+
+/**
+ * GUI is toggling the integer scaling feature
+ */
+void
+Emulator::integer_scaling()
+{
+	config.integer_scaling ^= 1;
+
+	// Save the settings to the rpc.cfg file
+	config_save(&config);
 }
 
 /**

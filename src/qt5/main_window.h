@@ -69,6 +69,8 @@ public:
 
 	void get_host_size(int& host_xsize, int& host_ysize) const;
 	void set_full_screen(bool full_screen);
+	void set_integer_scaling(bool integer_scaling);
+	bool get_integer_scaling() const;
 	void update_image(const QImage& img, int yl, int yh, int double_size);
 	int get_double_size();
 	bool save_screenshot(QString filename);
@@ -90,6 +92,7 @@ private:
 	int double_size;
 
 	bool full_screen;
+	bool integer_scaling;
 	int host_xsize, host_ysize;
 	int scaled_x, scaled_y;
 	int offset_x, offset_y;
@@ -135,6 +138,7 @@ private slots:
 	void menu_nat_list();
 #endif /* RPCEMU_NETWORKING */
 	void menu_fullscreen();
+	void menu_integer_scaling();
 	void menu_cpu_idle();
 	void menu_mouse_hack();
 	void menu_mouse_twobutton();
@@ -239,6 +243,7 @@ private:
 	QAction *nat_list_action;
 #endif /* RPCEMU_NETWORKING */
 	QAction *fullscreen_action;
+	QAction *integer_scaling_action;
 	QAction *cpu_idle_action;
 	QAction *mouse_hack_action;
 	QAction *mouse_twobutton_action;

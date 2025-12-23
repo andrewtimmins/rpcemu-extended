@@ -314,6 +314,7 @@ config_load_from_path(Config *config, const char *path)
 	config->cpu_idle = settings.value("cpu_idle", "0").toInt();
 
 	config->show_fullscreen_message = settings.value("show_fullscreen_message", "1").toInt();
+	config->integer_scaling = settings.value("integer_scaling", "0").toInt();
 
 	sText = settings.value("network_capture", "").toString();
 	if (sText != "") {
@@ -415,6 +416,7 @@ config_save_to_path(Config *config, const char *path)
 
 	settings.setValue("cpu_idle", config->cpu_idle);
 	settings.setValue("show_fullscreen_message", config->show_fullscreen_message);
+	settings.setValue("integer_scaling", config->integer_scaling);
 
 	if (config->network_capture) {
 		settings.setValue("network_capture", config->network_capture);

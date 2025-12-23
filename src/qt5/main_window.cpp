@@ -53,7 +53,8 @@ MainDisplay::MainDisplay(Emulator &emulator, QWidget *parent)
     : QWidget(parent),
       emulator(emulator),
       double_size(VIDC_DOUBLE_NONE),
-      full_screen(false)
+      full_screen(false),
+      integer_scaling(false)
 {
 	assert(pconfig_copy);
 
@@ -61,6 +62,9 @@ MainDisplay::MainDisplay(Emulator &emulator, QWidget *parent)
 
 	// No need to erase to background colour before painting
 	this->setAttribute(Qt::WA_OpaquePaintEvent);
+
+	// Initialize integer scaling from config
+	integer_scaling = pconfig_copy->integer_scaling != 0;
 
 	// Hide pointer in mouse hack mode
 	if(pconfig_copy->mousehackon) {
@@ -135,7 +139,8 @@ MainDisplay::paintEvent(QPaintEvent *event)
 {
 	QPainter painter(this);
 
-	if(full_screen) {
+	// Use smooth scaling only in fullscreen without integer scaling
+	if (full_screen && !integer_scaling) {
 		painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
 	} else {
 		painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
@@ -159,8 +164,11 @@ MainDisplay::paintEvent(QPaintEvent *event)
 		break;
 	}
 
-	if (full_screen) {
-		if ((dest.x() < offset_x) || (dest.y() < offset_y)) {
+	if (full_screen || integer_scaling) {
+		// Fill background with black for letterboxing
+		if ((dest.x() < offset_x) || (dest.y() < offset_y) ||
+		    (dest.x() + dest.width() > offset_x + scaled_x) ||
+		    (dest.y() + dest.height() > offset_y + scaled_y)) {
 			painter.fillRect(dest, Qt::black);
 		}
 
@@ -190,6 +198,21 @@ MainDisplay::set_full_screen(bool full_screen)
 	this->full_screen = full_screen;
 
 	calculate_scaling();
+}
+
+void
+MainDisplay::set_integer_scaling(bool integer_scaling)
+{
+	this->integer_scaling = integer_scaling;
+
+	calculate_scaling();
+	update();
+}
+
+bool
+MainDisplay::get_integer_scaling() const
+{
+	return this->integer_scaling;
 }
 
 void
@@ -271,6 +294,7 @@ MainDisplay::update_image(const QImage& img, int yl, int yh, int double_size)
  * - Double-size
  * - Windowed or Full screen
  * - Widget size
+ * - Integer scaling mode
  */
 void
 MainDisplay::calculate_scaling()
@@ -286,16 +310,32 @@ MainDisplay::calculate_scaling()
 		host_ysize = image->height();
 	}
 
-	if (full_screen) {
+	if (full_screen || integer_scaling) {
 		const int widget_x = this->width();
 		const int widget_y = this->height();
 
-		if ((widget_x * host_ysize) >= (widget_y * host_xsize)) {
-			scaled_x = (widget_y * host_xsize) / host_ysize;
-			scaled_y = widget_y;
+		if (integer_scaling) {
+			// Calculate maximum integer scale factor that fits
+			int scale_x = widget_x / host_xsize;
+			int scale_y = widget_y / host_ysize;
+			int scale = (scale_x < scale_y) ? scale_x : scale_y;
+
+			// Ensure at least 1x scaling
+			if (scale < 1) {
+				scale = 1;
+			}
+
+			scaled_x = host_xsize * scale;
+			scaled_y = host_ysize * scale;
 		} else {
-			scaled_x = widget_x;
-			scaled_y = (widget_x * host_ysize) / host_xsize;
+			// Smooth scaling to fit (fullscreen only)
+			if ((widget_x * host_ysize) >= (widget_y * host_xsize)) {
+				scaled_x = (widget_y * host_xsize) / host_ysize;
+				scaled_y = widget_y;
+			} else {
+				scaled_x = widget_x;
+				scaled_y = (widget_x * host_ysize) / host_xsize;
+			}
 		}
 
 		offset_x = (widget_x - scaled_x) / 2;
@@ -1026,6 +1066,20 @@ MainWindow::menu_cpu_idle()
 
 }
 
+/**
+ * Handle clicking on the Settings->Integer Scaling option
+ */
+void
+MainWindow::menu_integer_scaling()
+{
+	config_copy.integer_scaling = config_copy.integer_scaling ? 0 : 1;
+	integer_scaling_action->setChecked(config_copy.integer_scaling != 0);
+	display->set_integer_scaling(config_copy.integer_scaling != 0);
+
+	// Signal the emulator thread to update its config
+	emit this->emulator.integer_scaling_signal();
+}
+
 
 void
 MainWindow::menu_cdrom_disabled()
@@ -1316,6 +1370,10 @@ MainWindow::create_actions()
 	fullscreen_action = new QAction(tr("Full-screen Mode"), this);
 	fullscreen_action->setCheckable(true);
 	connect(fullscreen_action, &QAction::triggered, this, &MainWindow::menu_fullscreen);
+	integer_scaling_action = new QAction(tr("Pixel Perfect"), this);
+	integer_scaling_action->setCheckable(true);
+	integer_scaling_action->setChecked(config_copy.integer_scaling != 0);
+	connect(integer_scaling_action, &QAction::triggered, this, &MainWindow::menu_integer_scaling);
 	cpu_idle_action = new QAction(tr("Reduce CPU Usage"), this);
 	cpu_idle_action->setCheckable(true);
 	connect(cpu_idle_action, &QAction::triggered, this, &MainWindow::menu_cpu_idle);
@@ -1429,6 +1487,7 @@ MainWindow::create_menus()
 #endif /* RPCEMU_NETWORKING */
 	settings_menu->addSeparator();
 	settings_menu->addAction(fullscreen_action);
+	settings_menu->addAction(integer_scaling_action);
 	settings_menu->addSeparator();
 	settings_menu->addAction(cpu_idle_action);
 	settings_menu->addSeparator();

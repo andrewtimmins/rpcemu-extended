@@ -98,6 +98,7 @@ Config config = {
 	NetworkType_Off,	/* network_type */
 	0,			/* cpu_idle */
 	1,			/* show_fullscreen_message */
+	0,			/* integer_scaling */
 	NULL,			/* network_capture */
 };
 

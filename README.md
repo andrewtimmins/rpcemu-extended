@@ -8,6 +8,7 @@ This repository hosts a feature-rich fork of **RPCEmu**, the open-source emulato
 - **Shared HostFS drive** – A second "Shared" drive icon on the RISC OS icon bar provides access to a common `shared/` folder visible to all machine instances, enabling easy file sharing between configurations.
 - **Access/ShareFS networking** – Full support for Acorn Access and ShareFS file sharing between emulated machines via NAT networking.
 - **FPA emulation** – Full Floating Point Accelerator (FPA10) coprocessor emulation with all operations implemented and cycle-accurate timing. Enables floating-point intensive RISC OS applications to run correctly.
+- **Pixel Perfect scaling** – Optional integer scaling mode for sharp, crisp pixels without bilinear blur. Toggle via Settings → Pixel Perfect.
 - **Machine Inspector window** – Inspect CPU registers, pipeline state, MMU flags, performance counters, and key peripheral snapshots (VIDC, SuperIO, IDE, podules) with optional auto-refresh.
 - **Integrated debugger** – Pause/resume execution, single-step (×1/×5), and manage breakpoints and watchpoints directly in the GUI, with clear status readouts for the last halt reason.
 - **Dynarec-aware instrumentation** – The ARM dynamic recompiler honours debugger pause requests, breakpoints, and watchpoints via shared hooks (`debugger_requires_instruction_hook`) so that interpreter and dynarec stays in sync.
@@ -86,6 +87,7 @@ This allows you to:
 - **Dual HostFS drives** – Per-machine HostFS plus a common Shared drive for cross-machine file sharing.
 - Access/ShareFS networking support for file sharing between emulated machines.
 - **Full FPA emulation** – Complete FPA10 floating-point coprocessor with all operations and cycle timing (see below).
+- **Pixel Perfect scaling** – Integer scaling option for sharp pixels without blur.
 - In-depth machine inspector and debugger tooling not present upstream.
 - Dynarec pause logic patched so debugger operations are consistent across cores.
 - Custom ARM cross-assembler toolchain support for building RISC OS modules.
@@ -126,5 +128,4 @@ Issues and pull requests are welcome, especially around debugger/inspector featu
 ## License & credits
 - Licensed under the **GNU General Public License v2**. See `COPYING` for details.
 - Original emulator by the RPCEmu contributors.
-- Debugger, inspector, multi-machine configuration, and stability enhancements developed within this fork to support modern RISC OS development workflows.
  
