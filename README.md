@@ -7,7 +7,7 @@ This repository hosts a feature-rich fork of **RPCEmu**, the open-source emulato
 - **Multi-machine configuration** – Create, edit, clone and manage multiple machine configurations from a startup selector dialog. Each machine has isolated CMOS, HostFS and hard disc storage.
 - **Quick machine switching** – Switch between machines on-the-fly via File → Recent Machines without restarting the emulator.
 - **Shared HostFS drive** – A second "Shared" drive icon on the RISC OS icon bar provides access to a common `shared/` folder visible to all machine instances, enabling easy file sharing between configurations.
-- **Access/ShareFS networking** – Full support for Acorn Access and ShareFS file sharing between emulated machines via NAT networking.
+- **Access/ShareFS networking** – Full support for Acorn Access and ShareFS file sharing via NAT networking.
 - **FPA emulation** – Full Floating Point Accelerator (FPA10) coprocessor emulation with all operations implemented and cycle-accurate timing. Enables floating-point intensive RISC OS applications to run correctly.
 - **Pixel Perfect scaling** – Optional integer scaling mode for sharp, crisp pixels without bilinear blur. Toggle via Settings → Pixel Perfect.
 - **Built-in VNC server** – Remote desktop access to RISC OS from any VNC client. Enable via Settings → VNC Server. Connect from tablets, phones, or other computers on your network.
