@@ -807,6 +807,7 @@ void callbackide(void)
                 if (IDE_DRIVE_IS_CDROM(ide)) {
                         goto abort_cmd;
                 }
+                ide_activity_increment();
                 addr = ide_get_sector() * 512;
                 fseeko64(ide.hdfile[ide.drive], addr, SEEK_SET);
                 if (fread(ide.buffer, 1, 512, ide.hdfile[ide.drive]) != 512) {
@@ -822,6 +823,7 @@ void callbackide(void)
                 if (IDE_DRIVE_IS_CDROM(ide)) {
                         goto abort_cmd;
                 }
+                ide_activity_increment();
                 addr = ide_get_sector() * 512;
                 fseeko64(ide.hdfile[ide.drive], addr, SEEK_SET);
                 fwrite(ide.buffer, 512, 1, ide.hdfile[ide.drive]);
@@ -997,6 +999,7 @@ static void atapicommand(void)
         int len;
         int msf;
         int pos=0;
+        ide_activity_increment();
 //        rpclog("New ATAPI command %02X\n",idebufferb[0]);
                 msf=idebufferb[1]&2;
 

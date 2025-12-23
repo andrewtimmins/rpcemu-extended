@@ -626,6 +626,7 @@ opSWI(uint32_t opcode)
 
 		state.Reg = arm.reg;
 		hostfs(&state);
+		hostfs_activity_increment();
 
 	}
 #ifdef RPCEMU_NETWORKING
@@ -633,6 +634,7 @@ opSWI(uint32_t opcode)
 		if (config.network_type != NetworkType_Off) {
 			network_swi(arm.reg[0], arm.reg[1], arm.reg[2], arm.reg[3],
 			            arm.reg[4], arm.reg[5], &arm.reg[0], &arm.reg[1]);
+			network_activity_increment();
 		}
 	}
 #endif

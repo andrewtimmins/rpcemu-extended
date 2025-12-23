@@ -29,6 +29,15 @@
 static double fparegs[8] = {0.0}; /*No C variable type for 80-bit floating point, so use 64*/
 static uint32_t fpsr = 0, fpcr = 0;
 
+/* Consume cycles for FPA operations - real FPA is slow */
+#define FPA_CYCLES_LOAD_STORE   10
+#define FPA_CYCLES_SIMPLE       8    /* MVF, MNF, ABS */
+#define FPA_CYCLES_ARITH        20   /* ADD, SUB, MUL */
+#define FPA_CYCLES_DIV          70   /* DVF, RDF */
+#define FPA_CYCLES_TRANSCEND    150  /* SIN, COS, TAN, etc */
+#define FPA_CYCLES_COMPARE      10
+#define FPA_CYCLES_FIX_FLT      15
+
 void resetfpa(void)
 {
 //        fpsr=0;
@@ -41,11 +50,16 @@ void resetfpa(void)
 
 static inline void setsubf(double op1, double op2)
 {
-	arm.reg[cpsr] &= 0xfffffff;
-	if (op1 == op2) arm.reg[cpsr] |= ZFLAG;
-	if (op1 < op2)  arm.reg[cpsr] |= NFLAG;
-	if (op1 >= op2) arm.reg[cpsr] |= CFLAG;
-	// if ((op1^op2)&(op1^res)&0x80000000) arm.reg[cpsr]|=VFLAG;
+	arm.reg[cpsr] &= 0x0fffffff;
+	/* Check for unordered (NaN) comparison */
+	if (isnan(op1) || isnan(op2)) {
+		/* Unordered: set V flag, clear N, Z, C */
+		arm.reg[cpsr] |= VFLAG;
+		return;
+	}
+	if (op1 == op2) arm.reg[cpsr] |= ZFLAG | CFLAG;
+	else if (op1 < op2)  arm.reg[cpsr] |= NFLAG;
+	else arm.reg[cpsr] |= CFLAG; /* op1 > op2 */
 }
 
 static const double fconstants[8]={0.0,1.0,2.0,3.0,4.0,5.0,0.5,10.0};
@@ -207,6 +221,7 @@ void fpaopcode(uint32_t opcode)
                                 else                 addr-=((opcode&0xFF)<<2);
                         }
                         if (opcode & 0x200000) arm.reg[RN] = addr;
+                        linecyc -= FPA_CYCLES_LOAD_STORE;
                         return;
                 }
                 if (opcode&0x100000) /*LFM*/
@@ -281,6 +296,7 @@ void fpaopcode(uint32_t opcode)
                                 else                 addr-=((opcode&0xFF)<<2);
                         }
                         if (opcode & 0x200000) arm.reg[RN] = addr;
+                        linecyc -= FPA_CYCLES_LOAD_STORE;
                         return;
                 }
                 else /*SFM*/
@@ -358,6 +374,7 @@ void fpaopcode(uint32_t opcode)
                                 else                 addr-=((opcode&0xFF)<<2);
                         }
                         if (opcode & 0x200000) arm.reg[RN] = addr;
+                        linecyc -= FPA_CYCLES_LOAD_STORE;
                         return;
                 }
                 /*LFM/SFM*/
@@ -375,6 +392,14 @@ void fpaopcode(uint32_t opcode)
                                         if (opcode&8) tempf=fconstants[opcode&7];
                                         else          tempf=fparegs[opcode&7];
                                         setsubf(fparegs[FN],tempf);
+                                        linecyc -= FPA_CYCLES_COMPARE;
+                                        return;
+                                        case 5: /*CNF - Compare Negated*/
+                                        case 7: /*CNFE*/
+                                        if (opcode&8) tempf=fconstants[opcode&7];
+                                        else          tempf=fparegs[opcode&7];
+                                        setsubf(fparegs[FN],-tempf);
+                                        linecyc -= FPA_CYCLES_COMPARE;
                                         return;
                                 }
                                 fatal("Compare opcode %08X %i\n", opcode, (opcode >> 21) & 7);
@@ -385,21 +410,47 @@ void fpaopcode(uint32_t opcode)
                         {
                                 case 0: /*FLT*/
                                 fparegs[FN] = (double) (int32_t) arm.reg[RD];
+                                linecyc -= FPA_CYCLES_FIX_FLT;
                                 return;
                                 case 1: /*FIX*/
-                                arm.reg[RD] = (uint32_t) (int32_t) fparegs[opcode & 7];
+                                {
+                                        double val = fparegs[opcode & 7];
+                                        int32_t result;
+                                        /* Rounding mode is in bits 5-6 */
+                                        switch ((opcode >> 5) & 3) {
+                                                case 0: /* Nearest */
+                                                        result = (int32_t) rint(val);
+                                                        break;
+                                                case 1: /* Plus Infinity (ceil) */
+                                                        result = (int32_t) ceil(val);
+                                                        break;
+                                                case 2: /* Minus Infinity (floor) */
+                                                        result = (int32_t) floor(val);
+                                                        break;
+                                                case 3: /* Zero (truncate) */
+                                                default:
+                                                        result = (int32_t) trunc(val);
+                                                        break;
+                                        }
+                                        arm.reg[RD] = (uint32_t) result;
+                                }
+                                linecyc -= FPA_CYCLES_FIX_FLT;
                                 return;
                                 case 2: /*WFS*/
                                 fpsr = (arm.reg[RD] & 0xffffff) | (fpsr & 0xff000000);
+                                linecyc -= FPA_CYCLES_SIMPLE;
                                 return;
                                 case 3: /*RFS*/
                                 arm.reg[RD] = fpsr;
+                                linecyc -= FPA_CYCLES_SIMPLE;
                                 return;
                                 case 4: /*WFC*/
                                 fpcr = (fpcr & ~0xd00) | (arm.reg[RD] & 0xd00);
+                                linecyc -= FPA_CYCLES_SIMPLE;
                                 return;
                                 case 5: /*RFC*/
                                 arm.reg[RD] = fpcr;
+                                linecyc -= FPA_CYCLES_SIMPLE;
                                 return;
                         }
                         fatal("Register opcode %08X at %07X\n", opcode, PC);
@@ -409,85 +460,160 @@ void fpaopcode(uint32_t opcode)
                 else          tempf=fparegs[opcode&7];
 //                rpclog("Data %08X %06X\n",opcode,opcode&0xF08000);
 //                rpclog("F%i F%i F%i\n",FD,FN,opcode&7);
-                if ((opcode&0x8000) && ((opcode&0xF08000)>=0x508000) && ((opcode&0xF08000)<0xE08000))
-                {
-                        arm.reg[15] += 4;
-                        arm_exception_undefined();
-                        return;
-                }
                 switch (opcode&0xF08000)
                 {
                         case 0x000000: /*ADF*/
 //                        rpclog("ADF %f+%f=",fparegs[FN],tempf);
                         fparegs[FD]=fparegs[FN]+tempf;
 //                        rpclog("%f\n",fparegs[RD]);
+                        linecyc -= FPA_CYCLES_ARITH;
                         return;
                         case 0x100000: /*MUF*/
                         case 0x900000: /*FML*/
 //                        rpclog("MUF %f*%f=",fparegs[FN],tempf);
                         fparegs[FD]=fparegs[FN]*tempf;
 //                        rpclog("%f\n",fparegs[RD]);
+                        linecyc -= FPA_CYCLES_ARITH;
                         return;
                         case 0x200000: /*SUF*/
 //                        rpclog("SUF %f-%f=",fparegs[FN],tempf);
                         fparegs[FD]=fparegs[FN]-tempf;
 //                        rpclog("%f\n",fparegs[RD]);
+                        linecyc -= FPA_CYCLES_ARITH;
                         return;
                         case 0x300000: /*RSF*/
 //                        rpclog("SUF %f-%f=",fparegs[FN],tempf);
                         fparegs[FD]=tempf-fparegs[FN];
 //                        rpclog("%f\n",fparegs[RD]);
+                        linecyc -= FPA_CYCLES_ARITH;
                         return;
                         case 0x400000: /*DVF*/
                         case 0xA00000: /*FDV*/
 //                        rpclog("DVF %f/%f=",fparegs[FN],tempf);
                         fparegs[FD]=fparegs[FN]/tempf;
 //                        rpclog("%f  %07X\n",fparegs[RD],PC);
+                        linecyc -= FPA_CYCLES_DIV;
+                        return;
+                        case 0x500000: /*RDF - Reverse Divide*/
+                        case 0xB00000: /*FRD*/
+                        fparegs[FD]=tempf/fparegs[FN];
+                        linecyc -= FPA_CYCLES_DIV;
+                        return;
+                        case 0x600000: /*POW - Power*/
+                        fparegs[FD]=pow(fparegs[FN],tempf);
+                        linecyc -= FPA_CYCLES_TRANSCEND;
+                        return;
+                        case 0x700000: /*RPW - Reverse Power*/
+                        fparegs[FD]=pow(tempf,fparegs[FN]);
+                        linecyc -= FPA_CYCLES_TRANSCEND;
+                        return;
+                        case 0x800000: /*RMF - IEEE Remainder*/
+                        fparegs[FD]=remainder(fparegs[FN],tempf);
+                        linecyc -= FPA_CYCLES_DIV;
+                        return;
+                        case 0xC00000: /*POL - Polar Angle*/
+                        fparegs[FD]=atan2(fparegs[FN],tempf);
+                        linecyc -= FPA_CYCLES_TRANSCEND;
                         return;
                         case 0x008000: /*MVF*/
 //                        rpclog("MVF %f=\n",tempf);
                         fparegs[FD]=tempf;
 //                        rpclog("%f\n",fparegs[RD]);
+                        linecyc -= FPA_CYCLES_SIMPLE;
                         return;
                         case 0x108000: /*MNF*/
 //                        rpclog("MNF %f=\n",tempf);
                         fparegs[FD]=-tempf;
 //                        rpclog("%f\n",fparegs[RD]);
+                        linecyc -= FPA_CYCLES_SIMPLE;
                         return;
                         case 0x208000: /*ABS*/
                         fparegs[FD]=fabs(tempf);
+                        linecyc -= FPA_CYCLES_SIMPLE;
+                        return;
+                        case 0x308000: /*RND - Round to Integer*/
+                        /* Rounding mode is in bits 5-6 */
+                        switch ((opcode >> 5) & 3) {
+                                case 0: /* Nearest */
+                                        fparegs[FD] = rint(tempf);
+                                        break;
+                                case 1: /* Plus Infinity (ceil) */
+                                        fparegs[FD] = ceil(tempf);
+                                        break;
+                                case 2: /* Minus Infinity (floor) */
+                                        fparegs[FD] = floor(tempf);
+                                        break;
+                                case 3: /* Zero (truncate) */
+                                default:
+                                        fparegs[FD] = trunc(tempf);
+                                        break;
+                        }
+                        linecyc -= FPA_CYCLES_SIMPLE;
                         return;
                         case 0x408000: /*SQT*/
                         fparegs[FD]=sqrt(tempf);
+                        linecyc -= FPA_CYCLES_DIV;
                         return;
                         case 0x508000: /*LOG*/
                         fparegs[FD]=log10(tempf);
+                        linecyc -= FPA_CYCLES_TRANSCEND;
                         return;
                         case 0x608000: /*LGN*/
                         fparegs[FD]=log(tempf);
+                        linecyc -= FPA_CYCLES_TRANSCEND;
                         return;
                         case 0x708000: /*EXP*/
                         fparegs[FD]=exp(tempf);
+                        linecyc -= FPA_CYCLES_TRANSCEND;
                         return;
                         case 0x808000: /*SIN*/
 //                        rpclog("SIN of %f is ",tempf);
                         fparegs[FD]=sin(tempf);
 //                        rpclog("%f\n",fparegs[FD]);
+                        linecyc -= FPA_CYCLES_TRANSCEND;
                         return;
                         case 0x908000: /*COS*/
                         fparegs[FD]=cos(tempf);
+                        linecyc -= FPA_CYCLES_TRANSCEND;
                         return;
                         case 0xA08000: /*TAN*/
                         fparegs[FD]=tan(tempf);
+                        linecyc -= FPA_CYCLES_TRANSCEND;
                         return;
                         case 0xB08000: /*ASN*/
                         fparegs[FD]=asin(tempf);
+                        linecyc -= FPA_CYCLES_TRANSCEND;
                         return;
                         case 0xC08000: /*ACS*/
                         fparegs[FD]=acos(tempf);
+                        linecyc -= FPA_CYCLES_TRANSCEND;
                         return;
                         case 0xD08000: /*ATN*/
                         fparegs[FD]=atan(tempf);
+                        linecyc -= FPA_CYCLES_TRANSCEND;
+                        return;
+                        case 0xE08000: /*URD - Unnormalized Round (treat as RND)*/
+                        /* Rounding mode is in bits 5-6 */
+                        switch ((opcode >> 5) & 3) {
+                                case 0: /* Nearest */
+                                        fparegs[FD] = rint(tempf);
+                                        break;
+                                case 1: /* Plus Infinity (ceil) */
+                                        fparegs[FD] = ceil(tempf);
+                                        break;
+                                case 2: /* Minus Infinity (floor) */
+                                        fparegs[FD] = floor(tempf);
+                                        break;
+                                case 3: /* Zero (truncate) */
+                                default:
+                                        fparegs[FD] = trunc(tempf);
+                                        break;
+                        }
+                        linecyc -= FPA_CYCLES_SIMPLE;
+                        return;
+                        case 0xF08000: /*NRM - Normalize (no-op for normalized values)*/
+                        fparegs[FD]=tempf;
+                        linecyc -= FPA_CYCLES_SIMPLE;
                         return;
                 }
                 /*Data processing*/

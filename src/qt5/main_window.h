@@ -24,6 +24,8 @@
 #include <QLabel>
 #include <QMainWindow>
 #include <QMenu>
+#include <QStatusBar>
+#include <QSettings>
 
 #include "configure_dialog.h"
 #include "nat_list_dialog.h"
@@ -144,6 +146,11 @@ private slots:
 	void menu_debug_pause();
 	void menu_debug_step();
 	void menu_debug_step5();
+	void menu_recent_machine_triggered();
+	void fdc_led_timeout();
+	void ide_led_timeout();
+	void hostfs_led_timeout();
+	void network_led_timeout();
 
 	// Track menu show/hide
 	void menu_aboutToShow();
@@ -169,9 +176,12 @@ private:
 	void create_actions();
 	void create_menus();
 	void create_tool_bars();
+	void create_status_bar();
 
 	void add_menu_show_hide_handlers();
 	void update_debugger_action_states();
+	void update_recent_machines_menu();
+	void add_to_recent_machines(const QString &machineName);
 
 	void readSettings();
 	void writeSettings();
@@ -194,6 +204,7 @@ private:
 
 	// Menus
 	QMenu *file_menu;
+	QMenu *recent_machines_menu;
 	QMenu *disc_menu;
 	QMenu *floppy_menu;
 	QMenu *cdrom_menu;
@@ -267,6 +278,28 @@ private:
 	bool menu_open; ///< Is there a menu open? Used to suppress key-presses
 
 	bool infocus; ///< Does the main window currently have the focus
+
+	// Status bar labels
+	QLabel *status_mips;
+	QLabel *status_avg_mips;
+	QLabel *status_fdc_label;
+	QLabel *status_fdc_led;
+	QLabel *status_ide_label;
+	QLabel *status_ide_led;
+	QLabel *status_hostfs_label;
+	QLabel *status_hostfs_led;
+	QLabel *status_network_label;
+	QLabel *status_network_led;
+	
+	// LED fade timers
+	QTimer *fdc_led_timer;
+	QTimer *ide_led_timer;
+	QTimer *hostfs_led_timer;
+	QTimer *network_led_timer;
+	
+	// Recent machines
+	static const int MaxRecentMachines = 5;
+	QList<QAction*> recent_machine_actions;
 };
 
 #endif

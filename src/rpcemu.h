@@ -226,6 +226,12 @@ extern void rpcemu_nat_forward_remove(PortForwardRule rule);
 
 extern uint32_t inscount;
 
+/* Activity counters for status bar indicators (implemented in Qt frontend) */
+extern void hostfs_activity_increment(void);
+extern void network_activity_increment(void);
+extern void ide_activity_increment(void);
+extern void fdc_activity_increment(void);
+
 /* These functions can optionally be overridden by a platform. If not
    needed to be overridden, there is a generic version in rpc-machdep.c */
 extern const char *rpcemu_get_datadir(void);

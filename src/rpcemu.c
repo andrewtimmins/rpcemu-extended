@@ -543,6 +543,7 @@ resetrpc(void)
         mem_reset(config.mem_size, config.vram_size);
         cp15_reset(machine.cpu_model);
 	arm_reset(machine.cpu_model);
+	resetfpa();
         keyboard_reset();
 	iomd_reset(machine.iomd_type);
 

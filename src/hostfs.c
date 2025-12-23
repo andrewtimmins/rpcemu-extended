@@ -617,9 +617,6 @@ hostfs_path_process(const char *ro_path,
   assert(host_pathname);
   assert(object_info);
 
-  /* Debug: log incoming path */
-  rpclog("HostFS: path_process incoming path: '%s'\n", ro_path);
-
   assert(ro_path[0] == '$' || ro_path[0] == ':');
 
   /* Initialise Host pathname */
@@ -659,9 +656,6 @@ hostfs_path_process(const char *ro_path,
     memcpy(disc_name, ro_path + 1, disc_name_len);
     disc_name[disc_name_len] = '\0';
 
-    /* Debug: log extracted disc name */
-    rpclog("HostFS: extracted disc name: '%s'\n", disc_name);
-
     /* Identify the disc from the disc name */
     if (!hostfs_disc_name_valid(disc_name)) {
       object_info->type = OBJECT_TYPE_NOT_FOUND;
@@ -670,9 +664,6 @@ hostfs_path_process(const char *ro_path,
 
     /* Select the appropriate root path for this disc */
     root_path = hostfs_get_root_for_disc(disc_name);
-
-    /* Debug: log selected root path */
-    rpclog("HostFS: selected root path: '%s'\n", root_path);
 
     /* Now process the path from '$' onwards */
     ro_path = c + 1;

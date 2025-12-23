@@ -7,9 +7,10 @@ This repository hosts a feature-rich fork of **RPCEmu**, the open-source emulato
 - **Multi-machine configuration** – Create, edit, clone and manage multiple machine configurations from a startup selector dialog. Each machine has isolated CMOS, HostFS and hard disc storage.
 - **Shared HostFS drive** – A second "Shared" drive icon on the RISC OS icon bar provides access to a common `shared/` folder visible to all machine instances, enabling easy file sharing between configurations.
 - **Access/ShareFS networking** – Full support for Acorn Access and ShareFS file sharing between emulated machines via NAT networking.
+- **FPA emulation** – Full Floating Point Accelerator (FPA10) coprocessor emulation with all operations implemented and cycle-accurate timing. Enables floating-point intensive RISC OS applications to run correctly.
 - **Machine Inspector window** – Inspect CPU registers, pipeline state, MMU flags, performance counters, and key peripheral snapshots (VIDC, SuperIO, IDE, podules) with optional auto-refresh.
 - **Integrated debugger** – Pause/resume execution, single-step (×1/×5), and manage breakpoints and watchpoints directly in the GUI, with clear status readouts for the last halt reason.
-- **Dynarec-aware instrumentation** – The ARM dynamic recompiler honours debugger pause requests, breakpoints, and watchpoints via shared hooks (`debugger_requires_instruction_hook`) so that interpreter and dynarec stay in sync.
+- **Dynarec-aware instrumentation** – The ARM dynamic recompiler honours debugger pause requests, breakpoints, and watchpoints via shared hooks (`debugger_requires_instruction_hook`) so that interpreter and dynarec stays in sync.
 - **Snapshot plumbing** – Thread-safe `MachineSnapshot` and peripheral snapshot structs marshal detailed state off the emulator thread for UI consumption without stalls.
 
 ## Machine configuration system
@@ -84,9 +85,32 @@ This allows you to:
 - ROM selection per configuration.
 - **Dual HostFS drives** – Per-machine HostFS plus a common Shared drive for cross-machine file sharing.
 - Access/ShareFS networking support for file sharing between emulated machines.
+- **Full FPA emulation** – Complete FPA10 floating-point coprocessor with all operations and cycle timing (see below).
 - In-depth machine inspector and debugger tooling not present upstream.
 - Dynarec pause logic patched so debugger operations are consistent across cores.
 - Custom ARM cross-assembler toolchain support for building RISC OS modules.
+
+## FPA (Floating Point Accelerator) emulation
+This fork includes complete FPA10 coprocessor emulation, enabling RISC OS applications that use hardware floating-point to run correctly. The implementation includes:
+
+### Supported operations
+| Category | Operations |
+| --- | --- |
+| **Dyadic** | ADF, MUF, SUF, RSF, DVF, RDF, POW, RPW, RMF, FML, FDV, FRD, POL |
+| **Monadic** | MVF, MNF, ABS, RND, SQT, LOG, LGN, EXP, SIN, COS, TAN, ASN, ACS, ATN, URD, NRM |
+| **Conversion** | FIX (float→int), FLT (int→float) with all IEEE rounding modes |
+| **Comparison** | CMF, CMFE, CNF, CNFE with proper NaN exception handling |
+| **Transfer** | LDF, STF, LFM, SFM (load/store single and multiple) |
+
+### Features
+- **Cycle-accurate timing** – Each operation has appropriate cycle costs (e.g., 10 cycles for load/store, 150 cycles for transcendental functions like SIN/COS/TAN).
+- **IEEE rounding modes** – FIX, RND, and URD support all four IEEE 754 rounding modes (nearest, +∞, −∞, zero).
+- **NaN handling** – Comparison operations correctly set the V flag for unordered (NaN) comparisons.
+- **Dynarec integration** – FPA works with both the interpreter and dynamic recompiler.
+
+### Compatibility notes
+- Ensure 16-bit sound is enabled in RISC OS configuration for correct audio playback when using FPA-intensive applications.
+- Some applications (e.g., !AMPlayer) may exhibit timing-sensitive behaviour; if issues occur, test with the interpreter mode.
  
 ## Troubleshooting
 | Symptom | Remedy |

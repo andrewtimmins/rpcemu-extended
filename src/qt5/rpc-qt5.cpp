@@ -80,6 +80,10 @@ static QThread *gui_thread = NULL; ///< copy of reference to GUI thread
 QAtomicInt instruction_count; ///< Instruction counter shared between Emulator and GUI threads
 QAtomicInt iomd_timer_count;  ///< IOMD timer  counter shared between Emulator and GUI threads
 QAtomicInt video_timer_count; ///< Video timer counter shared between Emulator and GUI threads
+QAtomicInt hostfs_activity;   ///< HostFS activity counter shared between Emulator and GUI threads
+QAtomicInt network_activity;  ///< Network activity counter shared between Emulator and GUI threads
+QAtomicInt ide_activity;      ///< IDE activity counter shared between Emulator and GUI threads
+QAtomicInt fdc_activity;      ///< Floppy activity counter shared between Emulator and GUI threads
 
 static pthread_t sound_thread;
 static pthread_cond_t sound_cond = PTHREAD_COND_INITIALIZER;
@@ -293,6 +297,42 @@ vidcthreadrunner(void *threadid)
 
 
 extern "C" {
+
+/**
+ * Increment the HostFS activity counter.
+ * Called from the emulator thread when HostFS operations occur.
+ */
+void hostfs_activity_increment(void)
+{
+	hostfs_activity.fetchAndAddRelease(1);
+}
+
+/**
+ * Increment the network activity counter.
+ * Called from the emulator thread when network operations occur.
+ */
+void network_activity_increment(void)
+{
+	network_activity.fetchAndAddRelease(1);
+}
+
+/**
+ * Increment the IDE activity counter.
+ * Called from the emulator thread when IDE disk operations occur.
+ */
+void ide_activity_increment(void)
+{
+	ide_activity.fetchAndAddRelease(1);
+}
+
+/**
+ * Increment the floppy activity counter.
+ * Called from the emulator thread when floppy disk operations occur.
+ */
+void fdc_activity_increment(void)
+{
+	fdc_activity.fetchAndAddRelease(1);
+}
 
 
 /**

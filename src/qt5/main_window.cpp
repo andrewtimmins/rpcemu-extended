@@ -30,6 +30,8 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
+#include <QStatusBar>
+#include <QSettings>
 
 #if defined(Q_OS_WIN32)
 #include "Windows.h"
@@ -327,12 +329,26 @@ MainDisplay::save_screenshot(QString filename)
 MainWindow::MainWindow(Emulator &emulator)
 		: full_screen(false),
 			reenable_mousehack(false),
+			machine_inspector_window(nullptr),
 			emulator(emulator),
 			mips_timer(this),
 			mips_total_instructions(0),
 			mips_seconds(0),
-			machine_inspector_window(nullptr),
-			menu_open(false)
+			menu_open(false),
+			status_mips(nullptr),
+			status_avg_mips(nullptr),
+			status_fdc_label(nullptr),
+			status_fdc_led(nullptr),
+			status_ide_label(nullptr),
+			status_ide_led(nullptr),
+			status_hostfs_label(nullptr),
+			status_hostfs_led(nullptr),
+			status_network_label(nullptr),
+			status_network_led(nullptr),
+			fdc_led_timer(nullptr),
+			ide_led_timer(nullptr),
+			hostfs_led_timer(nullptr),
+			network_led_timer(nullptr)
 {
 	setWindowTitle("RPCEmu v" VERSION);
 
@@ -351,8 +367,12 @@ MainWindow::MainWindow(Emulator &emulator)
 	create_actions();
 	create_menus();
 	create_tool_bars();
+	create_status_bar();
 
 	readSettings();
+	
+	// Add current machine to recent machines list
+	add_to_recent_machines(QString::fromUtf8(config_copy.name));
 
 	this->setFixedSize(this->sizeHint());
 	setUnifiedTitleAndToolBarOnMac(true);
@@ -1356,6 +1376,19 @@ MainWindow::create_menus()
 	file_menu = menuBar()->addMenu(tr("File"));
 	file_menu->addAction(screenshot_action);
 	file_menu->addSeparator();
+	
+	// Recent Machines submenu
+	recent_machines_menu = file_menu->addMenu(tr("Recent Machines"));
+	for (int i = 0; i < MaxRecentMachines; i++) {
+		QAction *action = new QAction(this);
+		action->setVisible(false);
+		connect(action, &QAction::triggered, this, &MainWindow::menu_recent_machine_triggered);
+		recent_machines_menu->addAction(action);
+		recent_machine_actions.append(action);
+	}
+	update_recent_machines_menu();
+	
+	file_menu->addSeparator();
 	file_menu->addAction(reset_action);
 	file_menu->addSeparator();
 	file_menu->addAction(exit_action);
@@ -1431,6 +1464,200 @@ MainWindow::create_menus()
 void
 MainWindow::create_tool_bars()
 {
+}
+
+/**
+ * Create the status bar with MIPS, average MIPS, HostFS and network activity indicators.
+ */
+void
+MainWindow::create_status_bar()
+{
+	// LED style for inactive (grey) and active (colored)
+	const QString led_style_off = "QLabel { color: #888888; font-size: 14px; }";
+
+	status_mips = new QLabel("MIPS: -");
+	status_mips->setToolTip(tr("Current emulation speed in million instructions per second"));
+	status_avg_mips = new QLabel("Avg: -");
+	status_avg_mips->setToolTip(tr("Average emulation speed over session"));
+	
+	// Floppy indicator with LED (orange)
+	status_fdc_label = new QLabel("Floppy");
+	status_fdc_label->setToolTip(tr("Floppy disk activity"));
+	status_fdc_led = new QLabel(QString::fromUtf8("\xe2\x97\x8f")); // Unicode filled circle
+	status_fdc_led->setStyleSheet(led_style_off);
+	status_fdc_led->setToolTip(tr("Floppy disk activity"));
+	
+	// IDE indicator with LED (red for disk activity)
+	status_ide_label = new QLabel("HDD/CDROM");
+	status_ide_label->setToolTip(tr("Hard disk and CD-ROM activity"));
+	status_ide_led = new QLabel(QString::fromUtf8("\xe2\x97\x8f")); // Unicode filled circle
+	status_ide_led->setStyleSheet(led_style_off);
+	status_ide_led->setToolTip(tr("Hard disk and CD-ROM activity"));
+	
+	// HostFS indicator with LED (green)
+	status_hostfs_label = new QLabel("HostFS");
+	status_hostfs_label->setToolTip(tr("Host filesystem activity"));
+	status_hostfs_led = new QLabel(QString::fromUtf8("\xe2\x97\x8f")); // Unicode filled circle
+	status_hostfs_led->setStyleSheet(led_style_off);
+	status_hostfs_led->setToolTip(tr("Host filesystem activity"));
+	
+	// Network indicator with LED (blue)
+	status_network_label = new QLabel("Net");
+	status_network_label->setToolTip(tr("Network activity"));
+	status_network_led = new QLabel(QString::fromUtf8("\xe2\x97\x8f")); // Unicode filled circle
+	status_network_led->setStyleSheet(led_style_off);
+	status_network_led->setToolTip(tr("Network activity"));
+
+	// Add spacing between labels
+	status_mips->setMinimumWidth(80);
+	status_avg_mips->setMinimumWidth(80);
+
+	statusBar()->addWidget(status_mips);
+	statusBar()->addWidget(status_avg_mips);
+	statusBar()->addPermanentWidget(status_fdc_label);
+	statusBar()->addPermanentWidget(status_fdc_led);
+	statusBar()->addPermanentWidget(status_ide_label);
+	statusBar()->addPermanentWidget(status_ide_led);
+	statusBar()->addPermanentWidget(status_hostfs_label);
+	statusBar()->addPermanentWidget(status_hostfs_led);
+	statusBar()->addPermanentWidget(status_network_label);
+	statusBar()->addPermanentWidget(status_network_led);
+	
+	// Create timers for LED fade-off effect
+	fdc_led_timer = new QTimer(this);
+	fdc_led_timer->setSingleShot(true);
+	connect(fdc_led_timer, &QTimer::timeout, this, &MainWindow::fdc_led_timeout);
+	
+	ide_led_timer = new QTimer(this);
+	ide_led_timer->setSingleShot(true);
+	connect(ide_led_timer, &QTimer::timeout, this, &MainWindow::ide_led_timeout);
+	
+	hostfs_led_timer = new QTimer(this);
+	hostfs_led_timer->setSingleShot(true);
+	connect(hostfs_led_timer, &QTimer::timeout, this, &MainWindow::hostfs_led_timeout);
+	
+	network_led_timer = new QTimer(this);
+	network_led_timer->setSingleShot(true);
+	connect(network_led_timer, &QTimer::timeout, this, &MainWindow::network_led_timeout);
+}
+
+/**
+ * Update the Recent Machines menu from saved settings.
+ */
+void
+MainWindow::update_recent_machines_menu()
+{
+	QSettings settings("RPCEmu", "RPCEmu");
+	QStringList recent = settings.value("recentMachines").toStringList();
+
+	// Clear existing actions
+	for (int i = 0; i < recent_machine_actions.size(); i++) {
+		recent_machine_actions[i]->setVisible(false);
+	}
+
+	// Populate with recent machines
+	int num_recent = qMin(recent.size(), MaxRecentMachines);
+	for (int i = 0; i < num_recent; i++) {
+		QString text = QString("&%1 %2").arg(i + 1).arg(recent[i]);
+		recent_machine_actions[i]->setText(text);
+		recent_machine_actions[i]->setData(recent[i]);
+		recent_machine_actions[i]->setVisible(true);
+	}
+
+	// Show/hide the separator and "no recent" message
+	recent_machines_menu->setEnabled(num_recent > 0);
+}
+
+/**
+ * Add a machine to the recent machines list.
+ *
+ * @param machine_name Name of the machine to add
+ */
+void
+MainWindow::add_to_recent_machines(const QString &machine_name)
+{
+	if (machine_name.isEmpty()) {
+		return;
+	}
+
+	QSettings settings("RPCEmu", "RPCEmu");
+	QStringList recent = settings.value("recentMachines").toStringList();
+
+	// Remove if already in list (to move to top)
+	recent.removeAll(machine_name);
+
+	// Add to front
+	recent.prepend(machine_name);
+
+	// Limit size
+	while (recent.size() > MaxRecentMachines) {
+		recent.removeLast();
+	}
+
+	settings.setValue("recentMachines", recent);
+
+	update_recent_machines_menu();
+}
+
+/**
+ * Handler for when user clicks a recent machine entry.
+ */
+void
+MainWindow::menu_recent_machine_triggered()
+{
+	QAction *action = qobject_cast<QAction *>(sender());
+	if (action) {
+		QString machine_name = action->data().toString();
+		// Currently just informational - can't switch machines mid-session
+		// Could show a dialog telling user to restart with this machine
+		QMessageBox::information(this, tr("Recent Machine"),
+			tr("To switch to '%1', please restart RPCEmu and select it from the machine list.")
+			.arg(machine_name));
+	}
+}
+
+/**
+ * Turn off the FDC LED after timeout.
+ */
+void
+MainWindow::fdc_led_timeout()
+{
+	if (status_fdc_led) {
+		status_fdc_led->setStyleSheet("QLabel { color: #888888; font-size: 14px; }");
+	}
+}
+
+/**
+ * Turn off the IDE LED after timeout.
+ */
+void
+MainWindow::ide_led_timeout()
+{
+	if (status_ide_led) {
+		status_ide_led->setStyleSheet("QLabel { color: #888888; font-size: 14px; }");
+	}
+}
+
+/**
+ * Turn off the HostFS LED after timeout.
+ */
+void
+MainWindow::hostfs_led_timeout()
+{
+	if (status_hostfs_led) {
+		status_hostfs_led->setStyleSheet("QLabel { color: #888888; font-size: 14px; }");
+	}
+}
+
+/**
+ * Turn off the Network LED after timeout.
+ */
+void
+MainWindow::network_led_timeout()
+{
+	if (status_network_led) {
+		status_network_led->setStyleSheet("QLabel { color: #888888; font-size: 14px; }");
+	}
 }
 
 /**
@@ -1611,6 +1838,44 @@ MainWindow::mips_timer_timeout()
 	// Update global perf structure for Machine Inspector
 	perf.mips = (float) mips;
 
+	// Read (and zero atomically) the activity counters
+	const int fdc_ops = fdc_activity.fetchAndStoreRelease(0);
+	const int ide_ops = ide_activity.fetchAndStoreRelease(0);
+	const int hostfs_ops = hostfs_activity.fetchAndStoreRelease(0);
+	const int network_ops = network_activity.fetchAndStoreRelease(0);
+
+	// Update status bar
+	if (status_mips) {
+		status_mips->setText(QString("MIPS: %1").arg(mips, 0, 'f', 1));
+	}
+	if (status_avg_mips) {
+		status_avg_mips->setText(QString("Avg: %1").arg(average, 0, 'f', 1));
+	}
+	
+	// FDC LED - light up orange on activity
+	if (status_fdc_led && fdc_ops > 0) {
+		status_fdc_led->setStyleSheet("QLabel { color: #ff9900; font-size: 14px; }");
+		fdc_led_timer->start(200); // LED stays on for 200ms
+	}
+	
+	// IDE LED - light up red on activity
+	if (status_ide_led && ide_ops > 0) {
+		status_ide_led->setStyleSheet("QLabel { color: #ff3333; font-size: 14px; }");
+		ide_led_timer->start(200); // LED stays on for 200ms
+	}
+	
+	// HostFS LED - light up green on activity
+	if (status_hostfs_led && hostfs_ops > 0) {
+		status_hostfs_led->setStyleSheet("QLabel { color: #00cc00; font-size: 14px; }");
+		hostfs_led_timer->start(200); // LED stays on for 200ms
+	}
+	
+	// Network LED - light up blue on activity
+	if (status_network_led && network_ops > 0) {
+		status_network_led->setStyleSheet("QLabel { color: #0088ff; font-size: 14px; }");
+		network_led_timer->start(200); // LED stays on for 200ms
+	}
+
 	if(!pconfig_copy->mousehackon) {
 		if(mouse_captured) {
 			capture_text = " Press CTRL-END to release mouse";
@@ -1622,10 +1887,9 @@ MainWindow::mips_timer_timeout()
 	}
 
 #if 1
-	// Update window title
-	window_title = QString("RPCEmu - MIPS: %1 AVG: %2%3")
-	    .arg(mips, 0, 'f', 1)
-	    .arg(average, 0, 'f', 1)
+	// Update window title with machine name
+	window_title = QString("RPCEmu - %1%2")
+	    .arg(config_copy.name)
 	    .arg(capture_text);
 
 #else
@@ -1636,9 +1900,8 @@ MainWindow::mips_timer_timeout()
 	const int vcount = video_timer_count.fetchAndStoreRelease(0);
 
 	// Update window title (including timer information, for debug purposes)
-	window_title = QString("RPCEmu - MIPS: %1 AVG: %2, ITimer: %3, VTimer: %4%5")
-	    .arg(mips, 0, 'f', 1)
-	    .arg(average, 0, 'f', 1)
+	window_title = QString("RPCEmu - %1, ITimer: %2, VTimer: %3%4")
+	    .arg(config_copy.name)
 	    .arg(icount)
 	    .arg(vcount)
 	    .arg(capture_text);

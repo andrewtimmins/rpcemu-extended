@@ -23,7 +23,7 @@ int blockend;
 /*Preliminary FPA emulation. This works to an extent - !Draw works with it, !SICK
   seems to (FPA Whetstone scores are around 100x without), but !AMPlayer doesn't
   work, and GCC stuff tends to crash.*/
-//#define FPA
+#define FPA
 
 #include <stdio.h>
 #include <string.h>

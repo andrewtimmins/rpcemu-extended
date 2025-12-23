@@ -33,6 +33,10 @@
 extern QAtomicInt instruction_count;
 extern QAtomicInt iomd_timer_count; ///< IOMD timer counter shared between Emulator and GUI threads
 extern QAtomicInt video_timer_count; ///< Video timer counter shared between Emulator and GUI threads
+extern QAtomicInt hostfs_activity; ///< HostFS activity counter shared between Emulator and GUI threads
+extern QAtomicInt network_activity; ///< Network activity counter shared between Emulator and GUI threads
+extern QAtomicInt ide_activity;     ///< IDE activity counter shared between Emulator and GUI threads
+extern QAtomicInt fdc_activity;     ///< Floppy activity counter shared between Emulator and GUI threads
 
 extern int mouse_captured;
 extern Config *pconfig_copy;

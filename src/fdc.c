@@ -308,6 +308,7 @@ fdc_write(uint32_t addr, uint32_t val)
 					break;
 
 				case FD_CMD_WRITE_DATA_MFM:
+					fdc_activity_increment();
 					fdc.st0        = fdc.parameters[0] & 7;
 					fdc.st1        = 0;
 					fdc.st2        = 0;
@@ -320,6 +321,7 @@ fdc_write(uint32_t addr, uint32_t val)
 					break;
 
 				case FD_CMD_READ_DATA_MFM:
+					fdc_activity_increment();
 					fdc.in_read = 1;
 				case FD_CMD_VERIFY_DATA_MFM:
 					fdc.st0        = fdc.parameters[0] & 7;
@@ -349,6 +351,7 @@ fdc_write(uint32_t addr, uint32_t val)
 					break;
 
 				case FD_CMD_FORMAT_TRACK_MFM:
+					fdc_activity_increment();
 					fdc.st0        = fdc.parameters[0] & 7;
 					fdc.st1        = 0;
 					fdc.st2        = 0;

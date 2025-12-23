@@ -132,6 +132,7 @@ sound_irq_update(void)
         start = soundaddr[offset] & 0xFF0;
         end   = (soundaddr[offset + 1] & 0xFF0) + 16;
         len   = (end - start) >> 2;
+        
         soundlatch = (int) (((float) len / (float) samplefreq) * 2000000.0f);
 
         iomd.irqdma.status |= IOMD_IRQDMA_SOUND_0;
@@ -152,8 +153,8 @@ sound_irq_update(void)
         for (c = start; c < end; c += 4)
         {
                 temp = ramp[((c + page) & mem_rammask) >> 2];
-                bigsoundbuffer[bigsoundbufferhead][bigsoundpos++] = (temp & 0xFFFF); //^0x8000;
-                bigsoundbuffer[bigsoundbufferhead][bigsoundpos++] = (temp >> 16); //&0x8000;
+                bigsoundbuffer[bigsoundbufferhead][bigsoundpos++] = (int16_t)(temp & 0xFFFF);
+                bigsoundbuffer[bigsoundbufferhead][bigsoundpos++] = (int16_t)(temp >> 16);
                 if (bigsoundpos >= (BUFFERLENSAMPLES))
                 {
                         bigsoundbufferhead++;
