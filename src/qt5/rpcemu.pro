@@ -43,7 +43,9 @@ HEADERS =	../superio.h \
 		rpc-qt5.h \
 		plt_sound.h \
 		machine_snapshot.h \
-		machine_inspector_window.h
+		machine_inspector_window.h \
+		vnc_server.h \
+		vnc_dialog.h
 
 SOURCES =	../superio.c \
 		../cdrom-iso.c \
@@ -78,7 +80,9 @@ SOURCES =	../superio.c \
 		config_selector_dialog.cpp \
 		about_dialog.cpp \
 		plt_sound.cpp \
-		machine_inspector_window.cpp
+		machine_inspector_window.cpp \
+		vnc_server.cpp \
+		vnc_dialog.cpp
 
 # NAT Networking
 linux | win32 {
@@ -165,6 +169,11 @@ linux {
 			network_dialog.cpp
 	HEADERS +=	../network.h \
 			network_dialog.h
+
+	# VNC Server support using libvncserver
+	CONFIG += link_pkgconfig
+	PKGCONFIG += libvncserver
+	DEFINES += RPCEMU_VNC
 }
 
 unix {

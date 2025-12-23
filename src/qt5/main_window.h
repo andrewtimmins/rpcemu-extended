@@ -32,6 +32,10 @@
 #include "about_dialog.h"
 #include "rpc-qt5.h"
 
+#ifdef RPCEMU_VNC
+#include "vnc_server.h"
+#endif
+
 #include "rpcemu.h"
 
 class MachineInspectorWindow;
@@ -139,6 +143,9 @@ private slots:
 #endif /* RPCEMU_NETWORKING */
 	void menu_fullscreen();
 	void menu_integer_scaling();
+#ifdef RPCEMU_VNC
+	void menu_vnc_server();
+#endif
 	void menu_cpu_idle();
 	void menu_mouse_hack();
 	void menu_mouse_twobutton();
@@ -244,6 +251,9 @@ private:
 #endif /* RPCEMU_NETWORKING */
 	QAction *fullscreen_action;
 	QAction *integer_scaling_action;
+#ifdef RPCEMU_VNC
+	QAction *vnc_server_action;
+#endif
 	QAction *cpu_idle_action;
 	QAction *mouse_hack_action;
 	QAction *mouse_twobutton_action;
@@ -263,6 +273,11 @@ private:
 	NatListDialog *nat_list_dialog;
 	AboutDialog *about_dialog;
  	MachineInspectorWindow *machine_inspector_window;
+
+#ifdef RPCEMU_VNC
+	// VNC Server
+	VncServer *vnc_server;
+#endif
 
 	// Pointer to emulator instance
 	Emulator &emulator;

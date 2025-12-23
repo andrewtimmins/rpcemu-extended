@@ -316,6 +316,17 @@ config_load_from_path(Config *config, const char *path)
 	config->show_fullscreen_message = settings.value("show_fullscreen_message", "1").toInt();
 	config->integer_scaling = settings.value("integer_scaling", "0").toInt();
 
+	config->vnc_enabled = settings.value("vnc_enabled", "0").toInt();
+	config->vnc_port = settings.value("vnc_port", "5900").toInt();
+	sText = settings.value("vnc_password", "").toString();
+	if (!sText.isEmpty()) {
+		ba = sText.toUtf8();
+		strncpy(config->vnc_password, ba.constData(), sizeof(config->vnc_password) - 1);
+		config->vnc_password[sizeof(config->vnc_password) - 1] = '\0';
+	} else {
+		config->vnc_password[0] = '\0';
+	}
+
 	sText = settings.value("network_capture", "").toString();
 	if (sText != "") {
 		ba = sText.toUtf8();
@@ -417,6 +428,10 @@ config_save_to_path(Config *config, const char *path)
 	settings.setValue("cpu_idle", config->cpu_idle);
 	settings.setValue("show_fullscreen_message", config->show_fullscreen_message);
 	settings.setValue("integer_scaling", config->integer_scaling);
+
+	settings.setValue("vnc_enabled", config->vnc_enabled);
+	settings.setValue("vnc_port", config->vnc_port);
+	settings.setValue("vnc_password", config->vnc_password);
 
 	if (config->network_capture) {
 		settings.setValue("network_capture", config->network_capture);

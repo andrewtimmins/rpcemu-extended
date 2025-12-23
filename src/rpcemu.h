@@ -177,6 +177,9 @@ typedef struct {
 	int show_fullscreen_message;	/**< Show explanation of how to leave fullscreen, on entering fullscreen */
 	int integer_scaling;	/**< Use integer scaling (2x, 3x) for sharp pixels instead of smooth scaling */
 	char *network_capture;		///< Path to capture network traffic file, or NULL to disable
+	int vnc_enabled;	/**< Enable the built-in VNC server */
+	int vnc_port;		/**< Port for the VNC server (default 5900) */
+	char vnc_password[64];	/**< Password for VNC authentication (empty = no auth) */
 } Config;
 
 extern Config config;

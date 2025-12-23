@@ -100,6 +100,9 @@ Config config = {
 	1,			/* show_fullscreen_message */
 	0,			/* integer_scaling */
 	NULL,			/* network_capture */
+	0,			/* vnc_enabled */
+	5900,			/* vnc_port */
+	"",			/* vnc_password */
 };
 
 /* Performance measuring variables */

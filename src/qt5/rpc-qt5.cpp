@@ -55,6 +55,10 @@ extern "C" {
 #include "podules.h"
 }
 
+#ifdef RPCEMU_VNC
+#include "vnc_server.h"
+#endif
+
 extern "C" {
 extern void podulerom_mouse_wheel_change(int dy);
 }
@@ -430,6 +434,13 @@ rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize,
 
 	// Send update message to GUI
 	emit pMainWin->main_display_signal(video_update);
+
+#ifdef RPCEMU_VNC
+	// Update VNC server if running
+	if (g_vncServer && g_vncServer->isRunning()) {
+		g_vncServer->updateFramebuffer(buffer, xsize, ysize, yl, yh);
+	}
+#endif
 
 	// Send flyback message to emulator thread
 	emit emulator->video_flyback_signal();

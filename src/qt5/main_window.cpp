@@ -46,6 +46,11 @@
 #include "machine_snapshot.h"
 #include "config_selector_dialog.h"
 
+#ifdef RPCEMU_VNC
+#include "vnc_server.h"
+#include "vnc_dialog.h"
+#endif
+
 #define URL_MANUAL	"http://www.marutan.net/rpcemu/manual/"
 #define URL_WEBSITE	"http://www.marutan.net/rpcemu/"
 
@@ -370,6 +375,9 @@ MainWindow::MainWindow(Emulator &emulator)
 		: full_screen(false),
 			reenable_mousehack(false),
 			machine_inspector_window(nullptr),
+#ifdef RPCEMU_VNC
+			vnc_server(nullptr),
+#endif
 			emulator(emulator),
 			mips_timer(this),
 			mips_total_instructions(0),
@@ -439,6 +447,18 @@ MainWindow::MainWindow(Emulator &emulator)
 	configure_dialog = new ConfigureDialog(emulator, &config_copy, &model_copy, this);
 	nat_list_dialog = new NatListDialog(emulator, this);
 	about_dialog = new AboutDialog(this);
+
+#ifdef RPCEMU_VNC
+	// VNC Server
+	vnc_server = new VncServer(&emulator, this);
+	g_vncServer = vnc_server;
+	
+	// Auto-start VNC if enabled in config
+	if (config_copy.vnc_enabled) {
+		QString password = QString::fromUtf8(config_copy.vnc_password);
+		vnc_server->start(config_copy.vnc_port, password);
+	}
+#endif
 
 	// MIPS counting
 	window_title.reserve(128);
@@ -1080,6 +1100,32 @@ MainWindow::menu_integer_scaling()
 	emit this->emulator.integer_scaling_signal();
 }
 
+#ifdef RPCEMU_VNC
+/**
+ * Handle clicking on the Settings->VNC Server... option
+ * Opens the VNC server configuration dialog
+ */
+void
+MainWindow::menu_vnc_server()
+{
+	QString currentPassword = QString::fromUtf8(config_copy.vnc_password);
+	VncDialog dialog(vnc_server, currentPassword, this);
+	dialog.exec();
+	
+	// Update config based on VNC server state and dialog settings
+	config_copy.vnc_enabled = vnc_server->isRunning() ? 1 : 0;
+	config_copy.vnc_port = vnc_server->getPort();
+	if (config_copy.vnc_port == 0) {
+		config_copy.vnc_port = 5900;
+	}
+	
+	// Save password from dialog
+	QByteArray pwdBytes = dialog.getPassword().toUtf8();
+	strncpy(config_copy.vnc_password, pwdBytes.constData(), sizeof(config_copy.vnc_password) - 1);
+	config_copy.vnc_password[sizeof(config_copy.vnc_password) - 1] = '\0';
+}
+#endif
+
 
 void
 MainWindow::menu_cdrom_disabled()
@@ -1374,6 +1420,10 @@ MainWindow::create_actions()
 	integer_scaling_action->setCheckable(true);
 	integer_scaling_action->setChecked(config_copy.integer_scaling != 0);
 	connect(integer_scaling_action, &QAction::triggered, this, &MainWindow::menu_integer_scaling);
+#ifdef RPCEMU_VNC
+	vnc_server_action = new QAction(tr("VNC Server..."), this);
+	connect(vnc_server_action, &QAction::triggered, this, &MainWindow::menu_vnc_server);
+#endif
 	cpu_idle_action = new QAction(tr("Reduce CPU Usage"), this);
 	cpu_idle_action->setCheckable(true);
 	connect(cpu_idle_action, &QAction::triggered, this, &MainWindow::menu_cpu_idle);
@@ -1489,6 +1539,10 @@ MainWindow::create_menus()
 	settings_menu->addAction(fullscreen_action);
 	settings_menu->addAction(integer_scaling_action);
 	settings_menu->addSeparator();
+#ifdef RPCEMU_VNC
+	settings_menu->addAction(vnc_server_action);
+	settings_menu->addSeparator();
+#endif
 	settings_menu->addAction(cpu_idle_action);
 	settings_menu->addSeparator();
 	mouse_menu = settings_menu->addMenu(tr("Mouse"));
