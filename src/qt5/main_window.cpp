@@ -1670,6 +1670,101 @@ MainWindow::create_menus()
 void
 MainWindow::create_tool_bars()
 {
+	main_toolbar = addToolBar(tr("Main Toolbar"));
+	main_toolbar->setObjectName("MainToolbar"); // For saving state
+	main_toolbar->setMovable(false);
+	main_toolbar->setIconSize(QSize(24, 24));
+
+	// Screenshot - use camera/save icon
+	QAction *tb_screenshot = main_toolbar->addAction(
+		style()->standardIcon(QStyle::SP_DialogSaveButton),
+		tr("Screenshot"));
+	tb_screenshot->setToolTip(tr("Save screenshot (Ctrl+S)"));
+	connect(tb_screenshot, &QAction::triggered, this, &MainWindow::menu_screenshot);
+
+	main_toolbar->addSeparator();
+
+	// Load Floppy - use file open icon
+	QAction *tb_load_floppy = main_toolbar->addAction(
+		style()->standardIcon(QStyle::SP_DriveFDIcon),
+		tr("Load Floppy"));
+	tb_load_floppy->setToolTip(tr("Load floppy disc into drive :0 (Ctrl+1)"));
+	connect(tb_load_floppy, &QAction::triggered, this, &MainWindow::menu_loaddisc0);
+
+	// Load CD-ROM - use CD icon
+	QAction *tb_load_cdrom = main_toolbar->addAction(
+		style()->standardIcon(QStyle::SP_DriveCDIcon),
+		tr("Load CD-ROM"));
+	tb_load_cdrom->setToolTip(tr("Load CD-ROM ISO image"));
+	connect(tb_load_cdrom, &QAction::triggered, this, &MainWindow::menu_cdrom_iso);
+
+	main_toolbar->addSeparator();
+
+	// Reset - use refresh/reload icon
+	QAction *tb_reset = main_toolbar->addAction(
+		style()->standardIcon(QStyle::SP_BrowserReload),
+		tr("Reset"));
+	tb_reset->setToolTip(tr("Reset machine (Ctrl+R)"));
+	connect(tb_reset, &QAction::triggered, this, &MainWindow::menu_reset);
+
+	main_toolbar->addSeparator();
+
+	// Run - use media play icon
+	QAction *tb_run = main_toolbar->addAction(
+		style()->standardIcon(QStyle::SP_MediaPlay),
+		tr("Run"));
+	tb_run->setToolTip(tr("Run emulation (F5)"));
+	connect(tb_run, &QAction::triggered, this, &MainWindow::menu_debug_run);
+
+	// Pause - use media pause icon
+	QAction *tb_pause = main_toolbar->addAction(
+		style()->standardIcon(QStyle::SP_MediaPause),
+		tr("Pause"));
+	tb_pause->setToolTip(tr("Pause emulation (F6)"));
+	connect(tb_pause, &QAction::triggered, this, &MainWindow::menu_debug_pause);
+
+	// Step - use media skip forward icon
+	QAction *tb_step = main_toolbar->addAction(
+		style()->standardIcon(QStyle::SP_MediaSkipForward),
+		tr("Step"));
+	tb_step->setToolTip(tr("Single step (F7)"));
+	connect(tb_step, &QAction::triggered, this, &MainWindow::menu_debug_step);
+
+	main_toolbar->addSeparator();
+
+	// Mute - use media volume icon
+	QAction *tb_mute = main_toolbar->addAction(
+		style()->standardIcon(QStyle::SP_MediaVolume),
+		tr("Mute"));
+	tb_mute->setToolTip(tr("Toggle sound mute (F10)"));
+	tb_mute->setCheckable(true);
+	tb_mute->setChecked(false);
+	connect(tb_mute, &QAction::triggered, this, &MainWindow::menu_mute_sound);
+	// Keep in sync with menu action
+	connect(mute_sound_action, &QAction::toggled, tb_mute, &QAction::setChecked);
+
+	main_toolbar->addSeparator();
+
+	// Fullscreen - use desktop icon
+	QAction *tb_fullscreen = main_toolbar->addAction(
+		style()->standardIcon(QStyle::SP_TitleBarMaxButton),
+		tr("Fullscreen"));
+	tb_fullscreen->setToolTip(tr("Toggle full-screen mode (F11)"));
+	connect(tb_fullscreen, &QAction::triggered, this, &MainWindow::menu_fullscreen);
+
+	// Configure - use preferences/dialog icon
+	QAction *tb_configure = main_toolbar->addAction(
+		style()->standardIcon(QStyle::SP_FileDialogDetailedView),
+		tr("Configure"));
+	tb_configure->setToolTip(tr("Configure machine settings (Ctrl+,)"));
+	connect(tb_configure, &QAction::triggered, this, &MainWindow::menu_configure);
+
+	// Machine Inspector - use computer icon
+	QAction *tb_inspector = main_toolbar->addAction(
+		style()->standardIcon(QStyle::SP_ComputerIcon),
+		tr("Inspector"));
+	tb_inspector->setToolTip(tr("Open Machine Inspector (Ctrl+I)"));
+	connect(tb_inspector, &QAction::triggered, this, &MainWindow::menu_machine_inspector);
 }
 
 /**

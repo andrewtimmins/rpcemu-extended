@@ -26,6 +26,7 @@
 #include <QMenu>
 #include <QStatusBar>
 #include <QSettings>
+#include <QToolBar>
 
 #include "configure_dialog.h"
 #include "nat_list_dialog.h"
@@ -238,6 +239,9 @@ private:
 	QMenu *mouse_menu;
 	QMenu *debug_menu;
 	QMenu *help_menu;
+
+	// Toolbar
+	QToolBar *main_toolbar;
 
 	// Actions on File menu
 	QAction *screenshot_action;
