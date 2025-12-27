@@ -2,7 +2,7 @@
 #include <stdio.h>
 
 #undef UNICODE
-#include <Windows.h>
+#include <windows.h>
 
 #include "hostfs_internal.h"
 

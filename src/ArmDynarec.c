@@ -34,7 +34,7 @@ int blockend;
 #	include <unistd.h>
 #	include <sys/mman.h>
 #elif defined WIN32 || defined _WIN32
-#	include <Windows.h>
+#	include <windows.h>
 #endif
 
 #include "rpcemu.h"

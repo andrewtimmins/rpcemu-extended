@@ -112,10 +112,10 @@ MXE builds standard Windows binaries (MinGW).
     ```
 
 2.  **Build Qt5 (This takes a long time - hours):**
-    This builds the cross-compiler and Qt library for Windows.
+    This builds the cross-compiler and Qt library for Windows (32-bit).
     ```bash
     cd /opt/mxe
-    make qtbase
+    make MXE_TARGETS='i686-w64-mingw32.static' qtbase qtmultimedia
     ```
 
 3.  **Add to PATH:**
@@ -131,9 +131,8 @@ Once MXE is ready, build RPCEmu using the MXE-specific wrapper scripts:
 # Navigate to src/qt5
 cd src/qt5
 
-# Run MXE qmake
-# Note: 'x86_64-w64-mingw32.static-qmake-qt5' might vary slightly depending on MXE version/target
-/opt/mxe/usr/bin/x86_64-w64-mingw32.static-qmake-qt5 rpcemu.pro
+# Run MXE qmake (32-bit Windows target)
+/opt/mxe/usr/bin/i686-w64-mingw32.static-qmake-qt5 rpcemu.pro
 
 # Compile
 make

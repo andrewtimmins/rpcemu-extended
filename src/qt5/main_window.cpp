@@ -34,7 +34,7 @@
 #include <QSettings>
 
 #if defined(Q_OS_WIN32)
-#include "Windows.h"
+#include "windows.h"
 #endif /* Q_OS_WIN32 */ 
 
 #include "rpcemu.h"
