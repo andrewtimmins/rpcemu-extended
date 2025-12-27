@@ -3,6 +3,15 @@
 ## Overview
 This repository hosts a feature-rich fork of **RPCEmu**, the open-source emulator for Acorn Risc PC and A7000 machines. Alongside the standard emulator core, this edition layers in a modern Qt 5 front-end, a live machine inspector, integrated debugger controls, and a multi-machine configuration system. The project remains distributed under the GNU GPL v2.
 
+## Screenshots
+![Machine Selection](screenshots/machine-selection.png)
+![New Layout](screenshots/new-layout.png)
+![VNC Server](screenshots/vnc.png)
+![Access](screenshots/access.png)
+![Machine Inspector](screenshots/inspector.png)
+![Dissassembler](screenshots/diss.png)
+![Memory Browser](screenshots/mem.png)
+
 ## Fork highlights
 - **Multi-machine configuration** – Create, edit, clone and manage multiple machine configurations from a startup selector dialog. Each machine has isolated CMOS, HostFS and hard disc storage.
 - **Quick machine switching** – Switch between machines on-the-fly via File → Recent Machines without restarting the emulator.
