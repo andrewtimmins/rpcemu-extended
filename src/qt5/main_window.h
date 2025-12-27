@@ -150,6 +150,9 @@ private slots:
 #ifdef RPCEMU_VNC
 	void menu_vnc_server();
 #endif
+	void menu_serial();
+	void menu_parallel();
+
 	void menu_cpu_idle();
 	void menu_mouse_hack();
 	void menu_mouse_twobutton();
@@ -276,6 +279,9 @@ private:
 #ifdef RPCEMU_VNC
 	QAction *vnc_server_action;
 #endif
+	QAction *serial_action;
+	QAction *parallel_action;
+
 	QAction *cpu_idle_action;
 	QAction *mouse_hack_action;
 	QAction *mouse_twobutton_action;
@@ -295,6 +301,8 @@ private:
 	NatListDialog *nat_list_dialog;
 	AboutDialog *about_dialog;
  	MachineInspectorWindow *machine_inspector_window;
+	class SerialDialog *serial_dialog;
+	class ParallelDialog *parallel_dialog;
 
 #ifdef RPCEMU_VNC
 	// VNC Server

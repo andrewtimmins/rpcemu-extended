@@ -44,10 +44,16 @@ HEADERS =	../superio.h \
 		plt_sound.h \
 		machine_snapshot.h \
 		machine_inspector_window.h \
-		vnc_server.h \
-		vnc_dialog.h
+		../vnc_server.h \
+		vnc_dialog.h \
+		serial_dialog.h \
+		parallel_dialog.h \
+		../parallel.h \
+		../serial.h
 
 SOURCES =	../superio.c \
+		../parallel.c \
+		../serial.c \
 		../cdrom-iso.c \
 		../cmos.c \
 		../cp15.c \
@@ -73,6 +79,7 @@ SOURCES =	../superio.c \
 		../disc_adf.c \
 		../disc_hfe.c \
 		../disc_mfm_common.c \
+		../vnc_server.cpp \
 		settings.cpp \
 		rpc-qt5.cpp \
 		main_window.cpp \
@@ -81,8 +88,9 @@ SOURCES =	../superio.c \
 		about_dialog.cpp \
 		plt_sound.cpp \
 		machine_inspector_window.cpp \
-		vnc_server.cpp \
-		vnc_dialog.cpp
+		vnc_dialog.cpp \
+		serial_dialog.cpp \
+		parallel_dialog.cpp
 
 # NAT Networking
 linux | win32 {

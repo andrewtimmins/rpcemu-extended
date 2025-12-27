@@ -52,6 +52,8 @@ OBJECTS_DIR   = release/
 ####### Files
 
 SOURCES       = ../superio.c \
+		../parallel.c \
+		../serial.c \
 		../cdrom-iso.c \
 		../cmos.c \
 		../cp15.c \
@@ -77,6 +79,7 @@ SOURCES       = ../superio.c \
 		../disc_adf.c \
 		../disc_hfe.c \
 		../disc_mfm_common.c \
+		../vnc_server.cpp \
 		settings.cpp \
 		rpc-qt5.cpp \
 		main_window.cpp \
@@ -85,8 +88,9 @@ SOURCES       = ../superio.c \
 		about_dialog.cpp \
 		plt_sound.cpp \
 		machine_inspector_window.cpp \
-		vnc_server.cpp \
 		vnc_dialog.cpp \
+		serial_dialog.cpp \
+		parallel_dialog.cpp \
 		../network-nat.c \
 		../broadcast_relay.c \
 		nat_edit_dialog.cpp \
@@ -127,10 +131,14 @@ SOURCES       = ../superio.c \
 		release/moc_machine_inspector_window.cpp \
 		release/moc_vnc_server.cpp \
 		release/moc_vnc_dialog.cpp \
+		release/moc_serial_dialog.cpp \
+		release/moc_parallel_dialog.cpp \
 		release/moc_nat_edit_dialog.cpp \
 		release/moc_nat_list_dialog.cpp \
 		release/moc_network_dialog.cpp
 OBJECTS       = release/superio.o \
+		release/parallel.o \
+		release/serial.o \
 		release/cdrom-iso.o \
 		release/cmos.o \
 		release/cp15.o \
@@ -156,6 +164,7 @@ OBJECTS       = release/superio.o \
 		release/disc_adf.o \
 		release/disc_hfe.o \
 		release/disc_mfm_common.o \
+		release/vnc_server.o \
 		release/settings.o \
 		release/rpc-qt5.o \
 		release/main_window.o \
@@ -164,8 +173,9 @@ OBJECTS       = release/superio.o \
 		release/about_dialog.o \
 		release/plt_sound.o \
 		release/machine_inspector_window.o \
-		release/vnc_server.o \
 		release/vnc_dialog.o \
+		release/serial_dialog.o \
+		release/parallel_dialog.o \
 		release/network-nat.o \
 		release/broadcast_relay.o \
 		release/nat_edit_dialog.o \
@@ -207,6 +217,8 @@ OBJECTS       = release/superio.o \
 		release/moc_machine_inspector_window.o \
 		release/moc_vnc_server.o \
 		release/moc_vnc_dialog.o \
+		release/moc_serial_dialog.o \
+		release/moc_parallel_dialog.o \
 		release/moc_nat_edit_dialog.o \
 		release/moc_nat_list_dialog.o \
 		release/moc_network_dialog.o
@@ -320,8 +332,12 @@ DIST          = /usr/lib/x86_64-linux-gnu/qt5/mkspecs/features/spec_pre.prf \
 		plt_sound.h \
 		machine_snapshot.h \
 		machine_inspector_window.h \
-		vnc_server.h \
+		../vnc_server.h \
 		vnc_dialog.h \
+		serial_dialog.h \
+		parallel_dialog.h \
+		../parallel.h \
+		../serial.h \
 		../network-nat.h \
 		../broadcast_relay.h \
 		nat_edit_dialog.h \
@@ -351,6 +367,8 @@ DIST          = /usr/lib/x86_64-linux-gnu/qt5/mkspecs/features/spec_pre.prf \
 		../ArmDynarecOps.h \
 		../codegen_x86_common.h \
 		../codegen_amd64.h ../superio.c \
+		../parallel.c \
+		../serial.c \
 		../cdrom-iso.c \
 		../cmos.c \
 		../cp15.c \
@@ -376,6 +394,7 @@ DIST          = /usr/lib/x86_64-linux-gnu/qt5/mkspecs/features/spec_pre.prf \
 		../disc_adf.c \
 		../disc_hfe.c \
 		../disc_mfm_common.c \
+		../vnc_server.cpp \
 		settings.cpp \
 		rpc-qt5.cpp \
 		main_window.cpp \
@@ -384,8 +403,9 @@ DIST          = /usr/lib/x86_64-linux-gnu/qt5/mkspecs/features/spec_pre.prf \
 		about_dialog.cpp \
 		plt_sound.cpp \
 		machine_inspector_window.cpp \
-		vnc_server.cpp \
 		vnc_dialog.cpp \
+		serial_dialog.cpp \
+		parallel_dialog.cpp \
 		../network-nat.c \
 		../broadcast_relay.c \
 		nat_edit_dialog.cpp \
@@ -444,8 +464,8 @@ distdir: FORCE
 	$(COPY_FILE) --parents $(DIST) $(DISTDIR)/
 	$(COPY_FILE) --parents icon.qrc resources.qrc $(DISTDIR)/
 	$(COPY_FILE) --parents /usr/lib/x86_64-linux-gnu/qt5/mkspecs/features/data/dummy.cpp $(DISTDIR)/
-	$(COPY_FILE) --parents ../superio.h ../cdrom-iso.h ../cmos.h ../cp15.h ../fdc.h ../hostfs.h ../hostfs_internal.h ../ide.h ../iomd.h ../keyboard.h ../mem.h ../sound.h ../vidc20.h ../arm_common.h ../arm.h ../arm_disasm.h ../disc.h ../disc_adf.h ../disc_hfe.h ../disc_mfm_common.h main_window.h configure_dialog.h config_selector_dialog.h about_dialog.h rpc-qt5.h plt_sound.h machine_snapshot.h machine_inspector_window.h vnc_server.h vnc_dialog.h ../network-nat.h ../broadcast_relay.h nat_edit_dialog.h nat_list_dialog.h ../slirp/bootp.h ../slirp/cutils.h ../slirp/debug.h ../slirp/if.h ../slirp/ip.h ../slirp/ip_icmp.h ../slirp/libslirp.h ../slirp/main.h ../slirp/mbuf.h ../slirp/misc.h ../slirp/sbuf.h ../slirp/slirp_config.h ../slirp/slirp.h ../slirp/socket.h ../slirp/tcp.h ../slirp/tcpip.h ../slirp/tcp_timer.h ../slirp/tcp_var.h ../slirp/tftp.h ../slirp/udp.h ../network.h network_dialog.h ../ArmDynarecOps.h ../codegen_x86_common.h ../codegen_amd64.h $(DISTDIR)/
-	$(COPY_FILE) --parents ../superio.c ../cdrom-iso.c ../cmos.c ../cp15.c ../fdc.c ../fpa.c ../hostfs.c ../ide.c ../iomd.c ../keyboard.c ../mem.c ../romload.c ../rpcemu.c ../sound.c ../vidc20.c ../podules.c ../podulerom.c ../icside.c ../rpc-machdep.c ../arm_common.c ../arm_disasm.c ../i8042.c ../disc.c ../disc_adf.c ../disc_hfe.c ../disc_mfm_common.c settings.cpp rpc-qt5.cpp main_window.cpp configure_dialog.cpp config_selector_dialog.cpp about_dialog.cpp plt_sound.cpp machine_inspector_window.cpp vnc_server.cpp vnc_dialog.cpp ../network-nat.c ../broadcast_relay.c nat_edit_dialog.cpp nat_list_dialog.cpp ../slirp/bootp.c ../slirp/cksum.c ../slirp/cutils.c ../slirp/if.c ../slirp/ip_icmp.c ../slirp/ip_input.c ../slirp/ip_output.c ../slirp/mbuf.c ../slirp/misc.c ../slirp/sbuf.c ../slirp/slirp.c ../slirp/socket.c ../slirp/tcp_input.c ../slirp/tcp_output.c ../slirp/tcp_subr.c ../slirp/tcp_timer.c ../slirp/udp.c ../cdrom-linuxioctl.c ../network-linux.c ../network.c network_dialog.cpp keyboard_x.c ../hostfs-unix.c ../rpc-linux.c ../ArmDynarec.c ../codegen_amd64.c $(DISTDIR)/
+	$(COPY_FILE) --parents ../superio.h ../cdrom-iso.h ../cmos.h ../cp15.h ../fdc.h ../hostfs.h ../hostfs_internal.h ../ide.h ../iomd.h ../keyboard.h ../mem.h ../sound.h ../vidc20.h ../arm_common.h ../arm.h ../arm_disasm.h ../disc.h ../disc_adf.h ../disc_hfe.h ../disc_mfm_common.h main_window.h configure_dialog.h config_selector_dialog.h about_dialog.h rpc-qt5.h plt_sound.h machine_snapshot.h machine_inspector_window.h ../vnc_server.h vnc_dialog.h serial_dialog.h parallel_dialog.h ../parallel.h ../serial.h ../network-nat.h ../broadcast_relay.h nat_edit_dialog.h nat_list_dialog.h ../slirp/bootp.h ../slirp/cutils.h ../slirp/debug.h ../slirp/if.h ../slirp/ip.h ../slirp/ip_icmp.h ../slirp/libslirp.h ../slirp/main.h ../slirp/mbuf.h ../slirp/misc.h ../slirp/sbuf.h ../slirp/slirp_config.h ../slirp/slirp.h ../slirp/socket.h ../slirp/tcp.h ../slirp/tcpip.h ../slirp/tcp_timer.h ../slirp/tcp_var.h ../slirp/tftp.h ../slirp/udp.h ../network.h network_dialog.h ../ArmDynarecOps.h ../codegen_x86_common.h ../codegen_amd64.h $(DISTDIR)/
+	$(COPY_FILE) --parents ../superio.c ../parallel.c ../serial.c ../cdrom-iso.c ../cmos.c ../cp15.c ../fdc.c ../fpa.c ../hostfs.c ../ide.c ../iomd.c ../keyboard.c ../mem.c ../romload.c ../rpcemu.c ../sound.c ../vidc20.c ../podules.c ../podulerom.c ../icside.c ../rpc-machdep.c ../arm_common.c ../arm_disasm.c ../i8042.c ../disc.c ../disc_adf.c ../disc_hfe.c ../disc_mfm_common.c ../vnc_server.cpp settings.cpp rpc-qt5.cpp main_window.cpp configure_dialog.cpp config_selector_dialog.cpp about_dialog.cpp plt_sound.cpp machine_inspector_window.cpp vnc_dialog.cpp serial_dialog.cpp parallel_dialog.cpp ../network-nat.c ../broadcast_relay.c nat_edit_dialog.cpp nat_list_dialog.cpp ../slirp/bootp.c ../slirp/cksum.c ../slirp/cutils.c ../slirp/if.c ../slirp/ip_icmp.c ../slirp/ip_input.c ../slirp/ip_output.c ../slirp/mbuf.c ../slirp/misc.c ../slirp/sbuf.c ../slirp/slirp.c ../slirp/socket.c ../slirp/tcp_input.c ../slirp/tcp_output.c ../slirp/tcp_subr.c ../slirp/tcp_timer.c ../slirp/udp.c ../cdrom-linuxioctl.c ../network-linux.c ../network.c network_dialog.cpp keyboard_x.c ../hostfs-unix.c ../rpc-linux.c ../ArmDynarec.c ../codegen_amd64.c $(DISTDIR)/
 
 
 clean: compiler_clean 
@@ -492,9 +512,9 @@ compiler_moc_predefs_clean:
 release/moc_predefs.h: /usr/lib/x86_64-linux-gnu/qt5/mkspecs/features/data/dummy.cpp
 	g++ -pipe -Werror=switch -fno-common -O2 -Wall -Wextra -dM -E -o release/moc_predefs.h /usr/lib/x86_64-linux-gnu/qt5/mkspecs/features/data/dummy.cpp
 
-compiler_moc_header_make_all: release/moc_main_window.cpp release/moc_configure_dialog.cpp release/moc_config_selector_dialog.cpp release/moc_about_dialog.cpp release/moc_rpc-qt5.cpp release/moc_plt_sound.cpp release/moc_machine_inspector_window.cpp release/moc_vnc_server.cpp release/moc_vnc_dialog.cpp release/moc_nat_edit_dialog.cpp release/moc_nat_list_dialog.cpp release/moc_network_dialog.cpp
+compiler_moc_header_make_all: release/moc_main_window.cpp release/moc_configure_dialog.cpp release/moc_config_selector_dialog.cpp release/moc_about_dialog.cpp release/moc_rpc-qt5.cpp release/moc_plt_sound.cpp release/moc_machine_inspector_window.cpp release/moc_vnc_server.cpp release/moc_vnc_dialog.cpp release/moc_serial_dialog.cpp release/moc_parallel_dialog.cpp release/moc_nat_edit_dialog.cpp release/moc_nat_list_dialog.cpp release/moc_network_dialog.cpp
 compiler_moc_header_clean:
-	-$(DEL_FILE) release/moc_main_window.cpp release/moc_configure_dialog.cpp release/moc_config_selector_dialog.cpp release/moc_about_dialog.cpp release/moc_rpc-qt5.cpp release/moc_plt_sound.cpp release/moc_machine_inspector_window.cpp release/moc_vnc_server.cpp release/moc_vnc_dialog.cpp release/moc_nat_edit_dialog.cpp release/moc_nat_list_dialog.cpp release/moc_network_dialog.cpp
+	-$(DEL_FILE) release/moc_main_window.cpp release/moc_configure_dialog.cpp release/moc_config_selector_dialog.cpp release/moc_about_dialog.cpp release/moc_rpc-qt5.cpp release/moc_plt_sound.cpp release/moc_machine_inspector_window.cpp release/moc_vnc_server.cpp release/moc_vnc_dialog.cpp release/moc_serial_dialog.cpp release/moc_parallel_dialog.cpp release/moc_nat_edit_dialog.cpp release/moc_nat_list_dialog.cpp release/moc_network_dialog.cpp
 release/moc_main_window.cpp: main_window.h \
 		configure_dialog.h \
 		rpc-qt5.h \
@@ -502,10 +522,11 @@ release/moc_main_window.cpp: main_window.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		machine_snapshot.h \
 		nat_list_dialog.h \
 		about_dialog.h \
-		vnc_server.h \
+		../vnc_server.h \
 		release/moc_predefs.h \
 		/usr/lib/qt5/bin/moc
 	/usr/lib/qt5/bin/moc $(DEFINES) --include /home/atimmins/Apps/RPCEmu/src/qt5/release/moc_predefs.h -I/usr/lib/x86_64-linux-gnu/qt5/mkspecs/linux-g++ -I/home/atimmins/Apps/RPCEmu/src/qt5 -I/home/atimmins/Apps/RPCEmu/src -I/usr/include/x86_64-linux-gnu/qt5 -I/usr/include/x86_64-linux-gnu/qt5/QtWidgets -I/usr/include/x86_64-linux-gnu/qt5/QtMultimedia -I/usr/include/x86_64-linux-gnu/qt5/QtGui -I/usr/include/x86_64-linux-gnu/qt5/QtNetwork -I/usr/include/x86_64-linux-gnu/qt5/QtCore -I/usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -I/usr/include/c++/11/backward -I/usr/lib/gcc/x86_64-linux-gnu/11/include -I/usr/local/include -I/usr/include/x86_64-linux-gnu -I/usr/include main_window.h -o release/moc_main_window.cpp
@@ -516,6 +537,7 @@ release/moc_configure_dialog.cpp: configure_dialog.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		machine_snapshot.h \
 		release/moc_predefs.h \
 		/usr/lib/qt5/bin/moc
@@ -536,6 +558,7 @@ release/moc_rpc-qt5.cpp: rpc-qt5.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		machine_snapshot.h \
 		release/moc_predefs.h \
 		/usr/lib/qt5/bin/moc
@@ -552,19 +575,30 @@ release/moc_machine_inspector_window.cpp: machine_inspector_window.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		release/moc_predefs.h \
 		/usr/lib/qt5/bin/moc
 	/usr/lib/qt5/bin/moc $(DEFINES) --include /home/atimmins/Apps/RPCEmu/src/qt5/release/moc_predefs.h -I/usr/lib/x86_64-linux-gnu/qt5/mkspecs/linux-g++ -I/home/atimmins/Apps/RPCEmu/src/qt5 -I/home/atimmins/Apps/RPCEmu/src -I/usr/include/x86_64-linux-gnu/qt5 -I/usr/include/x86_64-linux-gnu/qt5/QtWidgets -I/usr/include/x86_64-linux-gnu/qt5/QtMultimedia -I/usr/include/x86_64-linux-gnu/qt5/QtGui -I/usr/include/x86_64-linux-gnu/qt5/QtNetwork -I/usr/include/x86_64-linux-gnu/qt5/QtCore -I/usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -I/usr/include/c++/11/backward -I/usr/lib/gcc/x86_64-linux-gnu/11/include -I/usr/local/include -I/usr/include/x86_64-linux-gnu -I/usr/include machine_inspector_window.h -o release/moc_machine_inspector_window.cpp
 
-release/moc_vnc_server.cpp: vnc_server.h \
+release/moc_vnc_server.cpp: ../vnc_server.h \
 		release/moc_predefs.h \
 		/usr/lib/qt5/bin/moc
-	/usr/lib/qt5/bin/moc $(DEFINES) --include /home/atimmins/Apps/RPCEmu/src/qt5/release/moc_predefs.h -I/usr/lib/x86_64-linux-gnu/qt5/mkspecs/linux-g++ -I/home/atimmins/Apps/RPCEmu/src/qt5 -I/home/atimmins/Apps/RPCEmu/src -I/usr/include/x86_64-linux-gnu/qt5 -I/usr/include/x86_64-linux-gnu/qt5/QtWidgets -I/usr/include/x86_64-linux-gnu/qt5/QtMultimedia -I/usr/include/x86_64-linux-gnu/qt5/QtGui -I/usr/include/x86_64-linux-gnu/qt5/QtNetwork -I/usr/include/x86_64-linux-gnu/qt5/QtCore -I/usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -I/usr/include/c++/11/backward -I/usr/lib/gcc/x86_64-linux-gnu/11/include -I/usr/local/include -I/usr/include/x86_64-linux-gnu -I/usr/include vnc_server.h -o release/moc_vnc_server.cpp
+	/usr/lib/qt5/bin/moc $(DEFINES) --include /home/atimmins/Apps/RPCEmu/src/qt5/release/moc_predefs.h -I/usr/lib/x86_64-linux-gnu/qt5/mkspecs/linux-g++ -I/home/atimmins/Apps/RPCEmu/src/qt5 -I/home/atimmins/Apps/RPCEmu/src -I/usr/include/x86_64-linux-gnu/qt5 -I/usr/include/x86_64-linux-gnu/qt5/QtWidgets -I/usr/include/x86_64-linux-gnu/qt5/QtMultimedia -I/usr/include/x86_64-linux-gnu/qt5/QtGui -I/usr/include/x86_64-linux-gnu/qt5/QtNetwork -I/usr/include/x86_64-linux-gnu/qt5/QtCore -I/usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -I/usr/include/c++/11/backward -I/usr/lib/gcc/x86_64-linux-gnu/11/include -I/usr/local/include -I/usr/include/x86_64-linux-gnu -I/usr/include ../vnc_server.h -o release/moc_vnc_server.cpp
 
 release/moc_vnc_dialog.cpp: vnc_dialog.h \
 		release/moc_predefs.h \
 		/usr/lib/qt5/bin/moc
 	/usr/lib/qt5/bin/moc $(DEFINES) --include /home/atimmins/Apps/RPCEmu/src/qt5/release/moc_predefs.h -I/usr/lib/x86_64-linux-gnu/qt5/mkspecs/linux-g++ -I/home/atimmins/Apps/RPCEmu/src/qt5 -I/home/atimmins/Apps/RPCEmu/src -I/usr/include/x86_64-linux-gnu/qt5 -I/usr/include/x86_64-linux-gnu/qt5/QtWidgets -I/usr/include/x86_64-linux-gnu/qt5/QtMultimedia -I/usr/include/x86_64-linux-gnu/qt5/QtGui -I/usr/include/x86_64-linux-gnu/qt5/QtNetwork -I/usr/include/x86_64-linux-gnu/qt5/QtCore -I/usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -I/usr/include/c++/11/backward -I/usr/lib/gcc/x86_64-linux-gnu/11/include -I/usr/local/include -I/usr/include/x86_64-linux-gnu -I/usr/include vnc_dialog.h -o release/moc_vnc_dialog.cpp
+
+release/moc_serial_dialog.cpp: serial_dialog.h \
+		release/moc_predefs.h \
+		/usr/lib/qt5/bin/moc
+	/usr/lib/qt5/bin/moc $(DEFINES) --include /home/atimmins/Apps/RPCEmu/src/qt5/release/moc_predefs.h -I/usr/lib/x86_64-linux-gnu/qt5/mkspecs/linux-g++ -I/home/atimmins/Apps/RPCEmu/src/qt5 -I/home/atimmins/Apps/RPCEmu/src -I/usr/include/x86_64-linux-gnu/qt5 -I/usr/include/x86_64-linux-gnu/qt5/QtWidgets -I/usr/include/x86_64-linux-gnu/qt5/QtMultimedia -I/usr/include/x86_64-linux-gnu/qt5/QtGui -I/usr/include/x86_64-linux-gnu/qt5/QtNetwork -I/usr/include/x86_64-linux-gnu/qt5/QtCore -I/usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -I/usr/include/c++/11/backward -I/usr/lib/gcc/x86_64-linux-gnu/11/include -I/usr/local/include -I/usr/include/x86_64-linux-gnu -I/usr/include serial_dialog.h -o release/moc_serial_dialog.cpp
+
+release/moc_parallel_dialog.cpp: parallel_dialog.h \
+		release/moc_predefs.h \
+		/usr/lib/qt5/bin/moc
+	/usr/lib/qt5/bin/moc $(DEFINES) --include /home/atimmins/Apps/RPCEmu/src/qt5/release/moc_predefs.h -I/usr/lib/x86_64-linux-gnu/qt5/mkspecs/linux-g++ -I/home/atimmins/Apps/RPCEmu/src/qt5 -I/home/atimmins/Apps/RPCEmu/src -I/usr/include/x86_64-linux-gnu/qt5 -I/usr/include/x86_64-linux-gnu/qt5/QtWidgets -I/usr/include/x86_64-linux-gnu/qt5/QtMultimedia -I/usr/include/x86_64-linux-gnu/qt5/QtGui -I/usr/include/x86_64-linux-gnu/qt5/QtNetwork -I/usr/include/x86_64-linux-gnu/qt5/QtCore -I/usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -I/usr/include/c++/11/backward -I/usr/lib/gcc/x86_64-linux-gnu/11/include -I/usr/local/include -I/usr/include/x86_64-linux-gnu -I/usr/include parallel_dialog.h -o release/moc_parallel_dialog.cpp
 
 release/moc_nat_edit_dialog.cpp: nat_edit_dialog.h \
 		rpc-qt5.h \
@@ -572,6 +606,7 @@ release/moc_nat_edit_dialog.cpp: nat_edit_dialog.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		machine_snapshot.h \
 		release/moc_predefs.h \
 		/usr/lib/qt5/bin/moc
@@ -583,6 +618,7 @@ release/moc_nat_list_dialog.cpp: nat_list_dialog.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		machine_snapshot.h \
 		release/moc_predefs.h \
 		/usr/lib/qt5/bin/moc
@@ -594,6 +630,7 @@ release/moc_network_dialog.cpp: network_dialog.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		machine_snapshot.h \
 		release/moc_predefs.h \
 		/usr/lib/qt5/bin/moc
@@ -619,17 +656,35 @@ release/superio.o: ../superio.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../fdc.h \
 		../vidc20.h \
 		../ide.h \
 		../arm.h \
-		../i8042.h
+		../i8042.h \
+		../parallel.h
 	$(CC) -c $(CFLAGS) $(INCPATH) -o release/superio.o ../superio.c
+
+release/parallel.o: ../parallel.c ../rpcemu.h \
+		../iomd.h \
+		../superio.h \
+		../peripheral_snapshot.h \
+		../serial.h \
+		../parallel.h
+	$(CC) -c $(CFLAGS) $(INCPATH) -o release/parallel.o ../parallel.c
+
+release/serial.o: ../serial.c ../rpcemu.h \
+		../iomd.h \
+		../superio.h \
+		../peripheral_snapshot.h \
+		../serial.h
+	$(CC) -c $(CFLAGS) $(INCPATH) -o release/serial.o ../serial.c
 
 release/cdrom-iso.o: ../cdrom-iso.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../ide.h \
 		../cdrom-iso.h
 	$(CC) -c $(CFLAGS) $(INCPATH) -o release/cdrom-iso.o ../cdrom-iso.c
@@ -638,6 +693,7 @@ release/cmos.o: ../cmos.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../cmos.h
 	$(CC) -c $(CFLAGS) $(INCPATH) -o release/cmos.o ../cmos.c
 
@@ -645,6 +701,7 @@ release/cp15.o: ../cp15.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../arm.h \
 		../cp15.h \
 		../mem.h
@@ -654,6 +711,7 @@ release/fdc.o: ../fdc.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../fdc.h \
 		../vidc20.h \
 		../ide.h \
@@ -667,6 +725,7 @@ release/fpa.o: ../fpa.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../mem.h \
 		../arm.h
 	$(CC) -c $(CFLAGS) $(INCPATH) -o release/fpa.o ../fpa.c
@@ -676,6 +735,7 @@ release/hostfs.o: ../hostfs.c ../arm.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../mem.h \
 		../hostfs.h \
 		../hostfs_internal.h
@@ -685,6 +745,7 @@ release/ide.o: ../ide.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../vidc20.h \
 		../mem.h \
 		../ide.h \
@@ -695,6 +756,7 @@ release/iomd.o: ../iomd.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../vidc20.h \
 		../keyboard.h \
 		../sound.h \
@@ -707,6 +769,7 @@ release/keyboard.o: ../keyboard.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../vidc20.h \
 		../mem.h \
 		../arm.h \
@@ -717,6 +780,7 @@ release/mem.o: ../mem.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../vidc20.h \
 		../mem.h \
 		../ide.h \
@@ -730,6 +794,7 @@ release/romload.o: ../romload.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../mem.h \
 		../romload.h
 	$(CC) -c $(CFLAGS) $(INCPATH) -o release/romload.o ../romload.c
@@ -738,6 +803,7 @@ release/rpcemu.o: ../rpcemu.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../mem.h \
 		../vidc20.h \
 		../keyboard.h \
@@ -757,6 +823,7 @@ release/rpcemu.o: ../rpcemu.c ../rpcemu.h \
 		../disc_adf.h \
 		../disc_hfe.h \
 		../disc_mfm_common.h \
+		../parallel.h \
 		../network.h
 	$(CC) -c $(CFLAGS) $(INCPATH) -o release/rpcemu.o ../rpcemu.c
 
@@ -764,6 +831,7 @@ release/sound.o: ../sound.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../mem.h \
 		../sound.h
 	$(CC) -c $(CFLAGS) $(INCPATH) -o release/sound.o ../sound.c
@@ -772,6 +840,7 @@ release/vidc20.o: ../vidc20.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../cp15.h \
 		../vidc20.h \
 		../keyboard.h \
@@ -783,6 +852,7 @@ release/podules.o: ../podules.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../podules.h
 	$(CC) -c $(CFLAGS) $(INCPATH) -o release/podules.o ../podules.c
 
@@ -790,6 +860,7 @@ release/podulerom.o: ../podulerom.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../podules.h \
 		../podulerom.h
 	$(CC) -c $(CFLAGS) $(INCPATH) -o release/podulerom.o ../podulerom.c
@@ -798,6 +869,7 @@ release/icside.o: ../icside.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../podules.h \
 		../ide.h
 	$(CC) -c $(CFLAGS) $(INCPATH) -o release/icside.o ../icside.c
@@ -805,13 +877,15 @@ release/icside.o: ../icside.c ../rpcemu.h \
 release/rpc-machdep.o: ../rpc-machdep.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
-		../peripheral_snapshot.h
+		../peripheral_snapshot.h \
+		../serial.h
 	$(CC) -c $(CFLAGS) $(INCPATH) -o release/rpc-machdep.o ../rpc-machdep.c
 
 release/arm_common.o: ../arm_common.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../arm.h \
 		../arm_common.h \
 		../mem.h \
@@ -828,6 +902,7 @@ release/i8042.o: ../i8042.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../keyboard.h \
 		../i8042.h
 	$(CC) -c $(CFLAGS) $(INCPATH) -o release/i8042.o ../i8042.c
@@ -836,6 +911,7 @@ release/disc.o: ../disc.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../disc.h \
 		../disc_adf.h \
 		../fdc.h
@@ -845,6 +921,7 @@ release/disc_adf.o: ../disc_adf.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../disc.h \
 		../disc_adf.h \
 		../fdc.h
@@ -854,6 +931,7 @@ release/disc_hfe.o: ../disc_hfe.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../disc.h \
 		../disc_hfe.h \
 		../disc_mfm_common.h
@@ -863,15 +941,28 @@ release/disc_mfm_common.o: ../disc_mfm_common.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../disc.h \
 		../disc_mfm_common.h \
 		../fdc.h
 	$(CC) -c $(CFLAGS) $(INCPATH) -o release/disc_mfm_common.o ../disc_mfm_common.c
 
+release/vnc_server.o: ../vnc_server.cpp ../vnc_server.h \
+		rpc-qt5.h \
+		../rpcemu.h \
+		../iomd.h \
+		../superio.h \
+		../peripheral_snapshot.h \
+		../serial.h \
+		machine_snapshot.h \
+		../keyboard.h
+	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/vnc_server.o ../vnc_server.cpp
+
 release/settings.o: settings.cpp ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
-		../peripheral_snapshot.h
+		../peripheral_snapshot.h \
+		../serial.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/settings.o settings.cpp
 
 release/rpc-qt5.o: rpc-qt5.cpp main_window.h \
@@ -881,10 +972,11 @@ release/rpc-qt5.o: rpc-qt5.cpp main_window.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		machine_snapshot.h \
 		nat_list_dialog.h \
 		about_dialog.h \
-		vnc_server.h \
+		../vnc_server.h \
 		config_selector_dialog.h \
 		../arm.h \
 		../arm_disasm.h \
@@ -898,6 +990,9 @@ release/rpc-qt5.o: rpc-qt5.cpp main_window.h \
 		../podules.h \
 		../network-nat.h \
 		../fdc.h \
+		../cmos.h \
+		../romload.h \
+		../hostfs.h \
 		../cdrom-ioctl.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/rpc-qt5.o rpc-qt5.cpp
 
@@ -905,6 +1000,7 @@ release/main_window.o: main_window.cpp ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../keyboard.h \
 		main_window.h \
 		configure_dialog.h \
@@ -912,11 +1008,13 @@ release/main_window.o: main_window.cpp ../rpcemu.h \
 		machine_snapshot.h \
 		nat_list_dialog.h \
 		about_dialog.h \
-		vnc_server.h \
+		../vnc_server.h \
 		../vidc20.h \
 		machine_inspector_window.h \
 		config_selector_dialog.h \
-		vnc_dialog.h
+		vnc_dialog.h \
+		serial_dialog.h \
+		parallel_dialog.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/main_window.o main_window.cpp
 
 release/configure_dialog.o: configure_dialog.cpp main_window.h \
@@ -926,30 +1024,34 @@ release/configure_dialog.o: configure_dialog.cpp main_window.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		machine_snapshot.h \
 		nat_list_dialog.h \
 		about_dialog.h \
-		vnc_server.h
+		../vnc_server.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/configure_dialog.o configure_dialog.cpp
 
 release/config_selector_dialog.o: config_selector_dialog.cpp config_selector_dialog.h \
 		../rpcemu.h \
 		../iomd.h \
 		../superio.h \
-		../peripheral_snapshot.h
+		../peripheral_snapshot.h \
+		../serial.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/config_selector_dialog.o config_selector_dialog.cpp
 
 release/about_dialog.o: about_dialog.cpp about_dialog.h \
 		../rpcemu.h \
 		../iomd.h \
 		../superio.h \
-		../peripheral_snapshot.h
+		../peripheral_snapshot.h \
+		../serial.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/about_dialog.o about_dialog.cpp
 
 release/plt_sound.o: plt_sound.cpp ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		plt_sound.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/plt_sound.o plt_sound.cpp
 
@@ -959,28 +1061,26 @@ release/machine_inspector_window.o: machine_inspector_window.cpp machine_inspect
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		rpc-qt5.h \
 		../arm.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/machine_inspector_window.o machine_inspector_window.cpp
 
-release/vnc_server.o: vnc_server.cpp vnc_server.h \
-		rpc-qt5.h \
-		../rpcemu.h \
-		../iomd.h \
-		../superio.h \
-		../peripheral_snapshot.h \
-		machine_snapshot.h \
-		../keyboard.h
-	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/vnc_server.o vnc_server.cpp
-
 release/vnc_dialog.o: vnc_dialog.cpp vnc_dialog.h \
-		vnc_server.h
+		../vnc_server.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/vnc_dialog.o vnc_dialog.cpp
+
+release/serial_dialog.o: serial_dialog.cpp serial_dialog.h
+	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/serial_dialog.o serial_dialog.cpp
+
+release/parallel_dialog.o: parallel_dialog.cpp parallel_dialog.h
+	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/parallel_dialog.o parallel_dialog.cpp
 
 release/network-nat.o: ../network-nat.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../mem.h \
 		../network.h \
 		../podules.h \
@@ -994,6 +1094,7 @@ release/broadcast_relay.o: ../broadcast_relay.c ../broadcast_relay.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../network.h \
 		../podules.h \
 		../network-nat.h
@@ -1006,10 +1107,11 @@ release/nat_edit_dialog.o: nat_edit_dialog.cpp main_window.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		machine_snapshot.h \
 		nat_list_dialog.h \
 		about_dialog.h \
-		vnc_server.h \
+		../vnc_server.h \
 		nat_edit_dialog.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/nat_edit_dialog.o nat_edit_dialog.cpp
 
@@ -1020,10 +1122,11 @@ release/nat_list_dialog.o: nat_list_dialog.cpp main_window.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		machine_snapshot.h \
 		nat_list_dialog.h \
 		about_dialog.h \
-		vnc_server.h \
+		../vnc_server.h \
 		nat_edit_dialog.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/nat_list_dialog.o nat_list_dialog.cpp
 
@@ -1375,6 +1478,7 @@ release/cdrom-linuxioctl.o: ../cdrom-linuxioctl.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../ide.h
 	$(CC) -c $(CFLAGS) $(INCPATH) -o release/cdrom-linuxioctl.o ../cdrom-linuxioctl.c
 
@@ -1382,6 +1486,7 @@ release/network-linux.o: ../network-linux.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../mem.h \
 		../network.h \
 		../podules.h
@@ -1391,6 +1496,7 @@ release/network.o: ../network.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../mem.h \
 		../network.h \
 		../podules.h \
@@ -1404,10 +1510,11 @@ release/network_dialog.o: network_dialog.cpp main_window.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		machine_snapshot.h \
 		nat_list_dialog.h \
 		about_dialog.h \
-		vnc_server.h \
+		../vnc_server.h \
 		network_dialog.h \
 		../network.h \
 		../podules.h
@@ -1423,6 +1530,7 @@ release/rpc-linux.o: ../rpc-linux.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../mem.h \
 		../sound.h \
 		../vidc20.h
@@ -1432,6 +1540,7 @@ release/ArmDynarec.o: ../ArmDynarec.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../arm.h \
 		../cp15.h \
 		../mem.h \
@@ -1445,6 +1554,7 @@ release/codegen_amd64.o: ../codegen_amd64.c ../rpcemu.h \
 		../iomd.h \
 		../superio.h \
 		../peripheral_snapshot.h \
+		../serial.h \
 		../arm.h \
 		../arm_common.h \
 		../codegen_amd64.h \
@@ -1484,6 +1594,12 @@ release/moc_vnc_server.o: release/moc_vnc_server.cpp
 
 release/moc_vnc_dialog.o: release/moc_vnc_dialog.cpp 
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/moc_vnc_dialog.o release/moc_vnc_dialog.cpp
+
+release/moc_serial_dialog.o: release/moc_serial_dialog.cpp 
+	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/moc_serial_dialog.o release/moc_serial_dialog.cpp
+
+release/moc_parallel_dialog.o: release/moc_parallel_dialog.cpp 
+	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/moc_parallel_dialog.o release/moc_parallel_dialog.cpp
 
 release/moc_nat_edit_dialog.o: release/moc_nat_edit_dialog.cpp 
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o release/moc_nat_edit_dialog.o release/moc_nat_edit_dialog.cpp

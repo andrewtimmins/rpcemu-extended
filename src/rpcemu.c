@@ -57,6 +57,7 @@
 #include "disc_adf.h"
 #include "disc_hfe.h"
 #include "disc_mfm_common.h"
+#include "parallel.h"
 
 #ifdef RPCEMU_NETWORKING
 #include "network.h"
@@ -560,6 +561,7 @@ resetrpc(void)
         podulerom_reset(); // must be called after podules_reset()
         hostfs_reset();
 
+
 #ifdef RPCEMU_NETWORKING
 	network_reset();
 
@@ -658,6 +660,7 @@ void
 rpcemu_start(void)
 {
 	hostfs_init();
+	parallel_bus_init();
 	mem_init();
 	cp15_init();
 	arm_init();

@@ -45,6 +45,11 @@ extern void superio_smi_clrint1(uint8_t i);
 extern void superio_smi_clrint2(uint8_t i);
 extern void superio_get_snapshot(SuperIOStateSnapshot *snapshot);
 
+/* Serial port interface (called by serial bus) */
+#include "serial.h"  /* For SerialPortID */
+extern void superio_serial_rx(SerialPortID port, uint8_t data);
+extern void superio_serial_update_msr(SerialPortID port, uint8_t status);
+
 #ifdef __cplusplus
 }
 #endif

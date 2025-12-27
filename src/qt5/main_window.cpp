@@ -51,6 +51,11 @@
 #include "vnc_dialog.h"
 #endif
 
+#include "serial_dialog.h"
+#include "parallel_dialog.h"
+
+
+
 #define URL_MANUAL	"http://www.marutan.net/rpcemu/manual/"
 #define URL_WEBSITE	"http://www.marutan.net/rpcemu/"
 
@@ -375,6 +380,8 @@ MainWindow::MainWindow(Emulator &emulator)
 		: full_screen(false),
 			reenable_mousehack(false),
 			machine_inspector_window(nullptr),
+			serial_dialog(nullptr),
+			parallel_dialog(nullptr),
 #ifdef RPCEMU_VNC
 			vnc_server(nullptr),
 #endif
@@ -1151,6 +1158,47 @@ MainWindow::menu_vnc_server()
 }
 #endif
 
+/**
+ * Handle clicking on the Settings->Serial... option
+ * Opens the serial port configuration dialog
+ */
+void
+MainWindow::menu_serial()
+{
+	if (!serial_dialog) {
+		serial_dialog = new SerialDialog(this);
+	}
+	
+	if (serial_dialog->exec() == QDialog::Accepted) {
+		// Settings are stored in the dialog for now
+		// In future, save to config and apply to serial bus
+		SerialPortSettings com1 = serial_dialog->getCom1Settings();
+		SerialPortSettings com2 = serial_dialog->getCom2Settings();
+		(void)com1;
+		(void)com2;
+	}
+}
+
+/**
+ * Handle clicking on the Settings->Parallel... option
+ * Opens the parallel port configuration dialog
+ */
+void
+MainWindow::menu_parallel()
+{
+	if (!parallel_dialog) {
+		parallel_dialog = new ParallelDialog(this);
+	}
+	
+	if (parallel_dialog->exec() == QDialog::Accepted) {
+		// Settings are stored in the dialog for now
+		// In future, save to config and apply to parallel bus
+		ParallelPortSettings settings = parallel_dialog->getSettings();
+		(void)settings;
+	}
+}
+
+
 
 void
 MainWindow::menu_cdrom_disabled()
@@ -1446,7 +1494,7 @@ MainWindow::create_actions()
 #endif
 
 	// Actions on Settings menu
-	configure_action = new QAction(tr("Configure..."), this);
+	configure_action = new QAction(tr("Machine..."), this);
 	connect(configure_action, &QAction::triggered, this, &MainWindow::menu_configure);
 #ifdef RPCEMU_NETWORKING
 	nat_list_action = new QAction(tr("NAT Port Forwarding Rules..."), this);
@@ -1468,6 +1516,12 @@ MainWindow::create_actions()
 	vnc_server_action = new QAction(tr("VNC Server..."), this);
 	connect(vnc_server_action, &QAction::triggered, this, &MainWindow::menu_vnc_server);
 #endif
+
+	serial_action = new QAction(tr("Serial..."), this);
+	connect(serial_action, &QAction::triggered, this, &MainWindow::menu_serial);
+	parallel_action = new QAction(tr("Parallel..."), this);
+	connect(parallel_action, &QAction::triggered, this, &MainWindow::menu_parallel);
+
 	cpu_idle_action = new QAction(tr("Reduce CPU Usage"), this);
 	cpu_idle_action->setCheckable(true);
 	connect(cpu_idle_action, &QAction::triggered, this, &MainWindow::menu_cpu_idle);
@@ -1634,8 +1688,12 @@ MainWindow::create_menus()
 	settings_menu->addSeparator();
 #ifdef RPCEMU_VNC
 	settings_menu->addAction(vnc_server_action);
-	settings_menu->addSeparator();
 #endif
+
+	settings_menu->addSeparator();
+	settings_menu->addAction(serial_action);
+	settings_menu->addAction(parallel_action);
+	settings_menu->addSeparator();
 	settings_menu->addAction(cpu_idle_action);
 	settings_menu->addSeparator();
 	mouse_menu = settings_menu->addMenu(tr("Mouse"));
@@ -2276,6 +2334,8 @@ MainWindow::readSettings()
 	QSize size = settings.value("size", QSize(400, 400)).toSize();
 	resize(size);
 	move(pos);
+	
+
 }
 
 void
