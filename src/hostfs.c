@@ -51,10 +51,7 @@
 # define mkdir(name, mode) _mkdir(name)
 #endif
 
-typedef int bool;
-
-#define true  ((bool) 1)
-#define false ((bool) 0)
+#include <stdbool.h>
 
 /** Registration states of HostFS module with backend code */
 typedef enum {
