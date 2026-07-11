@@ -34,6 +34,7 @@ void callbackide(void);
 
 #include <sys/types.h>
 
+#include "lfs-compat.h"
 #include "rpcemu.h"
 #include "vidc20.h"
 #include "mem.h"

@@ -107,7 +107,9 @@ extern "C" void sound_thread_start(void)
 		fatal("Couldn't create sound thread");
 	}
 
-#ifdef _GNU_SOURCE
+	/* 2-arg (Linux/winpthreads) form; macOS's pthread_setname_np takes one arg
+	   and names only the calling thread, so skip it there (names are cosmetic). */
+#if defined(_GNU_SOURCE) && !defined(__APPLE__)
 	pthread_setname_np(sound_thread, "rpcemu: sound");
 #endif
 }
@@ -166,7 +168,7 @@ extern "C" void vidcstartthread(void)
 	}
 	video_thread_running = true;
 
-#ifdef _GNU_SOURCE
+#if defined(_GNU_SOURCE) && !defined(__APPLE__)
 	pthread_setname_np(video_thread, "rpcemu: vidc");
 #endif
 }

@@ -21,6 +21,7 @@
 #define _LARGEFILE_SOURCE
 #define _LARGEFILE64_SOURCE
 #include <stdio.h>
+#include "lfs-compat.h"
 #include "rpcemu.h"
 #include "ide.h"
 #include "cdrom-iso.h"
