@@ -122,9 +122,93 @@ jobs:
             releases/windows/*.zip
           if-no-files-found: error
 
+  macos-x86_64:
+    # Intel runner: builds the x86_64 slice WITH the dynarec and runs the JIT
+    # unit test on real macOS. This is our only x86-dynarec-on-macOS check
+    # (a Linux/osxcross build cannot be executed).
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install cmake ninja pkg-config wxwidgets sdl2 libvncserver
+
+      - name: Build x86_64 slice (dynarec) + test
+        run: |
+          chmod +x build-macos.sh
+          ./build-macos.sh --arch x86_64
+
+      - name: Upload x86_64 slice
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-slice-x86_64
+          path: build-mac-x86_64/bin/
+          if-no-files-found: error
+
+  macos-arm64:
+    # Apple Silicon runner: builds the arm64 slice. There is no ARM dynarec
+    # backend, so arm64 uses the interpreter (RPCEMU_DYNAREC=OFF), mirroring the
+    # Linux arm64 build. On Apple Silicon the x86_64 slice also runs via Rosetta.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install cmake ninja pkg-config wxwidgets sdl2 libvncserver
+
+      - name: Build arm64 slice (interpreter) + test
+        run: |
+          chmod +x build-macos.sh
+          ./build-macos.sh --arch arm64
+
+      - name: Upload arm64 slice
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-slice-arm64
+          path: build-mac-arm64/bin/
+          if-no-files-found: error
+
+  macos-universal:
+    # Fuse the two per-arch slices into a universal binary and stage the release.
+    needs: [macos-x86_64, macos-arm64]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download x86_64 slice
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-slice-x86_64
+          path: build-mac-x86_64/bin
+
+      - name: Download arm64 slice
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-slice-arm64
+          path: build-mac-arm64/bin
+
+      - name: Fuse (lipo) + stage universal release
+        run: |
+          chmod +x build-macos.sh
+          ./build-macos.sh --fuse --zip
+
+      - name: Smoke test universal binary
+        run: |
+          lipo -archs releases/macos/universal/rpcemu
+          file releases/macos/universal/rpcemu | grep -i 'universal'
+
+      - name: Upload macOS universal release
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpcemu-macos-universal
+          path: |
+            releases/macos/universal/
+            releases/macos/*.tar.gz
+          if-no-files-found: error
+
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [linux-amd64, linux-arm64, windows-amd64]
+    needs: [linux-amd64, linux-arm64, windows-amd64, macos-universal]
     runs-on: ubuntu-latest
     permissions:
       contents: write

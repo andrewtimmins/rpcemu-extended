@@ -15,8 +15,8 @@ option(RPCEMU_ENABLE_GHOSTPDL "Enable in-process Ghostscript PDF conversion" ON)
 option(RPCEMU_ENABLE_VNC "Enable VNC server support (requires libvncserver)" ON)
 option(RPCEMU_BUILD_TESTS "Build unit tests (amd64 dynarec only)" ON)
 
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT WIN32)
-    message(FATAL_ERROR "RPCEmu (Spork Edition) supports Linux and Windows (MinGW-w64) only.")
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT WIN32 AND NOT APPLE)
+    message(FATAL_ERROR "RPCEmu (Spork Edition) supports Linux, Windows (MinGW-w64), and macOS.")
 endif()
 
 if(WIN32 AND MSVC)

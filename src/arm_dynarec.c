@@ -554,9 +554,16 @@ arm_unpredictable(uint32_t opcode)
 	}
 }
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 /**
  * Grant executable privilege to a region of memory.
+ *
+ * macOS note: the dynarec is the x86_64 slice only (the arm64 slice is
+ * interpreter, RPCEMU_DYNAREC=OFF). On an unsigned/ad-hoc Intel build, POSIX
+ * mprotect(RWX) on the static JIT buffer works exactly as on Linux. A
+ * hardened-runtime / notarised build would instead need an mmap(MAP_JIT)
+ * buffer plus pthread_jit_write_protect_np() toggling; that is deferred until
+ * we sign for distribution.
  *
  * @param ptr Pointer to region of memory
  * @param len Length of region of memory
@@ -611,7 +618,7 @@ set_memory_executable(void *ptr, size_t len)
 	}
 }
 #else
-#error "RPCEmu dynarec requires Linux or Windows"
+#error "RPCEmu dynarec requires Linux, macOS, or Windows"
 #endif
 
 #include "arm_dynarec_ops.h"

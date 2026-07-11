@@ -132,7 +132,9 @@ NPROC=$(nproc 2>/dev/null || echo 4)
 
 clean_build() {
 	echo "Cleaning build directories and releases..."
-	rm -rf build build-* releases
+	# Only build DIRECTORIES - a bare "build-*" glob also matches the tracked
+	# build-windows.sh / build-macos.sh scripts and would delete them.
+	rm -rf build build-win build-mac-x86_64 build-mac-arm64 releases
 	rm -f rpcemu-recompiler rpcemu-interpreter
 	rm -f rpcemu-recompiler-debug rpcemu-interpreter-debug
 	rm -f rpclog.txt

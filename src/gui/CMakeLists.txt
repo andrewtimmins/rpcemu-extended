@@ -94,9 +94,9 @@ target_include_directories(${RPCEMU_GUI_TARGET} PRIVATE ${SDL2_INCLUDE_DIRS})
 target_link_libraries(${RPCEMU_GUI_TARGET} PRIVATE ${SDL2_LIBRARIES})
 
 # GTK3 is only used for the wxGTK relative-mouse capture path in
-# emulator_panel.cpp (guarded by __WXGTK__). wxMSW does not use it, so require
-# it on Linux only.
-if(NOT WIN32)
+# emulator_panel.cpp (guarded by __WXGTK__). wxMSW (Windows) and wxOSX (macOS)
+# do not use it, so require it on Linux only.
+if(NOT WIN32 AND NOT APPLE)
     pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
     target_include_directories(${RPCEMU_GUI_TARGET} PRIVATE ${GTK3_INCLUDE_DIRS})
     target_link_libraries(${RPCEMU_GUI_TARGET} PRIVATE ${GTK3_LIBRARIES})

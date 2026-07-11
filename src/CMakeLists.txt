@@ -83,9 +83,10 @@ endif()
 
 # Host-platform backends. Ethernet bridging / IP tunnelling (network-tun.c) go
 # through /dev/net/tun and the Linux CD-ROM ioctl backend (cdrom-ioctl.c) are
-# Linux-only. On Windows use the null network platform layer (NAT still works)
-# and the portable ISO-file CD-ROM backend (cdrom-iso.c, listed above).
-if(WIN32)
+# Linux-only. On Windows and macOS use the null network platform layer (NAT
+# still works via SLiRP) and the portable ISO-file CD-ROM backend (cdrom-iso.c,
+# listed above).
+if(WIN32 OR APPLE)
     list(APPEND RPCEMU_CORE_SOURCES network-null.c)
 else()
     list(APPEND RPCEMU_CORE_SOURCES network-tun.c cdrom-ioctl.c)

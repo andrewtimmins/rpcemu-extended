@@ -64,6 +64,13 @@
 #define SOCK_EINPROGRESS  EINPROGRESS
 #define SOCK_EINTR        EINTR
 
+/* macOS/BSD have no MSG_NOSIGNAL send flag; SIGPIPE is suppressed per-socket
+   via the SO_NOSIGPIPE option instead (set in socket_set_nonblocking below).
+   Define the flag as a no-op so the shared send() call sites still compile. */
+#if defined(__APPLE__) && !defined(MSG_NOSIGNAL)
+#define MSG_NOSIGNAL 0
+#endif
+
 #endif /* _WIN32 */
 
 /**
@@ -84,6 +91,14 @@ socket_set_nonblocking(int fd)
 	if (fl < 0) {
 		return -1;
 	}
+#ifdef __APPLE__
+	/* macOS has no MSG_NOSIGNAL; suppress SIGPIPE for this socket instead so a
+	   write to a peer that has gone away returns EPIPE rather than killing us. */
+	{
+		int on = 1;
+		setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
+	}
+#endif
 	return fcntl(fd, F_SETFL, fl | O_NONBLOCK);
 #endif
 }

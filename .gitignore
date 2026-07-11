@@ -5,6 +5,12 @@
 # Release staging
 /releases/
 
+# macOS cross-compile (osxcross): work tree, the user-provided macOS SDK (large,
+# Apple-licensed - never commit), and the generated env file.
+/.macos-cross/
+/macos-sdk/
+/macos-cross-env.sh
+
 # Built binaries at project root
 /rpcemu-recompiler
 /rpcemu-interpreter
