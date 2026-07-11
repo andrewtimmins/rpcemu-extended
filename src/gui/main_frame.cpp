@@ -506,7 +506,8 @@ void MainFrame::OnNatList(wxCommandEvent &)
 		nat_list_dialog_->ShowModal();
 	}
 #else
-	(void)event;
+	/* Networking (and the NAT list) is not compiled in - nothing to do.
+	   (The handler's wxCommandEvent parameter is unnamed, so nothing to void.) */
 #endif
 }
 

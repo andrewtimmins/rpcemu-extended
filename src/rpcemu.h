@@ -69,7 +69,7 @@ extern "C" {
 # define __attribute__(x) /*NOTHING*/
 #endif
 
-#if defined __linux || defined __linux__ || defined _WIN32
+#if defined __linux || defined __linux__ || defined _WIN32 || defined __APPLE__
 #define RPCEMU_NETWORKING
 #endif
 
