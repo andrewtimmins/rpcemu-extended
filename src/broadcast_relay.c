@@ -271,9 +271,11 @@ get_broadcast_address(struct in_addr *bcast, struct in_addr *host)
             continue;
         }
 
-        /* Get broadcast address */
-        if (ifa->ifa_ifu.ifu_broadaddr != NULL) {
-            struct sockaddr_in *bcast_sa = (struct sockaddr_in *)ifa->ifa_ifu.ifu_broadaddr;
+        /* Get broadcast address. Use the standard ifa_broadaddr spelling: on
+           glibc it is a macro over the ifa_ifu union; on macOS/BSD it is a
+           direct struct member (there is no ifa_ifu union there). */
+        if (ifa->ifa_broadaddr != NULL) {
+            struct sockaddr_in *bcast_sa = (struct sockaddr_in *)ifa->ifa_broadaddr;
             struct sockaddr_in *host_sa = (struct sockaddr_in *)ifa->ifa_addr;
 
             *bcast = bcast_sa->sin_addr;
