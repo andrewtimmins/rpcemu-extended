@@ -92,8 +92,11 @@ build_slice() {
 	fi
 
 	echo "==> [$arch] configuring ($MODE, dynarec=$dyn, tests=$tests)"
+	# Expand possibly-empty arrays safely: macOS ships bash 3.2, where
+	# "${arr[@]}" on an empty array under `set -u` is an "unbound variable"
+	# error. The ${arr[@]+...} guard expands to nothing when empty.
 	cmake -B "$build_dir" -G "$gen" \
-		"${tc_args[@]}" "${extra_args[@]}" \
+		${tc_args[@]+"${tc_args[@]}"} ${extra_args[@]+"${extra_args[@]}"} \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DRPCEMU_DYNAREC="$dyn" \
 		-DRPCEMU_BUILD_TESTS="$tests" \
