@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 
@@ -217,6 +219,55 @@ void MainFrame::OnReset(wxCommandEvent &)
 	if (emulator_) {
 		emulator_->Reset();
 	}
+}
+
+void MainFrame::OnSaveState(wxCommandEvent &)
+{
+	const wxFileName snapshot(ConfigPathsSnapshotForConfig(
+	    ConfigPathsAbsoluteConfigPath(wxString::FromUTF8(config_get_path()))));
+
+	wxFileDialog dlg(this, "Save Machine State", snapshot.GetPath(), snapshot.GetFullName(),
+	                 "RPCEmu machine state (*.state)|*.state|All files (*)|*",
+	                 wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+	if (dlg.ShowModal() != wxID_OK) {
+		return;
+	}
+
+	if (emulator_) {
+		if (!emulator_->SaveState(dlg.GetPath().utf8_str().data())) {
+			wxMessageBox("Failed to save the machine state.", "RPCEmu",
+			             wxOK | wxICON_WARNING, this);
+		}
+	}
+}
+
+void MainFrame::OnLoadState(wxCommandEvent &)
+{
+	const wxFileName snapshot(ConfigPathsSnapshotForConfig(
+	    ConfigPathsAbsoluteConfigPath(wxString::FromUTF8(config_get_path()))));
+
+	wxFileDialog dlg(this, "Load Machine State", snapshot.GetPath(), wxEmptyString,
+	                 "RPCEmu machine state (*.state)|*.state|All files (*)|*",
+	                 wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+	if (dlg.ShowModal() != wxID_OK) {
+		return;
+	}
+
+	if (emulator_) {
+		std::string error;
+		if (!emulator_->LoadState(dlg.GetPath().utf8_str().data(), &error)) {
+			wxMessageBox(error.empty() ? wxString("Failed to load the machine state.")
+			                           : wxString::FromUTF8(error.c_str()),
+			             "RPCEmu", wxOK | wxICON_WARNING, this);
+		}
+	}
+}
+
+void MainFrame::OnSuspend(wxCommandEvent &)
+{
+	/* Suspend is an explicit "save state and exit". The machine state is
+	   stored by OnClose (as it is for any exit), so this just closes. */
+	Close(true);
 }
 
 void MainFrame::OnRecentMachine(wxCommandEvent &event)
@@ -1068,6 +1119,10 @@ void MainFrame::PostError(const std::string &message)
 
 void MainFrame::PostFatal(const std::string &message)
 {
+	// Runs on the thread that raised the fatal error (often the emulator
+	// thread, which then spins and can no longer service commands). Record it
+	// immediately so a concurrent window close doesn't try to save state.
+	fatal_occurred_ = true;
 	CallAfter([this, message]() { ShowFatal(message); });
 }
 
@@ -1078,9 +1133,19 @@ void MainFrame::ShowError(const std::string &message)
 
 void MainFrame::ShowFatal(const std::string &message)
 {
+	fatal_occurred_ = true;
 	wxMessageBox(wxString::FromUTF8(message), "RPCEmu Fatal Error", wxOK | wxICON_ERROR, this);
-	ShutdownEmulator();
-	Close(true);
+
+	// The machine has failed unrecoverably, so terminate the process rather
+	// than attempting a clean shutdown. A normal shutdown joins the emulator
+	// thread, but the thread that raised the error is spinning forever inside
+	// fatal() and would deadlock that join. And a startup failure (e.g. a
+	// missing ROM) runs on the GUI thread before the event loop has started,
+	// so falling back through fatal()'s wait loop would hang the whole app
+	// after the user clicks OK. Flush logs, then exit hard (no destructors,
+	// which would themselves try to join the spinning thread).
+	fflush(nullptr);
+	std::_Exit(EXIT_FAILURE);
 }
 
 void MainFrame::PostNatRule(PortForwardRule rule)
@@ -1117,6 +1182,22 @@ void MainFrame::OnClose(wxCloseEvent &event)
 	if (shutting_down_) {
 		event.Skip();
 		return;
+	}
+
+	// Store the machine state on exit, so the session resumes next launch
+	// (the machine selector offers it as "Resume"). This must run while the
+	// emulator thread is still alive, before ShutdownEmulator() stops it.
+	//
+	// Skip it if the emulator never started running (e.g. a fatal error like
+	// a missing ROM during startup) or if a fatal error has since occurred:
+	// in those cases the emulator thread cannot service a SaveState command,
+	// so attempting it would block forever, and its state is not worth saving.
+	if (emulator_ && emulator_->IsRunning() && !fatal_occurred_) {
+		const wxString snapshot = ConfigPathsSnapshotForConfig(
+		    ConfigPathsAbsoluteConfigPath(wxString::FromUTF8(config_get_path())));
+		if (!emulator_->SaveState(snapshot.utf8_str().data())) {
+			rpclog("MainFrame: failed to save machine state on exit\n");
+		}
 	}
 
 	ShutdownEmulator();

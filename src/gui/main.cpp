@@ -11,6 +11,7 @@
 
 extern "C" {
 #include "rpcemu.h"
+#include "savestate.h"
 }
 
 class RpcemuApp : public wxApp {
@@ -44,6 +45,12 @@ bool RpcemuApp::OnInit()
 	}
 
 	const wxString config_path = selector.GetSelectedConfigPath();
+	const bool resume_requested = selector.ShouldResume();
+	const wxString state_file = selector.GetStateFileToLoad();
+	// The machine's own snapshot is "consumed" (renamed to .bak) on resume;
+	// a state file the user opened explicitly via Load State is left in place.
+	const wxString own_snapshot = ConfigPathsSnapshotForConfig(
+	    ConfigPathsAbsoluteConfigPath(config_path));
 	config_set_path(ConfigPathsAbsoluteConfigPath(config_path).utf8_str().data());
 	rpcemu_prestart();
 
@@ -52,6 +59,37 @@ bool RpcemuApp::OnInit()
 	SetTopWindow(frame);
 
 	rpcemu_start();
+
+	// If the user chose Resume in the machine selector, load this machine's
+	// snapshot. This runs before the emulator thread starts, so state_load()
+	// operates single-threaded. The snapshot is renamed to .bak on success so
+	// it is "consumed" (the session is now live) yet recoverable; a Restart /
+	// Start leaves the snapshot untouched.
+	if (resume_requested) {
+		const std::string state_utf8 = state_file.utf8_str().data();
+		char errbuf[256];
+
+		if (state_check(state_utf8.c_str(), errbuf, sizeof(errbuf)) == 0 &&
+		    state_load(state_utf8.c_str()) == 0) {
+			/* Only the machine's own snapshot is consumed to .bak; a file
+			   opened explicitly via Load State is left where it is. */
+			if (state_file == own_snapshot) {
+				const wxString bak = own_snapshot + ".bak";
+				if (wxFileExists(bak)) {
+					wxRemoveFile(bak);
+				}
+				wxRenameFile(own_snapshot, bak);
+			}
+		} else {
+			rpclog("main: could not load state '%s': %s\n",
+			       state_utf8.c_str(), errbuf);
+			wxMessageBox(
+			    wxString::Format("Could not load the machine state:\n%s\n\n"
+			                     "Performing a normal boot instead.",
+			                     wxString::FromUTF8(errbuf)),
+			    "RPCEmu", wxOK | wxICON_WARNING, frame);
+		}
+	}
 
 	// Start the emulator (which spawns the CPU and VIDC worker threads) only
 	// once the GUI event loop is actually running. If it starts here - before

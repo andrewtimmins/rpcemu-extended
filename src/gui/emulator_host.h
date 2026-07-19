@@ -64,6 +64,8 @@ enum class EmuCommandType {
 	Disassemble,
 	SetDebugTraceConfig,
 	DrainTraceEvents,
+	SaveState,
+	LoadState,
 };
 
 struct EmuCommand {
@@ -142,6 +144,11 @@ public:
 	size_t ReadMemory(uint32_t address, uint32_t length, uint8_t *buffer, size_t buffer_size);
 	std::string DisassembleAt(uint32_t address, int count);
 
+	/* Machine save-state (suspend/resume). Both block until the emulator
+	   thread has completed the operation at an instruction boundary. */
+	bool SaveState(const std::string &path);
+	bool LoadState(const std::string &path, std::string *error_out);
+
 	void StoreNatRuleForGui(PortForwardRule rule);
 	std::vector<PortForwardRule> TakePendingNatRules();
 
@@ -170,6 +177,12 @@ private:
 	std::condition_variable snapshot_cv_;
 	bool snapshot_ready_ = false;
 	MachineSnapshot snapshot_result_{};
+
+	std::mutex state_mutex_;
+	std::condition_variable state_cv_;
+	bool state_ready_ = false;
+	bool state_ok_ = false;
+	std::string state_error_;
 
 	std::mutex memory_mutex_;
 	std::condition_variable memory_cv_;

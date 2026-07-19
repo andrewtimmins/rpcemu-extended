@@ -1,6 +1,7 @@
 #ifndef MAIN_FRAME_H
 #define MAIN_FRAME_H
 
+#include <atomic>
 #include <cstdint>
 #include <list>
 #include <memory>
@@ -30,6 +31,9 @@ enum MainFrameMenuId {
 	ID_MENU_RECENT_MACHINE_4,
 	ID_MENU_CLEAR_RECENT_MACHINES,
 	ID_MENU_RESET,
+	ID_MENU_SAVE_STATE,
+	ID_MENU_LOAD_STATE,
+	ID_MENU_SUSPEND,
 	ID_MENU_LOAD_DISC0,
 	ID_MENU_LOAD_DISC1,
 	ID_MENU_EJECT_DISC0,
@@ -134,6 +138,9 @@ private:
 	void OnExit(wxCommandEvent &event);
 	void OnScreenshot(wxCommandEvent &event);
 	void OnReset(wxCommandEvent &event);
+	void OnSaveState(wxCommandEvent &event);
+	void OnLoadState(wxCommandEvent &event);
+	void OnSuspend(wxCommandEvent &event);
 	void OnRecentMachine(wxCommandEvent &event);
 	void OnClearRecentMachines(wxCommandEvent &event);
 	void OnLoadDisc0(wxCommandEvent &event);
@@ -246,6 +253,11 @@ private:
 	wxToolBarToolBase *tb_mute_tool_ = nullptr;
 
 	bool shutting_down_ = false;
+	/* Set as soon as a fatal error is raised (possibly from the emulator
+	   thread, which then spins forever and can no longer service commands).
+	   Guards the save-on-exit so it never blocks trying to snapshot a machine
+	   that has already failed. */
+	std::atomic<bool> fatal_occurred_{false};
 	bool menu_open_ = false;
 	bool window_active_ = false;
 	bool full_screen_ = false;

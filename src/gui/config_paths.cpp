@@ -184,3 +184,22 @@ wxString ConfigPathsRenameMachine(const wxString &old_name, const wxString &new_
 
 	return new_config;
 }
+
+wxString ConfigPathsSnapshotForConfig(const wxString &config_path)
+{
+	// The machine's suspend snapshot lives in its data directory
+	// (machines/<name>/suspend.state), beside its cmos.ram. The machine
+	// directory is keyed by the config's "name" field (matching
+	// rpcemu_set_machine_datadir), falling back to the config filename.
+	wxFileConfig settings(wxEmptyString, wxEmptyString, config_path, wxEmptyString,
+	                      wxCONFIG_USE_RELATIVE_PATH);
+	ConfigFileUseGeneralGroup(settings);
+	wxString name;
+	settings.Read("name", &name, wxEmptyString);
+	if (name.empty()) {
+		name = wxFileName(config_path).GetName();
+	}
+
+	const wxString sep = wxFileName::GetPathSeparator();
+	return ConfigPathsMachinesDir() + sep + name + sep + "suspend.state";
+}

@@ -10,6 +10,7 @@ wxString ConfigPathsRomsDir();
 wxString ConfigPathsResourceDir();
 bool ConfigPathsEnsureDataLayout();
 wxString ConfigPathsAbsoluteConfigPath(const wxString &path);
+wxString ConfigPathsSnapshotForConfig(const wxString &config_path);
 
 wxString ConfigPathsSanitizeName(const wxString &name);
 bool ConfigPathsIsNameUnique(const wxString &name);

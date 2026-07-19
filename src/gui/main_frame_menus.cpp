@@ -91,6 +91,8 @@ void MainFrame::BuildMenus()
 {
 	auto *file_menu = new wxMenu;
 	file_menu->Append(ID_MENU_SCREENSHOT, "Take Screenshot...");
+	file_menu->Append(ID_MENU_SAVE_STATE, "Save State...");
+	file_menu->Append(ID_MENU_LOAD_STATE, "Load State...");
 	file_menu->AppendSeparator();
 
 	auto *recent_machines_menu = new wxMenu;
@@ -101,6 +103,7 @@ void MainFrame::BuildMenus()
 	file_menu->AppendSeparator();
 	file_menu->Append(ID_MENU_RESET, "&Reset");
 	file_menu->AppendSeparator();
+	file_menu->Append(ID_MENU_SUSPEND, "Suspend");
 	file_menu->Append(wxID_EXIT, "E&xit");
 
 	auto *disc_menu = new wxMenu;
@@ -191,7 +194,10 @@ void MainFrame::BuildMenus()
 	SetMenuBar(menu_bar);
 
 	BindMenuItem(file_menu, ID_MENU_SCREENSHOT, this, &MainFrame::OnScreenshot);
+	BindMenuItem(file_menu, ID_MENU_SAVE_STATE, this, &MainFrame::OnSaveState);
+	BindMenuItem(file_menu, ID_MENU_LOAD_STATE, this, &MainFrame::OnLoadState);
 	BindMenuItem(file_menu, ID_MENU_RESET, this, &MainFrame::OnReset);
+	BindMenuItem(file_menu, ID_MENU_SUSPEND, this, &MainFrame::OnSuspend);
 	BindMenuItem(file_menu, wxID_EXIT, this, &MainFrame::OnExit);
 	BindMenuItem(recent_machines_menu, ID_MENU_CLEAR_RECENT_MACHINES, this, &MainFrame::OnClearRecentMachines);
 	for (int i = 0; i < MaxRecentMachines; ++i) {

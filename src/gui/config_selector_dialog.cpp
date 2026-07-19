@@ -7,11 +7,13 @@
 
 #include <wx/dir.h>
 #include <wx/fileconf.h>
+#include <wx/filedlg.h>
 #include <wx/filename.h>
 #include <wx/textdlg.h>
 
 extern "C" {
 #include "rpcemu.h"
+#include "savestate.h"
 }
 
 ConfigSelectorDialog::ConfigSelectorDialog(wxWindow *parent)
@@ -26,6 +28,8 @@ ConfigSelectorDialog::ConfigSelectorDialog(wxWindow *parent)
 	edit_button_ = new wxButton(this, wxID_ANY, "Edit...");
 	clone_button_ = new wxButton(this, wxID_ANY, "Clone...");
 	delete_button_ = new wxButton(this, wxID_ANY, "Delete");
+	load_state_button_ = new wxButton(this, wxID_ANY, "Load State...");
+	resume_button_ = new wxButton(this, wxID_ANY, "Resume");
 	start_button_ = new wxButton(this, wxID_OK, "Start");
 	auto *cancel_button = new wxButton(this, wxID_CANCEL, "Cancel");
 	start_button_->SetDefault();
@@ -36,6 +40,8 @@ ConfigSelectorDialog::ConfigSelectorDialog(wxWindow *parent)
 	button_col->Add(clone_button_, 0, wxBOTTOM, 4);
 	button_col->Add(delete_button_, 0, wxBOTTOM, 4);
 	button_col->AddStretchSpacer();
+	button_col->Add(load_state_button_, 0, wxBOTTOM, 4);
+	button_col->Add(resume_button_, 0, wxBOTTOM, 4);
 	button_col->Add(start_button_, 0, wxBOTTOM, 4);
 
 	auto *body = new wxBoxSizer(wxHORIZONTAL);
@@ -62,6 +68,8 @@ ConfigSelectorDialog::ConfigSelectorDialog(wxWindow *parent)
 	clone_button_->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnClone, this);
 	delete_button_->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnDelete, this);
 	start_button_->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnStart, this);
+	resume_button_->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnResume, this);
+	load_state_button_->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnLoadStateFile, this);
 	cancel_button->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnCancel, this);
 	config_list_->Bind(wxEVT_LISTBOX_DCLICK, &ConfigSelectorDialog::OnListDoubleClick, this);
 	config_list_->Bind(wxEVT_LISTBOX, [this](wxCommandEvent &) { UpdateButtons(); });
@@ -123,6 +131,23 @@ void ConfigSelectorDialog::UpdateButtons()
 	clone_button_->Enable(has_selection);
 	delete_button_->Enable(has_selection && config_list_->GetCount() > 1);
 	start_button_->Enable(has_selection);
+
+	// If the selected machine has a suspend snapshot, offer Resume (default)
+	// and relabel Start as Restart (cold boot). Otherwise just Start.
+	bool has_snapshot = false;
+	if (has_selection) {
+		has_snapshot = wxFileExists(ConfigPathsSnapshotForConfig(SelectedConfigPath()));
+	}
+
+	resume_button_->Show(has_snapshot);
+	resume_button_->Enable(has_snapshot);
+	start_button_->SetLabel(has_snapshot ? "Restart" : "Start");
+	if (has_snapshot) {
+		resume_button_->SetDefault();
+	} else {
+		start_button_->SetDefault();
+	}
+	Layout();
 }
 
 wxString ConfigSelectorDialog::SelectedConfigPath() const
@@ -141,6 +166,62 @@ void ConfigSelectorDialog::OnStart(wxCommandEvent &)
 		wxMessageBox("Select a machine configuration to start.", "RPCEmu", wxOK | wxICON_INFORMATION, this);
 		return;
 	}
+	resume_selected_ = false;
+	state_file_to_load_.clear();
+	EndModal(wxID_OK);
+}
+
+void ConfigSelectorDialog::OnResume(wxCommandEvent &)
+{
+	selected_config_path_ = SelectedConfigPath();
+	if (selected_config_path_.empty()) {
+		return;
+	}
+	resume_selected_ = true;
+	state_file_to_load_ = ConfigPathsSnapshotForConfig(selected_config_path_);
+	EndModal(wxID_OK);
+}
+
+void ConfigSelectorDialog::OnLoadStateFile(wxCommandEvent &)
+{
+	wxFileDialog dlg(this, "Load Machine State", ConfigPathsMachinesDir(), wxEmptyString,
+	                 "RPCEmu machine state (*.state)|*.state|All files (*)|*",
+	                 wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+	if (dlg.ShowModal() != wxID_OK) {
+		return;
+	}
+	const wxString file = dlg.GetPath();
+
+	/* The snapshot records the machine it belongs to; boot that machine. */
+	char name[256];
+	if (state_get_machine_name(file.utf8_str().data(), name, sizeof(name)) != 0) {
+		wxMessageBox("This is not a valid RPCEmu state file, or it was made by a "
+		             "different version of RPCEmu.",
+		             "RPCEmu", wxOK | wxICON_WARNING, this);
+		return;
+	}
+	const wxString machine_name = wxString::FromUTF8(name);
+
+	wxString config_path;
+	for (const auto &entry : config_entries_) {
+		if (entry.display_name == machine_name) {
+			config_path = entry.config_path;
+			break;
+		}
+	}
+	if (config_path.empty()) {
+		wxMessageBox(wxString::Format(
+		                 "This state file belongs to machine '%s', but no machine "
+		                 "with that name exists.\n\nCreate or rename a machine to "
+		                 "'%s' and try again.",
+		                 machine_name, machine_name),
+		             "RPCEmu", wxOK | wxICON_WARNING, this);
+		return;
+	}
+
+	selected_config_path_ = config_path;
+	state_file_to_load_ = file;
+	resume_selected_ = true;
 	EndModal(wxID_OK);
 }
 
@@ -151,7 +232,14 @@ void ConfigSelectorDialog::OnCancel(wxCommandEvent &)
 
 void ConfigSelectorDialog::OnListDoubleClick(wxCommandEvent &event)
 {
-	OnStart(event);
+	// Double-click performs the default action: Resume if the machine has a
+	// snapshot, otherwise Start.
+	const wxString path = SelectedConfigPath();
+	if (!path.empty() && wxFileExists(ConfigPathsSnapshotForConfig(path))) {
+		OnResume(event);
+	} else {
+		OnStart(event);
+	}
 }
 
 void ConfigSelectorDialog::OnNew(wxCommandEvent &)

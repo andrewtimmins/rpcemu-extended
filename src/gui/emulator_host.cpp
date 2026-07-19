@@ -26,6 +26,7 @@ extern "C" {
 #include "network-nat.h"
 #include "podulerom.h"
 #include "romload.h"
+#include "savestate.h"
 #include "sound.h"
 #include "vidc20.h"
 }
@@ -523,6 +524,55 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 		pthread_mutex_unlock(&video_mutex);
 		resetrpc();
 		break;
+	case EmuCommandType::SaveState: {
+		int r;
+
+		/* Quiesce the video thread while the snapshot is taken */
+		pthread_mutex_lock(&video_mutex);
+		r = state_save(command.string_path.c_str());
+		pthread_mutex_unlock(&video_mutex);
+
+		{
+			std::lock_guard<std::mutex> lock(state_mutex_);
+			state_ok_ = (r == 0);
+			state_error_.clear();
+			state_ready_ = true;
+		}
+		state_cv_.notify_one();
+		break;
+	}
+	case EmuCommandType::LoadState: {
+		char errbuf[256];
+		bool ok;
+		std::string err;
+
+		/* Validate against the running configuration first, so a
+		   mismatched or non-snapshot file leaves the session untouched */
+		if (state_check(command.string_path.c_str(), errbuf, sizeof(errbuf)) != 0) {
+			ok = false;
+			err = errbuf;
+		} else {
+			int r;
+
+			pthread_mutex_lock(&video_mutex);
+			r = state_load(command.string_path.c_str());
+			pthread_mutex_unlock(&video_mutex);
+
+			ok = (r == 0);
+			if (!ok) {
+				err = "Failed to load the machine state; the machine has been reset.";
+			}
+		}
+
+		{
+			std::lock_guard<std::mutex> lock(state_mutex_);
+			state_ok_ = ok;
+			state_error_ = err;
+			state_ready_ = true;
+		}
+		state_cv_.notify_one();
+		break;
+	}
 	case EmuCommandType::Exit:
 		quited = 1;
 		break;
@@ -990,6 +1040,35 @@ MachineSnapshot EmulatorHost::TakeSnapshot()
 
 	snapshot_cv_.wait(lock, [this]() { return snapshot_ready_; });
 	return snapshot_result_;
+}
+
+bool EmulatorHost::SaveState(const std::string &path)
+{
+	std::unique_lock<std::mutex> lock(state_mutex_);
+	state_ready_ = false;
+
+	EmuCommand command = MakeCommand(EmuCommandType::SaveState);
+	command.string_path = path;
+	PostCommand(command);
+
+	state_cv_.wait(lock, [this]() { return state_ready_; });
+	return state_ok_;
+}
+
+bool EmulatorHost::LoadState(const std::string &path, std::string *error_out)
+{
+	std::unique_lock<std::mutex> lock(state_mutex_);
+	state_ready_ = false;
+
+	EmuCommand command = MakeCommand(EmuCommandType::LoadState);
+	command.string_path = path;
+	PostCommand(command);
+
+	state_cv_.wait(lock, [this]() { return state_ready_; });
+	if (error_out != nullptr) {
+		*error_out = state_error_;
+	}
+	return state_ok_;
 }
 
 size_t EmulatorHost::ReadMemory(uint32_t address, uint32_t length, uint8_t *buffer, size_t buffer_size)
