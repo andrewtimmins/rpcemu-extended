@@ -35,6 +35,7 @@
 #include "mem.h"
 #include "hostfs.h"
 #include "hostfs_internal.h"
+#include "savestate.h"
 #include "rpcemu-win.h"
 
 #define HOSTFS_PROTOCOL_VERSION	3
@@ -122,6 +123,12 @@ static char csd_hostfs[PATH_MAX];
 static char csd_shared[PATH_MAX];
 
 static FILE *open_file[MAX_OPEN_FILES + 1]; /* array subscript 0 is never used */
+
+/* Host path and open mode of each open_file[] entry. The guest holds the
+   indexes as live FileSwitch handles, so a suspended session needs these to
+   re-open the same files on resume */
+static char open_file_path[MAX_OPEN_FILES + 1][PATH_MAX];
+static uint8_t open_file_update[MAX_OPEN_FILES + 1]; /* 1 = open for update */
 
 static unsigned char *buffer = NULL;
 static size_t buffer_size = 0;
@@ -909,6 +916,7 @@ hostfs_open(ARMul_State *state)
   case OPEN_MODE_READ:
     dbug_hostfs("\tOpen for read\n");
     open_file[idx] = fopen(host_pathname, "rb");
+    open_file_update[idx] = 0;
     state->Reg[0] = FILE_INFO_WORD_READ_OK;
     break;
 
@@ -919,6 +927,7 @@ hostfs_open(ARMul_State *state)
   case OPEN_MODE_UPDATE:
     dbug_hostfs("\tOpen for update\n");
     open_file[idx] = fopen(host_pathname, "rb+");
+    open_file_update[idx] = 1;
     state->Reg[0] = (uint32_t) (FILE_INFO_WORD_READ_OK | FILE_INFO_WORD_WRITE_OK);
     break;
   }
@@ -943,6 +952,10 @@ hostfs_open(ARMul_State *state)
       return;
     }
   }
+
+  /* Record the host path so a suspended session can re-open this file */
+  strncpy(open_file_path[idx], host_pathname, sizeof(open_file_path[idx]) - 1);
+  open_file_path[idx][sizeof(open_file_path[idx]) - 1] = '\0';
 
   /* Find the extent of the file */
   fseek(open_file[idx], 0L, SEEK_END);
@@ -1207,6 +1220,7 @@ hostfs_close(ARMul_State *state)
 
   /* Free up the open_file[] entry */
   open_file[state->Reg[1]] = NULL;
+  open_file_path[state->Reg[1]][0] = '\0';
 
   /* If load and exec addresses are both 0, then nothing to do */
   if (load == 0 && exec == 0) {
@@ -2335,6 +2349,7 @@ hostfs_reset(void)
       fclose(open_file[i]);
       open_file[i] = NULL;
     }
+    open_file_path[i][0] = '\0';
   }
 }
 
@@ -2383,5 +2398,83 @@ hostfs(ARMul_State *state)
   case HOSTFS_STATE_IGNORE:
     /* Ignore further HostFS operations after logging once */
     break;
+  }
+}
+
+/**
+ * Write the HostFS state to a suspend snapshot.
+ *
+ * The registration state is guest-visible (the HostFS module registers only
+ * once, at boot) and must survive a resume. For each open file the host
+ * path, mode and offset are stored; the guest holds the open_file[] indexes
+ * as live FileSwitch handles. The directory cache is not stored: it is
+ * re-read whenever an enumeration is (re)started or changes directory.
+ */
+void
+hostfs_savestate(FILE *f)
+{
+  unsigned i;
+
+  savestate_write_u8(f, (uint8_t) hostfs_state);
+
+  for (i = 1; i < (MAX_OPEN_FILES + 1); i++) {
+    if (open_file[i] != NULL) {
+      long offset = ftell(open_file[i]);
+      uint16_t len = (uint16_t) strlen(open_file_path[i]);
+
+      savestate_write_u16(f, (uint16_t) i);
+      savestate_write_u8(f, open_file_update[i]);
+      savestate_write_u64(f, (offset > 0) ? (uint64_t) offset : 0);
+      savestate_write_u16(f, len);
+      savestate_write(f, open_file_path[i], len);
+    }
+  }
+  savestate_write_u16(f, 0); /* end marker (index 0 is never used) */
+}
+
+/**
+ * Restore the HostFS state from a suspend snapshot.
+ *
+ * Files that have disappeared while suspended are replaced by an empty
+ * temporary file, so the guest's handle stays safe to use (reads return no
+ * data, writes are discarded) instead of crashing the emulator.
+ */
+void
+hostfs_loadstate(FILE *f)
+{
+  hostfs_state = (HostFSState) savestate_read_u8(f);
+
+  for (;;) {
+    uint16_t idx, len;
+    uint8_t update;
+    uint64_t offset;
+
+    idx = savestate_read_u16(f);
+    if (idx == 0 || savestate_error) {
+      break;
+    }
+    update = savestate_read_u8(f);
+    offset = savestate_read_u64(f);
+    len = savestate_read_u16(f);
+    if (idx > MAX_OPEN_FILES || len >= PATH_MAX) {
+      savestate_error = 1;
+      break;
+    }
+    savestate_read(f, open_file_path[idx], len);
+    open_file_path[idx][len] = '\0';
+    open_file_update[idx] = update;
+
+    open_file[idx] = fopen(open_file_path[idx], update ? "rb+" : "rb");
+    if (open_file[idx] != NULL) {
+      fseek(open_file[idx], (long) offset, SEEK_SET);
+    } else {
+      rpclog("HostFS: cannot re-open '%s' on resume, substituting an empty file\n",
+             open_file_path[idx]);
+      open_file[idx] = tmpfile();
+      if (open_file[idx] == NULL) {
+        savestate_error = 1;
+        break;
+      }
+    }
   }
 }

@@ -63,6 +63,7 @@
 #include "serial.h"
 #include "printer.h"
 #include "peripheral_config.h"
+#include "savestate.h"
 
 #ifdef RPCEMU_NETWORKING
 #include "network.h"
@@ -1359,4 +1360,29 @@ rpcemu_nat_forward_remove(PortForwardRule rule)
 
 	// rule not found, should be impossible
 	assert(0);
+}
+
+/**
+ * Write the execution-loop state to a suspend snapshot.
+ *
+ * 'cycles' is the residual cycle budget of the current execrpcemu() chunk;
+ * restoring it means the first chunk after resume runs exactly as many
+ * cycles as the interrupted run would have, keeping device/timer callbacks
+ * aligned to the same instruction boundaries.
+ */
+void
+rpcemu_savestate(FILE *f)
+{
+	savestate_write_i32(f, cycles);
+	savestate_write_u32(f, inscount);
+}
+
+/**
+ * Restore the execution-loop state from a suspend snapshot.
+ */
+void
+rpcemu_loadstate(FILE *f)
+{
+	cycles = savestate_read_i32(f);
+	inscount = savestate_read_u32(f);
 }

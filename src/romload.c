@@ -470,6 +470,8 @@ rom_model_is_compatible(Model model, const char *rom_dir, char *msg, size_t msg_
 	return 1;
 }
 
+uint32_t rom_loaded_size = 0; /**< Size in bytes of the loaded ROM image */
+
 /**
  * Load the ROM images, calls fatal() on error.
  */
@@ -610,6 +612,8 @@ void loadroms(void)
         }
 
 	rpclog("romload: Total ROM size %d MB\n", pos / 1048576);
+
+	rom_loaded_size = (uint32_t) pos;
 
 #ifdef _RPCEMU_BIG_ENDIAN
 	/* Endian swap */

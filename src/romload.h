@@ -33,6 +33,8 @@ typedef enum {
 	RomAddressing_Unknown
 } RomAddressing;
 
+extern uint32_t rom_loaded_size; /**< Size in bytes of the loaded ROM image */
+
 void loadroms(void);
 
 /** Non-zero if this machine model can run 32-bit ROM images (RISC OS 5+). */

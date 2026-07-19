@@ -40,6 +40,7 @@
 #include "sound.h"
 #include "mem.h"
 #include "iomd.h"
+#include "savestate.h"
 static int current_sizex = -1; /**< Width of the video mode, -1 on invalid */
 static int current_sizey = -1; /**< Height of the video mode, -1 on invalid */
 
@@ -1080,4 +1081,70 @@ void
 resetbuffer(void)
 {
 	memset(dirtybuffer, 0xff, VRAM_DIRTY_PAGES);
+}
+
+/**
+ * Write the VIDC20 state to a suspend snapshot.
+ */
+void
+vidc20_savestate(FILE *f)
+{
+	int c;
+
+	for (c = 0; c < 256; c++) {
+		savestate_write_u32(f, vidc.palette[c]);
+	}
+	savestate_write_i32(f, vidc.palindex);
+	savestate_write_u32(f, vidc.border_colour);
+	for (c = 0; c < 3; c++) {
+		savestate_write_u32(f, vidc.cursor_palette[c]);
+	}
+	savestate_write_u32(f, vidc.hdsr);
+	savestate_write_u32(f, vidc.hcsr);
+	savestate_write_u32(f, vidc.hder);
+	savestate_write_u32(f, vidc.vdsr);
+	savestate_write_u32(f, vidc.vcsr);
+	savestate_write_u32(f, vidc.vcer);
+	savestate_write_u32(f, vidc.vder);
+	savestate_write_u32(f, vidc.b0);
+	savestate_write_u32(f, vidc.b1);
+	savestate_write_u32(f, vidc.bit8);
+}
+
+/**
+ * Restore the VIDC20 state from a suspend snapshot.
+ *
+ * The cached video-thread state (which holds host pointers and derived
+ * sizes) is not stored; the next drawscr() rebuilds it because the mode
+ * size is invalidated, the palette marked changed and every line dirtied.
+ */
+void
+vidc20_loadstate(FILE *f)
+{
+	int c;
+
+	for (c = 0; c < 256; c++) {
+		vidc.palette[c] = savestate_read_u32(f);
+	}
+	vidc.palindex = savestate_read_i32(f);
+	vidc.border_colour = savestate_read_u32(f);
+	for (c = 0; c < 3; c++) {
+		vidc.cursor_palette[c] = savestate_read_u32(f);
+	}
+	vidc.hdsr = savestate_read_u32(f);
+	vidc.hcsr = savestate_read_u32(f);
+	vidc.hder = savestate_read_u32(f);
+	vidc.vdsr = savestate_read_u32(f);
+	vidc.vcsr = savestate_read_u32(f);
+	vidc.vcer = savestate_read_u32(f);
+	vidc.vder = savestate_read_u32(f);
+	vidc.b0 = savestate_read_u32(f);
+	vidc.b1 = savestate_read_u32(f);
+	vidc.bit8 = savestate_read_u32(f);
+
+	vidc.palchange = 1;
+	current_sizex = -1;
+	current_sizey = -1;
+	memset(dirtybuffer1, 0xff, sizeof(dirtybuffer1));
+	memset(dirtybuffer2, 0xff, sizeof(dirtybuffer2));
 }

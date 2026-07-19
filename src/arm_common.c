@@ -30,6 +30,7 @@
 #include "keyboard.h"
 #include "hostfs.h"
 #include "hostcmd.h"
+#include "savestate.h"
 
 #ifdef RPCEMU_NETWORKING
 #include "network.h"
@@ -672,4 +673,111 @@ realswi:
 
 	return 0;
 }
+/**
+ * Write the CPU state to a suspend snapshot.
+ *
+ * Shared between the interpreter and dynarec builds: both keep the complete
+ * architectural state in the ARMState struct between arm_exec() calls (the
+ * dynarec's lazy flags and compiled blocks are only live inside a block),
+ * so a snapshot is portable between the two CPU cores.
+ */
+void
+arm_savestate(FILE *f)
+{
+	int c;
+
+	for (c = 0; c < 17; c++) {
+		savestate_write_u32(f, arm.reg[c]);
+	}
+	savestate_write_u32(f, arm.mode);
+	savestate_write_u32(f, arm.event);
+	for (c = 0; c < 15; c++) {
+		savestate_write_u32(f, arm.user_reg[c]);
+	}
+	for (c = 0; c < 15; c++) {
+		savestate_write_u32(f, arm.fiq_reg[c]);
+	}
+	for (c = 0; c < 2; c++) {
+		savestate_write_u32(f, arm.irq_reg[c]);
+	}
+	for (c = 0; c < 2; c++) {
+		savestate_write_u32(f, arm.super_reg[c]);
+	}
+	for (c = 0; c < 2; c++) {
+		savestate_write_u32(f, arm.abort_reg[c]);
+	}
+	for (c = 0; c < 2; c++) {
+		savestate_write_u32(f, arm.undef_reg[c]);
+	}
+	for (c = 0; c < 16; c++) {
+		savestate_write_u32(f, arm.spsr[c]);
+	}
+	savestate_write_u32(f, arm.r15_diff);
+	savestate_write_u8(f, arm.abort_base_restored);
+	savestate_write_u8(f, arm.stm_writeback_at_end);
+	savestate_write_u8(f, arm.arch_v4);
+}
+
+/**
+ * Restore the CPU state from a suspend snapshot.
+ *
+ * mmask, r15_mask, prog32, memmode, cpsr/pcpsr and the usrregs bank
+ * pointers are all derived from the restored mode by updatemode().
+ */
+void
+arm_loadstate(FILE *f)
+{
+	ARMState saved;
+	int c;
+
+	for (c = 0; c < 17; c++) {
+		arm.reg[c] = savestate_read_u32(f);
+	}
+	arm.mode = savestate_read_u32(f);
+	arm.event = savestate_read_u32(f);
+	for (c = 0; c < 15; c++) {
+		arm.user_reg[c] = savestate_read_u32(f);
+	}
+	for (c = 0; c < 15; c++) {
+		arm.fiq_reg[c] = savestate_read_u32(f);
+	}
+	for (c = 0; c < 2; c++) {
+		arm.irq_reg[c] = savestate_read_u32(f);
+	}
+	for (c = 0; c < 2; c++) {
+		arm.super_reg[c] = savestate_read_u32(f);
+	}
+	for (c = 0; c < 2; c++) {
+		arm.abort_reg[c] = savestate_read_u32(f);
+	}
+	for (c = 0; c < 2; c++) {
+		arm.undef_reg[c] = savestate_read_u32(f);
+	}
+	for (c = 0; c < 16; c++) {
+		arm.spsr[c] = savestate_read_u32(f);
+	}
+	arm.r15_diff = savestate_read_u32(f);
+	arm.abort_base_restored = savestate_read_u8(f);
+	arm.stm_writeback_at_end = savestate_read_u8(f);
+	arm.arch_v4 = savestate_read_u8(f);
+
+	/* updatemode() starts by writing the active registers back into the
+	   banked copies for the current mode, which would clobber the
+	   restored bank contents; put them back afterwards so the restored
+	   CPU state is exactly the saved one */
+	saved = arm;
+	updatemode(arm.mode);
+	memcpy(arm.user_reg, saved.user_reg, sizeof(arm.user_reg));
+	memcpy(arm.fiq_reg, saved.fiq_reg, sizeof(arm.fiq_reg));
+	memcpy(arm.irq_reg, saved.irq_reg, sizeof(arm.irq_reg));
+	memcpy(arm.super_reg, saved.super_reg, sizeof(arm.super_reg));
+	memcpy(arm.abort_reg, saved.abort_reg, sizeof(arm.abort_reg));
+	memcpy(arm.undef_reg, saved.undef_reg, sizeof(arm.undef_reg));
+
+	/* Invalidate the instruction-fetch fast path; it holds a host
+	   pointer into the previous session's memory */
+	pccache = 0xffffffff;
+	blockend = 0;
+}
+
 #endif /* ifndef TEST */

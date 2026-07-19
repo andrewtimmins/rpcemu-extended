@@ -24,6 +24,7 @@
 #include "rpcemu.h"
 #include "podules.h"
 #include "ide.h"
+#include "savestate.h"
 
 unsigned char icsrom[8192];
 int icspage;
@@ -110,4 +111,23 @@ void initics(void)
         fclose(f);
         addpodule(NULL,icswritew,icswriteb,NULL,icsreadw,icsreadb,NULL,NULL);*/
 //        rpclog("ICS Initialised!\n");
+}
+
+/**
+ * Write the ICS IDE interface state to a suspend snapshot.
+ * The podule ROM is reloaded from disk at startup and not stored.
+ */
+void
+icside_savestate(FILE *f)
+{
+	savestate_write_i32(f, icspage);
+}
+
+/**
+ * Restore the ICS IDE interface state from a suspend snapshot.
+ */
+void
+icside_loadstate(FILE *f)
+{
+	icspage = savestate_read_i32(f);
 }

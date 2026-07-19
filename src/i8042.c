@@ -38,6 +38,7 @@
 
 #include "keyboard.h"
 #include "i8042.h"
+#include "savestate.h"
 
 /* Commands */
 #define KBD_CCMD_READ_MODE	0x20	/* Read mode bits */
@@ -231,4 +232,32 @@ i8042_reset(void)
 	i8042.out = 0;
 	i8042.irq_kbd = 0;
 	i8042.irq_mouse = 0;
+}
+
+/**
+ * Write the PS/2 keyboard controller state to a suspend snapshot.
+ */
+void
+i8042_savestate(FILE *f)
+{
+	savestate_write_u8(f, i8042.command);
+	savestate_write_u8(f, i8042.status);
+	savestate_write_u8(f, i8042.out);
+	savestate_write_u8(f, i8042.mode);
+	savestate_write_i32(f, i8042.irq_kbd);
+	savestate_write_i32(f, i8042.irq_mouse);
+}
+
+/**
+ * Restore the PS/2 keyboard controller state from a suspend snapshot.
+ */
+void
+i8042_loadstate(FILE *f)
+{
+	i8042.command = savestate_read_u8(f);
+	i8042.status = savestate_read_u8(f);
+	i8042.out = savestate_read_u8(f);
+	i8042.mode = savestate_read_u8(f);
+	i8042.irq_kbd = savestate_read_i32(f);
+	i8042.irq_mouse = savestate_read_i32(f);
 }

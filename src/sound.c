@@ -27,6 +27,7 @@
 #include "iomd.h"
 
 #include "sound.h"
+#include "savestate.h"
 
 uint32_t soundaddr[4];
 static uint32_t samplefreq = 41666;
@@ -199,3 +200,45 @@ sound_buffer_update(void)
 	}
 }
 
+
+/**
+ * Write the sound DMA state to a suspend snapshot.
+ */
+void
+sound_savestate(FILE *f)
+{
+	int c;
+
+	for (c = 0; c < 4; c++) {
+		savestate_write_u32(f, soundaddr[c]);
+	}
+	savestate_write_u32(f, samplefreq);
+	savestate_write_i32(f, soundlatch);
+	savestate_write_i32(f, soundcount);
+}
+
+/**
+ * Restore the sound DMA state from a suspend snapshot.
+ *
+ * The host-side sample buffers are discarded (momentary silence until the
+ * restored DMA state refills them).
+ */
+void
+sound_loadstate(FILE *f)
+{
+	int c;
+
+	for (c = 0; c < 4; c++) {
+		soundaddr[c] = savestate_read_u32(f);
+	}
+	samplefreq = savestate_read_u32(f);
+	soundlatch = savestate_read_i32(f);
+	soundcount = savestate_read_i32(f);
+
+	for (c = 0; c < 4; c++) {
+		memset(bigsoundbuffer[c], 0, BUFFERLENBYTES);
+	}
+	bigsoundpos = 0;
+	bigsoundbufferhead = 0;
+	bigsoundbuffertail = 0;
+}

@@ -148,6 +148,7 @@ extern uint32_t iomd_mouse_buttons_read(void);
 extern void iomd_flyback(int flyback_new);
 
 extern void gentimerirq(uint64_t nsec_timer);
+extern void iomd_timer_resync(uint64_t nsec_timer);
 
 #ifdef __cplusplus
 } /* extern "C" */

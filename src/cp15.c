@@ -28,6 +28,7 @@
 #include "arm.h"
 #include "cp15.h"
 #include "mem.h"
+#include "savestate.h"
 
 int dcache = 0; /* Data cache on StrongARM, unified cache pre-StrongARM */
 
@@ -702,4 +703,67 @@ getpccache(uint32_t addr)
 		break;
 	}
 	fatal("Bad PC %08x %08x\n", addr, phys_addr);
+}
+
+/**
+ * Write the MMU/system coprocessor state to a suspend snapshot.
+ */
+void
+cp15_savestate(FILE *f)
+{
+	savestate_write_u32(f, cp15.ctrl);
+	savestate_write_u32(f, cp15.translation_table);
+	savestate_write_u32(f, cp15.domain_access_control);
+	savestate_write_u32(f, cp15.fault_status);
+	savestate_write_u32(f, cp15.fault_address);
+}
+
+/**
+ * Restore the MMU/system coprocessor state from a suspend snapshot.
+ *
+ * The cached control flags, the host pointer to the page-table RAM
+ * (tlbram) and all cached translation state are re-derived; the TLB caches
+ * are flushed and rebuilt lazily from the page tables in the restored RAM.
+ */
+void
+cp15_loadstate(FILE *f)
+{
+	uint32_t ttb_bank;
+
+	cp15.ctrl = savestate_read_u32(f);
+	cp15.translation_table = savestate_read_u32(f);
+	cp15.domain_access_control = savestate_read_u32(f);
+	cp15.fault_status = savestate_read_u32(f);
+	cp15.fault_address = savestate_read_u32(f);
+
+	dcache = cp15.ctrl & CP15_CTRL_CACHE;
+	icache = cp15.ctrl & CP15_CTRL_ICACHE;
+	mmu = cp15.ctrl & CP15_CTRL_MMU;
+	prog32 = cp15.ctrl & CP15_CTRL_PROG32;
+
+	/* Re-derive the page-table RAM pointer from the Translation Table Base,
+	   mirroring the 30-bit bank decode in cp15_write() case 2 (including the
+	   Kinetic SDRAM banks at 0x20000000/0x30000000). */
+	ttb_bank = cp15.translation_table & 0x3f000000;
+	if (ttb_bank == 0x02000000) {
+		tlbram = vram;
+		tlbrammask = mem_vrammask >> 2;
+	} else if (ttb_bank >= 0x10000000 && ttb_bank <= 0x13000000) {
+		tlbram = ram00;
+		tlbrammask = mem_rammask >> 2;
+	} else if (ttb_bank >= 0x14000000 && ttb_bank <= 0x17000000) {
+		tlbram = ram01;
+		tlbrammask = mem_rammask >> 2;
+	} else if (ttb_bank >= 0x18000000 && ttb_bank <= 0x1f000000) {
+		tlbram = ram1;
+		tlbrammask = 0x7ffffff >> 2;
+	} else if (ttb_bank >= 0x20000000 && ttb_bank <= 0x2f000000) {
+		tlbram = sdram0;
+		tlbrammask = 0x7ffffff >> 2;
+	} else if (ttb_bank >= 0x30000000 && ttb_bank <= 0x3f000000) {
+		tlbram = sdram1;
+		tlbrammask = 0x7ffffff >> 2;
+	}
+
+	cp15_tlb_flush_all();
 }

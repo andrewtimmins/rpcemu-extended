@@ -34,6 +34,7 @@
 #include "rpcemu.h"
 #include "cmos.h"
 #include "ide.h"
+#include "savestate.h"
 
 #if 0
 #define dbgprintf(x...) { fprintf(stderr, x); }
@@ -853,4 +854,76 @@ reseti2c(uint32_t chosen_i2c_devices)
 
 	/* Initialise the I2C state machine */
 	reset_serdes(serdes);
+}
+
+/**
+ * Write the CMOS/RTC and I2C bus state to a suspend snapshot.
+ *
+ * The CMOS contents are also saved to cmos.ram at exit, but the snapshot
+ * copy is authoritative on resume so the RAM contents and any
+ * mid-transaction I2C state stay consistent.
+ */
+void
+cmos_savestate(FILE *f)
+{
+	uint8_t active_slave;
+
+	savestate_write(f, cmosram, sizeof(cmosram));
+	savestate_write_i32(f, i2cclock);
+	savestate_write_i32(f, i2cdata);
+
+	savestate_write_u16(f, pcf->reg_address);
+	savestate_write_i32(f, pcf->state);
+	savestate_write_u8(f, spd->reg_address);
+
+	/* The active slave is stored as an index, never as a pointer */
+	if (serdes->active_slave == pcf8583) {
+		active_slave = 1;
+	} else if (serdes->active_slave == spd_i2c) {
+		active_slave = 2;
+	} else {
+		active_slave = 0;
+	}
+	savestate_write_u8(f, active_slave);
+	savestate_write_i32(f, serdes->slave_was_accessed);
+	savestate_write_i32(f, serdes->address);
+	savestate_write_u8(f, serdes->inbuf);
+	savestate_write_u8(f, serdes->outbuf);
+	savestate_write_i32(f, serdes->bitcount);
+	savestate_write_i32(f, serdes->state);
+	savestate_write_i32(f, serdes->oldpinstate);
+}
+
+/**
+ * Restore the CMOS/RTC and I2C bus state from a suspend snapshot.
+ *
+ * Only data fields are restored; the I2C slave descriptors and their
+ * function pointers were rebuilt by reseti2c() during the machine reset.
+ */
+void
+cmos_loadstate(FILE *f)
+{
+	uint8_t active_slave;
+
+	savestate_read(f, cmosram, sizeof(cmosram));
+	i2cclock = savestate_read_i32(f);
+	i2cdata = savestate_read_i32(f);
+
+	pcf->reg_address = savestate_read_u16(f);
+	pcf->state = savestate_read_i32(f);
+	spd->reg_address = savestate_read_u8(f);
+
+	active_slave = savestate_read_u8(f);
+	switch (active_slave) {
+	case 1:  serdes->active_slave = pcf8583; break;
+	case 2:  serdes->active_slave = spd_i2c; break;
+	default: serdes->active_slave = NULL;    break;
+	}
+	serdes->slave_was_accessed = savestate_read_i32(f);
+	serdes->address = savestate_read_i32(f);
+	serdes->inbuf = savestate_read_u8(f);
+	serdes->outbuf = savestate_read_u8(f);
+	serdes->bitcount = savestate_read_i32(f);
+	serdes->state = savestate_read_i32(f);
+	serdes->oldpinstate = savestate_read_i32(f);
 }

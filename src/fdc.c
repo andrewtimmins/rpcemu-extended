@@ -35,6 +35,7 @@
 #include "disc.h"
 #include "disc_adf.h"
 #include "disc_hfe.h"
+#include "savestate.h"
 
 /* FDC commands */
 enum {
@@ -832,4 +833,82 @@ fdc_dma_write(uint32_t addr, uint8_t val)
 	}
 	fdc.written = 1;
 	fdc.dmadat = val;
+}
+
+/**
+ * Write the floppy controller state to a suspend snapshot.
+ */
+void
+fdc_savestate(FILE *f)
+{
+	savestate_write_u8(f, fdc.dor);
+	savestate_write_i32(f, fdc.reset);
+	savestate_write_u8(f, fdc.status);
+	savestate_write_i32(f, fdc.incommand);
+	savestate_write_u8(f, fdc.command);
+	savestate_write_u8(f, fdc.st0);
+	savestate_write_u8(f, fdc.st1);
+	savestate_write_u8(f, fdc.st2);
+	savestate_write_u8(f, fdc.st3);
+	savestate_write_i32(f, fdc.track);
+	savestate_write_i32(f, fdc.sector);
+	savestate_write_i32(f, fdc.side);
+	savestate_write_u8(f, fdc.data);
+	savestate_write_i32(f, fdc.params);
+	savestate_write_i32(f, fdc.curparam);
+	savestate_write(f, fdc.parameters, sizeof(fdc.parameters));
+	savestate_write_u8(f, fdc.dmadat);
+	savestate_write_i32(f, fdc.rate);
+	savestate_write_i32(f, fdc.oldpos);
+	savestate_write(f, fdc.results, sizeof(fdc.results));
+	savestate_write_i32(f, fdc.result_rp);
+	savestate_write_i32(f, fdc.result_wp);
+	savestate_write_i32(f, fdc.drive);
+	savestate_write_i32(f, fdc.density);
+	savestate_write_i32(f, fdc.tc);
+	savestate_write_i32(f, fdc.data_ready);
+	savestate_write_i32(f, fdc.written);
+	savestate_write_i32(f, fdc.in_read);
+
+	savestate_write_i32(f, fdccallback);
+	savestate_write_i32(f, motoron);
+}
+
+/**
+ * Restore the floppy controller state from a suspend snapshot.
+ */
+void
+fdc_loadstate(FILE *f)
+{
+	fdc.dor = savestate_read_u8(f);
+	fdc.reset = savestate_read_i32(f);
+	fdc.status = savestate_read_u8(f);
+	fdc.incommand = savestate_read_i32(f);
+	fdc.command = savestate_read_u8(f);
+	fdc.st0 = savestate_read_u8(f);
+	fdc.st1 = savestate_read_u8(f);
+	fdc.st2 = savestate_read_u8(f);
+	fdc.st3 = savestate_read_u8(f);
+	fdc.track = savestate_read_i32(f);
+	fdc.sector = savestate_read_i32(f);
+	fdc.side = savestate_read_i32(f);
+	fdc.data = savestate_read_u8(f);
+	fdc.params = savestate_read_i32(f);
+	fdc.curparam = savestate_read_i32(f);
+	savestate_read(f, fdc.parameters, sizeof(fdc.parameters));
+	fdc.dmadat = savestate_read_u8(f);
+	fdc.rate = savestate_read_i32(f);
+	fdc.oldpos = savestate_read_i32(f);
+	savestate_read(f, fdc.results, sizeof(fdc.results));
+	fdc.result_rp = savestate_read_i32(f);
+	fdc.result_wp = savestate_read_i32(f);
+	fdc.drive = savestate_read_i32(f);
+	fdc.density = savestate_read_i32(f);
+	fdc.tc = savestate_read_i32(f);
+	fdc.data_ready = savestate_read_i32(f);
+	fdc.written = savestate_read_i32(f);
+	fdc.in_read = savestate_read_i32(f);
+
+	fdccallback = savestate_read_i32(f);
+	motoron = savestate_read_i32(f);
 }

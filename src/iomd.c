@@ -29,6 +29,7 @@
 #include "iomd.h"
 #include "arm.h"
 #include "cmos.h"
+#include "savestate.h"
 #include "podules.h"
 
 /* References -
@@ -984,3 +985,131 @@ iomd_flyback(int flyback_new)
 		updateirqs();
 	}
 }
+static void
+iomd_irq_savestate(FILE *f, const iomd_irq *irq)
+{
+	savestate_write_u8(f, irq->status);
+	savestate_write_u8(f, irq->mask);
+}
+
+static void
+iomd_irq_loadstate(FILE *f, iomd_irq *irq)
+{
+	irq->status = savestate_read_u8(f);
+	irq->mask = savestate_read_u8(f);
+}
+
+static void
+iomd_timer_savestate(FILE *f, const iomd_timer *timer)
+{
+	savestate_write_u32(f, timer->in_latch);
+	savestate_write_i32(f, timer->counter);
+	savestate_write_u32(f, timer->out_latch);
+}
+
+static void
+iomd_timer_loadstate(FILE *f, iomd_timer *timer)
+{
+	timer->in_latch = savestate_read_u32(f);
+	timer->counter = savestate_read_i32(f);
+	timer->out_latch = savestate_read_u32(f);
+}
+
+/**
+ * Write the IOMD state to a suspend snapshot.
+ */
+void
+iomd_savestate(FILE *f)
+{
+	iomd_irq_savestate(f, &iomd.irqa);
+	iomd_irq_savestate(f, &iomd.irqb);
+	iomd_irq_savestate(f, &iomd.irqc);
+	iomd_irq_savestate(f, &iomd.irqd);
+	iomd_irq_savestate(f, &iomd.fiq);
+	iomd_irq_savestate(f, &iomd.irqdma);
+	savestate_write_u8(f, iomd.romcr0);
+	savestate_write_u8(f, iomd.romcr1);
+	savestate_write_u32(f, iomd.vidstart);
+	savestate_write_u32(f, iomd.vidend);
+	savestate_write_u32(f, iomd.vidcur);
+	savestate_write_u32(f, iomd.vidinit);
+	iomd_timer_savestate(f, &iomd.t0);
+	iomd_timer_savestate(f, &iomd.t1);
+	savestate_write_u8(f, iomd.ctrl);
+	savestate_write_u8(f, iomd.vidcr);
+	savestate_write_u8(f, iomd.sndstat);
+	savestate_write_u8(f, iomd.refcr);
+	savestate_write_u8(f, iomd.iotcr);
+	savestate_write_u8(f, iomd.ectcr);
+	savestate_write_u16(f, iomd.mousex);
+	savestate_write_u16(f, iomd.mousey);
+	savestate_write_u8(f, iomd.dmaext);
+	savestate_write_u8(f, iomd.susmode);
+	savestate_write_u8(f, iomd.clkctrl);
+	savestate_write_u8(f, iomd.vidimux);
+	savestate_write_u8(f, iomd.dramcr);
+	savestate_write_u8(f, iomd.selfref);
+	savestate_write_u32(f, cinit);
+	savestate_write_i32(f, sndon);
+	savestate_write_i32(f, flyback);
+}
+
+/**
+ * Re-baseline the IOMD timers against the host clock.
+ *
+ * old_timer_ticks is host-clock-relative state and is never stored in a
+ * snapshot; the frontend calls this before starting (or resuming)
+ * emulation so the restored timer counters are not consumed by a large
+ * catch-up of host time that passed while no emulation was running.
+ *
+ * @param nsec_timer Current value of the frontend's nanosecond timer
+ */
+void
+iomd_timer_resync(uint64_t nsec_timer)
+{
+	old_timer_ticks = (uint32_t) (nsec_timer / 500);
+}
+
+/**
+ * Restore the IOMD state from a suspend snapshot.
+ *
+ * old_timer_ticks is deliberately not restored: it is a baseline against
+ * the host clock; the frontend re-baselines it with iomd_timer_resync()
+ * before emulation continues.
+ */
+void
+iomd_loadstate(FILE *f)
+{
+	iomd_irq_loadstate(f, &iomd.irqa);
+	iomd_irq_loadstate(f, &iomd.irqb);
+	iomd_irq_loadstate(f, &iomd.irqc);
+	iomd_irq_loadstate(f, &iomd.irqd);
+	iomd_irq_loadstate(f, &iomd.fiq);
+	iomd_irq_loadstate(f, &iomd.irqdma);
+	iomd.romcr0 = savestate_read_u8(f);
+	iomd.romcr1 = savestate_read_u8(f);
+	iomd.vidstart = savestate_read_u32(f);
+	iomd.vidend = savestate_read_u32(f);
+	iomd.vidcur = savestate_read_u32(f);
+	iomd.vidinit = savestate_read_u32(f);
+	iomd_timer_loadstate(f, &iomd.t0);
+	iomd_timer_loadstate(f, &iomd.t1);
+	iomd.ctrl = savestate_read_u8(f);
+	iomd.vidcr = savestate_read_u8(f);
+	iomd.sndstat = savestate_read_u8(f);
+	iomd.refcr = savestate_read_u8(f);
+	iomd.iotcr = savestate_read_u8(f);
+	iomd.ectcr = savestate_read_u8(f);
+	iomd.mousex = savestate_read_u16(f);
+	iomd.mousey = savestate_read_u16(f);
+	iomd.dmaext = savestate_read_u8(f);
+	iomd.susmode = savestate_read_u8(f);
+	iomd.clkctrl = savestate_read_u8(f);
+	iomd.vidimux = savestate_read_u8(f);
+	iomd.dramcr = savestate_read_u8(f);
+	iomd.selfref = savestate_read_u8(f);
+	cinit = savestate_read_u32(f);
+	sndon = savestate_read_i32(f);
+	flyback = savestate_read_i32(f);
+}
+

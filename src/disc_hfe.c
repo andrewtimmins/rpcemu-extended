@@ -6,6 +6,7 @@
 #include "disc.h"
 #include "disc_hfe.h"
 #include "disc_mfm_common.h"
+#include "savestate.h"
 
 static disc_funcs hfe_disc_funcs;
 
@@ -370,3 +371,133 @@ static disc_funcs hfe_disc_funcs = {
 	.stop        = hfe_stop,
 	.close       = hfe_close
 };
+
+static void
+hfe_mfm_savestate(FILE *f, const mfm_t *mfm)
+{
+	int c;
+
+	savestate_write_rle(f, mfm->track_data, sizeof(mfm->track_data));
+	for (c = 0; c < 3; c++) {
+		savestate_write_i32(f, mfm->track_len[c]);
+	}
+	for (c = 0; c < 3; c++) {
+		savestate_write_i32(f, mfm->track_index[c]);
+	}
+	savestate_write_i32(f, mfm->sector);
+	savestate_write_i32(f, mfm->track);
+	savestate_write_i32(f, mfm->side);
+	savestate_write_i32(f, mfm->drive);
+	savestate_write_i32(f, mfm->density);
+	savestate_write_i32(f, mfm->in_read);
+	savestate_write_i32(f, mfm->in_write);
+	savestate_write_i32(f, mfm->in_readaddr);
+	savestate_write_i32(f, mfm->in_format);
+	savestate_write_i32(f, mfm->sync_required);
+	savestate_write_u64(f, mfm->buffer);
+	savestate_write_i32(f, mfm->pos);
+	savestate_write_i32(f, mfm->revs);
+	savestate_write_i32(f, mfm->indextime_blank);
+	savestate_write_i32(f, mfm->pollbytesleft);
+	savestate_write_i32(f, mfm->pollbitsleft);
+	savestate_write_i32(f, mfm->ddidbitsleft);
+	savestate_write_i32(f, mfm->readidpoll);
+	savestate_write_i32(f, mfm->readdatapoll);
+	savestate_write_i32(f, mfm->writedatapoll);
+	savestate_write_i32(f, mfm->rw_write);
+	savestate_write_i32(f, mfm->nextsector);
+	savestate_write_rle(f, mfm->sectordat, sizeof(mfm->sectordat));
+	savestate_write_u16(f, mfm->crc);
+	savestate_write_i32(f, mfm->lastdat[0]);
+	savestate_write_i32(f, mfm->lastdat[1]);
+	savestate_write_i32(f, mfm->sectorcrc[0]);
+	savestate_write_i32(f, mfm->sectorcrc[1]);
+	savestate_write_i32(f, mfm->sectorsize);
+	savestate_write_i32(f, mfm->fdc_sectorsize);
+	savestate_write_i32(f, mfm->last_bit);
+	savestate_write_i32(f, mfm->write_protected);
+}
+
+static void
+hfe_mfm_loadstate(FILE *f, mfm_t *mfm)
+{
+	int c;
+
+	savestate_read_rle(f, mfm->track_data, sizeof(mfm->track_data));
+	for (c = 0; c < 3; c++) {
+		mfm->track_len[c] = savestate_read_i32(f);
+	}
+	for (c = 0; c < 3; c++) {
+		mfm->track_index[c] = savestate_read_i32(f);
+	}
+	mfm->sector = savestate_read_i32(f);
+	mfm->track = savestate_read_i32(f);
+	mfm->side = savestate_read_i32(f);
+	mfm->drive = savestate_read_i32(f);
+	mfm->density = savestate_read_i32(f);
+	mfm->in_read = savestate_read_i32(f);
+	mfm->in_write = savestate_read_i32(f);
+	mfm->in_readaddr = savestate_read_i32(f);
+	mfm->in_format = savestate_read_i32(f);
+	mfm->sync_required = savestate_read_i32(f);
+	mfm->buffer = savestate_read_u64(f);
+	mfm->pos = savestate_read_i32(f);
+	mfm->revs = savestate_read_i32(f);
+	mfm->indextime_blank = savestate_read_i32(f);
+	mfm->pollbytesleft = savestate_read_i32(f);
+	mfm->pollbitsleft = savestate_read_i32(f);
+	mfm->ddidbitsleft = savestate_read_i32(f);
+	mfm->readidpoll = savestate_read_i32(f);
+	mfm->readdatapoll = savestate_read_i32(f);
+	mfm->writedatapoll = savestate_read_i32(f);
+	mfm->rw_write = savestate_read_i32(f);
+	mfm->nextsector = savestate_read_i32(f);
+	savestate_read_rle(f, mfm->sectordat, sizeof(mfm->sectordat));
+	mfm->crc = savestate_read_u16(f);
+	mfm->lastdat[0] = savestate_read_i32(f);
+	mfm->lastdat[1] = savestate_read_i32(f);
+	mfm->sectorcrc[0] = savestate_read_i32(f);
+	mfm->sectorcrc[1] = savestate_read_i32(f);
+	mfm->sectorsize = savestate_read_i32(f);
+	mfm->fdc_sectorsize = savestate_read_i32(f);
+	mfm->last_bit = savestate_read_i32(f);
+	mfm->write_protected = savestate_read_i32(f);
+}
+
+/**
+ * Write the HFE floppy image state to a suspend snapshot.
+ *
+ * The image file handle, header and track table are not stored; they are
+ * rebuilt when the image is re-opened before this state is restored. The
+ * MFM decode state (including the buffered track) is stored so an
+ * in-flight operation carries across; its writeback function pointer is
+ * left untouched.
+ */
+void
+hfe_savestate(FILE *f)
+{
+	int d;
+
+	savestate_write_i32(f, hfe_drive);
+	for (d = 0; d < 4; d++) {
+		savestate_write_i32(f, hfe[d].current_track);
+		savestate_write_i32(f, hfe[d].write_prot);
+		hfe_mfm_savestate(f, &hfe[d].mfm);
+	}
+}
+
+/**
+ * Restore the HFE floppy image state from a suspend snapshot.
+ */
+void
+hfe_loadstate(FILE *f)
+{
+	int d;
+
+	hfe_drive = savestate_read_i32(f);
+	for (d = 0; d < 4; d++) {
+		hfe[d].current_track = savestate_read_i32(f);
+		hfe[d].write_prot = savestate_read_i32(f);
+		hfe_mfm_loadstate(f, &hfe[d].mfm);
+	}
+}

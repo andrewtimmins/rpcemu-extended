@@ -46,6 +46,7 @@
 #include "vidc20.h"
 #include "iomd.h"
 #include "ide.h"
+#include "savestate.h"
 #include "arm.h"
 #include "i8042.h"
 #include "parallel.h"
@@ -1356,4 +1357,139 @@ superio_read(uint32_t addr)
     /* -------------------- Unhandled -------------------- */
     rpclog("SuperIO: Unhandled read port=0x%03X\n", port);
     return 0xFF;
+}
+
+/* ========================================================================
+ * Suspend/resume state serialization
+ * ======================================================================== */
+
+static void
+parallel_savestate(FILE *f, const ParallelPort *p)
+{
+	savestate_write_u8(f, p->data);
+	savestate_write_u8(f, p->status);
+	savestate_write_u8(f, p->control);
+	savestate_write_u8(f, p->ecr);
+	savestate_write_u8(f, p->config_a);
+	savestate_write_u8(f, p->config_b);
+	savestate_write(f, p->fifo, sizeof(p->fifo));
+	savestate_write_i32(f, p->fifo_head);
+	savestate_write_i32(f, p->fifo_tail);
+	savestate_write_i32(f, p->fifo_count);
+	savestate_write_i32(f, p->last_strobe);
+	savestate_write_i32(f, p->ack_pending);
+	savestate_write_u16(f, p->base_addr);
+}
+
+static void
+parallel_loadstate(FILE *f, ParallelPort *p)
+{
+	p->data = savestate_read_u8(f);
+	p->status = savestate_read_u8(f);
+	p->control = savestate_read_u8(f);
+	p->ecr = savestate_read_u8(f);
+	p->config_a = savestate_read_u8(f);
+	p->config_b = savestate_read_u8(f);
+	savestate_read(f, p->fifo, sizeof(p->fifo));
+	p->fifo_head = savestate_read_i32(f);
+	p->fifo_tail = savestate_read_i32(f);
+	p->fifo_count = savestate_read_i32(f);
+	p->last_strobe = savestate_read_i32(f);
+	p->ack_pending = savestate_read_i32(f);
+	p->base_addr = savestate_read_u16(f);
+}
+
+static void
+uart_savestate(FILE *f, const UART *u)
+{
+	savestate_write_u8(f, u->rbr);
+	savestate_write_u8(f, u->thr);
+	savestate_write_u8(f, u->dll);
+	savestate_write_u8(f, u->dlm);
+	savestate_write_u8(f, u->ier);
+	savestate_write_u8(f, u->iir);
+	savestate_write_u8(f, u->fcr);
+	savestate_write_u8(f, u->lcr);
+	savestate_write_u8(f, u->mcr);
+	savestate_write_u8(f, u->lsr);
+	savestate_write_u8(f, u->msr);
+	savestate_write_u8(f, u->scr);
+	savestate_write(f, u->rx_fifo, sizeof(u->rx_fifo));
+	savestate_write(f, u->tx_fifo, sizeof(u->tx_fifo));
+	savestate_write_i32(f, u->rx_head);
+	savestate_write_i32(f, u->rx_tail);
+	savestate_write_i32(f, u->rx_count);
+	savestate_write_i32(f, u->tx_head);
+	savestate_write_i32(f, u->tx_tail);
+	savestate_write_i32(f, u->tx_count);
+	savestate_write_i32(f, u->fifo_enabled);
+	savestate_write_i32(f, u->thre_int_pending);
+	savestate_write_u16(f, u->base_addr);
+}
+
+static void
+uart_loadstate(FILE *f, UART *u)
+{
+	u->rbr = savestate_read_u8(f);
+	u->thr = savestate_read_u8(f);
+	u->dll = savestate_read_u8(f);
+	u->dlm = savestate_read_u8(f);
+	u->ier = savestate_read_u8(f);
+	u->iir = savestate_read_u8(f);
+	u->fcr = savestate_read_u8(f);
+	u->lcr = savestate_read_u8(f);
+	u->mcr = savestate_read_u8(f);
+	u->lsr = savestate_read_u8(f);
+	u->msr = savestate_read_u8(f);
+	u->scr = savestate_read_u8(f);
+	savestate_read(f, u->rx_fifo, sizeof(u->rx_fifo));
+	savestate_read(f, u->tx_fifo, sizeof(u->tx_fifo));
+	u->rx_head = savestate_read_i32(f);
+	u->rx_tail = savestate_read_i32(f);
+	u->rx_count = savestate_read_i32(f);
+	u->tx_head = savestate_read_i32(f);
+	u->tx_tail = savestate_read_i32(f);
+	u->tx_count = savestate_read_i32(f);
+	u->fifo_enabled = savestate_read_i32(f);
+	u->thre_int_pending = savestate_read_i32(f);
+	u->base_addr = savestate_read_u16(f);
+}
+
+/**
+ * Write the SuperIO state to a suspend snapshot.
+ *
+ * super_type is not stored; it is set from the machine model at reset. The
+ * transient logging/trace counters are not stored either.
+ */
+void
+superio_savestate(FILE *f)
+{
+	savestate_write_i32(f, configmode);
+	savestate_write(f, configregs665, sizeof(configregs665));
+	savestate_write(f, configregs672, sizeof(configregs672));
+	savestate_write_u8(f, configreg);
+	parallel_savestate(f, &lpt1);
+	parallel_savestate(f, &lpt2);
+	uart_savestate(f, &com1);
+	uart_savestate(f, &com2);
+	savestate_write_i32(f, gp_index);
+	savestate_write(f, gp_regs, sizeof(gp_regs));
+}
+
+/**
+ * Restore the SuperIO state from a suspend snapshot.
+ */
+void
+superio_loadstate(FILE *f)
+{
+	configmode = savestate_read_i32(f);
+	savestate_read(f, configregs665, sizeof(configregs665));
+	savestate_read(f, configregs672, sizeof(configregs672));
+	configreg = savestate_read_u8(f);
+	parallel_loadstate(f, &lpt1);
+	parallel_loadstate(f, &lpt2);
+	uart_loadstate(f, &com1);
+	uart_loadstate(f, &com2);
+	gp_index = savestate_read_i32(f);
+	savestate_read(f, gp_regs, sizeof(gp_regs));
 }

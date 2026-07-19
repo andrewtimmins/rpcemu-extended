@@ -42,6 +42,7 @@ void callbackide(void);
 #include "ide.h"
 #include "cmos.h"
 #include "arm.h"
+#include "savestate.h"
 
 /* Bits of 'atastat' */
 #define ERR_STAT		0x01
@@ -1599,4 +1600,82 @@ static void callreadcd(void)
                 ide.pos=0;
                 idecallback=60;
                 ide.packlen=2048;
+}
+
+/**
+ * Write the IDE controller state to a suspend snapshot.
+ *
+ * The disc image file handles are not stored: resume re-opens the images
+ * from the data directory, and every transfer seeks before accessing.
+ * The sector buffer is stored so an in-flight transfer carries across.
+ */
+void
+ide_savestate(FILE *f)
+{
+	int d;
+
+	savestate_write_u8(f, ide.atastat);
+	savestate_write_u8(f, ide.error);
+	savestate_write_i32(f, ide.secount);
+	savestate_write_i32(f, ide.sector);
+	savestate_write_i32(f, ide.cylinder);
+	savestate_write_i32(f, ide.head);
+	savestate_write_i32(f, ide.drive);
+	savestate_write_i32(f, ide.cylprecomp);
+	savestate_write_u8(f, ide.command);
+	savestate_write_u8(f, ide.fdisk);
+	savestate_write_i32(f, ide.pos);
+	savestate_write_i32(f, ide.packlen);
+	for (d = 0; d < 2; d++) {
+		savestate_write_i32(f, ide.spt[d]);
+		savestate_write_i32(f, ide.hpc[d]);
+		savestate_write_i32(f, ide.skip512[d]);
+		savestate_write_i32(f, ide.lba_cmd[d]);
+	}
+	savestate_write_i32(f, ide.packetstatus);
+	savestate_write_i32(f, ide.cdpos);
+	savestate_write_i32(f, ide.cdlen);
+	savestate_write_u8(f, ide.asc);
+	savestate_write_i32(f, ide.discchanged);
+	savestate_write_i32(f, ide.reset);
+	savestate_write_rle(f, ide.buffer, sizeof(ide.buffer));
+
+	savestate_write_i32(f, idecallback);
+}
+
+/**
+ * Restore the IDE controller state from a suspend snapshot.
+ */
+void
+ide_loadstate(FILE *f)
+{
+	int d;
+
+	ide.atastat = savestate_read_u8(f);
+	ide.error = savestate_read_u8(f);
+	ide.secount = savestate_read_i32(f);
+	ide.sector = savestate_read_i32(f);
+	ide.cylinder = savestate_read_i32(f);
+	ide.head = savestate_read_i32(f);
+	ide.drive = savestate_read_i32(f);
+	ide.cylprecomp = savestate_read_i32(f);
+	ide.command = savestate_read_u8(f);
+	ide.fdisk = savestate_read_u8(f);
+	ide.pos = savestate_read_i32(f);
+	ide.packlen = savestate_read_i32(f);
+	for (d = 0; d < 2; d++) {
+		ide.spt[d] = savestate_read_i32(f);
+		ide.hpc[d] = savestate_read_i32(f);
+		ide.skip512[d] = savestate_read_i32(f);
+		ide.lba_cmd[d] = savestate_read_i32(f);
+	}
+	ide.packetstatus = savestate_read_i32(f);
+	ide.cdpos = savestate_read_i32(f);
+	ide.cdlen = savestate_read_i32(f);
+	ide.asc = savestate_read_u8(f);
+	ide.discchanged = savestate_read_i32(f);
+	ide.reset = savestate_read_i32(f);
+	savestate_read_rle(f, ide.buffer, sizeof(ide.buffer));
+
+	idecallback = savestate_read_i32(f);
 }

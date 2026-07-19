@@ -25,6 +25,7 @@
 #include "rpcemu.h"
 #include "mem.h"
 #include "arm.h"
+#include "savestate.h"
 
 static double fparegs[8] = {0.0}; /*No C variable type for 80-bit floating point, so use 64*/
 static uint32_t fpsr = 0, fpcr = 0;
@@ -672,4 +673,34 @@ void fpaopcode(uint32_t opcode)
                 fpa_undefined(opcode);
                 return;
         }
+}
+
+/**
+ * Write the FPA state to a suspend snapshot.
+ */
+void
+fpa_savestate(FILE *f)
+{
+	int c;
+
+	for (c = 0; c < 8; c++) {
+		savestate_write_f64(f, fparegs[c]);
+	}
+	savestate_write_u32(f, fpsr);
+	savestate_write_u32(f, fpcr);
+}
+
+/**
+ * Restore the FPA state from a suspend snapshot.
+ */
+void
+fpa_loadstate(FILE *f)
+{
+	int c;
+
+	for (c = 0; c < 8; c++) {
+		fparegs[c] = savestate_read_f64(f);
+	}
+	fpsr = savestate_read_u32(f);
+	fpcr = savestate_read_u32(f);
 }

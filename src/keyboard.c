@@ -43,6 +43,7 @@
 #include "iomd.h"
 #include "arm.h"
 #include "i8042.h"
+#include "savestate.h"
 
 /* Keyboard Commands */
 #define KBD_CMD_ENABLE		0xf4
@@ -1261,4 +1262,120 @@ mouse_hack_osword_21_3(uint32_t a)
 	mouse_osunits_to_host(osx, osy, &x, &y);
 
 	rpcemu_move_host_mouse(x, y);
+}
+
+static void
+ps2_queue_savestate(FILE *f, const PS2Queue *q)
+{
+	savestate_write(f, q->data, PS2_QUEUE_SIZE);
+	savestate_write_i32(f, q->rptr);
+	savestate_write_i32(f, q->wptr);
+	savestate_write_i32(f, q->count);
+}
+
+static void
+ps2_queue_loadstate(FILE *f, PS2Queue *q)
+{
+	savestate_read(f, q->data, PS2_QUEUE_SIZE);
+	q->rptr = savestate_read_i32(f) & (PS2_QUEUE_SIZE - 1);
+	q->wptr = savestate_read_i32(f) & (PS2_QUEUE_SIZE - 1);
+	q->count = savestate_read_i32(f);
+}
+
+/**
+ * Write the keyboard, PS/2 mouse and mousehack state to a suspend snapshot.
+ */
+void
+keyboard_savestate(FILE *f)
+{
+	int c;
+
+	savestate_write_i32(f, kbd.enable);
+	savestate_write_i32(f, kbd.reset);
+	savestate_write_u8(f, kbd.stat);
+	savestate_write_u8(f, kbd.data);
+	savestate_write_u8(f, kbd.command);
+	ps2_queue_savestate(f, &kbd.queue);
+
+	savestate_write_i32(f, msenable);
+	savestate_write_i32(f, msreset);
+	savestate_write_u8(f, msstat);
+	savestate_write_u8(f, msdata);
+	savestate_write_i32(f, mousepoll);
+	savestate_write_i32(f, msincommand);
+	savestate_write_i32(f, justsent);
+	ps2_queue_savestate(f, &msqueue);
+	savestate_write_u8(f, mouse_type);
+	savestate_write_u8(f, mouse_detect_state);
+
+	savestate_write_u8(f, mouse_hack.pointer);
+	for (c = 0; c < 5; c++) {
+		savestate_write_i32(f, mouse_hack.activex[c]);
+	}
+	for (c = 0; c < 5; c++) {
+		savestate_write_i32(f, mouse_hack.activey[c]);
+	}
+	savestate_write_i32(f, mouse_hack.cursor_linked);
+	savestate_write_i32(f, mouse_hack.cursor_unlinked_x);
+	savestate_write_i32(f, mouse_hack.cursor_unlinked_y);
+	savestate_write_u16(f, (uint16_t) mouse_hack.boundbox.left);
+	savestate_write_u16(f, (uint16_t) mouse_hack.boundbox.right);
+	savestate_write_u16(f, (uint16_t) mouse_hack.boundbox.bottom);
+	savestate_write_u16(f, (uint16_t) mouse_hack.boundbox.top);
+
+	savestate_write_i32(f, kcallback);
+	savestate_write_i32(f, mcallback);
+}
+
+/**
+ * Restore the keyboard, PS/2 mouse and mousehack state from a suspend
+ * snapshot.
+ *
+ * The host-driven state (keys currently held, pending mouse deltas) is
+ * cleared instead: no host keys are down when resuming.
+ */
+void
+keyboard_loadstate(FILE *f)
+{
+	int c;
+
+	kbd.enable = savestate_read_i32(f);
+	kbd.reset = savestate_read_i32(f);
+	kbd.stat = savestate_read_u8(f);
+	kbd.data = savestate_read_u8(f);
+	kbd.command = savestate_read_u8(f);
+	ps2_queue_loadstate(f, &kbd.queue);
+	memset(kbd.keys2, 0, sizeof(kbd.keys2));
+
+	msenable = savestate_read_i32(f);
+	msreset = savestate_read_i32(f);
+	msstat = savestate_read_u8(f);
+	msdata = savestate_read_u8(f);
+	mousepoll = savestate_read_i32(f);
+	msincommand = savestate_read_i32(f);
+	justsent = savestate_read_i32(f);
+	ps2_queue_loadstate(f, &msqueue);
+	mouse_type = savestate_read_u8(f);
+	mouse_detect_state = savestate_read_u8(f);
+
+	mouse_hack.pointer = savestate_read_u8(f);
+	for (c = 0; c < 5; c++) {
+		mouse_hack.activex[c] = savestate_read_i32(f);
+	}
+	for (c = 0; c < 5; c++) {
+		mouse_hack.activey[c] = savestate_read_i32(f);
+	}
+	mouse_hack.cursor_linked = savestate_read_i32(f);
+	mouse_hack.cursor_unlinked_x = savestate_read_i32(f);
+	mouse_hack.cursor_unlinked_y = savestate_read_i32(f);
+	mouse_hack.boundbox.left = (int16_t) savestate_read_u16(f);
+	mouse_hack.boundbox.right = (int16_t) savestate_read_u16(f);
+	mouse_hack.boundbox.bottom = (int16_t) savestate_read_u16(f);
+	mouse_hack.boundbox.top = (int16_t) savestate_read_u16(f);
+
+	kcallback = savestate_read_i32(f);
+	mcallback = savestate_read_i32(f);
+
+	mouse.dx = 0;
+	mouse.dy = 0;
 }

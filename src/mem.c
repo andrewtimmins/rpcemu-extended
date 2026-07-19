@@ -30,6 +30,7 @@
 #include "cp15.h"
 #include "superio.h"
 #include "podules.h"
+#include "savestate.h"
 #include "fdc.h"
 
 /* References -
@@ -1514,4 +1515,101 @@ writememfb(uint32_t addr, uint8_t val)
 	}
 	mem_phys_write8(phys_addr, val);
 	debugger_memory_access(virt_addr, 1, 1, val);
+}
+
+/**
+ * Write the RAM and VRAM contents to a suspend snapshot.
+ *
+ * The ROM is not stored; the resume path reloads it from disk and the
+ * snapshot header carries a checksum to ensure it is the same image.
+ *
+ * Up to five RAM regions can be present: SIMM 0 banks 0 and 1 (always),
+ * the second 128MB SIMM (256MB configs), and the two 128MB Kinetic on-card
+ * SDRAM banks (Kinetic configs above 256MB). Each region is stored with a
+ * size word so it can be validated on resume, then RLE-compressed (guest
+ * RAM is mostly zero). The 16MB VRAM buffer is stored at its active size
+ * (mem_vrammask + 1).
+ */
+void
+mem_savestate(FILE *f)
+{
+	uint32_t bank_size = mem_rammask + 1;
+	uint32_t ram1_size = (ram1 != NULL) ? (128 * 1024 * 1024) : 0;
+	uint32_t sdram_size = (sdram0 != NULL) ? SDRAM_BANK_SIZE : 0;
+	uint32_t vram_size = (mem_vrammask != 0) ? (mem_vrammask + 1) : 0;
+
+	savestate_write_u32(f, bank_size);
+	savestate_write_rle(f, ram00, bank_size);
+	savestate_write_rle(f, ram01, bank_size);
+
+	savestate_write_u32(f, ram1_size);
+	if (ram1_size != 0) {
+		savestate_write_rle(f, ram1, ram1_size);
+	}
+
+	savestate_write_u32(f, sdram_size);
+	if (sdram_size != 0) {
+		savestate_write_rle(f, sdram0, sdram_size);
+		savestate_write_rle(f, sdram1, sdram_size);
+	}
+
+	savestate_write_u32(f, vram_size);
+	if (vram_size != 0) {
+		savestate_write_rle(f, vram, vram_size);
+	}
+}
+
+/**
+ * Restore the RAM and VRAM contents from a suspend snapshot.
+ *
+ * The arrays have already been allocated at their configured sizes by
+ * mem_reset(); the snapshot header guarantees the machine model and RAM/VRAM
+ * configuration match, so the bank presence and sizes must agree.
+ */
+void
+mem_loadstate(FILE *f)
+{
+	uint32_t bank_size = savestate_read_u32(f);
+	uint32_t ram1_size, sdram_size, vram_size;
+
+	if (bank_size != mem_rammask + 1) {
+		rpclog("mem_loadstate: RAM bank size mismatch\n");
+		savestate_error = 1;
+		return;
+	}
+	savestate_read_rle(f, ram00, bank_size);
+	savestate_read_rle(f, ram01, bank_size);
+
+	ram1_size = savestate_read_u32(f);
+	if (ram1_size != ((ram1 != NULL) ? (128 * 1024 * 1024) : 0)) {
+		rpclog("mem_loadstate: SIMM 1 size mismatch\n");
+		savestate_error = 1;
+		return;
+	}
+	if (ram1_size != 0) {
+		savestate_read_rle(f, ram1, ram1_size);
+	}
+
+	sdram_size = savestate_read_u32(f);
+	if (sdram_size != ((sdram0 != NULL) ? SDRAM_BANK_SIZE : 0)) {
+		rpclog("mem_loadstate: Kinetic SDRAM size mismatch\n");
+		savestate_error = 1;
+		return;
+	}
+	if (sdram_size != 0) {
+		savestate_read_rle(f, sdram0, sdram_size);
+		savestate_read_rle(f, sdram1, sdram_size);
+	}
+
+	vram_size = savestate_read_u32(f);
+	if (vram_size != ((mem_vrammask != 0) ? (mem_vrammask + 1) : 0)) {
+		rpclog("mem_loadstate: VRAM size mismatch\n");
+		savestate_error = 1;
+		return;
+	}
+	if (vram_size != 0) {
+		savestate_read_rle(f, vram, vram_size);
+	}
+
+	clearmemcache();
 }

@@ -5,6 +5,7 @@
 #include "disc.h"
 #include "disc_adf.h"
 #include "fdc.h"
+#include "savestate.h"
 
 static disc_funcs adf_disc_funcs;
 
@@ -306,3 +307,79 @@ static disc_funcs adf_disc_funcs = {
 	.stop        = adf_stop,
 	.close       = adf_close
 };
+
+/**
+ * Write the ADF floppy image state to a suspend snapshot.
+ *
+ * The image file handles are not stored; the images themselves are
+ * re-opened before this state is restored. The buffered track data is
+ * stored as it may contain sectors not yet written back.
+ */
+void
+adf_savestate(FILE *f)
+{
+	int d;
+
+	for (d = 0; d < 4; d++) {
+		savestate_write_rle(f, adf[d].track_data, sizeof(adf[d].track_data));
+		savestate_write_i32(f, adf[d].dblside);
+		savestate_write_i32(f, adf[d].sectors);
+		savestate_write_i32(f, adf[d].size);
+		savestate_write_i32(f, adf[d].track);
+		savestate_write_i32(f, adf[d].dblstep);
+		savestate_write_i32(f, adf[d].density);
+		savestate_write_i32(f, adf[d].maxsector);
+		savestate_write_i32(f, adf[d].skew);
+		savestate_write_i32(f, adf[d].write_prot);
+	}
+
+	savestate_write_i32(f, adf_state.sector);
+	savestate_write_i32(f, adf_state.track);
+	savestate_write_i32(f, adf_state.side);
+	savestate_write_i32(f, adf_state.drive);
+	savestate_write_i32(f, adf_state.readpos);
+	savestate_write_i32(f, adf_state.inread);
+	savestate_write_i32(f, adf_state.inwrite);
+	savestate_write_i32(f, adf_state.inreadaddr);
+	savestate_write_i32(f, adf_state.informat);
+	savestate_write_i32(f, adf_state.notfound);
+	savestate_write_i32(f, adf_state.cur_sector);
+	savestate_write_i32(f, adf_state.pause);
+	savestate_write_i32(f, adf_state.index);
+}
+
+/**
+ * Restore the ADF floppy image state from a suspend snapshot.
+ */
+void
+adf_loadstate(FILE *f)
+{
+	int d;
+
+	for (d = 0; d < 4; d++) {
+		savestate_read_rle(f, adf[d].track_data, sizeof(adf[d].track_data));
+		adf[d].dblside = savestate_read_i32(f);
+		adf[d].sectors = savestate_read_i32(f);
+		adf[d].size = savestate_read_i32(f);
+		adf[d].track = savestate_read_i32(f);
+		adf[d].dblstep = savestate_read_i32(f);
+		adf[d].density = savestate_read_i32(f);
+		adf[d].maxsector = savestate_read_i32(f);
+		adf[d].skew = savestate_read_i32(f);
+		adf[d].write_prot = savestate_read_i32(f);
+	}
+
+	adf_state.sector = savestate_read_i32(f);
+	adf_state.track = savestate_read_i32(f);
+	adf_state.side = savestate_read_i32(f);
+	adf_state.drive = savestate_read_i32(f);
+	adf_state.readpos = savestate_read_i32(f);
+	adf_state.inread = savestate_read_i32(f);
+	adf_state.inwrite = savestate_read_i32(f);
+	adf_state.inreadaddr = savestate_read_i32(f);
+	adf_state.informat = savestate_read_i32(f);
+	adf_state.notfound = savestate_read_i32(f);
+	adf_state.cur_sector = savestate_read_i32(f);
+	adf_state.pause = savestate_read_i32(f);
+	adf_state.index = savestate_read_i32(f);
+}

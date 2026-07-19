@@ -4,6 +4,7 @@
 #include "disc.h"
 #include "disc_adf.h"
 #include "fdc.h"
+#include "savestate.h"
 
 disc_funcs *drive_funcs[2];
 
@@ -93,4 +94,28 @@ disc_stop(int drive)
 {
 	if (drive_funcs[drive] && drive_funcs[drive]->stop)
 		drive_funcs[drive]->stop();
+}
+
+/**
+ * Write the shared floppy drive state to a suspend snapshot.
+ */
+void
+disc_savestate(FILE *f)
+{
+	savestate_write_i32(f, disc_drivesel);
+	savestate_write_i32(f, disc_notfound);
+	savestate_write_i32(f, current_track[0]);
+	savestate_write_i32(f, current_track[1]);
+}
+
+/**
+ * Restore the shared floppy drive state from a suspend snapshot.
+ */
+void
+disc_loadstate(FILE *f)
+{
+	disc_drivesel = savestate_read_i32(f);
+	disc_notfound = savestate_read_i32(f);
+	current_track[0] = savestate_read_i32(f);
+	current_track[1] = savestate_read_i32(f);
 }

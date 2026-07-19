@@ -20,6 +20,7 @@ set(RPCEMU_CORE_SOURCES
     mem.c
     romload.c
     rpcemu.c
+    savestate.c
     sound.c
     vidc20.c
     podules.c
