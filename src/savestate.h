@@ -117,6 +117,8 @@ extern void rpcemu_savestate(FILE *f);  /* execution-loop state (rpcemu.c) */
 extern void rpcemu_loadstate(FILE *f);
 extern void hostfs_savestate(FILE *f);
 extern void hostfs_loadstate(FILE *f);
+extern void network_savestate(FILE *f);
+extern void network_loadstate(FILE *f);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -45,6 +45,7 @@
 #include "rpcemu.h"
 #include "mem.h"
 #include "network.h"
+#include "savestate.h"
 #include "podules.h"
 
 #define HEADERLEN	18
@@ -459,5 +460,26 @@ network_plt_reset(void)
 	if (tunfd != -1) {
 		close(tunfd);
 		tunfd = -1;
+	}
+}
+
+/**
+ * Save/restore the platform (bridging/tunnelling) IRQ status address. On
+ * resume the setter is re-invoked so the async receive notification (SIGIO)
+ * is re-established, exactly as when the guest driver first registered it.
+ */
+void
+network_plt_savestate(FILE *f)
+{
+	savestate_write_u32(f, irqstatus);
+}
+
+void
+network_plt_loadstate(FILE *f)
+{
+	uint32_t address = savestate_read_u32(f);
+
+	if (address != 0) {
+		network_plt_setirqstatus(address);
 	}
 }

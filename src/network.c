@@ -31,6 +31,7 @@
 #include "mem.h"
 #include "network.h"
 #include "network-nat.h"
+#include "savestate.h"
 #include "podules.h"
 
 /* Variables for supporting a podule header data */
@@ -487,4 +488,34 @@ network_macaddress_parse(const char *macaddress, uint8_t hwaddr[6])
 	}
 
 	return 1;
+}
+
+/**
+ * Save/restore networking state to a suspend snapshot.
+ *
+ * Delegates to the active backend. The critical piece is the IRQ-status
+ * address the guest driver registered, which the emulator otherwise loses on
+ * a fresh-launch resume, leaving the resumed guest unable to receive packets.
+ */
+void
+network_savestate(FILE *f)
+{
+	savestate_write_u32(f, (uint32_t) config.network_type);
+	if (config.network_type == NetworkType_NAT) {
+		network_nat_savestate(f);
+	} else {
+		network_plt_savestate(f);
+	}
+}
+
+void
+network_loadstate(FILE *f)
+{
+	uint32_t type = savestate_read_u32(f);
+
+	if (type == (uint32_t) NetworkType_NAT) {
+		network_nat_loadstate(f);
+	} else {
+		network_plt_loadstate(f);
+	}
 }

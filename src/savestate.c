@@ -345,6 +345,9 @@ static const SnapshotChunk snapshot_chunks[] = {
 	{ "SND ", sound_savestate,    sound_loadstate    },
 	{ "EXEC", rpcemu_savestate,   rpcemu_loadstate   },
 	{ "HFS ", hostfs_savestate,   hostfs_loadstate   },
+#ifdef RPCEMU_NETWORKING
+	{ "NET ", network_savestate,  network_loadstate  },
+#endif
 };
 
 #define SNAPSHOT_CHUNK_COUNT \

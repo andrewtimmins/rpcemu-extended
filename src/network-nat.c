@@ -12,6 +12,7 @@
 #include "mem.h"
 #include "network.h"
 #include "network-nat.h"
+#include "savestate.h"
 #include "podules.h"
 #include "broadcast_relay.h"
 
@@ -563,4 +564,30 @@ network_nat_inject_packet(const uint8_t *pkt, int pkt_len)
 	nat.pkt_queue_count++;
 
 	return 1;
+}
+
+/**
+ * Save the guest-visible NAT networking state to a suspend snapshot.
+ *
+ * The only piece of host-side state the guest cannot re-establish itself on
+ * resume is irq_status: the address of the word in guest RAM used to signal
+ * received packets. The driver registers it once at init and never again, so
+ * without restoring it the emulator can no longer deliver packets to a
+ * resumed guest (every receive path bails on irq_status == 0). Slirp, the
+ * packet buffer and the relay queue are transient and rebuilt from scratch.
+ */
+void
+network_nat_savestate(FILE *f)
+{
+	savestate_write_u32(f, nat.irq_status);
+}
+
+void
+network_nat_loadstate(FILE *f)
+{
+	uint32_t address = savestate_read_u32(f);
+
+	if (address != 0) {
+		network_nat_setirqstatus(address);
+	}
 }

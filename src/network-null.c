@@ -35,6 +35,7 @@
 
 #include "rpcemu.h"
 #include "network.h"
+#include "savestate.h"
 
 void
 network_plt_reset(void)
@@ -78,4 +79,16 @@ void
 network_plt_setirqstatus(uint32_t address)
 {
 	NOT_USED(address);
+}
+
+void
+network_plt_savestate(FILE *f)
+{
+	savestate_write_u32(f, 0);
+}
+
+void
+network_plt_loadstate(FILE *f)
+{
+	(void) savestate_read_u32(f);
 }

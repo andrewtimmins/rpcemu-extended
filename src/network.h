@@ -39,6 +39,10 @@ void network_swi(uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3,
 
 void network_init(void);
 void network_reset(void);
+void network_savestate(FILE *f);
+void network_loadstate(FILE *f);
+void network_plt_savestate(FILE *f);
+void network_plt_loadstate(FILE *f);
 
 /* Functions shared between each platform, in network.c */
 void network_irq_raise(void);
