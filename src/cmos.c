@@ -701,7 +701,7 @@ cmosi2cchange(int scl, int sda)
 			if (slave == NULL) {
 				fprintf(stderr, "I2C-SerDes Bug: no slave in I2C-read\n");
 				rpclog("I2C-SerDes Bug: no slave in I2C-read\n");
-				exit(5324);
+				fatal("I2C-SerDes: no active slave in I2C read");
 			}
 			if (sda) {
 				/* Last was not acknowledged, so read nothing */
@@ -798,7 +798,7 @@ cmosi2cchange(int scl, int sda)
 				if (slave == NULL) {
 					fprintf(stderr, "I2C-SerDes Emulator Bug: no slave in write\n");
 					rpclog("I2C-SerDes Emulator Bug: no slave in write\n");
-					exit(3245);
+					fatal("I2C-SerDes: no active slave in I2C write");
 				}
 				result = slave->devops->write(slave->dev, serdes->inbuf);
 				serdes->slave_was_accessed = 1;

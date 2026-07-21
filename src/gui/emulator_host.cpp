@@ -73,6 +73,18 @@ Config *pconfig_copy = nullptr;
 static GuiBridge *g_gui_bridge = nullptr;
 static EmulatorHost *g_emulator_host = nullptr;
 
+/* Set as soon as any fatal() is raised, on whatever thread. The raising thread
+   then spins forever inside fatal(), so it can never again service commands or
+   signal a condition variable. GUI-thread waits and joins check this flag so
+   they can never deadlock on that spinning thread; the process is terminated
+   cleanly by ShowFatal() (or OnClose) reaching std::_Exit. */
+static std::atomic<bool> g_fatal_occurred{false};
+
+bool EmulatorFatalOccurred()
+{
+	return g_fatal_occurred.load();
+}
+
 static pthread_t sound_thread;
 static pthread_cond_t sound_cond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t sound_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -346,6 +358,16 @@ extern "C" void fatal(const char *format, ...)
 	rpclog("FATAL: %s\n", buf);
 	fprintf(stderr, "RPCEmu fatal error: %s\n", buf);
 
+	/* Record the fatal before anything else so any GUI-thread wait/join can
+	   observe it and stop blocking on this (about to spin) thread. A cv.wait
+	   only re-evaluates its predicate when notified, so also wake every request
+	   condition variable — otherwise a GUI thread already parked in one of them
+	   would sleep forever, since this thread is about to stop signalling. */
+	g_fatal_occurred.store(true);
+	if (g_emulator_host != nullptr) {
+		g_emulator_host->WakeAllWaiters();
+	}
+
 	if (g_gui_bridge == nullptr) {
 		exit(EXIT_FAILURE);
 	}
@@ -405,9 +427,27 @@ void EmulatorHost::Stop()
 
 void EmulatorHost::Join()
 {
+	if (g_fatal_occurred.load()) {
+		/* The emulator thread is spinning forever inside fatal() and will
+		   never return; joining it would deadlock. The process is terminated
+		   via ShowFatal()/OnClose reaching std::_Exit instead. */
+		return;
+	}
 	if (emu_thread_.joinable()) {
 		emu_thread_.join();
 	}
+}
+
+void EmulatorHost::WakeAllWaiters()
+{
+	/* Notify without holding the per-request mutexes: the predicates already
+	   test g_fatal_occurred (set before this is called), so a waiter that wakes
+	   spuriously here still sees the fatal and returns. */
+	trace_cv_.notify_all();
+	snapshot_cv_.notify_all();
+	state_cv_.notify_all();
+	memory_cv_.notify_all();
+	disasm_cv_.notify_all();
 }
 
 void EmulatorHost::PostCommand(EmuCommand command)
@@ -1063,7 +1103,7 @@ std::vector<DebugTraceEvent> EmulatorHost::DrainTraceEvents(uint32_t max, uint32
 	cmd.debug_count = max;
 	PostCommand(cmd);
 
-	trace_cv_.wait(lock, [this]() { return trace_ready_; });
+	trace_cv_.wait(lock, [this]() { return trace_ready_ || g_fatal_occurred.load(); });
 
 	if (dropped_out != nullptr) {
 		*dropped_out = trace_dropped_;
@@ -1078,7 +1118,7 @@ MachineSnapshot EmulatorHost::TakeSnapshot()
 
 	PostCommand(MakeCommand(EmuCommandType::TakeSnapshot));
 
-	snapshot_cv_.wait(lock, [this]() { return snapshot_ready_; });
+	snapshot_cv_.wait(lock, [this]() { return snapshot_ready_ || g_fatal_occurred.load(); });
 	return snapshot_result_;
 }
 
@@ -1091,7 +1131,7 @@ bool EmulatorHost::SaveState(const std::string &path)
 	command.string_path = path;
 	PostCommand(command);
 
-	state_cv_.wait(lock, [this]() { return state_ready_; });
+	state_cv_.wait(lock, [this]() { return state_ready_ || g_fatal_occurred.load(); });
 	return state_ok_;
 }
 
@@ -1104,7 +1144,7 @@ bool EmulatorHost::LoadState(const std::string &path, std::string *error_out)
 	command.string_path = path;
 	PostCommand(command);
 
-	state_cv_.wait(lock, [this]() { return state_ready_; });
+	state_cv_.wait(lock, [this]() { return state_ready_ || g_fatal_occurred.load(); });
 	if (error_out != nullptr) {
 		*error_out = state_error_;
 	}
@@ -1132,7 +1172,7 @@ size_t EmulatorHost::ReadMemory(uint32_t address, uint32_t length, uint8_t *buff
 	cmd.debug_count = length;
 	PostCommand(cmd);
 
-	memory_cv_.wait(lock, [this]() { return memory_ready_; });
+	memory_cv_.wait(lock, [this]() { return memory_ready_ || g_fatal_occurred.load(); });
 
 	const size_t to_copy = std::min(static_cast<size_t>(length), memory_result_.size());
 	if (to_copy > 0) {
@@ -1152,7 +1192,7 @@ std::string EmulatorHost::DisassembleAt(uint32_t address, int count)
 	cmd.arg1 = count;
 	PostCommand(cmd);
 
-	disasm_cv_.wait(lock, [this]() { return disasm_ready_; });
+	disasm_cv_.wait(lock, [this]() { return disasm_ready_ || g_fatal_occurred.load(); });
 	return disasm_result_;
 }
 

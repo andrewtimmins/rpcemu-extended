@@ -1321,6 +1321,16 @@ void MainFrame::OnClose(wxCloseEvent &event)
 		return;
 	}
 
+	// If a fatal error has been raised, the emulator thread is spinning forever
+	// inside fatal() and can never be joined or asked to save state. ShowFatal()
+	// normally terminates the process directly, but guard here too: run no
+	// teardown (destructors would try to join the spinning thread and hang) and
+	// exit immediately.
+	if (EmulatorFatalOccurred()) {
+		fflush(nullptr);
+		std::_Exit(EXIT_FAILURE);
+	}
+
 	// Store the machine state on exit so the next launch can Resume it (the
 	// machine selector offers it). This must run while the emulator thread is
 	// still alive, before ShutdownEmulator() stops it.

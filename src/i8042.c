@@ -173,7 +173,7 @@ i8042_data_write(uint8_t val)
 		mouse_data_write(val);
 		break;
 	default:
-		exit(1);
+		fatal("i8042: unknown controller command 0x%02x", val);
 	}
 	i8042.command = 0;
 }
@@ -215,7 +215,7 @@ i8042_command_write(uint8_t val)
 		i8042.command = val;
 		break;
 	default:
-		exit(1);
+		fatal("i8042: unknown controller command 0x%02x", val);
 	}
 }
 

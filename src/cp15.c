@@ -362,7 +362,7 @@ cp15_write(uint32_t opcode, uint32_t val)
 		default:
 			fprintf(stderr, "cp15_write(): unknown CPU model %d\n",
 				cp15.cpu_model);
-			exit(EXIT_FAILURE);
+			fatal("cp15_write(): unknown CPU model %d", cp15.cpu_model);
 		}
 		break;
 

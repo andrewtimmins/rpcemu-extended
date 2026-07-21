@@ -253,7 +253,7 @@ hostfs_ensure_buffer_size(size_t buffer_size_needed)
     if (!buffer) {
       fprintf(stderr, "HostFS could not increase buffer size to %lu bytes\n",
               (unsigned long) buffer_size_needed);
-      exit(EXIT_FAILURE);
+      fatal("HostFS: out of memory growing buffer to %lu bytes", (unsigned long) buffer_size_needed);
     }
     buffer_size = buffer_size_needed;
   }
@@ -971,7 +971,7 @@ hostfs_open(ARMul_State *state)
     /* No more space in the open_file[] array.
        This should never occur, because RISC OS is constraining the max
        number of open files */
-    abort();
+    fatal("HostFS: no free slot in open_file[] (RISC OS open-file limit exceeded)");
   }
 
 
@@ -1001,7 +1001,7 @@ hostfs_open(ARMul_State *state)
     case ENOMEM: /* Out of memory */
       fprintf(stderr, "HostFS out of memory in hostfs_open(): \'%s\'\n",
               strerror(errno));
-      exit(EXIT_FAILURE);
+      fatal("HostFS: out of memory in hostfs_open(): %s", strerror(errno));
       break;
 
     case ENOENT: /* File not found */
@@ -1470,7 +1470,7 @@ hostfs_file_1_write_cat_info(ARMul_State *state)
     break;
 
   default:
-    abort();
+    fatal("HostFS: unexpected object type in hostfs_read_file()");
   }
 }
 
@@ -1560,7 +1560,7 @@ hostfs_file_6_delete(ARMul_State *state)
     break;
 
   default:
-    abort();
+    fatal("HostFS: unexpected object type in hostfs_write_file()");
   }
 }
 
@@ -1909,7 +1909,7 @@ hostfs_cache_dir(const char *directory_name)
   }
   if ((!cache_entries) || (!cache_names)) {
     fprintf(stderr, "hostfs_cache_dir(): Out of memory\n");
-    exit(1);
+    fatal("hostfs_cache_dir(): out of memory");
   }
 
   /* Read each of the directory entries one at a time.
@@ -1950,7 +1950,7 @@ hostfs_cache_dir(const char *directory_name)
       cache_names = realloc(cache_names, cache_names_capacity);
       if (!cache_names) {
         fprintf(stderr, "hostfs_cache_dir(): Out of memory\n");
-        exit(1);
+        fatal("hostfs_cache_dir(): out of memory");
       }
     }
 
@@ -1968,7 +1968,7 @@ hostfs_cache_dir(const char *directory_name)
       cache_entries = realloc(cache_entries, cache_entries_capacity * sizeof(cache_directory_entry));
       if (!cache_entries) {
         fprintf(stderr, "hostfs_cache_dir(): Out of memory\n");
-        exit(1);
+        fatal("hostfs_cache_dir(): out of memory");
       }
     }
   }

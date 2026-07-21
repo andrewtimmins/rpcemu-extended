@@ -109,6 +109,11 @@ struct EmuCommand {
 	DebugTraceConfig debug_trace_config{};
 };
 
+/* True once any fatal() has been raised (on any thread). The raising thread
+   then spins forever inside fatal(), so GUI-thread teardown must not try to
+   join it or wait on a condition variable it can no longer signal. */
+bool EmulatorFatalOccurred();
+
 class EmulatorHost {
 public:
 	explicit EmulatorHost(GuiBridge *gui_bridge);
@@ -117,6 +122,11 @@ public:
 	void Start();
 	void Stop();
 	void Join();
+
+	/* Notify every request condition variable so any GUI-thread wait wakes and
+	   re-evaluates its predicate. Called from fatal() when the emulator thread
+	   is about to spin forever and can no longer signal completion itself. */
+	void WakeAllWaiters();
 
 	bool IsRunning() const { return emu_thread_.joinable(); }
 

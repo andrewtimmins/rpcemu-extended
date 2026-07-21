@@ -24,6 +24,7 @@ int blockend;
 /* FPA10 floating-point coprocessor emulation (see fpa.c). */
 #define FPA
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
@@ -585,7 +586,7 @@ set_memory_executable(void *ptr, size_t len)
 
 	if (mprotect(start, len, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
 		perror("mprotect");
-		exit(1);
+		fatal("mprotect failed making code cache executable: %s", strerror(errno));
 	}
 }
 #elif defined _WIN32

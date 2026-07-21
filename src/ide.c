@@ -1330,7 +1330,7 @@ static void atapicommand(void)
                         for (c=0;c<12;c++)
                             rpclog("%02X ",idebufferb[c]);
                         rpclog("\n");
-                        exit(-1);
+                        fatal("IDE: bad read TOC format (unhandled ATAPI request)");
                 }
                 len=atapi->readtoc(idebufferb,idebufferb[6],msf);
   /*      rpclog("ATAPI buffer len %i\n",len);
@@ -1355,7 +1355,7 @@ static void atapicommand(void)
                 rpclog("Packet data :\n");
                 for (c=0;c<12;c++)
                     rpclog("%02X\n",idebufferb[c]);
-                exit(-1);
+                fatal("IDE: unhandled READ CD flags (see log)");
                 
         case GPCMD_READ_CD:
                 if (!atapi->ready()) { atapi_notready(); return; }
@@ -1363,12 +1363,12 @@ static void atapicommand(void)
                 if (idebufferb[9]!=0x10)
                 {
                         rpclog("Bad flags bits %02X\n",idebufferb[9]);
-                        exit(-1);
+                        fatal("IDE: unhandled READ CD sector count (see log)");
                 }
 /*                if (idebufferb[6] || idebufferb[7] || (idebufferb[8]!=1))
                 {
                         rpclog("More than 1 sector!\n");
-                        exit(-1);
+                        fatal("IDE: unhandled READ HEADER in MSF mode");
                 }*/
                 ide.cdlen=(idebufferb[6]<<16)|(idebufferb[7]<<8)|idebufferb[8];
                 ide.cdpos=(idebufferb[2]<<24)|(idebufferb[3]<<16)|(idebufferb[4]<<8)|idebufferb[5];
@@ -1391,7 +1391,7 @@ static void atapicommand(void)
                 if (msf)
                 {
                         rpclog("Read Header MSF!\n");
-                        exit(-1);
+                        fatal("IDE: unhandled MODE SENSE page (not 3F, see log)");
                 }
                 for (c=0;c<4;c++) idebufferb[c+4]=idebufferb[c+2];
                 idebufferb[0]=1; /*2048 bytes user data*/
@@ -1413,7 +1413,7 @@ static void atapicommand(void)
                         rpclog("Packet data :\n");
                         for (c=0;c<12;c++)
                             rpclog("%02X\n",idebufferb[c]);
-                        exit(-1);
+                        fatal("IDE: unhandled READ SUBCHANNEL request (see log)");
                 }
                 len=(idebufferb[8]|(idebufferb[7]<<8));
 //                rpclog("Mode sense! %i\n",len);
@@ -1486,7 +1486,7 @@ static void atapicommand(void)
                         for (c=0;c<12;c++)
                             rpclog("%02X\n",idebufferb[c]);
                         arm_dump();
-                        exit(-1);
+                        fatal("IDE: unhandled ATAPI command (see log)");
                 }
                 pos=0;
                 idebufferb[pos++]=0;
@@ -1510,7 +1510,7 @@ static void atapicommand(void)
                         rpclog("Packet data :\n");
                         for (c=0;c<12;c++)
                             rpclog("%02X\n",idebufferb[c]);
-                        exit(-1);
+                        fatal("IDE: bad START/STOP UNIT command (see log)");
                 }
                 if (!idebufferb[4])        atapi->stop();
                 else if (idebufferb[4]==2) atapi->eject();
