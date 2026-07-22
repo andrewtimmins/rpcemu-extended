@@ -66,6 +66,10 @@ extern double savestate_read_f64(FILE *f);
 
 /* Write the complete machine state to 'path'. Must be called from the
    emulator thread between execrpcemu() calls. Returns 0 on success. */
+/* CRC32 (IEEE 802.3) over a buffer, using the same algorithm as snapshot ROM
+   validation. Exposed so romload.c can hash the raw ROM image at load time. */
+extern uint32_t savestate_crc32(const void *data, size_t len);
+
 extern int state_save(const char *path);
 
 /* Check that a snapshot file exists and matches the current configuration

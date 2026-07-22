@@ -35,6 +35,7 @@
 #include "rpcemu.h"
 #include "mem.h"
 #include "romload.h"
+#include "savestate.h"
 #include "rom_patch.h"
 
 #define MAXROMS 16 /**< Allow up to this many files for a romimage to be broken up into */
@@ -398,6 +399,7 @@ rom_model_is_compatible(Model model, const char *rom_dir, char *msg, size_t msg_
 }
 
 uint32_t rom_loaded_size = 0; /**< Size in bytes of the loaded ROM image */
+uint32_t rom_loaded_crc = 0;  /**< CRC32 of the raw ROM image (pre-patch) */
 
 /**
  * Load the ROM images, calls fatal() on error.
@@ -553,6 +555,12 @@ void loadroms(void)
 		              (temp << 24);
 	}
 #endif
+
+	/* Record the CRC of the raw ROM image now, before rom_patch_apply() writes
+	   host-dependent data into it (e.g. the display-derived EDID). Snapshot
+	   validation compares this so a resume on different display geometry does
+	   not misfire as a ROM-image mismatch. */
+	rom_loaded_crc = savestate_crc32(romb, rom_loaded_size);
 
 	/* Apply all ROM patches (see rom_patch.c). */
 	rom_patch_apply((size_t) pos);

@@ -59,7 +59,18 @@
 #include "romload.h"
 
 #define SNAPSHOT_MAGIC		"RPCESTAT"
-#define SNAPSHOT_VERSION	4
+/* Version written by this build. v5: ROM-identity CRC is taken over the raw ROM
+   image (before rom_patch.c applies host-dependent patches such as the
+   display-derived EDID). v4 hashed the patched image, so a resume on different
+   host display geometry falsely reported a ROM mismatch. */
+#define SNAPSHOT_VERSION	5
+/* Oldest snapshot we can still load. v4's chunk payload is byte-for-byte
+   identical to v5 - only the ROM-CRC field's meaning changed - so v4 files load
+   fine; we just cannot reproduce their host-dependent ROM CRC, so the ROM-image
+   check is skipped for them (the model/RAM/VRAM checks still apply). */
+#define SNAPSHOT_VERSION_MIN	4
+/* Snapshots from this version onward store the raw-ROM CRC and get the check. */
+#define SNAPSHOT_VERSION_RAW_ROM_CRC	5
 
 #define SNAPSHOT_FLAG_DYNAREC	(1u << 0)
 
@@ -293,6 +304,14 @@ crc32_buf(const uint8_t *data, size_t len)
 	return crc ^ 0xffffffff;
 }
 
+/* Public wrapper so other modules (romload.c) can compute the ROM-identity
+   CRC with exactly the same algorithm used for snapshot validation. */
+uint32_t
+savestate_crc32(const void *data, size_t len)
+{
+	return crc32_buf((const uint8_t *) data, len);
+}
+
 /* Floppy disc image paths. Written by savestate.c itself because the
    knowledge of which image is in which drive lives in rpcemu.c (discname).
    Must be loaded before the FDC/DISC/ADF/HFE chunks so the correct images
@@ -373,7 +392,9 @@ write_header(FILE *f)
 	savestate_write_u32(f, config.mem_size);
 	savestate_write_u32(f, config.vram_size);
 	savestate_write_u32(f, rom_loaded_size);
-	savestate_write_u32(f, crc32_buf(romb, rom_loaded_size));
+	/* CRC of the raw ROM image (before host-dependent patches), so resume on a
+	   different display geometry still validates - see SNAPSHOT_VERSION note. */
+	savestate_write_u32(f, rom_loaded_crc);
 	savestate_write_u32(f, flags);
 	savestate_write_u32(f, config.cdromenabled ? 1 : 0);
 	savestate_write_u32(f, (uint32_t) config.cdromtype);
@@ -415,7 +436,7 @@ check_header(FILE *f, char *errbuf, size_t errbuf_len)
 	}
 
 	version = savestate_read_u32(f);
-	if (version != SNAPSHOT_VERSION) {
+	if (version < SNAPSHOT_VERSION_MIN || version > SNAPSHOT_VERSION) {
 		snprintf(errbuf, errbuf_len,
 		         "This suspend file (version %u) was made by a different "
 		         "version of RPCEmu and cannot be loaded.", version);
@@ -464,8 +485,10 @@ check_header(FILE *f, char *errbuf, size_t errbuf_len)
 		         config.name, config.mem_size, config.vram_size);
 		return -1;
 	}
+	/* rom_crc is only comparable for v5+, where it hashes the raw ROM. v4 stored
+	   a host-dependent (patched) CRC we cannot reproduce, so trust rom_size only. */
 	if (rom_size != rom_loaded_size ||
-	    rom_crc != crc32_buf(romb, rom_loaded_size))
+	    (version >= SNAPSHOT_VERSION_RAW_ROM_CRC && rom_crc != rom_loaded_crc))
 	{
 		snprintf(errbuf, errbuf_len,
 		         "This snapshot belongs to machine '%s', which uses a different "
@@ -602,7 +625,7 @@ state_get_machine_name(const char *path, char *name, size_t name_len)
 	savestate_read(f, magic, 8);
 	version = savestate_read_u32(f);
 	if (!savestate_error && memcmp(magic, SNAPSHOT_MAGIC, 8) == 0 &&
-	    version == SNAPSHOT_VERSION)
+	    version >= SNAPSHOT_VERSION_MIN && version <= SNAPSHOT_VERSION)
 	{
 		/* Skip the eight u32 config words (model, mem, vram, rom size,
 		   rom crc, flags, cdrom enabled, cdrom type) to reach the name */

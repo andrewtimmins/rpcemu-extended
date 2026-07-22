@@ -34,6 +34,9 @@ typedef enum {
 } RomAddressing;
 
 extern uint32_t rom_loaded_size; /**< Size in bytes of the loaded ROM image */
+extern uint32_t rom_loaded_crc;  /**< CRC32 of the raw ROM image, before rom_patch.c
+                                      applies host-dependent patches. Used for
+                                      snapshot ROM-identity validation. */
 
 void loadroms(void);
 
