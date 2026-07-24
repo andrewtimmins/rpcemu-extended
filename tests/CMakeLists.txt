@@ -21,6 +21,12 @@ if(RPCEMU_DYNAREC AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|aarch64|arm64
     add_executable(test_jit_fuzz test_jit_fuzz.c test_stubs.c)
     target_link_libraries(test_jit_fuzz PRIVATE rpcemu_core m)
     add_test(NAME test_jit_fuzz COMMAND test_jit_fuzz 1 200000)
+
+    # Sequence fuzzer: random programs through arm_exec (branches + block
+    # linking), interpreter vs recompiler. Also runnable at scale by hand.
+    add_executable(test_jit_seqfuzz test_jit_seqfuzz.c test_stubs.c)
+    target_link_libraries(test_jit_seqfuzz PRIVATE rpcemu_core m)
+    add_test(NAME test_jit_seqfuzz COMMAND test_jit_seqfuzz 1 50000)
 else()
     message(STATUS "Skipping JIT differential tests (requires a native dynarec backend)")
 endif()
