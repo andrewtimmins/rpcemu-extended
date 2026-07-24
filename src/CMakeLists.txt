@@ -138,7 +138,7 @@ target_link_libraries(rpcemu_core PUBLIC pthread ${CMAKE_DL_LIBS})
 # Windows: Winsock (control sockets, SLiRP NAT, TCP modem, broadcast relay) and
 # the IP Helper API (adapter enumeration in broadcast_relay.c).
 if(WIN32)
-    target_link_libraries(rpcemu_core PUBLIC ws2_32 iphlpapi)
+    target_link_libraries(rpcemu_core PUBLIC ws2_32 iphlpapi winmm)
 endif()
 
 # SDL2 is needed by the podule sound-output pathway (common/sound_out_sdl2.c).

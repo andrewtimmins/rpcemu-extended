@@ -33,6 +33,7 @@
 /* Brings in Winsock2 (before windows.h) plus the Win32 API used for Sleep()
    and the WSAStartup()/WSACleanup() bootstrap below. */
 #include "socket-compat.h"
+#include <timeapi.h> /* timeBeginPeriod/timeEndPeriod - see rpcemu_start() */
 #endif
 
 #include "rpcemu.h"
@@ -896,6 +897,14 @@ rpcemu_start(void)
 			fatal("WSAStartup failed: %d", err);
 		}
 	}
+
+	/* Raise the system timer resolution to 1ms. Windows' default granularity is
+	   ~15.6ms, which makes the Sleep(1) in rpcemu_idle() (used by "Reduce CPU
+	   Usage" when RISC OS calls Portable_Idle) sleep for up to ~15ms - long
+	   enough that mouse and screen updates only get serviced every ~15ms, so the
+	   pointer becomes very laggy (issue #26). Paired with timeEndPeriod() in
+	   endrpcemu(). */
+	timeBeginPeriod(1);
 #endif
 
 	hostfs_init();
@@ -1108,6 +1117,7 @@ endrpcemu(void)
 #endif
 
 #ifdef _WIN32
+	timeEndPeriod(1); /* release the 1ms timer resolution set in rpcemu_start() */
 	WSACleanup();
 #endif
 }
