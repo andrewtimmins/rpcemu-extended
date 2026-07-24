@@ -114,23 +114,22 @@ static void machine_cmos_sync(const char *machine_name, Model model, unsigned me
 
 	wxString old_model;
 	meta.Read("model", &old_model, wxEmptyString);
-	long old_mem = 0;
-	long old_vram = 0;
-	meta.Read("mem_size", &old_mem, 0L);
-	meta.Read("vram_size", &old_vram, 0L);
 	const wxString new_model = wxString::FromUTF8(models[model].name_config);
 
-	if (old_model.empty()) {
-		snprintf(cmos_path, sizeof(cmos_path), "%scmos.ram", rpcemu_get_machine_datadir());
-		if (wxFileExists(wxString::FromUTF8(cmos_path))) {
-			wxRemoveFile(wxString::FromUTF8(cmos_path));
-			rpclog("config_load: cleared legacy CMOS on first tracked boot\n");
-		}
-	} else if (old_model != new_model || static_cast<unsigned>(old_mem) != mem_size
-	           || static_cast<unsigned>(old_vram) != vram_size) {
+	/*
+	 * Only a change of machine MODEL warrants discarding the saved CMOS. RISC OS
+	 * probes RAM and VRAM sizes at boot, so mem_size/vram_size changes do not
+	 * need a reset; wiping the CMOS on any config tweak (as this used to) threw
+	 * away the user's RISC OS configuration - boot options, filing system,
+	 * screen setup - every time they adjusted memory (issue #28). A model change
+	 * is effectively a different machine, whose CMOS defaults can genuinely
+	 * differ, so the reset is kept for that case only. A first boot with no
+	 * recorded model adopts the existing CMOS rather than clearing it.
+	 */
+	if (!old_model.empty() && old_model != new_model) {
 		snprintf(cmos_path, sizeof(cmos_path), "%scmos.ram", rpcemu_get_machine_datadir());
 		if (wxRemoveFile(wxString::FromUTF8(cmos_path))) {
-			rpclog("config_load: cleared stale CMOS after model/RAM change\n");
+			rpclog("config_load: cleared CMOS after machine model change\n");
 		}
 	}
 
