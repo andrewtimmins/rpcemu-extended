@@ -1097,9 +1097,16 @@ void MainFrame::NativeKeyRelease(unsigned scan_code)
 
 void MainFrame::ProcessEmulatorKeyEvent(wxKeyEvent &event, bool key_down)
 {
-	if (menu_open_) {
-		return;
-	}
+	/*
+	 * menu_open_ is raised on wxEVT_MENU_OPEN and cleared on wxEVT_MENU_CLOSE,
+	 * but that close event is not delivered reliably on every platform (on
+	 * wxOSX it can go missing, which used to leave the flag stuck true and
+	 * swallow all keyboard input - issue #29). A key event only reaches the
+	 * emulator panel once no menu is holding the keyboard, so its arrival is
+	 * itself proof that any open menu has since closed: clear the flag and
+	 * carry on rather than dropping the key.
+	 */
+	menu_open_ = false;
 
 	/* No keyboard shortcuts are intercepted here: menu/toolbar actions are
 	 * mouse-driven so that every key (function keys like F12, Ctrl combos, etc.)
