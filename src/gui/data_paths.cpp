@@ -241,6 +241,16 @@ void InitRpcemuPaths()
 		if (!env_resource.empty()) {
 			resource_dir = NormalizeDirPath(env_resource);
 			user_dir = UserDataRoot();
+#ifdef __WXOSX__
+		} else if (HasConfigsDir(NormalizeDirPath(wxStandardPaths::Get().GetResourcesDir()))) {
+			/* Inside a .app bundle the read-only payload lives in
+			   Contents/Resources and writable data is seeded into ~/RPCEmu
+			   on first run. GetResourcesDir() falls back to the executable's
+			   own directory for an unbundled binary, so the HasConfigsDir()
+			   guard keeps the plain-folder layout working too. */
+			resource_dir = NormalizeDirPath(wxStandardPaths::Get().GetResourcesDir());
+			user_dir = UserDataRoot();
+#endif
 		} else if (HasConfigsDir(exe_dir)) {
 			resource_dir = exe_dir;
 			user_dir = exe_dir;

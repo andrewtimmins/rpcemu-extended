@@ -111,7 +111,7 @@ Each GitHub release ships prebuilt packages for four targets:
 | `rpcemu_*_amd64.deb` / `_linux_amd64.tar.gz` | Linux x86-64 | Recompiler (full speed) |
 | `rpcemu_*_arm64.deb` / `_linux_arm64.tar.gz` | Linux arm64 (e.g. Raspberry Pi) | Interpreter (native arm64 recompiler implemented, not yet enabled in releases) |
 | `rpcemu_*_windows_amd64.zip` | Windows x64 (10/11) | Recompiler (full speed) |
-| `rpcemu_*_macos_universal.tar.gz` | macOS (Intel + Apple Silicon) | Universal binary — recompiler on Intel, interpreter on Apple Silicon |
+| `rpcemu_*_macos_universal.dmg` | macOS (Intel + Apple Silicon) | Universal app bundle — recompiler on Intel, interpreter on Apple Silicon |
 
 **Linux** packages are built on **Ubuntu 24.04 LTS**; being dynamically linked, they run
 on distributions whose system libraries are that version or newer:
@@ -133,6 +133,19 @@ On an older/different distribution (or for arm64), **build from source** instead
 The MinGW/SDL2/libvncserver runtime DLLs are bundled in the zip, so there is nothing
 else to install. Windows 10/11 (x64). Built with MinGW-w64 via MSYS2 — see
 [Build for Windows](#build-for-windows) to build it yourself.
+
+**macOS**: open the `macos_universal.dmg` and drag **RPCEmu** into **Applications**. It is
+a universal app (Intel and Apple Silicon); on Apple Silicon the Intel slice runs at full
+speed under Rosetta 2.
+
+The app is ad-hoc signed but not notarised by Apple, so the first launch is blocked with
+"RPCEmu cannot be opened because the developer cannot be verified". To open it the first
+time only: **right-click (or Control-click) the app, choose Open, then Open again** in the
+dialog. macOS remembers the choice and launches it normally thereafter. (On Sequoia and
+later, if Open is not offered, go to **System Settings > Privacy & Security** and click
+**Open Anyway**.) Nothing needs to be installed alongside it. As on Linux, machines,
+configs, ROMs, HostFS and logs are written to a visible **`~/RPCEmu/`** folder, never
+inside the app bundle, so the app stays read-only in Applications.
 
 ### Install the `.deb`
 
@@ -181,21 +194,26 @@ is exactly what the `windows-amd64` CI job runs.
 
 ### Build for macOS
 
-`build-macos.sh` produces a **universal** binary — the Intel (x86-64) slice includes the
-dynamic recompiler, the Apple Silicon (arm64) slice is the interpreter — fused with
-`lipo`. Dependencies come from Homebrew. (A native arm64 recompiler now exists, but it
-is not yet used for the Apple Silicon slice: macOS's hardened runtime needs `MAP_JIT`
-support for the JIT buffer, which is still to do — see
-[docs/arm64-dynarec.md](docs/arm64-dynarec.md).) Build each slice, then fuse and package:
+`build-macos.sh` produces a **universal** `RPCEmu.app` — the Intel (x86-64) slice includes
+the dynamic recompiler, the Apple Silicon (arm64) slice is the interpreter — fused with
+`lipo`, then ad-hoc signed and wrapped in a drag-to-Applications `.dmg`. Dependencies come
+from Homebrew. (A native arm64 recompiler now exists, including the `MAP_JIT` support the
+hardened runtime needs, but it is not yet used for the Apple Silicon slice pending testing
+on real arm64 hardware — see [docs/arm64-dynarec.md](docs/arm64-dynarec.md).) Build each
+slice, then fuse and package:
 
 ```bash
 ./build-macos.sh --arch x86_64   # Intel slice (recompiler)
 ./build-macos.sh --arch arm64    # Apple Silicon slice (interpreter)
-./build-macos.sh --fuse --zip    # lipo into one universal binary + releases/macos/*.tar.gz
+./build-macos.sh --fuse --zip    # lipo -> RPCEmu.app + releases/macos/*.dmg (+ .tar.gz)
 ```
 
-On a single machine each slice is built for its own architecture (the other builds under
-Rosetta); the `macos-x86_64`, `macos-arm64`, and `macos-universal` CI jobs do exactly
+The app bundle keeps its read-only payload in `Contents/Resources` and seeds writable data
+into `~/RPCEmu` on first run. The `.icns` icon is built from `resources/rpcemu.png` with
+`iconutil`, and the app is ad-hoc signed (Apple Silicon will not run an unsigned binary);
+without an Apple Developer ID it is not notarised, so first launch needs a right-click >
+Open. On a single machine each slice is built for its own architecture (the other builds
+under Rosetta); the `macos-x86_64`, `macos-arm64`, and `macos-universal` CI jobs do exactly
 this and fuse the result.
 
 ### Run

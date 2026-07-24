@@ -207,22 +207,26 @@ jobs:
           name: macos-slice-arm64
           path: build-mac-arm64/bin
 
-      - name: Fuse (lipo) + stage universal release
+      - name: Fuse (lipo) + build RPCEmu.app + DMG
         run: |
           chmod +x build-macos.sh
           ./build-macos.sh --fuse --zip
 
-      - name: Smoke test universal binary
+      - name: Smoke test app bundle
         run: |
-          lipo -archs releases/macos/universal/rpcemu
-          file releases/macos/universal/rpcemu | grep -i 'universal'
+          APP=releases/macos/RPCEmu.app
+          lipo -archs "$APP/Contents/MacOS/rpcemu"
+          file "$APP/Contents/MacOS/rpcemu" | grep -i 'universal'
+          test -f "$APP/Contents/Info.plist"
+          codesign --verify --deep --strict "$APP"
+          ls -la releases/macos/*.dmg
 
       - name: Upload macOS universal release
         uses: actions/upload-artifact@v4
         with:
           name: rpcemu-macos-universal
           path: |
-            releases/macos/universal/
+            releases/macos/*.dmg
             releases/macos/*.tar.gz
           if-no-files-found: error
 
@@ -244,6 +248,7 @@ jobs:
           generate_release_notes: true
           files: |
             upload/**/*.deb
+            upload/**/*.dmg
             upload/**/*.tar.gz
             upload/**/*.zip
         env:
