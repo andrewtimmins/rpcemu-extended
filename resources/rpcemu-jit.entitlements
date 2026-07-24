@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	    Allows the process to allocate MAP_JIT memory and toggle it between
+	    writable and executable with pthread_jit_write_protect_np(). Required to
+	    run the AArch64 recompiler under the hardened runtime on Apple Silicon;
+	    see src/codegen_arm64.c and docs/arm64-dynarec.md.
+	-->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+</dict>
+</plist>

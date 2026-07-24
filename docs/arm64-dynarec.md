@@ -123,10 +123,27 @@ end-to-end test runs with the MMU off and code in RAM, comparing the recompiler
 
 ## Platform note
 
-`set_memory_executable()` makes the static code buffer executable with
-`mprotect`/`VirtualProtect`. On macOS a hardened, notarised build would instead
-need a `MAP_JIT` buffer with `pthread_jit_write_protect_np()`; that is not yet
-implemented.
+On Linux and Windows the code cache is a static array made executable once with
+`mprotect`/`VirtualProtect` (`set_memory_executable()`).
+
+On Apple Silicon the hardened runtime rejects a static RWX array, so the cache
+is allocated with `mmap(..., MAP_JIT)` and each thread toggles it between
+writable and executable with `pthread_jit_write_protect_np()`. `initcodeblock()`
+enables writing before a block is generated and `endblock()` returns the cache
+to executable once the block is complete; `codegen_jit_writable()` /
+`codegen_jit_executable()` are no-ops on every other platform. This requires the
+`com.apple.security.cs.allow-jit` entitlement, so a recompiler build has to be
+signed with it before it will run:
+
+```
+codesign -s - --force \
+    --entitlements resources/rpcemu-jit.entitlements \
+    rpcemu
+```
+
+`build-macos.sh` does this automatically when `RPCEMU_MACOS_CODESIGN=1` is set.
+The prebuilt macOS release ships the arm64 slice as the interpreter, so it is
+unsigned and needs neither `MAP_JIT` nor the entitlement.
 
 ## Adding a new recompiled instruction
 

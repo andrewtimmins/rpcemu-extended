@@ -51,6 +51,18 @@
 #include "codegen_arm64.h"
 #include "mem.h"
 
+#if defined(__APPLE__) && defined(__aarch64__)
+/* Apple Silicon under the hardened runtime rejects RWX on ordinary memory, so
+   the code cache is an mmap(MAP_JIT) region rather than a static array, and each
+   thread switches between writing it and executing it with
+   pthread_jit_write_protect_np(). See initcodeblocks() and the codegen_jit_*
+   helpers below. */
+#include <errno.h>
+#include <sys/mman.h>
+#include <pthread.h>
+#include <libkern/OSCacheControl.h>
+#endif
+
 int lastflagchange;
 
 #ifdef RPCEMU_JIT_TEST
@@ -59,7 +71,11 @@ int lastflagchange;
 unsigned long codegen_test_flag_emits = 0;
 #endif
 
+#if defined(__APPLE__) && defined(__aarch64__)
+uint8_t (*rcodeblock)[1792];	/* MAP_JIT code cache, allocated in initcodeblocks() */
+#else
 uint8_t rcodeblock[BLOCKS][1792] __attribute__ ((aligned (4096)));
+#endif
 uint32_t codeblockpc[0x8000];
 int codeblocknum[0x8000];
 static const void *codeblockaddr[BLOCKS];	/* base pointer of each block, for linking */
@@ -274,23 +290,55 @@ gen_call_c_function(const void *addr)
 	a64_blr(A64_X9);
 }
 
+/*
+ * A MAP_JIT region can be written or executed by a thread, but not both at
+ * once. Code is generated between initcodeblock() and endblock() and executed
+ * outside that window, so a block enables writing on entry and returns the
+ * cache to executable once it is complete. On every other platform the cache is
+ * a plain W+X array and these are no-ops.
+ */
+#if defined(__APPLE__) && defined(__aarch64__)
+static inline void codegen_jit_writable(void)   { pthread_jit_write_protect_np(0); }
+static inline void codegen_jit_executable(void) { pthread_jit_write_protect_np(1); }
+#else
+static inline void codegen_jit_writable(void)   { }
+static inline void codegen_jit_executable(void) { }
+#endif
+
 /* ---- block cache management ---------------------------------------------- */
 
 void
 initcodeblocks(void)
 {
+	const size_t rcodeblock_size = (size_t) BLOCKS * sizeof(rcodeblock[0]);
 	int c;
 
 	memset(codeblockpc, 0xff, sizeof(codeblockpc));
 	memset(blocks, 0xff, sizeof(blocks));
+
+#if defined(__APPLE__) && defined(__aarch64__)
+	/* Allocate the code cache as MAP_JIT memory (a static RWX array is refused
+	   under the hardened runtime). Allocated once; it lives for the process. */
+	if (rcodeblock == NULL) {
+		rcodeblock = mmap(NULL, rcodeblock_size, PROT_READ | PROT_WRITE | PROT_EXEC,
+		                  MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
+		if (rcodeblock == MAP_FAILED) {
+			fatal("Unable to allocate MAP_JIT code cache: %s", strerror(errno));
+		}
+	}
+#endif
+
 	for (c = 0; c < BLOCKS; c++) {
 		codeblockaddr[c] = &rcodeblock[c][0];
 	}
 	blockpoint = 0;
 
+#if !(defined(__APPLE__) && defined(__aarch64__))
 	/* Make the code buffer executable (NX defeat); the arm64 build additionally
-	   needs I-cache maintenance after each block is written - see endblock(). */
-	set_memory_executable(rcodeblock, sizeof(rcodeblock));
+	   needs I-cache maintenance after each block is written - see endblock(). The
+	   Apple Silicon MAP_JIT mapping above is already executable. */
+	set_memory_executable(rcodeblock, rcodeblock_size);
+#endif
 }
 
 void
@@ -329,6 +377,8 @@ cacheclearpage(uint32_t a)
 void
 initcodeblock(uint32_t l)
 {
+	codegen_jit_writable();		/* about to write generated code into the block */
+
 	codeblockpresent[(l >> 12) & 0xffff] = 1;
 	tempinscount = 0;
 	blockpoint++;
@@ -1274,6 +1324,11 @@ endblock(uint32_t opcode)
 	a64_ldr_x_reg(A64_X14, A64_X12, A64_X13);
 	a64_add_x_imm(A64_X14, A64_X14, (uint32_t) block_enter);
 	a64_br(A64_X14);
+
+	/* Block complete: return the cache to executable (a no-op off Apple Silicon)
+	   before the I-cache maintenance below, matching Apple's write-then-execute
+	   ordering. */
+	codegen_jit_executable();
 
 	/* AArch64 does not keep I- and D-caches coherent: make the freshly written
 	   block visible to the instruction fetcher before it is executed. This is

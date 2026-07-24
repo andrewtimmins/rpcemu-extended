@@ -184,6 +184,18 @@ Binary: rpcemu (universal: x86_64 recompiler + arm64 interpreter)
 Toolkit: wxWidgets (wxOSX/Cocoa) + CMake
 EOF
 
+	# Optionally ad-hoc codesign the emulator with the JIT entitlement. This is
+	# only needed when the arm64 slice is built as the recompiler (which uses
+	# MAP_JIT) and run under the hardened runtime. The shipped arm64 slice is the
+	# interpreter, so signing is opt-in (RPCEMU_MACOS_CODESIGN=1) and stays off in
+	# CI, leaving the release flow unchanged. See docs/arm64-dynarec.md.
+	if [ "${RPCEMU_MACOS_CODESIGN:-0}" = 1 ] && command -v codesign >/dev/null 2>&1; then
+		echo "==> codesign (ad-hoc) with JIT entitlement"
+		codesign -s - --force \
+			--entitlements resources/rpcemu-jit.entitlements \
+			"$MAC_RELEASE/rpcemu"
+	fi
+
 	echo "==> Universal binary architectures:"
 	"$LIPO" -archs "$MAC_RELEASE/rpcemu" 2>/dev/null || true
 	echo "✓ Staged: $MAC_RELEASE"
