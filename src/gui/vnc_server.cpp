@@ -449,16 +449,39 @@ void vnc_ptr_callback(int buttonMask, int x, int y, rfbClientPtr cl)
 
 	server->emulator_host_->MouseMove(x, y);
 
+	/* RFB reports buttons as bit 0 = left, bit 1 = middle, bit 2 = right. The
+	   guest button encoding (matching the native panel's MapClickButton) is
+	   left = 1, right = 2, middle = 4, so remap rather than pass the raw mask -
+	   otherwise the right button acts as Menu and the middle does nothing. */
+	int guest = 0;
+	if (buttonMask & (1 << 0)) guest |= 1; /* left   */
+	if (buttonMask & (1 << 1)) guest |= 4; /* middle */
+	if (buttonMask & (1 << 2)) guest |= 2; /* right  */
+
 	static int last_buttons = 0;
-	const int pressed = buttonMask & ~last_buttons;
-	const int released = last_buttons & ~buttonMask;
+	const int pressed = guest & ~last_buttons;
+	const int released = last_buttons & ~guest;
 	if (pressed) {
 		server->emulator_host_->MousePress(pressed);
 	}
 	if (released) {
 		server->emulator_host_->MouseRelease(released);
 	}
-	last_buttons = buttonMask;
+	last_buttons = guest;
+
+	/* The scroll wheel is delivered as momentary clicks of RFB buttons 4 (up)
+	   and 5 (down). Send one wheel notch on each press edge, matching the
+	   native panel which forwards a wxWidgets wheel rotation of +/-120. */
+	static int last_wheel = 0;
+	const int wheel = buttonMask & ((1 << 3) | (1 << 4));
+	const int wheel_pressed = wheel & ~last_wheel;
+	if (wheel_pressed & (1 << 3)) {
+		server->emulator_host_->MouseWheel(120);
+	}
+	if (wheel_pressed & (1 << 4)) {
+		server->emulator_host_->MouseWheel(-120);
+	}
+	last_wheel = wheel;
 }
 
 enum rfbNewClientAction vnc_new_client_callback(rfbClientPtr cl)
