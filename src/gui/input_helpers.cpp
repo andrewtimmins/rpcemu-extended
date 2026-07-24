@@ -44,6 +44,13 @@ static unsigned scancode_from_wx_key_code(int key_code)
 		return 0x32;
 	case WXK_CONTROL:
 		return 0x25;
+#ifdef __WXOSX__
+	case WXK_RAW_CONTROL:
+		/* On macOS wxWidgets maps the Command key to WXK_CONTROL and the
+		   physical Control key to WXK_RAW_CONTROL. RISC OS uses Control (e.g.
+		   Ctrl-C to copy), so send both to the guest's Control key. */
+		return 0x25;
+#endif
 	case WXK_ALT:
 		return 0x40;
 	case WXK_DELETE:
@@ -192,7 +199,21 @@ unsigned InputNativeScancodeFromKeyEvent(const wxKeyEvent &event)
 	}
 #endif
 
-	return scancode_from_wx_key_code(event.GetKeyCode());
+	int keycode = event.GetKeyCode();
+
+	/* A letter typed with Control held arrives as a control character (1-26)
+	   rather than the letter code on the wx-keycode platforms (notably wxOSX,
+	   where Ctrl-C gives 3), which would otherwise map to no scancode and the
+	   guest would never see the letter. Remap it back to the letter so the
+	   combination reaches RISC OS. Backspace, Tab and Return share codes 8, 9
+	   and 13, so leave those as their own keys. */
+	if ((event.GetModifiers() & wxMOD_RAW_CONTROL) &&
+	    keycode >= 1 && keycode <= 26 &&
+	    keycode != WXK_BACK && keycode != WXK_TAB && keycode != WXK_RETURN) {
+		keycode = 'a' + keycode - 1;
+	}
+
+	return scancode_from_wx_key_code(keycode);
 }
 
 bool InputIsReleaseMouseCaptureKey(const wxKeyEvent &event)
