@@ -43,6 +43,7 @@
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "rpcemu.h"
@@ -1280,6 +1281,60 @@ generatepcinc(void)
 	}
 }
 
+/* Instruction-cache maintenance for a freshly written block. Normally the
+   toolchain builtin, which on AArch64 expands to the dc cvau / ic ivau / dsb /
+   isb sequence that makes a data write visible to the instruction fetcher.
+
+   Setting RPCEMU_ARM64_ICACHE_PARANOID replaces the builtin with the same
+   sequence coded by hand, reading the cache line sizes from CTR_EL0. This is a
+   diagnostic for issue #30: a recompiler-only blank screen on real arm64
+   hardware while the interpreter and qemu-aarch64 are fine. qemu re-translates
+   modified code automatically, so it cannot reproduce a genuine I-cache
+   coherency fault - and if a target's __builtin___clear_cache is weak or
+   stubbed, this hand-rolled path both proves and fixes it. The choice is read
+   once and cached. Apple Silicon keeps the builtin (dc/ic from EL0 is not the
+   sanctioned path there; sys_icache_invalidate would be, and that route is a
+   separate concern from the Linux/Pi report). */
+static void
+codegen_flush_icache(void *start, void *end)
+{
+#if !defined(__APPLE__)
+	static int paranoid = -1;
+
+	if (paranoid < 0) {
+		const char *e = getenv("RPCEMU_ARM64_ICACHE_PARANOID");
+
+		paranoid = (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;
+		if (paranoid) {
+			rpclog("codegen_arm64: hand-rolled (paranoid) I-cache maintenance enabled\n");
+		}
+	}
+
+	if (paranoid) {
+		const uintptr_t s = (uintptr_t) start;
+		const uintptr_t e = (uintptr_t) end;
+		uint64_t ctr;
+		uintptr_t dline, iline, p;
+
+		__asm__ __volatile__("mrs %0, ctr_el0" : "=r" (ctr));
+		dline = (uintptr_t) 4u << ((ctr >> 16) & 0xf);	/* CTR_EL0.DminLine */
+		iline = (uintptr_t) 4u << (ctr & 0xf);		/* CTR_EL0.IminLine */
+
+		for (p = s & ~(dline - 1); p < e; p += dline) {
+			__asm__ __volatile__("dc cvau, %0" : : "r" (p) : "memory");
+		}
+		__asm__ __volatile__("dsb ish" : : : "memory");
+		for (p = s & ~(iline - 1); p < e; p += iline) {
+			__asm__ __volatile__("ic ivau, %0" : : "r" (p) : "memory");
+		}
+		__asm__ __volatile__("dsb ish\n\tisb" : : : "memory");
+		return;
+	}
+#endif
+
+	__builtin___clear_cache((char *) start, (char *) end);
+}
+
 void
 endblock(uint32_t opcode)
 {
@@ -1334,8 +1389,8 @@ endblock(uint32_t opcode)
 	   block visible to the instruction fetcher before it is executed. This is
 	   the last write to the block, so flushing the whole range here covers the
 	   epilogue, prologue and body. */
-	__builtin___clear_cache((char *) &rcodeblock[blockpoint2][0],
-	                        (char *) &rcodeblock[blockpoint2][codeblockpos]);
+	codegen_flush_icache(&rcodeblock[blockpoint2][0],
+	                     &rcodeblock[blockpoint2][codeblockpos]);
 }
 
 void

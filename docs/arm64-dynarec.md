@@ -51,8 +51,17 @@ to the architecture:
   addresses are not guaranteed within range. AAPCS64 passes arguments in `x0…`,
   so no argument shuffling or shadow space is needed.
 - **Instruction-cache coherency** is not automatic on ARM. After a block is
-  written and before it executes, `endblock()` calls
-  `__builtin___clear_cache()` over the block's range.
+  written and before it executes, `endblock()` calls `codegen_flush_icache()`
+  over the block's range, which normally defers to `__builtin___clear_cache()`.
+  Setting the environment variable `RPCEMU_ARM64_ICACHE_PARANOID` (to any value
+  other than empty or `0`) instead runs the `dc cvau` / `ic ivau` / `dsb` /
+  `isb` sequence by hand, reading the cache line sizes from `CTR_EL0`. That is a
+  diagnostic switch: qemu-aarch64 re-translates modified code automatically and
+  so hides genuine cache-coherency faults, and a weak or stubbed
+  `__builtin___clear_cache()` in a host toolchain would show up only on real
+  silicon. The hand-rolled path removes the dependency on the builtin. It is
+  Linux/Pi only; Apple Silicon keeps the builtin (`dc`/`ic` from EL0 is not the
+  sanctioned route there).
 
 ## Condition flags
 
