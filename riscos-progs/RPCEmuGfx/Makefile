@@ -48,8 +48,14 @@ $(ROM_IMAGE): $(MODULE).elf
 %.elf: %.o
 	$(LD) --section-start .text=0 -o $@ $<
 
-$(MODULE).o: $(MODULE).s version.inc $(APP_IMAGE)
+$(MODULE).o: $(MODULE).s version.inc resfs.inc $(APP_IMAGE)
 	$(AS) -o $@ $<
+
+# The files carried in the card's ROM. Regenerated whenever a file with a RISC OS
+# filetype suffix is added, removed or changed here, so icons, templates and
+# message files only have to be dropped into this directory.
+resfs.inc: mkresfs.py $(APP_IMAGE) $(wildcard *,[0-9a-f][0-9a-f][0-9a-f])
+	python3 mkresfs.py . $@
 
 $(APP_IMAGE): app.s
 	$(AS) -o app.o app.s
@@ -57,4 +63,4 @@ $(APP_IMAGE): app.s
 	$(OBJCOPY) -O binary app.elf $@
 
 clean:
-	rm -f *.o *.elf $(ROM_IMAGE) $(APP_IMAGE) version.inc
+	rm -f *.o *.elf $(ROM_IMAGE) $(APP_IMAGE) version.inc resfs.inc

@@ -101,6 +101,26 @@ Quit
 Frames displayed is the card actually scanning out, so it is the quickest way to
 tell whether the card is driving the screen or merely fitted.
 
+### Adding icons, templates and message files
+
+Anything the application needs travels in the same ROM. Drop a file into
+`riscos-progs/RPCEmuGfx/` with a RISC OS **filetype suffix** and it appears in the
+application directory next time the module is built - no change to the assembler
+or the Makefile:
+
+| File | Becomes | Notes |
+| --- | --- | --- |
+| `!Sprites,ff9` | `Resources:$.Apps.!GfxCard.!Sprites` | Sprite named `!gfxcard` for the application and icon bar, `sm!gfxcard` for the small one |
+| `Templates,fec` | `...!GfxCard.Templates` | Wimp templates |
+| `Messages,fff` | `...!GfxCard.Messages` | MessageTrans tokens |
+| `!Boot,feb` | `...!GfxCard.!Boot` | Obey, run by the Filer when it sees the application |
+| `!Run,feb` | `...!GfxCard.!Run` | Replaces the generated default |
+
+`mkresfs.py` builds the ResourceFS chain from whatever is there, and the module
+carries it. Because the files are inside `gfxroms/RPCEmuGfx,ffa`, every release
+gets them automatically - all three build scripts stage that directory and the
+CMake install rules cover it, so there is nothing to add anywhere else.
+
 The application is `riscos-progs/RPCEmuGfx/app.s`, an absolute file assembled
 alongside the driver and carried in the same ROM. It is written in assembler like
 the rest of the guest code here; there is no RISC OS C toolchain in this build
