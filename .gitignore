@@ -56,5 +56,9 @@
 *.bak
 .DS_Store
 
+# Bytecode from the Python test helpers (tests/, tools/mcp/)
+__pycache__/
+*.pyc
+
 # Upstream reference sources (Arculator etc.) - study only, never committed
 /reference/

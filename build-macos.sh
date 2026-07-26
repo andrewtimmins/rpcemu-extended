@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Build RPCEmu (Spork Edition) for macOS as a UNIVERSAL binary and stage a
-# runnable release into releases/macos/universal/ - parity with build.sh's
+# runnable release into releases/macos/ as RPCEmu.app - parity with build.sh's
 # releases/linux/<arch>/ and build-windows.sh's releases/windows/amd64/ layout.
 #
 # Why two slices instead of one -arch arm64 -arch x86_64 build:
@@ -36,16 +36,37 @@ DO_BUILD=true
 DO_FUSE=true
 ONE_ARCH=""
 
-for arg in "$@"; do
-	case "$arg" in
+# A "for arg in $@" loop cannot consume an option's value, which is why --arch
+# used to be a no-op that relied on the architecture being parsed as a bare
+# argument. That accepted "build-macos.sh arm64", and silently ignored a bare
+# "--arch" with nothing after it.
+FUSE_REQUESTED=false
+while [ $# -gt 0 ]; do
+	case "$1" in
 		--zip|-z) MAKE_ZIP=true ;;
-		--arch) : ;;                       # value handled below
-		x86_64|arm64) ONE_ARCH="$arg"; DO_FUSE=false ;;
-		--fuse) DO_BUILD=false; DO_FUSE=true ;;
+		--arch)
+			case "${2:-}" in
+				x86_64|arm64) ONE_ARCH="$2"; [ "$FUSE_REQUESTED" = true ] || DO_FUSE=false; shift ;;
+				"") echo "error: --arch needs an architecture (x86_64 or arm64)"; exit 2 ;;
+				*)  echo "error: unknown architecture '$2' (want x86_64 or arm64)"; exit 2 ;;
+			esac
+			;;
+		--arch=*)
+			case "${1#--arch=}" in
+				x86_64|arm64) ONE_ARCH="${1#--arch=}"; [ "$FUSE_REQUESTED" = true ] || DO_FUSE=false ;;
+				*) echo "error: unknown architecture '${1#--arch=}' (want x86_64 or arm64)"; exit 2 ;;
+			esac
+			;;
+		--fuse) DO_BUILD=false; DO_FUSE=true; FUSE_REQUESTED=true ;;
 		--help|-h) echo "Usage: $0 [--arch x86_64|arm64] [--fuse] [--zip]"; exit 0 ;;
-		*) echo "unknown option: $arg"; exit 2 ;;
+		*) echo "unknown option: $1"; exit 2 ;;
 	esac
+	shift
 done
+# "--arch x --fuse" means build that slice and fuse it with the other one that
+# already exists, which is what a CI job building each arch separately wants.
+# Given in either order, an explicit --fuse wins over --arch's default.
+[ "$FUSE_REQUESTED" = true ] && DO_FUSE=true
 
 get_version() { [ -f VERSION ] && tr -d ' \t\r\n' < VERSION || echo "0.0.0"; }
 VERSION=$(get_version)
@@ -71,7 +92,7 @@ write_info_plist() {
 	<key>CFBundleVersion</key><string>${VERSION}</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-	<key>LSMinimumSystemVersion</key><string>10.15</string>
+	<key>LSMinimumSystemVersion</key><string>${PLIST_MIN_OS}</string>
 	<key>NSHighResolutionCapable</key><true/>
 	<key>NSSupportsAutomaticGraphicsSwitching</key><true/>
 	<key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
@@ -205,12 +226,34 @@ INSTALL_NAME_TOOL=$(command -v install_name_tool || \
 # These have to be followed rather than skipped. Homebrew's webp libraries refer
 # to each other this way, and leaving them out produced an app that still would
 # not start, with dyld looking for Contents/Frameworks/../lib.
+# Canonical path: resolve the directory AND follow a symlinked filename.
+# "cd $(dirname) && pwd -P" alone resolves the directory only, so Homebrew's
+# lib/libSDL3.dylib -> libSDL3.0.dylib still came back under the link's name and
+# looked like a different library from the same file reached directly.
+canon_path() {
+	local p="$1" d f
+	while [ -L "$p" ]; do
+		d=$(cd "$(dirname "$p")" 2>/dev/null && pwd -P) || break
+		f=$(readlink "$p")
+		case "$f" in
+			/*) p="$f" ;;
+			*)  p="$d/$f" ;;
+		esac
+	done
+	d=$(cd "$(dirname "$p")" 2>/dev/null && pwd -P) || { echo "$p"; return; }
+	echo "$d/${p##*/}"
+}
+
 resolve_dep() {
 	local obj="$1" dep="$2" origin="$3" entry candidate
 
 	case "$dep" in
-	@loader_path/*)
-		candidate="$origin/${dep#@loader_path/}"
+	@loader_path/*|@executable_path/*)
+		# Both are relative to where the referring object sits, which during
+		# staging is $origin. collect_deps() handles @executable_path itself,
+		# but a chain reaching here through @rpath can arrive with either form,
+		# so the resolver understands both.
+		candidate="$origin/${dep#@*_path/}"
 		if [ -f "$candidate" ]; then
 			echo "$candidate"
 			return 0
@@ -239,24 +282,42 @@ resolve_dep() {
 # holding "basename<tab>path" lines. "origin" is the directory that
 # @loader_path refers to for this object.
 collect_deps() {
-	local obj="$1" map="$2" origin="$3" dep base resolved
+	local obj="$1" map="$2" origin="$3" dep base resolved prev
 
 	while read -r dep; do
 		case "$dep" in
 			/usr/lib/*|/System/*) continue ;;	# provided by the OS
-			@executable_path/*) continue ;;		# already pointed into the bundle
 		esac
 
 		# Checked before resolving, which also disposes of the object's own id:
 		# otool lists that first for a dylib, and by the time we recurse into one
 		# its name is already recorded.
 		base=${dep##*/}
-		if awk -F'\t' -v b="$base" '$1 == b { found = 1 } END { exit !found }' "$map"; then
-			continue				# already collected
-		fi
+		# Already collected? Compare the resolved path too: two libraries with
+		# the same basename from different prefixes would both flatten to
+		# Contents/Frameworks/<basename>, and taking the first silently ships
+		# the wrong one, so that case is reported below rather than ignored.
+		prev=$(awk -F'\t' -v b="$base" '$1 == b { print $2; exit }' "$map")
 
 		case "$dep" in
 			/*) resolved="$dep" ;;
+			@executable_path/*)
+				# NOT "already in the bundle": no bundle exists yet. A binary
+				# reaching here with this form was rewritten by an earlier
+				# staging pass, and skipping it drops the dependency silently -
+				# the copy never happens and rewrite_deps() then finds nothing
+				# to do. Resolve it against where the executable actually is
+				# now, and fall back to the library search paths if the staged
+				# copy is not there yet.
+				resolved="$origin/${dep#@executable_path/}"
+				if [ ! -f "$resolved" ]; then
+					resolved=$(resolve_dep "$obj" "@rpath/${dep##*/}" "$origin" 2>/dev/null) || resolved=""
+				fi
+				if [ -z "$resolved" ] || [ ! -f "$resolved" ]; then
+					echo "   ! ${obj##*/} references $dep and it could not be resolved; not bundled"
+					continue
+				fi
+				;;
 			@rpath/*|@loader_path/*)
 				if ! resolved=$(resolve_dep "$obj" "$dep" "$origin"); then
 					echo "   ! ${obj##*/} references $dep and it could not be resolved; not bundled"
@@ -273,6 +334,23 @@ collect_deps() {
 			continue
 		fi
 
+		# Canonicalise before comparing. Homebrew reaches the same file through
+		# /opt/homebrew/opt/<formula> (a symlink into Cellar/) as well as its
+		# real path, and recursing accumulates "../lib/../lib/" segments, so
+		# the same library arrives under several spellings. Without this the
+		# collision check below reports those as different libraries.
+		resolved=$(canon_path "$resolved")
+
+		if [ -n "$prev" ]; then
+			if [ "$prev" != "$resolved" ]; then
+				echo "   ! two different libraries are both named $base:"
+				echo "       $prev"
+				echo "       $resolved"
+				echo "     they cannot both be Contents/Frameworks/$base"
+				echo BAD >> "${map}.collision"
+			fi
+			continue			# already collected
+		fi
 		printf '%s\t%s\n' "$base" "$resolved" >> "$map"
 		collect_deps "$resolved" "$map" "$(dirname "$resolved")"
 	done < <("$OTOOL" -L "$obj" | tail -n +2 | awk '{ print $1 }')
@@ -302,7 +380,7 @@ stage_slice() {
 	local arch="$1"
 	local build_dir="build-mac-$arch"
 	local stage="$build_dir/appstage"
-	local map="$build_dir/appstage-deps.map"
+	local map="$stage/deps.map"
 	local src base obj
 
 	rm -rf "$stage"
@@ -329,6 +407,88 @@ stage_slice() {
 		collect_deps "$obj" "$map" "$build_dir/bin"
 	done
 
+	# Libraries loaded at runtime rather than linked, which otool -L cannot see.
+	#
+	# Homebrew's "sdl2" is now sdl2-compat: a shim implementing the SDL2 ABI on
+	# top of SDL3, which it dlopen()s instead of linking. So libSDL3 appears in
+	# no LC_LOAD_DYLIB and the dependency walk above never finds it - the app
+	# then works on the build machine (Homebrew's copy is still on disk) and
+	# fails anywhere else. sdl2-compat's failure path runs in a library
+	# constructor and puts up a modal alert, so dyld blocks in
+	# runAllInitializersForMain() and the program never reaches main() at all:
+	# no output, no headless mode, and a GUI that cannot start either.
+	#
+	# sdl2-compat looks for "@loader_path/libSDL3.dylib" first, and the loader
+	# here is Contents/Frameworks/libSDL2-2.0.0.dylib, so placing SDL3 beside it
+	# is enough - no install-name rewriting of the reference is possible anyway,
+	# since there is no reference to rewrite.
+	# Test the dependency map, not $stage/libs: the copy loop below is what
+	# populates that directory, so checking it here always failed and this whole
+	# block was silently skipped.
+	if awk -F'\t' '$1 ~ /^libSDL2/ { f = 1 } END { exit !f }' "$map"; then
+		local sdl3 sdl3_prev sdl3_name
+		# Ask the Homebrew that matches THIS slice. On Apple Silicon the arm64
+		# brew in /opt/homebrew is on PATH, so building the x86_64 slice would
+		# otherwise pick up an arm64 SDL3 and lipo would later refuse to fuse
+		# it (or, worse, the slice would carry the wrong architecture).
+		local brew_x86=/usr/local/bin/brew brew_arm=/opt/homebrew/bin/brew
+		local brew_bin=""
+		if [ "$arch" = x86_64 ] && [ -x "$brew_x86" ]; then
+			brew_bin="$brew_x86"
+		elif [ "$arch" = arm64 ] && [ -x "$brew_arm" ]; then
+			brew_bin="$brew_arm"
+		fi
+		for sdl3 in \
+			"$([ -n "$brew_bin" ] && "$brew_bin" --prefix sdl3 2>/dev/null)/lib/libSDL3.dylib" \
+			"$([ -n "$brew_bin" ] && "$brew_bin" --prefix 2>/dev/null)/lib/libSDL3.dylib" \
+			"$([ "$arch" = x86_64 ] && echo /usr/local || echo /opt/homebrew)/lib/libSDL3.dylib"
+		do
+			# The prefix should imply the architecture, but check rather than
+			# assume: fusing a mismatched slice fails much later and far less
+			# clearly than saying so here.
+			if [ -f "$sdl3" ] && ! lipo -archs "$sdl3" 2>/dev/null | tr ' ' '\n' | grep -qx "$arch"; then
+				echo "   ! $sdl3 is not $arch ($(lipo -archs "$sdl3" 2>/dev/null)); ignoring"
+				continue
+			fi
+			if [ -f "$sdl3" ]; then
+				# Record it exactly as collect_deps() would, because the
+				# recursion below reaches the same file again and the two
+				# entries are compared:
+				#   - under its own install name (libSDL3.0.dylib), not the
+				#     symlink's name, so it is not bundled twice under two
+				#     names; and
+				#   - by canonical path, since $sdl3 is typically
+				#     /opt/homebrew/opt/sdl3/lib/libSDL3.dylib, a symlink into
+				#     Cellar. Storing the symlink made collect_deps' canonical
+				#     path look like a different library and failed the build.
+				sdl3=$(canon_path "$sdl3")
+				sdl3_name=$("$OTOOL" -D "$sdl3" 2>/dev/null | tail -n +2 | head -1)
+				sdl3_name=${sdl3_name##*/}
+				[ -n "$sdl3_name" ] || sdl3_name=${sdl3##*/}
+				sdl3_prev=$(awk -F'\t' -v b="$sdl3_name" '$1 == b { print $2; exit }' "$map")
+				if [ -z "$sdl3_prev" ]; then
+					printf '%s\t%s\n' "$sdl3_name" "$sdl3" >> "$map"
+				elif [ "$sdl3_prev" != "$sdl3" ]; then
+					echo "error: [$arch] two different SDL3 libraries were found:"
+					echo "         $sdl3_prev"
+					echo "         $sdl3"
+					exit 1
+				fi
+				collect_deps "$sdl3" "$map" "$(dirname "$sdl3")"
+				break
+			fi
+		done
+		echo "   SDL-related staged dependencies:"
+		grep -i sdl "$map" | sed 's/^/     /' || true
+		if ! awk -F'\t' '$1 ~ /^libSDL3/ { f = 1 } END { exit !f }' "$map"; then
+			echo "error: [$arch] this SDL2 is sdl2-compat, which needs SDL3 at runtime,"
+			echo "       but no libSDL3.dylib was found to bundle. Install it (brew"
+			echo "       install sdl3) or link a real SDL2 instead. Without it the"
+			echo "       finished app cannot start on any machine but this one."
+			exit 1
+		fi
+	fi
+
 	while IFS=$'\t' read -r base src; do
 		[ -n "$base" ] || continue
 		cp -f "$src" "$stage/libs/$base"
@@ -340,6 +500,13 @@ stage_slice() {
 		[ -f "$obj" ] || continue
 		rewrite_deps "$obj" "$stage/libs"
 	done
+
+	if [ -f "${map}.collision" ]; then
+		rm -f "${map}.collision"
+		echo "error: [$arch] two different libraries share a basename (see above);"
+		echo "       Contents/Frameworks is flat, so one would silently win."
+		exit 1
+	fi
 
 	echo "==> [$arch] bundling $(wc -l < "$map" | tr -d ' ') dependencies"
 }
@@ -389,6 +556,18 @@ if [ "$DO_FUSE" = true ]; then
 	# Writable data (machines, configs, ROMs, hostfs, logs) is NOT kept inside
 	# the bundle - InitRpcemuPaths() reads Contents/Resources and seeds ~/RPCEmu
 	# on first run, so an app dragged into /Applications stays read-only.
+	# The bundle can only claim what its slices support: x86_64 targets 10.15
+	# and arm64 targets 11.0 (there is no earlier macOS on Apple Silicon), so a
+	# fused bundle runs from 10.15 on Intel and 11.0 on Apple Silicon. The plist
+	# carries one number, so it must be the lower - anything higher would stop
+	# Intel Macs the x86_64 slice supports from launching. A single-arch arm64
+	# build advertises 11.0.
+	if [ -n "$ONE_ARCH" ]; then
+		PLIST_MIN_OS=$(slice_deploy "$ONE_ARCH")
+	else
+		PLIST_MIN_OS=$(slice_deploy x86_64)
+	fi
+
 	APP="releases/macos/RPCEmu.app"
 	CONTENTS="$APP/Contents"
 	MACOSD="$CONTENTS/MacOS"
@@ -447,11 +626,51 @@ if [ "$DO_FUSE" = true ]; then
 		[ -f "$FRAMEWORKSD/$base" ] && continue
 		mkdir -p "$FRAMEWORKSD"
 		if [ -f "$X86_STAGE/libs/$base" ] && [ -f "$ARM_STAGE/libs/$base" ]; then
+			# Same basename in both slices is not proof they are the same
+			# library: each slice resolved its own Homebrew prefix, and a
+			# machine with, say, /opt/local alongside could stage a different
+			# libfoo for each. Comparing the files is no use - thin slices for
+			# different architectures always differ - so compare where they
+			# came from, which the per-slice maps record. Anything below the
+			# slice's own prefix is expected to differ only in that prefix.
+			# The maps are per-slice build output, so they are present for a
+			# local two-arch build but not when the fusing job only downloaded
+			# the staged appstage directories. Missing maps mean the check
+			# cannot run, not that the libraries disagree - and awk exiting
+			# non-zero on a missing file would otherwise kill the script here,
+			# since a failing command substitution is fatal under set -e.
+			x86_src=""; arm_src=""
+			if [ -f "$X86_STAGE/deps.map" ] && [ -f "$ARM_STAGE/deps.map" ]; then
+				x86_src=$(awk -F'\t' -v b="$base" '$1 == b { print $2; exit }' "$X86_STAGE/deps.map")
+				arm_src=$(awk -F'\t' -v b="$base" '$1 == b { print $2; exit }' "$ARM_STAGE/deps.map")
+			fi
+			# Strip each slice's expected Homebrew prefix. What remains should
+			# be the same path under both - "Cellar/webp/1.6.0/lib/libwebp.7.dylib"
+			# and so on. If the tails differ, these are different libraries that
+			# happen to share a name.
+			x86_tail=${x86_src#/usr/local/}
+			arm_tail=${arm_src#/opt/homebrew/}
+			if [ -n "$x86_src" ] && [ -n "$arm_src" ] && [ "$x86_tail" != "$arm_tail" ]; then
+				echo "   ! $base is a different library in each slice:"
+				echo "       x86_64: $x86_src"
+				echo "       arm64:  $arm_src"
+				echo "     refusing to fuse them into one Contents/Frameworks/$base"
+				exit 1
+			fi
 			"$LIPO" -create "$X86_STAGE/libs/$base" "$ARM_STAGE/libs/$base" \
 				-output "$FRAMEWORKSD/$base"
 		else
 			echo "   ! $base is single-architecture (present in only one slice)"
 			cp -f "$lib" "$FRAMEWORKSD/$base"
+		fi
+		# The thin copies were given this id before fusing, so lipo should
+		# carry it through - but the finished bundle is what matters, and a
+		# wrong id here makes every dependent library unloadable. Cheap to
+		# assert rather than assume.
+		if [ -n "$INSTALL_NAME_TOOL" ]; then
+			chmod u+w "$FRAMEWORKSD/$base"
+			"$INSTALL_NAME_TOOL" -id "@executable_path/../Frameworks/$base" \
+				"$FRAMEWORKSD/$base" 2>/dev/null || true
 		fi
 		bundled=$((bundled + 1))
 	done
@@ -497,6 +716,18 @@ EOF
 	# open (right-click > Open once); this is documented in the README.
 	# RPCEMU_MACOS_CODESIGN=1 additionally applies the hardened runtime + JIT
 	# entitlement, needed only for a future recompiler arm64 slice (MAP_JIT).
+	# sdl2-compat dlopen()s "@loader_path/libSDL3.dylib" by that exact name, but
+	# SDL3's install name is versioned (libSDL3.0.dylib) and that is what gets
+	# bundled. Link the unversioned name to it, before signing so the signature
+	# covers the finished layout. Bundling the file twice would also work but
+	# wastes 5MB; leaving it out means sdl2-compat fails inside a dyld
+	# initializer and the app never reaches main() at all.
+	if ls "$CONTENTS/Frameworks"/libSDL3.*.dylib >/dev/null 2>&1 && \
+	   [ ! -e "$CONTENTS/Frameworks/libSDL3.dylib" ]; then
+		( cd "$CONTENTS/Frameworks" && ln -sf "$(ls libSDL3.*.dylib | head -1)" libSDL3.dylib )
+		echo "==> linked Frameworks/libSDL3.dylib -> $(readlink "$CONTENTS/Frameworks/libSDL3.dylib")"
+	fi
+
 	if [ "$(uname -s)" = Darwin ] && command -v codesign >/dev/null 2>&1; then
 		if [ "${RPCEMU_MACOS_CODESIGN:-0}" = 1 ] && [ -f resources/rpcemu-jit.entitlements ]; then
 			echo "==> codesign (ad-hoc, hardened runtime + JIT entitlement)"
@@ -509,6 +740,64 @@ EOF
 		fi
 		codesign --verify --deep --strict "$APP" 2>/dev/null && echo "✓ signature verified"
 	fi
+
+	# Prove the bundle is self-contained, rather than assuming it. Every
+	# @executable_path reference must resolve to a file that is actually here,
+	# and nothing may still point at Homebrew - that is the reference that works
+	# on the build machine and nowhere else.
+	echo "==> Verifying the bundle is self-contained"
+	bundle_ok=true
+	for obj in "$MACOSD"/* "$CONTENTS/Frameworks"/*; do
+		# Symlinks are skipped deliberately: they alias a real file in the same
+		# directory, which is examined on its own iteration, so following them
+		# would only check it twice.
+		[ -L "$obj" ] && continue
+		[ -f "$obj" ] || continue
+		file "$obj" 2>/dev/null | grep -q Mach-O || continue
+
+		"$OTOOL" -L "$obj" 2>/dev/null | tail -n +2 | awk '{ print $1 }' | while read -r dep; do
+			case "$dep" in
+				@executable_path/../Frameworks/*)
+					# -e, not -f: the question is "does this runtime path
+					# resolve", and Frameworks holds symlinks as well as
+					# regular files (libSDL3.dylib -> libSDL3.0.dylib). Both
+					# tests follow links, but -e is the one that stays correct
+					# if a dependency ever arrives as something other than a
+					# plain file, and it fails on a dangling link either way.
+					if [ ! -e "$CONTENTS/Frameworks/${dep##*/}" ]; then
+						echo "   ! $(basename "$obj") needs ${dep##*/}, which is not in Contents/Frameworks"
+						echo BAD >> "$CONTENTS/.deps.fail"
+					fi
+					;;
+				/opt/homebrew/*|/usr/local/*)
+					echo "   ! $(basename "$obj") still references $dep - it will not resolve elsewhere"
+					echo BAD >> "$CONTENTS/.deps.fail"
+					;;
+				@rpath/*|@loader_path/*)
+					# Everything non-system is meant to live in Frameworks under
+					# an @executable_path reference. One of these means a
+					# dependency was missed by the rewrite, and whether it
+					# resolves then depends on the LC_RPATH entries the library
+					# happens to carry - which is not something to ship on.
+					echo "   ! $(basename "$obj") still references $dep - it should point into Frameworks"
+					echo BAD >> "$CONTENTS/.deps.fail"
+					;;
+			esac
+		done
+	done
+	if [ -f "$CONTENTS/.deps.fail" ]; then
+		rm -f "$CONTENTS/.deps.fail"
+		echo "error: the bundle is not self-contained (see above)."
+		exit 1
+	fi
+	if [ -f "$CONTENTS/Frameworks/libSDL2-2.0.0.dylib" ] && \
+	   [ ! -e "$CONTENTS/Frameworks/libSDL3.dylib" ]; then
+		echo "error: libSDL2 is present but libSDL3 is not. If this SDL2 is"
+		echo "       sdl2-compat it loads SDL3 at runtime, and the app will stop"
+		echo "       in a modal alert before main() on any machine without it."
+		exit 1
+	fi
+	echo "✓ every bundled dependency resolves inside the bundle"
 
 	echo "==> Universal binary architectures:"
 	"$LIPO" -archs "$MACOSD/rpcemu" 2>/dev/null || true
