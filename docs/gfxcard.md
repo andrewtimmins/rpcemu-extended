@@ -86,15 +86,27 @@ Double-clicking it opens a task window showing the card's state and leaving a `*
 prompt, so `GfxCardOn`, `GfxCardOff` and `GfxCardStatus` are to hand without
 leaving the desktop.
 
-The driver also sets **`RPCEmuGfx$Base`** to the logical address of the card's
-registers, so anything at all can read the card directly - a BASIC program, an
-Obey file, the debugger. The register map is in `src/gfxcard.h`; register *n* is at
-`RPCEmuGfx$Base + n * 4`. For instance, in BASIC:
+### Reading the card's state from a program
+
+`*GfxCardVars` puts the card's state into three system variables, ready for
+anything that wants to display it:
 
 ```
-base% = EVAL("&" + FNgetvar("RPCEmuGfx$Base"))
-PRINT "Frames displayed: "; base%!(16 * 4)
+*GfxCardVars
+*Show GfxCard*
+GfxCard$Frames : Frames displayed 1526
+GfxCard$Mode   : 1920 x 1080, 32bpp
+GfxCard$Store  : Framestore 8100K of 15360K
 ```
+
+That indirection is necessary rather than decorative. The card's registers are in
+expansion card space, which RISC OS maps for **privileged access only**: a desktop
+application cannot read them however much it knows about the card. The driver can,
+so it formats what there is to say and leaves it somewhere anything can pick it up.
+
+`RPCEmuGfx$Base` holds the logical address of the registers for code that *is*
+privileged (a module, or the debugger). The register map is in `src/gfxcard.h`;
+register *n* is at `RPCEmuGfx$Base + n * 4`.
 
 ## What the card is
 

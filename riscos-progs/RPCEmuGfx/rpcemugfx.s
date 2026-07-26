@@ -298,10 +298,21 @@ table:
 	.int	0
 	.int	command_off_help
 
+	.string	"GfxCardVars"
+	.align
+	.int	command_vars
+	.int	0x00000000
+	.int	0
+	.int	command_vars_help
+
 	.byte	0	@ Table terminator
 
 command_status_help:
 	.string	"*GfxCardStatus shows the graphics card and its display state.\rSyntax: *GfxCardStatus"
+	.align
+
+command_vars_help:
+	.string	"*GfxCardVars puts the card's state into GfxCard$Mode, GfxCard$Store and GfxCard$Frames, for anything that cannot reach the card's registers itself.\rSyntax: *GfxCardVars"
 	.align
 
 command_on_help:
@@ -1481,6 +1492,154 @@ err_no_workspace:
 	.int	0
 	.string	"RPCEmuGfx: the driver is not initialised"
 	.align
+
+@ Put the card's state into system variables.
+@
+@ The card's registers are in expansion card space, which is mapped for
+@ privileged access only: a desktop application cannot read them however much it
+@ knows about the card. So the driver, which can, formats what there is to say and
+@ leaves it where anything at all can pick it up.
+command_vars:
+	stmfd	sp!, {r4, r5, r6, lr}
+	ldr	r5, [r12]
+	teq	r5, #0
+	beq	command_vars_no_ws
+
+	@ GfxCard$Mode - what it is displaying
+	add	r4, r5, #WS_CMD
+	bl	vars_displaying
+	bne	1f
+	adrl	r6, vtext_idle
+	bl	copy_string
+	b	2f
+1:
+	ldr	r0, [r5, #WS_REGS]
+	ldr	r0, [r0, #REG_WIDTH]
+	bl	append_decimal
+	adrl	r6, vtext_by
+	bl	copy_string
+	ldr	r0, [r5, #WS_REGS]
+	ldr	r0, [r0, #REG_HEIGHT]
+	bl	append_decimal
+	adrl	r6, vtext_comma
+	bl	copy_string
+	ldr	r0, [r5, #WS_REGS]
+	ldr	r0, [r0, #REG_BPP]
+	bl	append_decimal
+	adrl	r6, vtext_bpp
+	bl	copy_string
+2:
+	adrl	r0, var_mode
+	bl	set_var
+
+	@ GfxCard$Store - how much of the framestore the mode uses
+	add	r4, r5, #WS_CMD
+	adrl	r6, vtext_store
+	bl	copy_string
+	bl	vars_displaying
+	moveq	r0, #0			@ not displaying: none of it is in use
+	beq	3f
+	ldr	r0, [r5, #WS_REGS]
+	ldr	r1, [r0, #REG_STRIDE]
+	ldr	r2, [r0, #REG_HEIGHT]
+	mul	r0, r1, r2
+	mov	r0, r0, lsr #10
+3:
+	bl	append_decimal
+	adrl	r6, vtext_of
+	bl	copy_string
+	ldr	r0, [r5, #WS_REGS]
+	ldr	r0, [r0, #REG_FB_SIZE]
+	mov	r0, r0, lsr #10
+	bl	append_decimal
+	adrl	r6, vtext_k
+	bl	copy_string
+	adrl	r0, var_store
+	bl	set_var
+
+	@ GfxCard$Frames - frames the card has put out
+	add	r4, r5, #WS_CMD
+	adrl	r6, vtext_frames
+	bl	copy_string
+	ldr	r0, [r5, #WS_REGS]
+	ldr	r0, [r0, #REG_FRAMES]
+	bl	append_decimal
+	adrl	r0, var_frames
+	bl	set_var
+
+	cmp	pc, #0			@ clear V
+	ldmfd	sp!, {r4, r5, r6, pc}
+
+command_vars_no_ws:
+	adrl	r0, err_no_workspace
+	cmp	r0, #NBIT		@ set V
+	cmnvc	r0, #NBIT
+	ldmfd	sp!, {r4, r5, r6, pc}
+
+@ Is the card scanning out? Z set if it is not. in: r5 = workspace
+vars_displaying:
+	stmfd	sp!, {r0, lr}
+	ldr	r0, [r5, #WS_REGS]
+	ldr	r0, [r0, #REG_CTRL]
+	tst	r0, #GFXCARD_CTRL_ENABLE
+	ldmfd	sp!, {r0, pc}
+
+@ Append r0 in decimal at r4, leaving r4 after the digits.
+append_decimal:
+	stmfd	sp!, {r0, r1, r2, lr}
+	mov	r1, r4
+	mov	r2, #12
+	swi	XOS_ConvertCardinal4
+	movvc	r4, r1
+	ldmfd	sp!, {r0, r1, r2, pc}
+
+@ Set the variable named at r0 to the string built at WS_CMD.
+set_var:
+	stmfd	sp!, {r0, r1, r2, r3, r4, lr}
+	mov	r1, #0
+	strb	r1, [r4]		@ terminate
+	add	r1, r5, #WS_CMD
+	sub	r2, r4, r1		@ length
+	mov	r3, #0
+	mov	r4, #0			@ a plain string
+	swi	XOS_SetVarVal
+	ldmfd	sp!, {r0, r1, r2, r3, r4, pc}
+
+var_mode:
+	.string	"GfxCard$Mode"
+	.align
+var_store:
+	.string	"GfxCard$Store"
+	.align
+var_frames:
+	.string	"GfxCard$Frames"
+	.align
+vtext_idle:
+	.string	"Not displaying"
+	.align
+vtext_by:
+	.string	" x "
+	.align
+vtext_comma:
+	.string	", "
+	.align
+vtext_bpp:
+	.string	"bpp"
+	.align
+vtext_store:
+	.string	"Framestore "
+	.align
+vtext_of:
+	.string	"K of "
+	.align
+vtext_k:
+	.string	"K"
+	.align
+vtext_frames:
+	.string	"Frames displayed "
+	.align
+
+	.ltorg
 
 command_status:
 	stmfd	sp!, {r4, r5, r6, lr}
