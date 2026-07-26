@@ -209,6 +209,7 @@ jobs:
     # Fuse the two per-arch slices into a universal binary and stage the release.
     needs: [macos-x86_64, macos-arm64]
     runs-on: macos-14
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -239,10 +240,24 @@ jobs:
           ls -la releases/macos/*.dmg
           # Actually run the fused binary, so a lipo or signing step that
           # produces something unloadable is caught here rather than by a user.
-          # Both slices are exercised: arm64 natively, x86_64 under Rosetta.
-          "$APP/Contents/MacOS/rpcemu" --help
-          arch -arm64 "$APP/Contents/MacOS/rpcemu" --help
-          arch -x86_64 "$APP/Contents/MacOS/rpcemu" --help
+          # Wrapped in a timeout where one is available: an invocation that blocks
+          # rather than exiting would otherwise sit here until the job's own limit
+          # expires. macOS ships no timeout(1), so this is best-effort and the
+          # job-level timeout-minutes is the real backstop.
+          TMO=$(command -v timeout || command -v gtimeout || true)
+          run_help() {
+            if [ -n "$TMO" ]; then "$TMO" 60 "$@" --help; else "$@" --help; fi
+          }
+          run_help "$APP/Contents/MacOS/rpcemu"
+          run_help arch -arm64 "$APP/Contents/MacOS/rpcemu"
+          # The x86_64 slice needs Rosetta 2, which this job does not install
+          # (only the x86_64 build job does). Check for it rather than assuming,
+          # since invoking arch -x86_64 without it can stall.
+          if arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+            run_help arch -x86_64 "$APP/Contents/MacOS/rpcemu"
+          else
+            echo "Note: skipping the x86_64 slice check, Rosetta 2 is not installed on this runner."
+          fi
 
       - name: Upload macOS universal release
         uses: actions/upload-artifact@v4
