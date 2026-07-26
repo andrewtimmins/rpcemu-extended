@@ -31,6 +31,12 @@ else()
     message(STATUS "Skipping JIT differential tests (requires a native dynarec backend)")
 endif()
 
+# Display mode selection against a VRAM budget. Architecture-neutral and needs
+# no dynarec, so unlike the JIT tests it builds everywhere.
+add_executable(test_mode_fit test_mode_fit.c test_stubs.c)
+target_link_libraries(test_mode_fit PRIVATE rpcemu_core m)
+add_test(NAME test_mode_fit COMMAND test_mode_fit)
+
 # Networking tests for the Access+/ShareFS path, where large copies drive IP
 # fragment reassembly. These compile the code under test directly rather than
 # linking rpcemu_core, because each replaces a symbol the core also defines: the

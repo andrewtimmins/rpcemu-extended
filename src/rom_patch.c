@@ -281,6 +281,7 @@ rom_patch_monitor_edid(size_t rom_bytes)
 	size_t found = (size_t) -1;
 	size_t hits = 0;
 	unsigned native_x, native_y;
+	unsigned bound_x = 0, bound_y = 0;
 	uint8_t base[EDID_BLOCK_SIZE];
 	uint8_t block[EDID_BLOCK_SIZE];
 	size_t byte;
@@ -297,17 +298,35 @@ rom_patch_monitor_edid(size_t rom_bytes)
 		return;		/* Not a single unambiguous block: leave well alone. */
 	}
 
-	/* Choose the native mode: match the host display if the front-end has
-	   published it, else a sensible high default. Clamp to keep it sane. */
-	if (!rpcemu_get_host_display(&native_x, &native_y)) {
-		native_x = EDID_NATIVE_DEFAULT_X;
-		native_y = EDID_NATIVE_DEFAULT_Y;
+	/* Bound by the host display if the front-end has published it, else by a
+	   sensible high default. Clamp to keep it sane. */
+	if (!rpcemu_get_host_display(&bound_x, &bound_y)) {
+		bound_x = EDID_NATIVE_DEFAULT_X;
+		bound_y = EDID_NATIVE_DEFAULT_Y;
 	}
-	if (native_x > EDID_NATIVE_MAX_X) {
-		native_x = EDID_NATIVE_MAX_X;
+	if (bound_x > EDID_NATIVE_MAX_X) {
+		bound_x = EDID_NATIVE_MAX_X;
 	}
-	if (native_y > EDID_NATIVE_MAX_Y) {
-		native_y = EDID_NATIVE_MAX_Y;
+	if (bound_y > EDID_NATIVE_MAX_Y) {
+		bound_y = EDID_NATIVE_MAX_Y;
+	}
+
+	/* Then bound it by what the fitted VRAM can hold. Advertising a preferred
+	   timing whose framebuffer does not fit gives the guest a mode it cannot
+	   display: RISC OS answers "not suitable for displaying the desktop", which
+	   is how a Kinetic (clamped to 2MB) reacts to being offered 2560x1440.
+	   Budget 32bpp, since that is the deepest the desktop may choose and the
+	   advertised mode has to work whichever depth is configured. A machine with
+	   no VRAM fitted takes screen memory from DRAM instead, so there is no
+	   figure to reason about and the limit is skipped. */
+	if (!rpcemu_display_mode_fit(bound_x, bound_y, 4,
+	                             (size_t) config.vram_size * 1024 * 1024,
+	                             &native_x, &native_y))
+	{
+		rpclog("rom_patch: no standard mode fits %u MB VRAM within %ux%u - "
+		       "leaving the monitor EDID alone\n",
+		       config.vram_size, bound_x, bound_y);
+		return;
 	}
 
 	memcpy(base, &rb[found], EDID_BLOCK_SIZE);

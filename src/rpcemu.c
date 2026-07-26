@@ -98,6 +98,82 @@ rpcemu_get_host_display(unsigned *width, unsigned *height)
 	return 1;
 }
 
+/* Standard display modes, largest area first. Used to answer "the biggest mode
+   that will actually work here", so it holds sizes RISC OS and monitors both
+   expect rather than arbitrary geometry: a computed 1385x779 would be a strange
+   thing to advertise and less likely to be accepted. */
+static const struct {
+	unsigned width;
+	unsigned height;
+} display_modes[] = {
+	{ 2560, 1440 },	/* 3686400 */
+	{ 1920, 1200 },	/* 2304000 */
+	{ 1920, 1080 },	/* 2073600 */
+	{ 1600, 1200 },	/* 1920000 */
+	{ 1680, 1050 },	/* 1764000 */
+	{ 1400, 1050 },	/* 1470000 */
+	{ 1280, 1024 },	/* 1310720 */
+	{ 1440,  900 },	/* 1296000 */
+	{ 1280,  960 },	/* 1228800 */
+	{ 1366,  768 },	/* 1049088 */
+	{ 1152,  864 },	/*  995328 */
+	{ 1280,  720 },	/*  921600 */
+	{ 1024,  768 },	/*  786432 */
+	{  800,  600 },	/*  480000 */
+	{  640,  480 },	/*  307200 */
+};
+
+/**
+ * Find the largest standard display mode that fits both within the given bounds
+ * and within a framebuffer budget.
+ *
+ * The second limit is the one that catches people out. Screen memory on a Risc PC
+ * comes out of VRAM, so a mode is only displayable if its framebuffer fits: at 32
+ * bits per pixel 1600x1200 needs 7.68MB, which a 2MB machine cannot show at any
+ * refresh rate. Asking for one regardless earns "not suitable for displaying the
+ * desktop" from RISC OS, so both the mode advertised in the synthesised EDID and
+ * any mode requested later have to respect it.
+ *
+ * @param max_width       Largest acceptable width (typically the host display)
+ * @param max_height      Largest acceptable height
+ * @param bytes_per_pixel Depth to budget for; 4 (32bpp) is the safe assumption
+ *                        when the depth the guest will choose is not known
+ * @param budget_bytes    Framebuffer bytes available, or 0 if unknown/unlimited
+ * @param[out] width      Chosen width
+ * @param[out] height     Chosen height
+ *
+ * @return non-zero if a mode was found, zero if nothing fits
+ */
+int
+rpcemu_display_mode_fit(unsigned max_width, unsigned max_height,
+                        unsigned bytes_per_pixel, size_t budget_bytes,
+                        unsigned *width, unsigned *height)
+{
+	size_t i;
+
+	for (i = 0; i < sizeof(display_modes) / sizeof(display_modes[0]); i++) {
+		const unsigned w = display_modes[i].width;
+		const unsigned h = display_modes[i].height;
+
+		if (w > max_width || h > max_height) {
+			continue;
+		}
+		if (budget_bytes != 0 && bytes_per_pixel != 0) {
+			const size_t needed = (size_t) w * h * bytes_per_pixel;
+
+			if (needed > budget_bytes) {
+				continue;
+			}
+		}
+
+		*width = w;
+		*height = h;
+		return 1;
+	}
+
+	return 0;
+}
+
 /** Array of details of models the emulator can emulate, must be kept in sync with
     Model enum in rpcemu.h */
 const Model_Details models[] = {
