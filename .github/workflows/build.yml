@@ -122,10 +122,57 @@ jobs:
           # Actually run it. This exercises the staged release as a user gets it,
           # so it also catches a DLL that build-windows.sh failed to copy
           # alongside the executable. --help and --list-machines return before
-          # any wxWidgets initialisation. Note the exit code is what is being
-          # checked; a GUI-subsystem binary has no console to print to.
-          ./releases/windows/amd64/rpcemu-recompiler.exe --help
-          ./releases/windows/amd64/rpcemu-recompiler.exe --list-machines
+          # any wxWidgets initialisation.
+          #
+          # This binary is GUI-subsystem (no console window on double-click), so
+          # it reports these messages in a dialog. A modal dialog would hang a
+          # runner with no interactive desktop, so RPCEMU_NO_GUI_MESSAGES sends
+          # the text to the standard streams instead - which is also what a
+          # script on Windows would set. Both the output and the exit code are
+          # checked: asserting on the exit code alone previously let a silent
+          # --help pass.
+          export RPCEMU_NO_GUI_MESSAGES=1
+          ./releases/windows/amd64/rpcemu-recompiler.exe --help | grep -- '--machine'
+          ./releases/windows/amd64/rpcemu-recompiler.exe --list-machines | grep -i 'Default'
+          # An unknown machine must be reported, not silently ignored.
+          ./releases/windows/amd64/rpcemu-recompiler.exe --machine no-such-machine > out.txt 2>&1 && rc=0 || rc=$?
+          cat out.txt
+          test "$rc" = "2" || { echo "expected exit 2 for an unknown machine, got $rc"; exit 1; }
+          grep -qi 'not found' out.txt || { echo "expected 'not found' to be reported"; exit 1; }
+          rm -f out.txt
+
+      # Options must be spelled the same way on every platform, and an unknown
+      # one must be reported by RPCEmu itself. wxWidgets used to answer both
+      # "--foo" and DOS-style "/H" with its own error and usage dialogs, which
+      # listed wx's options rather than RPCEmu's, appeared as a second unrelated
+      # box, and would hang a runner with no interactive desktop.
+      - name: Unknown options are rejected by RPCEmu, not wxWidgets
+        timeout-minutes: 2
+        run: |
+          export RPCEMU_NO_GUI_MESSAGES=1
+          # MSYS2 rewrites an argument that looks like a Unix path into a Windows
+          # one, so a bare "/H" would reach the binary as "C:/msys64/H" - not a
+          # switch, and it would fall through to launching the GUI and hang.
+          # Exclude these arguments from that conversion so the test sends what
+          # it means to send.
+          export MSYS2_ARG_CONV_EXCL='*'
+          exe=./releases/windows/amd64/rpcemu-recompiler.exe
+
+          # A stray non-option argument is rejected too. RPCEmu takes none, and
+          # ignoring one used to fall through to launching the GUI, which on a
+          # runner with no display hangs until the job times out.
+          for opt in --foo /H stray-argument; do
+            "$exe" "$opt" > unknown.txt 2>&1 && rc=0 || rc=$?
+            cat unknown.txt
+            test "$rc" = "2" || { echo "$opt: expected exit 2, got $rc"; exit 1; }
+            grep -qiE "unknown option|unexpected argument" unknown.txt || { echo "$opt: not reported"; exit 1; }
+            # wx's own usage dialog names options RPCEmu does not document.
+            if grep -qi "verbose" unknown.txt; then
+              echo "$opt: wx's usage leaked into the message"
+              exit 1
+            fi
+            rm -f unknown.txt
+          done
 
       - name: Upload Windows amd64 release
         uses: actions/upload-artifact@v4
