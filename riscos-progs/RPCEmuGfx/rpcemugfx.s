@@ -1514,8 +1514,6 @@ command_vars:
 
 	@ GfxCard$Store - how much of the framestore the mode uses
 	add	r4, r5, #WS_CMD
-	adrl	r6, vtext_store
-	bl	copy_string
 	bl	vars_displaying
 	moveq	r0, #0			@ not displaying: none of it is in use
 	beq	3f
@@ -1539,8 +1537,6 @@ command_vars:
 
 	@ GfxCard$Frames - frames the card has put out
 	add	r4, r5, #WS_CMD
-	adrl	r6, vtext_frames
-	bl	copy_string
 	ldr	r0, [r5, #WS_REGS]
 	ldr	r0, [r0, #REG_FRAMES]
 	bl	append_decimal
@@ -1606,17 +1602,11 @@ vtext_comma:
 vtext_bpp:
 	.string	"bpp"
 	.align
-vtext_store:
-	.string	"Framestore "
-	.align
 vtext_of:
 	.string	"K of "
 	.align
 vtext_k:
 	.string	"K"
-	.align
-vtext_frames:
-	.string	"Frames displayed "
 	.align
 
 	.ltorg

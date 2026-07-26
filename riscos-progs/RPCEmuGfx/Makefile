@@ -54,7 +54,10 @@ $(MODULE).o: $(MODULE).s version.inc resfs.inc $(APP_IMAGE)
 # The files carried in the card's ROM. Regenerated whenever a file with a RISC OS
 # filetype suffix is added, removed or changed here, so icons, templates and
 # message files only have to be dropped into this directory.
-resfs.inc: mkresfs.py $(APP_IMAGE) $(wildcard *,[0-9a-f][0-9a-f][0-9a-f])
+RESOURCES = $(wildcard *,[0-9a-f][0-9a-f][0-9a-f]) \
+	    $(wildcard !Boot !Help !Run !Sprites !Sprites22 Messages Templates)
+
+resfs.inc: mkresfs.py $(APP_IMAGE) $(RESOURCES)
 	python3 mkresfs.py . $@
 
 $(APP_IMAGE): app.s

@@ -19,6 +19,11 @@
 # directory, with no change to the assembler or the Makefile. Sources have no
 # suffix, so there is nothing to exclude.
 #
+# A file under one of the conventional names an application always carries is
+# taken even without a suffix, because its type is not in doubt: a file called
+# Messages is text and a file called Templates is a template file, however it
+# arrived here from RISC OS.
+#
 # The format is the one ResourceFS documents: per file, an offset to the next
 # entry, the load and exec addresses and size as OS_File would give them, the
 # attributes, the name without "$.", then (word-aligned) the size again plus
@@ -32,6 +37,20 @@ APP = "Apps.!GfxCard"		# where the files appear under Resources:$
 ATTR = 3			# read/write, as ROM files are
 TYPE_OBEY = 0xFEB
 TYPE_ABS = 0xFF8
+TYPE_TEXT = 0xFFF
+TYPE_SPRITE = 0xFF9
+TYPE_TEMPLATE = 0xFEC
+
+# Names that need no suffix: the type follows from the name.
+KNOWN = {
+    "!Boot": TYPE_OBEY,
+    "!Help": TYPE_TEXT,
+    "!Run": TYPE_OBEY,
+    "!Sprites": TYPE_SPRITE,
+    "!Sprites22": TYPE_SPRITE,
+    "Messages": TYPE_TEXT,
+    "Templates": TYPE_TEMPLATE,
+}
 
 # The application itself: a build product rather than a file dropped in here.
 RUNIMAGE = "gfxapp"
@@ -62,7 +81,7 @@ def asm_label(name):
 
 
 def collect(directory):
-    """Every file here that carries a filetype suffix, sorted for a stable build."""
+    """Every resource file here, sorted so the build is reproducible."""
     found = []
     for entry in sorted(os.listdir(directory)):
         path = os.path.join(directory, entry)
@@ -71,9 +90,10 @@ def collect(directory):
         if entry in EXCLUDE:
             continue
         m = SUFFIX.match(entry)
-        if m is None:
-            continue
-        found.append((m.group("name"), int(m.group("type"), 16), entry))
+        if m is not None:
+            found.append((m.group("name"), int(m.group("type"), 16), entry))
+        elif entry in KNOWN:
+            found.append((entry, KNOWN[entry], entry))
     return found
 
 

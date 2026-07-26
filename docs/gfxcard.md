@@ -82,15 +82,13 @@ initialisation, so it appears as `Resources:$.Apps.!GfxCard` - the Apps folder o
 the icon bar. Nothing is installed on a disc, and it is there exactly when the
 card is.
 
-Double-clicking it puts an icon on the icon bar. Its menu carries the card's
-figures, refreshed as the menu opens, and the two commands worth having to hand:
+Double-clicking it puts the card's icon on the icon bar, with this menu:
 
 ```
 GfxCard
 -------------------------------
-1920 x 1080, 32bpp
-Framestore 8100K of 15360K
-Frames displayed 18195
+Info                          >
+Display                       >
 -------------------------------
 Display on the card
 Display on VIDC20
@@ -98,8 +96,23 @@ Display on VIDC20
 Quit
 ```
 
-Frames displayed is the card actually scanning out, so it is the quickest way to
-tell whether the card is driving the screen or merely fitted.
+*Display* opens a window with what the card is doing, read fresh each time it is
+shown:
+
+```
+Display Information
+Resolution   1280 x 1024, 32bpp
+Framestore   5120K of 15360K
+Frames       3036
+```
+
+Frames is the card actually scanning out, so it is the quickest way to tell
+whether the card is driving the screen or merely fitted. *Info* is the usual
+program information window.
+
+If RISC OS refuses one of the two commands - which it will if the monitor
+definition in force does not offer the mode - the application says so rather
+than appearing to do nothing.
 
 ### Adding icons, templates and message files
 
@@ -110,16 +123,40 @@ or the Makefile:
 
 | File | Becomes | Notes |
 | --- | --- | --- |
-| `!Sprites,ff9` | `Resources:$.Apps.!GfxCard.!Sprites` | Sprite named `!gfxcard` for the application and icon bar, `sm!gfxcard` for the small one |
-| `Templates,fec` | `...!GfxCard.Templates` | Wimp templates |
-| `Messages,fff` | `...!GfxCard.Messages` | MessageTrans tokens |
+| `!Sprites,ff9` | `Resources:$.Apps.!GfxCard.!Sprites` | Sprite named `!gfxcard`, used for the application and the icon bar |
+| `Templates,fec` | `...!GfxCard.Templates` | Wimp templates: `displayinfo` and `proginfo` |
+| `Messages,fff` | `...!GfxCard.Messages` | `Name:`, `Purpose:`, `Author:` and `Version:` for the information window |
 | `!Boot,feb` | `...!GfxCard.!Boot` | Obey, run by the Filer when it sees the application |
 | `!Run,feb` | `...!GfxCard.!Run` | Replaces the generated default |
+
+The names an application always carries - `!Boot`, `!Run`, `!Sprites`,
+`Templates`, `Messages`, `!Help` - are taken **with or without** the suffix,
+because the type follows from the name. Anything else needs its filetype suffix.
 
 `mkresfs.py` builds the ResourceFS chain from whatever is there, and the module
 carries it. Because the files are inside `gfxroms/RPCEmuGfx,ffa`, every release
 gets them automatically - all three build scripts stage that directory and the
 CMake install rules cover it, so there is nothing to add anywhere else.
+
+### What the application expects of those files
+
+The two windows and their words are the resource files' business, not the
+program's: it fills icons by number and looks tokens up by name.
+
+| Where | What goes in it |
+| --- | --- |
+| `displayinfo` icons 1, 2, 3 | Resolution, framestore, frames - indirected text, any buffer length |
+| `proginfo` icons 1, 2, 3, 4 | Name, purpose, author, version |
+| `Messages` | One `Token:value` per line: `Name`, `Purpose`, `Author`, `Version` |
+| `!Sprites` | A sprite called `!gfxcard` |
+| `!Run` | Must `*IconSprites` the sprite file and set `GfxCard$Path`, which is how the application finds Templates and Messages |
+
+Two things about the icon bar icon are worth knowing if it is ever changed: the
+sprite has to be named in the icon's **validation string** (`S!gfxcard`), because
+the sprite-only form of the icon data draws nothing on the icon bar; and the
+application asks Wimp_Initialise for `Message_MenuWarning` by name rather than
+passing 0 for "every message", which this Wimp does not honour. Neither failure
+reports an error - the icon or the windows simply never appear.
 
 The application is `riscos-progs/RPCEmuGfx/app.s`, an absolute file assembled
 alongside the driver and carried in the same ROM. It is written in assembler like
@@ -134,10 +171,13 @@ anything that wants to display it:
 ```
 *GfxCardVars
 *Show GfxCard*
-GfxCard$Frames : Frames displayed 1526
+GfxCard$Frames : 1526
 GfxCard$Mode   : 1920 x 1080, 32bpp
-GfxCard$Store  : Framestore 8100K of 15360K
+GfxCard$Store  : 8100K of 15360K
 ```
+
+The values are bare, with no words around them, so whatever displays them can
+label them itself - which is what the application's window does.
 
 That indirection is necessary rather than decorative. The card's registers are in
 expansion card space, which RISC OS maps for **privileged access only**: a desktop
