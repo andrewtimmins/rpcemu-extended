@@ -57,6 +57,9 @@
 	XOS_IntOff		= 0x20013
 	XOS_IntOn		= 0x20014
 	XOS_ScreenMode		= 0x20065
+	XOS_CLI			= 0x20005
+	XOS_ReadModeVariable	= 0x20035
+	XOS_ReadVarVal		= 0x20023
 	XOS_ConvertCardinal4	= 0x200d8
 	XPodule_ReadInfo	= 0x6028d
 
@@ -97,6 +100,11 @@
 
 	@ Mode flags (hdr:VduExt)
 	ModeFlag_FullPalette	= 1 << 7
+
+	@ Mode variables, as OS_ReadModeVariable numbers them
+	ModeVar_Log2BPP		= 9
+	ModeVar_XWindLimit	= 11
+	ModeVar_YWindLimit	= 12
 
 	@ VIDC list type 3 (hdr:VIDCList)
 	VIDCList3_Type			= 0
@@ -168,7 +176,28 @@
 	WS_GVHANDLER	= 64	@ our GraphicsV handler, as OS_Claim was given it
 	WS_VSHANDLER	= 68	@ our vsync handler, likewise
 	WS_SCRATCH	= 72	@ 4 words: Podule_ReadInfo results, number buffer
-	WORKSPACE_SIZE	= 88
+	WS_VET_W	= 100	@ the last mode vetted, and what came of it, so a
+	WS_VET_H	= 104	@ refusal can be explained rather than guessed at
+	WS_VET_STRIDE	= 108
+	WS_VET_L2BPP	= 112
+	WS_VET_REASON	= 116
+	WS_SAVE_W	= 88	@ geometry in use before a switch, so it survives it
+	WS_SAVE_H	= 92
+	WS_SAVE_L2BPP	= 96
+	WS_CMD		= 120	@ CMD_SIZE bytes: *WimpMode command builder
+	WORKSPACE_SIZE	= WS_CMD + CMD_SIZE
+
+	CMD_SIZE	= 64	@ "WimpMode X2560 Y1440 C16M" and room
+
+	@ Why the last mode was refused (WS_VET_REASON)
+	VET_OK		= 0
+	VET_NOT_TYPE3	= 1
+	VET_DEPTH	= 2
+	VET_INTERLACE	= 3
+	VET_NO_PIXELS	= 4
+	VET_TOO_WIDE	= 5
+	VET_TOO_TALL	= 6
+	VET_TOO_BIG	= 7
 
 	FLAG_VECTOR	= 1 << 0	@ GraphicsV claimed
 	FLAG_REGISTERED	= 1 << 1	@ driver number allocated
@@ -407,27 +436,40 @@ gv_readpal_done:
 	@ scan out from beyond its own memory.
 gv_vetmode:
 	stmfd	sp!, {r1, r2, r3, r5, r6}
+	mov	r6, #VET_OK
+	str	r6, [ws, #WS_VET_REASON]
 	bl	mode_geometry		@ r1 = width, r2 = height, r3 = stride,
 					@ r5 = log2bpp; V set if unusable
+	@ Note what was asked for either way, so *GfxCardStatus can say what
+	@ happened to the last mode the OS offered.
+	str	r1, [ws, #WS_VET_W]
+	str	r2, [ws, #WS_VET_H]
+	str	r3, [ws, #WS_VET_STRIDE]
+	str	r5, [ws, #WS_VET_L2BPP]
 	bvs	gv_vetmode_bad
 
 	ldr	r6, [ws, #WS_MAX_WIDTH]
 	cmp	r1, r6
-	bhi	gv_vetmode_bad
+	movhi	r6, #VET_TOO_WIDE
+	bhi	gv_vetmode_reason
 	ldr	r6, [ws, #WS_MAX_HEIGHT]
 	cmp	r2, r6
-	bhi	gv_vetmode_bad
+	movhi	r6, #VET_TOO_TALL
+	bhi	gv_vetmode_reason
 
 	mul	r6, r3, r2		@ bytes the mode needs
 	ldr	r1, [ws, #WS_FB_SIZE]
 	cmp	r6, r1
-	bhi	gv_vetmode_bad
+	movhi	r6, #VET_TOO_BIG
+	bhi	gv_vetmode_reason
 
 	mov	r0, #0			@ usable
 	mov	r4, #0
 	ldmfd	sp!, {r1, r2, r3, r5, r6}
 	ldmfd	sp!, {pc}
 
+gv_vetmode_reason:
+	str	r6, [ws, #WS_VET_REASON]
 gv_vetmode_bad:
 	mvn	r0, #0			@ not usable
 	mov	r4, #0
@@ -486,23 +528,27 @@ mode_geometry:
 
 	ldr	r1, [r0, #VIDCList3_Type]
 	teq	r1, #3
+	movne	r6, #VET_NOT_TYPE3
 	bne	mode_geometry_bad
 
 	ldr	r5, [r0, #VIDCList3_PixelDepth]
 	teq	r5, #3			@ 8bpp
 	teqne	r5, #5			@ or 32bpp; nothing else is scanned out
+	movne	r6, #VET_DEPTH
 	bne	mode_geometry_bad
 
 	@ Two distinct interlaced fields would need the card to reorder lines as
 	@ it scans out, which it does not do.
 	ldr	r1, [r0, #VIDCList3_SyncPol]
 	tst	r1, #SyncPol_InterlaceFields
+	movne	r6, #VET_INTERLACE
 	bne	mode_geometry_bad
 
 	ldr	r1, [r0, #VIDCList3_HorizDisplaySize]
 	ldr	r2, [r0, #VIDCList3_VertiDisplaySize]
 	teq	r1, #0
 	teqne	r2, #0
+	moveq	r6, #VET_NO_PIXELS
 	beq	mode_geometry_bad
 
 	mov	r3, r1, lsl r5
@@ -523,7 +569,9 @@ mode_geometry_ok:
 	cmp	pc, #0			@ clear V
 	ldmfd	sp!, {pc}
 
+@ Record why, then fail. r6 = reason.
 mode_geometry_bad:
+	str	r6, [ws, #WS_VET_REASON]
 	cmp	r0, #NBIT		@ set V
 	cmnvc	r0, #NBIT
 	ldmfd	sp!, {pc}
@@ -861,15 +909,182 @@ final_done:
 
 @ Switch the display to the card. OS_ScreenMode reason 11 does the work,
 @ including picking a mode and putting the previous driver back if that fails.
+@
+@ It does not, however, reach the Wimp. Changing driver re-initialises the mode
+@ to the configured one and clears the screen, but the desktop is never told and
+@ so never repaints: the screen is left blank, at whatever mode the CMOS asked
+@ for, however large the mode was beforehand. So the geometry in use is noted
+@ first and asked for again through *WimpMode once the switch has happened, which
+@ both keeps the resolution and gives the desktop a mode change it acts on.
+@ Outside the desktop there is nothing to repaint and the step is skipped.
 command_on:
 	stmfd	sp!, {r5, lr}
 	ldr	r5, [r12]
 	teq	r5, #0
-	beq	command_no_ws
+	beq	command_on_no_ws
+
+	bl	save_mode
 	mov	r0, #ScreenMode_SelectDevice
 	ldr	r1, [r5, #WS_DRIVER]
 	swi	XOS_ScreenMode
+	ldmvsfd	sp!, {r5, pc}		@ refused: report it as it stands
+
+	bl	restore_wimp_mode
+	cmp	pc, #0			@ clear V
 	ldmfd	sp!, {r5, pc}
+
+command_on_no_ws:
+	adrl	r0, err_no_workspace
+	cmp	r0, #NBIT		@ set V
+	cmnvc	r0, #NBIT
+	ldmfd	sp!, {r5, pc}
+
+@ Note the geometry of the mode in use, so it can be asked for again after the
+@ switch. A variable that cannot be read leaves zero, which restore_wimp_mode
+@ takes as "nothing to restore".
+@
+@ in: r5 = workspace
+save_mode:
+	stmfd	sp!, {r0, r1, r2, lr}
+	mov	r0, #0
+	str	r0, [r5, #WS_SAVE_W]
+	str	r0, [r5, #WS_SAVE_H]
+	mov	r0, #3			@ 256 colours if the depth is unreadable
+	str	r0, [r5, #WS_SAVE_L2BPP]
+
+	mvn	r0, #0			@ the mode in use
+	mov	r1, #ModeVar_XWindLimit
+	swi	XOS_ReadModeVariable
+	addvc	r2, r2, #1		@ a limit is the last pixel, not the count
+	strvc	r2, [r5, #WS_SAVE_W]
+
+	mvn	r0, #0
+	mov	r1, #ModeVar_YWindLimit
+	swi	XOS_ReadModeVariable
+	addvc	r2, r2, #1
+	strvc	r2, [r5, #WS_SAVE_H]
+
+	mvn	r0, #0
+	mov	r1, #ModeVar_Log2BPP
+	swi	XOS_ReadModeVariable
+	strvc	r2, [r5, #WS_SAVE_L2BPP]
+
+	cmp	pc, #0			@ clear V
+	ldmfd	sp!, {r0, r1, r2, pc}
+
+@ Ask the Wimp for the mode noted by save_mode, if the desktop is running.
+@ Nothing here is fatal: the display has already been switched, and a desktop
+@ that will not take the mode says so itself.
+@
+@ in: r5 = workspace
+restore_wimp_mode:
+	stmfd	sp!, {r0, r1, r2, r3, r4, r6, lr}
+	ldr	r0, [r5, #WS_SAVE_W]
+	ldr	r1, [r5, #WS_SAVE_H]
+	teq	r0, #0
+	teqne	r1, #0
+	beq	rwm_done
+
+	@ Wimp$State reads "desktop" while the desktop is running, and "commands"
+	@ when it is not; the first character is enough to tell them apart.
+	adrl	r0, var_wimp_state
+	add	r1, r5, #WS_CMD
+	mov	r2, #CMD_SIZE
+	mov	r3, #0
+	mov	r4, #3			@ expanded, as a string
+	swi	XOS_ReadVarVal
+	bvs	rwm_done
+	cmp	r2, #0
+	beq	rwm_done
+	ldrb	r0, [r5, #WS_CMD]
+	teq	r0, #'d'
+	bne	rwm_done
+
+	add	r4, r5, #WS_CMD		@ write cursor
+	adrl	r6, mode_prefix
+	bl	copy_string
+
+	ldr	r0, [r5, #WS_SAVE_W]
+	mov	r1, r4
+	mov	r2, #12
+	swi	XOS_ConvertCardinal4	@ decimal at r1; r1 -> the terminating NUL
+	mov	r4, r1
+
+	adrl	r6, mode_y
+	bl	copy_string
+	ldr	r0, [r5, #WS_SAVE_H]
+	mov	r1, r4
+	mov	r2, #12
+	swi	XOS_ConvertCardinal4
+	mov	r4, r1
+
+	@ The depth we came from, of the two this card scans out.
+	ldr	r0, [r5, #WS_SAVE_L2BPP]
+	teq	r0, #5
+	bne	1f
+	adrl	r6, mode_c16m
+	b	2f
+1:
+	adrl	r6, mode_c256
+2:
+	bl	copy_string
+
+	mov	r0, #0
+	strb	r0, [r4]		@ terminate
+	add	r0, r5, #WS_CMD
+	swi	XOS_CLI
+	bvc	rwm_done
+
+	@ The desktop would not take that mode. The display has already been
+	@ switched and the card is showing whatever the OS re-initialised to, so
+	@ this is not an error - but it is the one thing the user needs told, since
+	@ otherwise they are looking at a blank screen wondering why.
+	adrl	r0, msg_mode_lost
+	swi	XOS_Write0
+	add	r0, r5, #WS_CMD
+	swi	XOS_Write0
+	swi	XOS_NewLine
+	adrl	r0, msg_mode_hint
+	swi	XOS_Write0
+	swi	XOS_NewLine
+
+rwm_done:
+	cmp	pc, #0			@ clear V: a failure here is not the caller's
+	ldmfd	sp!, {r0, r1, r2, r3, r4, r6, pc}
+
+msg_mode_lost:
+	.string	"Switched to the graphics card, but the desktop would not take the mode it was in: "
+	.align
+msg_mode_hint:
+	.string	"The screen may be blank until you set a mode the card can show, e.g. *WimpMode X1280 Y1024 C256"
+	.align
+
+@ copy_string - append the NUL-terminated string at r6 to r4, leaving r4 after
+@ the last byte written and r6 after the terminator.
+copy_string:
+	stmfd	sp!, {r0, lr}
+1:
+	ldrb	r0, [r6], #1
+	teq	r0, #0
+	strneb	r0, [r4], #1
+	bne	1b
+	ldmfd	sp!, {r0, pc}
+
+var_wimp_state:
+	.string	"Wimp$State"
+	.align
+mode_prefix:
+	.string	"WimpMode X"
+	.align
+mode_y:
+	.string	" Y"
+	.align
+mode_c256:
+	.string	" C256"
+	.align
+mode_c16m:
+	.string	" C16M"
+	.align
 
 @ ...and back to VIDC20, which is driver 0: it registers from ROM before
 @ anything in an expansion card can.
@@ -965,6 +1180,46 @@ command_status:
 	adrl	r0, msg_bpp
 	swi	XOS_Write0
 
+	@ What became of the last mode the OS offered. This is what says whether a
+	@ "Screen mode not available" came from this card or from somewhere else.
+	ldr	r0, [r5, #WS_VET_W]
+	teq	r0, #0
+	beq	command_status_vsync
+	adrl	r0, msg_vetted
+	swi	XOS_Write0
+	ldr	r0, [r5, #WS_VET_W]
+	bl	print_number
+	adrl	r0, msg_by
+	swi	XOS_Write0
+	ldr	r0, [r5, #WS_VET_H]
+	bl	print_number
+	adrl	r0, msg_at
+	swi	XOS_Write0
+	mov	r0, #1
+	ldr	r1, [r5, #WS_VET_L2BPP]
+	mov	r0, r0, lsl r1
+	bl	print_number
+	adrl	r0, msg_bpp_stride
+	swi	XOS_Write0
+	ldr	r0, [r5, #WS_VET_STRIDE]
+	bl	print_number
+	adrl	r0, msg_arrow
+	swi	XOS_Write0
+	ldr	r0, [r5, #WS_VET_REASON]
+	teq	r0, #VET_OK
+	bne	1f
+	adrl	r0, msg_vet_ok
+	b	2f
+1:
+	ldr	r0, [r5, #WS_VET_REASON]
+	adrl	r1, vet_reasons
+	sub	r0, r0, #1
+	mov	r0, r0, lsl #5		@ 32 bytes per reason
+	add	r0, r1, r0
+2:
+	swi	XOS_Write0
+	swi	XOS_NewLine
+
 command_status_vsync:
 	@ Frames the card has displayed, and vsyncs we have handled. The two
 	@ tracking each other is what says the interrupt path is alive.
@@ -1036,6 +1291,36 @@ msg_not_in_use:
 msg_mode:
 	.string	"  Displaying "
 	.align
+msg_vetted:
+	.string	"  Last mode offered: "
+	.align
+msg_bpp_stride:
+	.string	" bpp, stride "
+	.align
+msg_arrow:
+	.string	" - "
+	.align
+msg_vet_ok:
+	.string	"accepted"
+	.align
+
+	@ Fixed 32-byte slots so the reason can be indexed, in VET_* order.
+vet_reasons:
+	.ascii	"not a type 3 mode list\0"
+	.space	32 - 23
+	.ascii	"a depth this card cannot show\0"
+	.space	32 - 30
+	.ascii	"interlaced with two fields\0"
+	.space	32 - 27
+	.ascii	"no pixels\0"
+	.space	32 - 10
+	.ascii	"wider than the card allows\0"
+	.space	32 - 27
+	.ascii	"taller than the card allows\0"
+	.space	32 - 28
+	.ascii	"too large for the framestore\0"
+	.space	32 - 29
+
 msg_frames:
 	.string	"  Frames displayed: "
 	.align
