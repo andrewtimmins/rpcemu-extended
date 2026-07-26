@@ -31,14 +31,40 @@ jobs:
         run: |
           file releases/linux/amd64/rpcemu-recompiler | grep -i ELF
           ls -la releases/linux/amd64/
-          # Actually execute it. --help and --list-machines run before any
-          # wxWidgets/GTK initialisation, so they work with no display and catch
-          # a binary that cannot start at all (bad link, missing library).
-          ./releases/linux/amd64/rpcemu-recompiler --help
-          ./releases/linux/amd64/rpcemu-recompiler --list-machines
+          # Actually execute it. These paths run before any wxWidgets/GTK
+          # initialisation, so they work with no display and catch a binary that
+          # cannot start at all (bad link, missing library). The same script
+          # runs on every platform, so the CLI is checked identically.
+          bash tests/cli_smoke.sh releases/linux/amd64/rpcemu-recompiler
+
+      # Boot the machine for real and look at the screen. Everything above stops
+      # at "the binary starts and parses its arguments"; this drives a full boot
+      # over the built-in VNC server, so a break in the CPU, memory, VIDC, ROM
+      # loading or the VNC server itself shows up here rather than in a user's
+      # first run. The test machine is seeded with a !Boot that runs Desktop, so
+      # a healthy run reaches the RISC OS desktop; the check asks whether the
+      # screen has a desktop's range of colour, not whether it matches a
+      # reference image, so cosmetic changes cannot fail the build.
+      - name: Headless boot and VNC screenshot
+        timeout-minutes: 3
+        run: |
+          python3 tests/vnc_smoke.py \
+            --binary releases/linux/amd64/rpcemu-recompiler \
+            --save vnc-smoke-linux-amd64.png
+
+      - name: Upload the boot screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vnc-smoke-linux-amd64
+          path: vnc-smoke-linux-amd64.png
+          # A single PNG: skip the zip so it can be viewed from the run page
+          # directly. "archive: false" allows one file only, which this is.
+          archive: false
+          if-no-files-found: ignore
 
       - name: Upload Linux amd64 release
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rpcemu-linux-amd64
           path: |
@@ -70,11 +96,36 @@ jobs:
         run: |
           file releases/linux/arm64/rpcemu-interpreter | grep -i ELF
           ls -la releases/linux/arm64/
-          ./releases/linux/arm64/rpcemu-interpreter --help
-          ./releases/linux/arm64/rpcemu-interpreter --list-machines
+          bash tests/cli_smoke.sh releases/linux/arm64/rpcemu-interpreter
+
+      # Boot the machine for real and look at the screen. Everything above stops
+      # at "the binary starts and parses its arguments"; this drives a full boot
+      # over the built-in VNC server, so a break in the CPU, memory, VIDC, ROM
+      # loading or the VNC server itself shows up here rather than in a user's
+      # first run. The test machine is seeded with a !Boot that runs Desktop, so
+      # a healthy run reaches the RISC OS desktop; the check asks whether the
+      # screen has a desktop's range of colour, not whether it matches a
+      # reference image, so cosmetic changes cannot fail the build.
+      - name: Headless boot and VNC screenshot
+        timeout-minutes: 3
+        run: |
+          python3 tests/vnc_smoke.py \
+            --binary releases/linux/arm64/rpcemu-interpreter \
+            --save vnc-smoke-linux-arm64.png
+
+      - name: Upload the boot screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vnc-smoke-linux-arm64
+          path: vnc-smoke-linux-arm64.png
+          # A single PNG: skip the zip so it can be viewed from the run page
+          # directly. "archive: false" allows one file only, which this is.
+          archive: false
+          if-no-files-found: ignore
 
       - name: Upload Linux arm64 release
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rpcemu-linux-arm64
           path: |
@@ -119,63 +170,65 @@ jobs:
           # Windows ships the recompiler (full-speed dynarec; the JIT now
           # supports the Windows x64 ABI).
           file releases/windows/amd64/rpcemu-recompiler.exe | grep -i 'PE32'
-          # Actually run it. This exercises the staged release as a user gets it,
-          # so it also catches a DLL that build-windows.sh failed to copy
-          # alongside the executable. --help and --list-machines return before
-          # any wxWidgets initialisation.
-          #
-          # This binary is GUI-subsystem (no console window on double-click), so
-          # it reports these messages in a dialog. A modal dialog would hang a
-          # runner with no interactive desktop, so RPCEMU_NO_GUI_MESSAGES sends
-          # the text to the standard streams instead - which is also what a
-          # script on Windows would set. Both the output and the exit code are
-          # checked: asserting on the exit code alone previously let a silent
-          # --help pass.
-          export RPCEMU_NO_GUI_MESSAGES=1
-          ./releases/windows/amd64/rpcemu-recompiler.exe --help | grep -- '--machine'
-          ./releases/windows/amd64/rpcemu-recompiler.exe --list-machines | grep -i 'Default'
-          # An unknown machine must be reported, not silently ignored.
-          ./releases/windows/amd64/rpcemu-recompiler.exe --machine no-such-machine > out.txt 2>&1 && rc=0 || rc=$?
-          cat out.txt
-          test "$rc" = "2" || { echo "expected exit 2 for an unknown machine, got $rc"; exit 1; }
-          grep -qi 'not found' out.txt || { echo "expected 'not found' to be reported"; exit 1; }
-          rm -f out.txt
+          # The same checks the other platforms run. This also exercises the
+          # staged release as a user gets it, so it catches a DLL that
+          # build-windows.sh failed to copy alongside the executable.
+          bash tests/cli_smoke.sh releases/windows/amd64/rpcemu-recompiler.exe
 
-      # Options must be spelled the same way on every platform, and an unknown
-      # one must be reported by RPCEmu itself. wxWidgets used to answer both
-      # "--foo" and DOS-style "/H" with its own error and usage dialogs, which
-      # listed wx's options rather than RPCEmu's, appeared as a second unrelated
-      # box, and would hang a runner with no interactive desktop.
-      - name: Unknown options are rejected by RPCEmu, not wxWidgets
+      # Windows only: wxWidgets used to accept DOS-style "/switch" here and
+      # answer an unrecognised one with its own error and usage dialogs, which
+      # listed wx's options rather than RPCEmu's and would hang a runner with no
+      # interactive desktop. Long options are the interface on every platform,
+      # so "/H" must be reported like any other unknown option.
+      - name: DOS-style switches are rejected
         timeout-minutes: 2
         run: |
           export RPCEMU_NO_GUI_MESSAGES=1
           # MSYS2 rewrites an argument that looks like a Unix path into a Windows
-          # one, so a bare "/H" would reach the binary as "C:/msys64/H" - not a
-          # switch, and it would fall through to launching the GUI and hang.
-          # Exclude these arguments from that conversion so the test sends what
-          # it means to send.
+          # one, so a bare "/H" would arrive as "C:/msys64/H". Exclude it from
+          # that conversion so the test sends what it means to send.
           export MSYS2_ARG_CONV_EXCL='*'
           exe=./releases/windows/amd64/rpcemu-recompiler.exe
 
-          # A stray non-option argument is rejected too. RPCEmu takes none, and
-          # ignoring one used to fall through to launching the GUI, which on a
-          # runner with no display hangs until the job times out.
-          for opt in --foo /H stray-argument; do
-            "$exe" "$opt" > unknown.txt 2>&1 && rc=0 || rc=$?
-            cat unknown.txt
-            test "$rc" = "2" || { echo "$opt: expected exit 2, got $rc"; exit 1; }
-            grep -qiE "unknown option|unexpected argument" unknown.txt || { echo "$opt: not reported"; exit 1; }
-            # wx's own usage dialog names options RPCEmu does not document.
-            if grep -qi "verbose" unknown.txt; then
-              echo "$opt: wx's usage leaked into the message"
-              exit 1
-            fi
-            rm -f unknown.txt
-          done
+          "$exe" /H > slash.txt 2>&1 && rc=0 || rc=$?
+          cat slash.txt
+          test "$rc" = "2" || { echo "expected exit 2 for /H, got $rc"; exit 1; }
+          grep -qi "unknown option" slash.txt || { echo "/H was not reported as an unknown option"; exit 1; }
+          # wx's own usage names options RPCEmu does not document.
+          if grep -qi "verbose" slash.txt; then
+            echo "wx's usage leaked into the message"
+            exit 1
+          fi
+          rm -f slash.txt
+
+      # Boot the machine for real and look at the screen. Everything above stops
+      # at "the binary starts and parses its arguments"; this drives a full boot
+      # over the built-in VNC server, so a break in the CPU, memory, VIDC, ROM
+      # loading or the VNC server itself shows up here rather than in a user's
+      # first run. The test machine is seeded with a !Boot that runs Desktop, so
+      # a healthy run reaches the RISC OS desktop; the check asks whether the
+      # screen has a desktop's range of colour, not whether it matches a
+      # reference image, so cosmetic changes cannot fail the build.
+      - name: Headless boot and VNC screenshot
+        timeout-minutes: 3
+        run: |
+          python3 tests/vnc_smoke.py \
+            --binary releases/windows/amd64/rpcemu-recompiler.exe \
+            --save vnc-smoke-windows-amd64.png
+
+      - name: Upload the boot screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vnc-smoke-windows-amd64
+          path: vnc-smoke-windows-amd64.png
+          # A single PNG: skip the zip so it can be viewed from the run page
+          # directly. "archive: false" allows one file only, which this is.
+          archive: false
+          if-no-files-found: ignore
 
       - name: Upload Windows amd64 release
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rpcemu-windows-amd64
           path: |
@@ -206,7 +259,17 @@ jobs:
             script="$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
             NONINTERACTIVE=1 arch -x86_64 /bin/bash -c "$script"
           fi
+          # Both slices must end up with the SAME version of every dependency:
+          # they are fused with lipo, and a library built from two different
+          # upstream releases is not one library. The Intel and Apple Silicon
+          # Homebrews are separate installations that update independently, so
+          # without this they drift - a real run fused SDL3 3.4.12 (x86_64)
+          # against 3.4.10 (arm64) before the bundler caught it. "brew update"
+          # puts both on the same formula revision.
+          arch -x86_64 /usr/local/bin/brew update
           arch -x86_64 /usr/local/bin/brew install cmake ninja pkg-config wxwidgets sdl2 libvncserver
+          echo "==> x86_64 dependency versions"
+          arch -x86_64 /usr/local/bin/brew list --versions sdl2-compat sdl3 wxwidgets libvncserver || true
 
       - name: Build x86_64 slice + test (Rosetta)
         run: |
@@ -220,7 +283,7 @@ jobs:
           ./build-macos.sh --arch x86_64
 
       - name: Upload x86_64 slice
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-slice-x86_64
           # The staged tree, not just bin/: it carries this slice's bundled
@@ -238,7 +301,18 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: brew install cmake ninja pkg-config wxwidgets sdl2 libvncserver
+        run: |
+          # Both slices must end up with the SAME version of every dependency:
+          # they are fused with lipo, and a library built from two different
+          # upstream releases is not one library. The Intel and Apple Silicon
+          # Homebrews are separate installations that update independently, so
+          # without this they drift - a real run fused SDL3 3.4.12 (x86_64)
+          # against 3.4.10 (arm64) before the bundler caught it. "brew update"
+          # puts both on the same formula revision.
+          brew update
+          brew install cmake ninja pkg-config wxwidgets sdl2 libvncserver
+          echo "==> arm64 dependency versions"
+          brew list --versions sdl2-compat sdl3 wxwidgets libvncserver || true
 
       - name: Build arm64 slice (interpreter) + test
         run: |
@@ -246,7 +320,7 @@ jobs:
           ./build-macos.sh --arch arm64
 
       - name: Upload arm64 slice
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-slice-arm64
           path: build-mac-arm64/appstage/
@@ -261,13 +335,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Download x86_64 slice
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: macos-slice-x86_64
           path: build-mac-x86_64/appstage
 
       - name: Download arm64 slice
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: macos-slice-arm64
           path: build-mac-arm64/appstage
@@ -321,51 +395,36 @@ jobs:
           fi
           echo "✓ all dependencies are bundled or system"
 
-          # Then a bounded attempt at actually running it, for information only.
-          # A GUI application launched with --help is expected to print usage and
-          # exit before wxEntry(), and in the bundle it does not: it starts the
-          # GUI instead, which is why this does not gate the build. It is kept
-          # because the output says which, and because a binary that cannot load
-          # at all fails here in seconds with dyld's own diagnosis.
-          #
-          # The watchdog is hand-rolled: macOS ships no timeout(1), and leaning
-          # on the job-level timeout-minutes instead cost twenty minutes of
-          # runner time the first time this test did not exit.
-          try_help() {
-            local out="help-$$.out" pid i
-            rm -f "$out"
-            "$@" --help >"$out" 2>&1 &
-            pid=$!
-            for i in $(seq 1 30); do
-              kill -0 "$pid" 2>/dev/null || break
-              sleep 1
-            done
-            if kill -0 "$pid" 2>/dev/null; then
-              kill -9 "$pid" 2>/dev/null || true
-              wait "$pid" 2>/dev/null || true
-              echo "note: '$*' did not exit within 30s; it started the GUI rather than printing usage."
-            elif wait "$pid"; then
-              if grep -q '^Usage:' "$out"; then
-                echo "note: '$*' printed usage and exited."
-              else
-                echo "note: '$*' exited cleanly but printed no usage."
-              fi
-            else
-              echo "note: '$*' exited non-zero. Output:"
-              cat "$out"
-            fi
-          }
-          # The staged slice as well as the bundled one: if that honours --help
-          # and the bundled binary does not, the difference is the bundle rather
-          # than the code. Restore the executable bit first - downloading an
-          # artifact does not preserve it, which is why the last run could not
-          # answer this.
-          chmod +x build-mac-arm64/appstage/bin/rpcemu || true
-          try_help build-mac-arm64/appstage/bin/rpcemu
-          try_help "$MACOSD/rpcemu"
+      # The same command-line checks the Linux and Windows jobs run, on the
+      # binary inside the bundle - which is what a user launches.
+      - name: Command-line smoke test
+        timeout-minutes: 3
+        run: |
+          bash tests/cli_smoke.sh releases/macos/RPCEmu.app/Contents/MacOS/rpcemu
+
+      # Boot the machine for real and look at the screen - see the Linux job for
+      # why. Run the binary inside the bundle, which is what a user launches,
+      # so a boot that only fails when bundled is caught here.
+      - name: Headless boot and VNC screenshot
+        timeout-minutes: 3
+        run: |
+          python3 tests/vnc_smoke.py \
+            --binary releases/macos/RPCEmu.app/Contents/MacOS/rpcemu \
+            --save vnc-smoke-macos-universal.png
+
+      - name: Upload the boot screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vnc-smoke-macos-universal
+          path: vnc-smoke-macos-universal.png
+          # A single PNG: skip the zip so it can be viewed from the run page
+          # directly. "archive: false" allows one file only, which this is.
+          archive: false
+          if-no-files-found: ignore
 
       - name: Upload macOS universal release
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rpcemu-macos-universal
           path: |
@@ -381,7 +440,7 @@ jobs:
       contents: write
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: upload
 
