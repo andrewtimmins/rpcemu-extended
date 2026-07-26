@@ -75,6 +75,27 @@ before the kernel commits to it.
 `*GfxCardOff` returns to VIDC20, and so does killing the driver (`*RMKill
 RPCEmuGfx`), which hands the display back before it goes.
 
+## The utility in the Apps folder
+
+The card carries a small application in its ROM, registered with ResourceFS at
+initialisation, so it appears as `Resources:$.Apps.!GfxCard` - the Apps folder on
+the icon bar. Nothing is installed on a disc, and it is there exactly when the
+card is.
+
+Double-clicking it opens a task window showing the card's state and leaving a `*`
+prompt, so `GfxCardOn`, `GfxCardOff` and `GfxCardStatus` are to hand without
+leaving the desktop.
+
+The driver also sets **`RPCEmuGfx$Base`** to the logical address of the card's
+registers, so anything at all can read the card directly - a BASIC program, an
+Obey file, the debugger. The register map is in `src/gfxcard.h`; register *n* is at
+`RPCEmuGfx$Base + n * 4`. For instance, in BASIC:
+
+```
+base% = EVAL("&" + FNgetvar("RPCEmuGfx$Base"))
+PRINT "Frames displayed: "; base%!(16 * 4)
+```
+
 ## What the card is
 
 An ordinary expansion card in an ordinary EASI slot, with 16MB of address space

@@ -61,6 +61,11 @@
 	XOS_ReadModeVariable	= 0x20035
 	XOS_ReadVarVal		= 0x20023
 	XOS_ReadSysInfo		= 0x20058
+	XOS_SetVarVal		= 0x20024
+	XResourceFS_RegisterFiles	= 0x61b40
+	XResourceFS_DeregisterFiles	= 0x61b41
+
+	Service_ResourceFSStarting	= 0x60
 	XOS_ConvertCardinal4	= 0x200d8
 	XPodule_ReadInfo	= 0x6028d
 
@@ -238,6 +243,7 @@
 	FLAG_REGISTERED	= 1 << 1	@ driver number allocated
 	FLAG_STARTED	= 1 << 2	@ driver started
 	FLAG_DEVICE	= 1 << 3	@ device vector claimed
+	FLAG_RESOURCES	= 1 << 4	@ app registered with ResourceFS
 
 
 	.global	_start
@@ -247,7 +253,7 @@ module_start:
 	.int	0		@ Start (not an application)
 	.int	init		@ Initialisation
 	.int	final		@ Finalisation
-	.int	0		@ Service Call
+	.int	service		@ Service Call
 	.int	title		@ Title String
 	.int	help		@ Help String
 	.int	table		@ Help and Command keyword table
@@ -927,6 +933,29 @@ init_start:
 	orr	r0, r0, #FLAG_STARTED
 	str	r0, [r5, #WS_FLAGS]
 
+	@ Put the desktop app into Resources:$.Apps, out of this card's own ROM, so
+	@ there is nothing to install and it is there only while the card is.
+	adrl	r0, resfs_files
+	swi	XResourceFS_RegisterFiles
+	ldrvc	r0, [r5, #WS_FLAGS]
+	orrvc	r0, r0, #FLAG_RESOURCES
+	strvc	r0, [r5, #WS_FLAGS]
+
+	@ And tell the app where to find the card. A system variable rather than a
+	@ SWI: it is one word of information, and this way anything at all can read
+	@ the card's registers - a BASIC program, an Obey file, a debugger.
+	adrl	r0, var_base_name
+	add	r1, r5, #WS_CMD
+	mov	r2, #8
+	ldr	r3, [r5, #WS_REGS]
+	bl	hex_word		@ r1 -> 8 hex digits, NUL terminated
+	adrl	r0, var_base_name
+	add	r1, r5, #WS_CMD
+	mov	r2, #8
+	mov	r3, #0
+	mov	r4, #0			@ a plain string
+	swi	XOS_SetVarVal
+
 	@ Take the display now, if that is how the card is configured. Doing it here
 	@ rather than leaving it to *GfxCardOn means the machine boots onto the card -
 	@ splash, desktop and all - instead of changing mode once the desktop is up
@@ -976,6 +1005,10 @@ init_banner:
 
 	cmp	pc, #0			@ clear V for a successful return
 	ldmfd	sp!, {r4, r5, r6, pc}
+
+	@ A literal pool here: initialisation's ldr= constants cannot reach the one
+	@ at the end of the module now that the app's files are carried in it.
+	.ltorg
 
 msg_banner:
 	.string	"High Resolution Graphics Card Installed..."
@@ -1081,6 +1114,18 @@ teardown:
 	ldr	r1, [r5, #WS_DRIVER]
 	swi	XOS_ScreenMode
 3:
+	tst	r4, #FLAG_RESOURCES
+	beq	35f
+	adrl	r0, resfs_files
+	swi	XResourceFS_DeregisterFiles
+	adrl	r0, var_base_name
+	mov	r1, #0			@ unset the variable
+	mov	r2, #-1
+	mov	r3, #0
+	mov	r4, #0
+	swi	XOS_SetVarVal
+	ldr	r4, [r5, #WS_FLAGS]
+35:
 	tst	r4, #FLAG_VECTOR
 	beq	4f
 	mov	r0, #GraphicsV
@@ -1110,6 +1155,94 @@ final:
 final_done:
 	cmp	pc, #0			@ clear V
 	ldmfd	sp!, {r5, pc}
+
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@ Service handler
+@
+@ Only Service_ResourceFSStarting: ResourceFS has restarted and wants its files
+@ back. It is not on the module chain at that point, so the SWI cannot be used -
+@ the service passes the address of a routine to call instead.
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+service_codetable:
+	.int	0			@ flags
+	.int	service_main
+	.int	Service_ResourceFSStarting
+	.int	0			@ table terminator
+
+	.int	service_codetable	@ lives at service-4
+service:
+	mov	r0, r0			@ magic: "my service table is at [service-4]"
+	teq	r1, #Service_ResourceFSStarting
+	movne	pc, lr
+
+service_main:
+	stmfd	sp!, {r0, lr}
+	adrl	r0, resfs_files
+	mov	lr, pc
+	mov	pc, r2			@ ResourceFS's own registration routine
+	ldmfd	sp!, {r0, pc}
+
+@ Write r3 as eight hex digits at r1, NUL terminated. r2 = 8, as given.
+hex_word:
+	stmfd	sp!, {r0, r1, r2, r3, r4, lr}
+	add	r1, r1, #8
+	mov	r0, #0
+	strb	r0, [r1]		@ terminator
+1:
+	and	r4, r3, #0xf
+	cmp	r4, #9
+	addls	r4, r4, #'0'
+	addhi	r4, r4, #'a' - 10
+	strb	r4, [r1, #-1]!
+	mov	r3, r3, lsr #4
+	subs	r2, r2, #1
+	bne	1b
+	ldmfd	sp!, {r0, r1, r2, r3, r4, pc}
+
+var_base_name:
+	.string	"RPCEmuGfx$Base"
+	.balign	4, 0
+
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@ The desktop app, carried in this card's ROM
+@
+@ Registered with ResourceFS so it appears as Resources:$.Apps.!GfxCard, which is
+@ where the Apps icon on the icon bar looks. Nothing is installed on a disc, and
+@ the app is present exactly when the card is.
+@
+@ The format is the one ResourceFS documents: per file, an offset to the next
+@ entry, the load and exec addresses and size as OS_File would give them, the
+@ attributes, the name without "$.", then (word-aligned) the size again plus four,
+@ then the data. A single zero word ends the list.
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+	LOAD_OBEY	= 0xfffffeb00 & 0xffffffff	@ filetype &FEB in the load address
+	LOAD_TEXT	= 0xffffff00			@ filetype &FFF
+	ATTR_READ	= 3				@ read/write, as ROM files are
+
+resfs_files:
+rf_run:
+	.int	rf_end - rf_run
+	.int	LOAD_OBEY
+	.int	0
+	.int	rf_run_end - rf_run_data
+	.int	ATTR_READ
+	.string	"Apps.!GfxCard.!Run"
+	.balign	4, 0
+	.int	rf_run_end - rf_run_data + 4
+rf_run_data:
+	.ascii	"| The graphics card's own utility, out of the card's ROM.\n"
+	.ascii	"| A task window, so the card's state can be read and its commands run\n"
+	.ascii	"| without leaving the desktop.\n"
+	.ascii	"TaskWindow \"GfxCardStatus\" -wimpslot 96k -name \"Graphics card\"\n"
+rf_run_end:
+	.balign	4, 0
+
+rf_end:
+	.int	0			@ end of the list
 
 
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
