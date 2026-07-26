@@ -4,11 +4,18 @@ An optional emulated graphics expansion card whose display memory is its own,
 rather than the motherboard's VRAM. That is the whole point of it: the modes a
 Risc PC can show are limited by how much VRAM is fitted, and this card is not.
 
-| VRAM fitted | Largest mode at 32bpp |
+| Display memory | Largest mode at 32bpp |
 | --- | --- |
-| 2MB (Kinetic, and the usual Risc PC) | 800 x 600 |
-| 8MB | 1920 x 1080 |
-| Graphics card (15MB of its own) | 2560 x 1440 |
+| 2MB of VRAM (Kinetic, and the usual Risc PC) | 800 x 600 |
+| 8MB of VRAM | 1920 x 1080 |
+| The card's own 15MB | 2560 x 1440 |
+
+The card holds that much. What RISC OS will currently *offer* is another matter:
+it vets every mode against the video memory it thinks the machine has, which is
+the fitted VRAM, so today the card displays any width and height the monitor
+offers at 256 colours but not the deeper modes its framestore could hold. See
+[Current limit](#current-limit-the-os-still-counts-vram) below - that ceiling is
+in the OS, not the card.
 
 The card is off by default. Turn it on in *Settings → Machine → Graphics card*,
 and the machine gains an expansion card in the next free EASI slot. RISC OS keeps
@@ -26,14 +33,17 @@ at boot with nothing to install. Three commands:
 *GfxCardOff         hand the display back to VIDC20
 ```
 
-After `*GfxCardOn`, a mode change picks up the new limits:
+`*GfxCardOn` keeps the mode you are in, so a desktop at 1920 x 1080 stays there,
+now scanning out of the card. Afterwards, any mode the monitor offers:
 
 ```
-*WimpMode X2560 Y1440 C16M
+*WimpMode X1920 Y1080 C256
 ```
 
 Modes are still offered by the monitor definition in force, so the mode you want
-has to be one your monitor type advertises. *Settings → Follow Host Display Size*
+has to be one your monitor type advertises. The card serves the same monitor
+definition the machine booted with, so switching to it does not change what is on
+offer. *Settings → Follow Host Display Size*
 with `MonitorType EDID` is the easy route: the emulator synthesises a monitor
 definition from the host's real display, up to 2560 x 1440.
 
