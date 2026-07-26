@@ -118,6 +118,11 @@
 	OP_POLL		= 0
 	OP_OUTPUT	= 1
 	OP_STATUS	= 2
+	OP_DISPLAY	= 3	@ read the display mode the host wants us to follow
+
+	@ How often to ask about the host display. A display change is a human-scale
+	@ event, so once every half second is ample and keeps the ticker cheap.
+	DISP_POLL_TICKS	= 50
 
 	@ STATUS markers (r0)
 	STATUS_START	= 0
@@ -135,6 +140,7 @@
 	@ RING_SIZE must be a power of two for the index masking below.)
 	CMD_SIZE	= 256
 	RCBUF_SIZE	= 16
+	MODECMD_SIZE	= 64			@ "WimpMode X2560 Y1440 C16M F60" and room
 	TWCMD_SIZE	= 512			@ TaskWindow spawn command string
 	POLLBLK_SIZE	= 256			@ Wimp poll / message block
 	STACK_SIZE	= 1024			@ private USR stack for the Wimp-task poll
@@ -160,7 +166,15 @@
 	WS_TASK_HANDLE	= 32			@ our Wimp task handle (0 = not a task / no desktop)
 	WS_CHILD_HANDLE	= 36			@ spawned TaskWindow child handle (0 = none)
 	WS_POLL_WORD	= 40			@ Wimp poll word (ticker sets non-zero to wake loop)
-	WS_TWCMD	= 44			@ TWCMD_SIZE bytes: TaskWindow command builder
+	@ Host display following (see poll_display / set_display_mode)
+	WS_DISP_GEN	= 44			@ host display generation last acted on
+	WS_DISP_W	= 48			@ mode the emulator wants us in
+	WS_DISP_H	= 52
+	WS_DISP_HZ	= 56			@ 0 if the host did not report a refresh
+	WS_DISP_TICK	= 60			@ ticks remaining until the next poll
+	WS_DISP_PRIMED	= 64			@ non-zero once a baseline generation is held
+	WS_MODECMD	= 68			@ MODECMD_SIZE bytes: *WimpMode builder
+	WS_TWCMD	= WS_MODECMD + MODECMD_SIZE	@ TWCMD_SIZE bytes: TaskWindow command builder
 	WS_POLLBLK	= WS_TWCMD + TWCMD_SIZE	@ POLLBLK_SIZE bytes: Wimp poll block
 	WS_RCBUF	= WS_POLLBLK + POLLBLK_SIZE	@ RCBUF_SIZE bytes
 	WS_CMD		= WS_RCBUF + RCBUF_SIZE	@ CMD_SIZE bytes
@@ -373,6 +387,11 @@ init:
 	str	r0, [wp, #WS_TASK_HANDLE]
 	str	r0, [wp, #WS_CHILD_HANDLE]
 	str	r0, [wp, #WS_POLL_WORD]
+	@ Display following: no baseline generation held yet, and a zero countdown
+	@ so the first tick asks straight away.
+	str	r0, [wp, #WS_DISP_GEN]
+	str	r0, [wp, #WS_DISP_PRIMED]
+	str	r0, [wp, #WS_DISP_TICK]
 
 	@ Register the ticker (every centisecond). r2 is passed to the routine
 	@ in r12, so the ticker (and everything it schedules) gets wp directly.
@@ -472,6 +491,7 @@ ticker:
 	@ r12 = wp (from the CallEvery r2 value)
 
 	bl	flush_ring
+	bl	poll_display
 
 	ldr	r3, [wp, #WS_STATE]
 	teq	r3, #STATE_IDLE
@@ -562,6 +582,156 @@ flush_loop:
 	b	flush_loop
 flush_done:
 	ldmfd	sp!, {r0-r4, r9, pc}
+
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@ poll_display - ask the emulator whether the host display has changed, and if
+@ so schedule a matching screen mode. Called from the ticker, so this runs at
+@ event time: it may only touch the ArcEm SWI (handled inside the emulator, never
+@ re-entering RISC OS) and must leave the actual mode change to a transient
+@ callback.
+@
+@ Only runs once we are a Wimp task. A mode selector is rejected before the
+@ desktop is up - nothing has adopted a monitor definition yet, so the OS is down
+@ to its numbered modes - and the first reading is taken as a baseline rather
+@ than acted on, because the synthesised EDID has already opened the desktop at
+@ the mode we would be asking for.
+@
+@ The emulator hands over geometry already bounded by the host display and by
+@ VRAM, so there is nothing to validate here.
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+poll_display:
+	stmfd	sp!, {r0-r4, r9, lr}
+
+	@ Cheap rate limit: only ask every DISP_POLL_TICKS ticks.
+	ldr	r0, [wp, #WS_DISP_TICK]
+	subs	r0, r0, #1
+	strgt	r0, [wp, #WS_DISP_TICK]
+	bgt	pd_done
+	mov	r0, #DISP_POLL_TICKS
+	str	r0, [wp, #WS_DISP_TICK]
+
+	@ Desktop up? Without the Wimp there is nothing to set a mode for.
+	ldr	r0, [wp, #WS_TASK_HANDLE]
+	teq	r0, #0
+	beq	pd_done
+
+	@ Stay out of the way of a command in flight; we will catch the change on a
+	@ later tick, since the generation is still there waiting for us.
+	ldr	r0, [wp, #WS_STATE]
+	teq	r0, #STATE_IDLE
+	bne	pd_done
+
+	@ r0 is cleared first so an emulator that predates this sub-op, and so leaves
+	@ the registers alone, reads as "nothing to report" rather than as garbage.
+	mov	r0, #0
+	mov	r9, #OP_DISPLAY
+	swi	ArcEm_HostCmd		@ r0=have r1=generation r2=w r3=h r4=hz
+	bvs	pd_done
+	teq	r0, #0
+	beq	pd_done			@ nothing to report yet
+
+	@ First reading after the desktop appears is the baseline.
+	ldr	r0, [wp, #WS_DISP_PRIMED]
+	teq	r0, #0
+	streq	r1, [wp, #WS_DISP_GEN]
+	moveq	r0, #1
+	streq	r0, [wp, #WS_DISP_PRIMED]
+	beq	pd_done
+
+	@ Unchanged since we last acted?
+	ldr	r0, [wp, #WS_DISP_GEN]
+	teq	r0, r1
+	beq	pd_done
+
+	str	r1, [wp, #WS_DISP_GEN]
+	str	r2, [wp, #WS_DISP_W]
+	str	r3, [wp, #WS_DISP_H]
+	str	r4, [wp, #WS_DISP_HZ]
+
+	@ OS_CLI is only safe from a foreground context.
+	adr	r0, set_display_mode
+	mov	r1, wp
+	swi	XOS_AddCallBack
+
+pd_done:
+	ldmfd	sp!, {r0-r4, r9, pc}
+
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@ set_display_mode - transient callback: put the desktop into the mode the host
+@ asked for. r12 = wp (AddCallBack r1). Builds e.g.
+@
+@	WimpMode X1920 Y1080 C16M F60
+@
+@ C16M because the emulator budgets 32bpp when deciding what fits VRAM, so the
+@ deepest mode is always the one it sized for. The refresh is omitted when the
+@ front end did not report one, leaving RISC OS to choose.
+@
+@ Any error from OS_CLI is dropped: the user may have picked a monitor
+@ definition that will not accept this mode, and there is nothing useful to do
+@ about it from here.
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+set_display_mode:
+	@ Saved as widely as run_command does: OS_CLI here runs *WimpMode, which
+	@ takes us into the Wimp, and an arbitrary command makes no promises about
+	@ what it leaves in the low registers.
+	stmfd	sp!, {r0-r9, lr}
+
+	add	r4, wp, #WS_MODECMD	@ write cursor
+	adr	r5, mode_prefix
+	bl	copy_string
+
+	ldr	r0, [wp, #WS_DISP_W]
+	mov	r1, r4
+	mov	r2, #12
+	swi	XOS_ConvertCardinal4	@ decimal at r1; r1 -> terminating NUL
+	mov	r4, r1			@ carry on over the NUL
+
+	adr	r5, mode_y
+	bl	copy_string
+	ldr	r0, [wp, #WS_DISP_H]
+	mov	r1, r4
+	mov	r2, #12
+	swi	XOS_ConvertCardinal4
+	mov	r4, r1
+
+	adr	r5, mode_depth
+	bl	copy_string
+
+	ldr	r0, [wp, #WS_DISP_HZ]
+	teq	r0, #0
+	beq	smd_run			@ no refresh reported: let RISC OS pick
+	adr	r5, mode_f
+	bl	copy_string
+	ldr	r0, [wp, #WS_DISP_HZ]
+	mov	r1, r4
+	mov	r2, #12
+	swi	XOS_ConvertCardinal4
+	mov	r4, r1
+
+smd_run:
+	mov	r0, #0
+	strb	r0, [r4]		@ terminate (ConvertCardinal4 left one here)
+	add	r0, wp, #WS_MODECMD
+	swi	XOS_CLI
+
+	ldmfd	sp!, {r0-r9, pc}
+
+mode_prefix:
+	.string	"WimpMode X"
+	.align
+mode_y:
+	.string	" Y"
+	.align
+mode_depth:
+	.string	" C16M"
+	.align
+mode_f:
+	.string	" F"
+	.align
 
 
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@

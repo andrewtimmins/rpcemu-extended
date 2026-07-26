@@ -278,6 +278,9 @@ hostcmd(ARMul_State *state)
 	}
 
 	default:
+		/* R0 = 0 so a guest module asking about something this build does not
+		   implement reads a definite "no" rather than whatever it passed in. */
+		state->Reg[0] = 0;
 		rpclog("HostCmd: unknown SWI op 0x%08x\n", op);
 		break;
 	}
