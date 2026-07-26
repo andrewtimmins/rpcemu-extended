@@ -76,6 +76,9 @@ void podule_fiq_lower(podule *p);
 void podule_irq_raise(podule *p);
 void podule_irq_lower(podule *p);
 
+/* Backplane slot a podule was given (0-7), or -1 if not one of ours. */
+extern int podule_slot_number(const podule *p);
+
 podule *addpodule(void (*writel)(podule *p, PoduleIoType io_type, uint32_t addr, uint32_t val),
               void (*writew)(podule *p, PoduleIoType io_type, uint32_t addr, uint16_t val),
               void (*writeb)(podule *p, PoduleIoType io_type, uint32_t addr, uint8_t val),

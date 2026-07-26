@@ -37,6 +37,7 @@
 #include "rpcemu.h"
 #include "cp15.h"
 #include "vidc20.h"
+#include "gfxcard.h"
 #include "keyboard.h"
 #include "sound.h"
 #include "mem.h"
@@ -133,6 +134,16 @@ static struct cached_state {
         uint32_t bpp;
         uint8_t *dirtybuffer;
         int threadpending;
+
+        /* Graphics card. When active the display comes from the card's own
+           framestore instead of VRAM or DRAM, which is a much simpler source:
+           linear, a known stride, and none of VIDC's DMA wrapping. It gets its
+           own draw path rather than another case in the VIDC one. */
+        int gfx_active;
+        const uint8_t *gfx_fb;
+        unsigned gfx_stride;
+        unsigned gfx_bpp;
+        int gfx_blanked;
 } thr;
 
 /* One entry per 4KB page of VRAM, sized for the maximum supported VRAM
@@ -314,6 +325,22 @@ drawscr(void)
 	thr.vidc_xsize = vidc.hder - vidc.hdsr;
 	thr.vidc_ysize = vidc.vder - vidc.vdsr;
 
+	/* If the graphics card is scanning out, it decides the geometry and supplies
+	   the pixels; VIDC's own registers are irrelevant while that is true. */
+	{
+		GfxCardFrame frame;
+
+		thr.gfx_active = gfxcard_frame(&frame);
+		if (thr.gfx_active) {
+			thr.gfx_fb = frame.fb;
+			thr.gfx_stride = frame.stride;
+			thr.gfx_bpp = frame.bpp;
+			thr.gfx_blanked = frame.blanked;
+			thr.vidc_xsize = (int) frame.width;
+			thr.vidc_ysize = (int) frame.height;
+		}
+	}
+
 	thr.cursorx = vidc.hcsr - vidc.hdsr;
 	thr.cursory = vidc.vcsr - vidc.vdsr;
 	if (mousehack) {
@@ -446,6 +473,82 @@ unlock_mutex_return:
  *
  * thread: video
  */
+/**
+ * Draw a frame from the graphics card's framestore.
+ *
+ * thread: video
+ *
+ * Kept apart from the VIDC path because the card is a far simpler source: the
+ * framestore is linear, the stride is known, and there is no DMA wrap to follow.
+ * Every line is redrawn - the card has no dirty-page tracking, the guest writing
+ * to its framestore through mem.c's fast path rather than anything we can see.
+ */
+static void
+vidcthread_gfxcard(void)
+{
+	uint32_t host_pal[256];
+	int x, y;
+
+	if (thr.vidc_xsize != current_sizex || thr.vidc_ysize != current_sizey) {
+		resizedisplay(thr.vidc_xsize, thr.vidc_ysize);
+	}
+
+	if (thr.gfx_blanked) {
+		for (y = 0; y < thr.vidc_ysize; y++) {
+			uint32_t *vidp = video_image_scanline(y);
+
+			memset(vidp, 0, (size_t) thr.vidc_xsize * sizeof(uint32_t));
+		}
+		video_update(0, thr.vidc_ysize);
+		return;
+	}
+
+	if (thr.gfx_bpp == 8) {
+		/* Fold the card's palette through the host channel tables once, rather
+		   than three lookups per pixel. Entries are &BBGGRRSS, as GraphicsV
+		   specifies for a palette word. */
+		const uint32_t *cpal = gfxcard_palette();
+		int i;
+
+		for (i = 0; i < 256; i++) {
+			const uint32_t e = cpal[i];
+
+			host_pal[i] = thr.pal[(e >> 8) & 0xff].r |
+			              thr.pal[(e >> 16) & 0xff].g |
+			              thr.pal[(e >> 24) & 0xff].b;
+		}
+	}
+
+	for (y = 0; y < thr.vidc_ysize; y++) {
+		uint32_t *vidp = video_image_scanline(y);
+		const uint8_t *line = thr.gfx_fb + (size_t) y * thr.gfx_stride;
+
+		switch (thr.gfx_bpp) {
+		case 8:
+			for (x = 0; x < thr.vidc_xsize; x++) {
+				vidp[x] = host_pal[line[x]];
+			}
+			break;
+
+		case 32:
+			/* Byte order matches VIDC's own 32bpp framestore: red first, then
+			   green and blue, with the fourth byte unused. */
+			for (x = 0; x < thr.vidc_xsize; x++) {
+				const uint8_t *p = line + ((size_t) x * 4);
+
+				vidp[x] = thr.pal[p[0]].r | thr.pal[p[1]].g | thr.pal[p[2]].b;
+			}
+			break;
+
+		default:
+			memset(vidp, 0, (size_t) thr.vidc_xsize * sizeof(uint32_t));
+			break;
+		}
+	}
+
+	video_update(0, thr.vidc_ysize);
+}
+
 void
 vidcthread(void)
 {
@@ -465,6 +568,11 @@ vidcthread(void)
 	}
 
 	thr.threadpending = 0;
+
+	if (thr.gfx_active) {
+		vidcthread_gfxcard();
+		return;
+	}
 
 	if (thr.iomd_vidinit & 0x10000000) {
 		/* Using DRAM for video */

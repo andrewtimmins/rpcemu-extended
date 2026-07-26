@@ -619,6 +619,25 @@ addpodule(void (*writel)(podule *p, PoduleIoType io_type, uint32_t addr, uint32_
 }
 
 /**
+ * Backplane slot a podule was given.
+ *
+ * A card whose framestore lives in its own EASI space has to be able to work out
+ * where that is in the physical map, and the slot is what decides it.
+ *
+ * @param p Podule returned by addpodule()
+ * @return Slot number 0-7, or -1 if this is not one of ours
+ */
+int
+podule_slot_number(const podule *p)
+{
+	if (p < &podules[0] || p >= &podules[8]) {
+		return -1;
+	}
+
+	return (int) (p - &podules[0]);
+}
+
+/**
  * Raise interrupts if any podules have requested them.
  */
 static void

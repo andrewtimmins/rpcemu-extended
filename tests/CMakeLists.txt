@@ -90,3 +90,13 @@ target_include_directories(test_relay_reasm PRIVATE
 target_compile_definitions(test_relay_reasm PRIVATE CONFIG_SLIRP _DEFAULT_SOURCE)
 target_link_libraries(test_relay_reasm PRIVATE ${NET_TEST_LIBS})
 add_test(NAME test_relay_reasm COMMAND test_relay_reasm)
+
+# The emulated graphics card: its register file, and the checks that stop a
+# guest-supplied mode from making the video code read outside the card's own
+# framestore. Compiles gfxcard.c directly and stubs the backplane, because
+# linking podules.c would drag in every bundled expansion card and the plugin
+# loader with them - and rpcemu_core would drag in SDL, which is what broke the
+# macOS arm64 build once already (see test_mode_fit above).
+add_executable(test_gfxcard test_gfxcard.c)
+target_include_directories(test_gfxcard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+add_test(NAME test_gfxcard COMMAND test_gfxcard)

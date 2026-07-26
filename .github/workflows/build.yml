@@ -240,14 +240,54 @@ jobs:
           ls -la releases/macos/*.dmg
           # Actually run the fused binary, so a lipo or signing step that
           # produces something unloadable is caught here rather than by a user.
-          # Wrapped in a timeout where one is available: an invocation that blocks
-          # rather than exiting would otherwise sit here until the job's own limit
-          # expires. macOS ships no timeout(1), so this is best-effort and the
-          # job-level timeout-minutes is the real backstop.
-          TMO=$(command -v timeout || command -v gtimeout || true)
+          #
+          # macOS ships no timeout(1), and relying on the job-level
+          # timeout-minutes as the backstop cost twenty minutes of runner time
+          # the first time this test did not exit. So the watchdog is done here:
+          # the invocation runs in the background and is killed if it outlives
+          # its grace period, and either outcome reports rather than hangs.
+          #
+          # --help is expected to print usage and exit without ever calling
+          # wxEntry(), so this also catches an argument-parsing path that does
+          # not run in a bundled app - which would take --headless with it.
           run_help() {
-            if [ -n "$TMO" ]; then "$TMO" 60 "$@" --help; else "$@" --help; fi
+            local out="help-$$.out" pid i
+            "$@" --help >"$out" 2>&1 &
+            pid=$!
+            for i in $(seq 1 45); do
+              kill -0 "$pid" 2>/dev/null || break
+              sleep 1
+            done
+            if kill -0 "$pid" 2>/dev/null; then
+              kill -9 "$pid" 2>/dev/null || true
+              wait "$pid" 2>/dev/null || true
+              echo "::error::'$* --help' did not exit within 45s (it should print usage and return)."
+              echo "--- output before it was killed ---"
+              cat "$out"
+              return 1
+            fi
+            wait "$pid"
+            local rc=$?
+            cat "$out"
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::'$* --help' exited $rc"
+              return 1
+            fi
+            if ! grep -q '^Usage:' "$out"; then
+              echo "::error::'$* --help' exited cleanly but printed no usage."
+              return 1
+            fi
           }
+          # Probe the unfused, unbundled slice first, and do not fail on it. If
+          # this one honours --help and the bundled binary below does not, then
+          # the difference is the fusing or the bundle rather than the code;
+          # if neither does, argument parsing is not reached on macOS at all.
+          # Either way the next run says which, instead of leaving it to guesswork.
+          if run_help build-mac-arm64/appstage/bin/rpcemu; then
+            echo "note: the staged arm64 slice honours --help."
+          else
+            echo "note: the staged arm64 slice does not honour --help either, so this is not the bundle."
+          fi
           run_help "$APP/Contents/MacOS/rpcemu"
           run_help arch -arm64 "$APP/Contents/MacOS/rpcemu"
           # The x86_64 slice needs Rosetta 2, which this job does not install

@@ -31,6 +31,7 @@
 #include "cp15.h"
 #include "superio.h"
 #include "podules.h"
+#include "gfxcard.h"
 #include "savestate.h"
 #include "fdc.h"
 
@@ -314,6 +315,14 @@ mem_phys_read32(uint32_t addr)
 	case 0x0d000000:
 	case 0x0e000000:
 	case 0x0f000000:
+		/* The graphics card's framestore is reached directly: every pixel the
+		   VDU drivers write arrives here, and going through the expansion card
+		   handlers for each word would make the card unusably slow. */
+		if (gfxcard_fb != NULL && (addr - gfxcard_fb_phys) < GFXCARD_FB_SIZE) {
+			uint32_t v;
+			memcpy(&v, &gfxcard_fb[addr - gfxcard_fb_phys], sizeof(v));
+			return v;
+		}
 		return podules_read32((addr >> 24) & 7, PODULE_IO_TYPE_EASI, addr & 0xffffff);
 
 	case 0x10000000: /* SIMM 0 bank 0 */
@@ -457,6 +466,9 @@ mem_phys_read8(uint32_t addr)
 	case 0x0d000000:
 	case 0x0e000000:
 	case 0x0f000000:
+		if (gfxcard_fb != NULL && (addr - gfxcard_fb_phys) < GFXCARD_FB_SIZE) {
+			return gfxcard_fb[addr - gfxcard_fb_phys];
+		}
 		return podules_read8((addr >> 24) & 7, PODULE_IO_TYPE_EASI, addr & 0xffffff);
 
 	case 0x10000000: /* SIMM 0 bank 0 */
@@ -735,6 +747,11 @@ mem_phys_write32(uint32_t addr, uint32_t val)
 	case 0x0d000000:
 	case 0x0e000000:
 	case 0x0f000000:
+		/* Framestore writes go straight to the buffer, as the reads above do. */
+		if (gfxcard_fb != NULL && (addr - gfxcard_fb_phys) < GFXCARD_FB_SIZE) {
+			memcpy(&gfxcard_fb[addr - gfxcard_fb_phys], &val, sizeof(val));
+			return;
+		}
 		podules_write32((addr >> 24) & 7, PODULE_IO_TYPE_EASI, addr & 0xffffff, val);
 		return;
 
@@ -887,6 +904,10 @@ mem_phys_write8(uint32_t addr, uint8_t val)
 	case 0x0d000000:
 	case 0x0e000000:
 	case 0x0f000000:
+		if (gfxcard_fb != NULL && (addr - gfxcard_fb_phys) < GFXCARD_FB_SIZE) {
+			gfxcard_fb[addr - gfxcard_fb_phys] = val;
+			return;
+		}
 		podules_write8((addr >> 24) & 7, PODULE_IO_TYPE_EASI, addr & 0xffffff, val);
 		return;
 

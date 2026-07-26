@@ -593,6 +593,8 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	cfg->fit_to_window = static_cast<int>(value);
 	settings.Read("follow_host_display", &value, 0L);
 	cfg->follow_host_display = static_cast<int>(value);
+	settings.Read("gfxcard_enabled", &value, 0L);
+	cfg->gfxcard_enabled = static_cast<int>(value);
 	settings.Read("suspend_on_exit", &value, 0L);
 	cfg->suspend_on_exit = static_cast<int>(value);
 	settings.Read("vnc_enabled", &value, 0L);
@@ -682,6 +684,7 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	settings.Write("integer_scaling", static_cast<long>(cfg->integer_scaling));
 	settings.Write("fit_to_window", static_cast<long>(cfg->fit_to_window));
 	settings.Write("follow_host_display", static_cast<long>(cfg->follow_host_display));
+	settings.Write("gfxcard_enabled", static_cast<long>(cfg->gfxcard_enabled));
 	settings.Write("suspend_on_exit", static_cast<long>(cfg->suspend_on_exit));
 	settings.Write("vnc_enabled", static_cast<long>(cfg->vnc_enabled));
 	settings.Write("vnc_port", static_cast<long>(cfg->vnc_port));

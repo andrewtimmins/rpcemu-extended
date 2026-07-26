@@ -53,6 +53,7 @@
 #include "cp15.h"
 #include "cdrom-iso.h"
 #include "podulerom.h"
+#include "gfxcard.h"
 #include "podules.h"
 #include "fdc.h"
 #include "hostfs.h"
@@ -196,6 +197,7 @@ Config config = {
 	0,			/* integer_scaling */
 	0,			/* fit_to_window */
 	0,			/* follow_host_display (OFF: it reflows the guest desktop) */
+	0,			/* gfxcard_enabled (OFF: needs its guest driver) */
 	NULL,			/* network_capture */
 	0,			/* vnc_enabled */
 	5900,			/* vnc_port */
@@ -996,6 +998,7 @@ rpcemu_start(void)
         if (config.cdromtype == 2) /* ISO */
                 iso_open(config.isoname);
         initpodulerom();
+        gfxcard_init();
         podule_build_list();
 
 	/* Other components are initialised in the same way as the hardware
@@ -1062,6 +1065,10 @@ execrpcemu(void)
 
 	if (drawscre > 0) {
 		drawscr();
+		/* A frame has gone out, so the card can raise its vsync. Its driver uses
+		   this to tell the OS a frame boundary has passed, which is when RISC OS
+		   wants pointer and palette changes to take effect. */
+		gfxcard_vsync();
 		drawscre--;
 		if (drawscre > 5) {
 			drawscre = 0;

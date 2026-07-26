@@ -10,6 +10,7 @@ set(RPCEMU_CORE_SOURCES
     cp15.c
     edid.c
     display_mode.c
+    gfxcard.c
     fdc.c
     fpa.c
     hostfs.c

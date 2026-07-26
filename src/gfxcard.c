@@ -1,0 +1,566 @@
+/*
+  RPCEmu - An Acorn system emulator
+
+  Copyright (C) 2026 Andy Timmins
+
+  This program is free software; you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation; either version 2 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program; if not, write to the Free Software
+  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * gfxcard.c - an emulated graphics expansion card
+ *
+ * A display whose framestore is its own memory rather than the motherboard's
+ * VRAM, which is what lets it offer modes VIDC20 cannot reach. VIDC20 is limited
+ * by how much VRAM is fitted: 2MB holds only 800x600 at 32bpp, and even 8MB
+ * stops at 1920x1080. This card carries 15.5MB of its own, so 2560x1440 at 32bpp
+ * costs the motherboard nothing.
+ *
+ * It is an ordinary card in an ordinary EASI slot. No fabricated address window,
+ * no patched ROM, no reliance on the VRAM cap: the guest reaches it the way it
+ * reaches any expansion card, and everything it needs to know is readable from
+ * the card's own registers.
+ *
+ * The guest side is a GraphicsV driver, carried in this card's ROM the way the
+ * network card carries its own driver. The register set below exists to serve
+ * that interface and no other: the depths in GFXCARD_CAP_* answer GraphicsV's
+ * pixel-format call, the display start register answers its hardware-scroll
+ * feature bit, and so on. Anything GraphicsV does not ask for is not here.
+ *
+ * The approach follows the precedent set by ViewFinder, John Kortink's graphics
+ * expansion card for the Acorn Risc PC, which showed that a card-hosted
+ * framestore driven by its own display driver could take the machine well beyond
+ * VIDC20's limits. No ViewFinder code, firmware or programming interface is used;
+ * the interface here is our own, derived from the GraphicsV documentation in the
+ * RISC OS sources.
+ */
+
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "rpcemu.h"
+#include "gfxcard.h"
+#include "podules.h"
+
+/* Expansion card identity. The product type is ours; it only has to differ from
+   the other cards this emulator presents. */
+#define GFXCARD_PRODUCT_TYPE	0x0f00u
+#define GFXCARD_ROM_MAX		0x00010000u	/* 64KB: ROM window / 4 */
+
+/* Where the driver module is kept, alongside the other guest-side modules but in
+   a directory of its own. It must not go in poduleroms/, which is scanned into
+   the general-purpose expansion card: the module would then be presented twice
+   and RISC OS would see duplicate copies. */
+#define GFXCARD_ROM_DIR		"gfxroms/"
+#define GFXCARD_DRIVER_FILE	"RPCEmuGfx,ffa"
+
+/* Fast path for the framestore. Every pixel the VDU drivers write arrives as an
+   EASI access, so mem.c maps this range straight into the host buffer instead of
+   calling through the expansion card handlers for each word. */
+uint8_t *gfxcard_fb = NULL;
+uint32_t gfxcard_fb_phys = 0;
+
+static struct {
+	podule		*podule;	/**< Backplane slot, NULL if no card */
+	int		slot;		/**< Slot number, -1 if none */
+	uint32_t	easi_phys;	/**< Physical base of our EASI space */
+
+	uint8_t		*rom;		/**< Card ROM, a byte per word of window */
+	uint32_t	rom_size;
+
+	/* Registers */
+	uint16_t	ctrl;
+	uint16_t	status;
+	uint16_t	width;
+	uint16_t	height;
+	uint16_t	bpp;
+	uint32_t	stride;
+	uint32_t	start;
+	uint16_t	pal_index;
+	uint32_t	pal_pending;	/**< Assembled from PAL_LO/PAL_HI */
+
+	uint32_t	palette[256];
+} gfx;
+
+/* ------------------------------------------------------------------------
+ * Card ROM
+ * ------------------------------------------------------------------------ */
+
+static uint32_t rom_chunkbase;
+static uint32_t rom_filebase;
+
+static void
+gfxcard_makechunk(uint8_t type, uint32_t filebase, uint32_t size)
+{
+	gfx.rom[rom_chunkbase++] = type;
+	gfx.rom[rom_chunkbase++] = (uint8_t) size;
+	gfx.rom[rom_chunkbase++] = (uint8_t) (size >> 8);
+	gfx.rom[rom_chunkbase++] = (uint8_t) (size >> 16);
+
+	gfx.rom[rom_chunkbase++] = (uint8_t) filebase;
+	gfx.rom[rom_chunkbase++] = (uint8_t) (filebase >> 8);
+	gfx.rom[rom_chunkbase++] = (uint8_t) (filebase >> 16);
+	gfx.rom[rom_chunkbase++] = (uint8_t) (filebase >> 24);
+}
+
+/**
+ * Build the card's ROM: identity bytes, a description, and the GraphicsV driver
+ * module if it can be found. Mirrors how the network card presents its own
+ * driver, so RISC OS starts it at boot without anything being installed.
+ */
+static void
+gfxcard_rom_init(void)
+{
+	static const char description[] = "RPCEmu Graphics";
+	char path[512];
+	FILE *f;
+	size_t driver_size = 0;
+
+	snprintf(path, sizeof(path), "%s%s%s", rpcemu_get_resourcedir(),
+	         GFXCARD_ROM_DIR, GFXCARD_DRIVER_FILE);
+
+	f = fopen(path, "rb");
+	if (f != NULL) {
+		long len;
+
+		fseek(f, 0, SEEK_END);
+		len = ftell(f);
+		if (len > 0 && (uint32_t) len <= GFXCARD_ROM_MAX / 2) {
+			driver_size = (size_t) len;
+			rewind(f);
+		} else {
+			rpclog("gfxcard: driver '%s' has an unusable size (%ld)\n", path, len);
+			fclose(f);
+			f = NULL;
+		}
+	} else {
+		rpclog("gfxcard: no driver module at '%s': the card will be present "
+		       "but nothing will drive it\n", path);
+	}
+
+	rom_chunkbase = 0x10;
+	rom_filebase = rom_chunkbase + (8 * 2) + 4;	/* room for two chunks */
+	gfx.rom_size = rom_filebase + ((sizeof(description) + 3) & ~3u);
+	if (driver_size != 0) {
+		gfx.rom_size += ((uint32_t) driver_size + 3) & ~3u;
+	}
+
+	gfx.rom = calloc(gfx.rom_size, 1);
+	if (gfx.rom == NULL) {
+		fatal("gfxcard: out of memory for the card ROM");
+	}
+
+	gfx.rom[0] = 0;		/* Acorn conformant, extended identity */
+	gfx.rom[1] = 3;		/* relocated interrupt status, chunks, byte access */
+	gfx.rom[2] = 0;		/* mandatory */
+	gfx.rom[3] = (uint8_t) GFXCARD_PRODUCT_TYPE;
+	gfx.rom[4] = (uint8_t) (GFXCARD_PRODUCT_TYPE >> 8);
+	gfx.rom[5] = 0;		/* manufacturer */
+	gfx.rom[6] = 0;
+	gfx.rom[7] = 0;
+	gfx.rom[12] = 1;	/* interrupt status bit mask */
+
+	memcpy(gfx.rom + rom_filebase, description, sizeof(description));
+	gfxcard_makechunk(0xf5, rom_filebase, sizeof(description));	/* description */
+	rom_filebase += (sizeof(description) + 3) & ~3u;
+
+	if (f != NULL) {
+		const size_t got = fread(gfx.rom + rom_filebase, 1, driver_size, f);
+
+		fclose(f);
+		if (got == driver_size) {
+			gfxcard_makechunk(0x81, rom_filebase,
+			                  (uint32_t) ((driver_size + 3) & ~3u));
+			rpclog("gfxcard: loaded driver '%s' (%zu bytes) into the card ROM\n",
+			       GFXCARD_DRIVER_FILE, driver_size);
+		} else {
+			rpclog("gfxcard: could not read the driver from '%s'\n", path);
+		}
+	}
+}
+
+/* ------------------------------------------------------------------------
+ * Registers
+ * ------------------------------------------------------------------------ */
+
+static uint16_t
+gfxcard_reg_read(uint32_t reg)
+{
+	switch (reg) {
+	case GFXCARD_REG_ID_LO:      return GFXCARD_ID_LO;
+	case GFXCARD_REG_ID_HI:      return GFXCARD_ID_HI;
+	case GFXCARD_REG_VERSION:    return GFXCARD_VERSION;
+	case GFXCARD_REG_CAPS:
+		/* 16bpp is deliberately not claimed: the card would have to scan it
+		   out and only 8 and 32 are implemented. A depth the card does not
+		   claim is simply one the OS will not ask it for. */
+		return GFXCARD_CAP_8BPP | GFXCARD_CAP_32BPP |
+		       GFXCARD_CAP_HW_SCROLL | GFXCARD_CAP_VSYNC;
+	case GFXCARD_REG_FB_PHYS_LO: return (uint16_t) gfxcard_fb_phys;
+	case GFXCARD_REG_FB_PHYS_HI: return (uint16_t) (gfxcard_fb_phys >> 16);
+	case GFXCARD_REG_FB_SIZE_LO: return (uint16_t) GFXCARD_FB_SIZE;
+	case GFXCARD_REG_FB_SIZE_HI: return (uint16_t) (GFXCARD_FB_SIZE >> 16);
+	case GFXCARD_REG_CTRL:       return gfx.ctrl;
+	case GFXCARD_REG_STATUS:     return gfx.status;
+	case GFXCARD_REG_WIDTH:      return gfx.width;
+	case GFXCARD_REG_HEIGHT:     return gfx.height;
+	case GFXCARD_REG_BPP:        return gfx.bpp;
+	case GFXCARD_REG_STRIDE_LO:  return (uint16_t) gfx.stride;
+	case GFXCARD_REG_STRIDE_HI:  return (uint16_t) (gfx.stride >> 16);
+	case GFXCARD_REG_START_LO:   return (uint16_t) gfx.start;
+	case GFXCARD_REG_START_HI:   return (uint16_t) (gfx.start >> 16);
+	case GFXCARD_REG_PAL_INDEX:  return gfx.pal_index;
+	case GFXCARD_REG_PAL_LO:     return (uint16_t) gfx.pal_pending;
+	case GFXCARD_REG_PAL_HI:     return (uint16_t) (gfx.pal_pending >> 16);
+	case GFXCARD_REG_MAX_WIDTH:  return GFXCARD_MAX_WIDTH;
+	case GFXCARD_REG_MAX_HEIGHT: return GFXCARD_MAX_HEIGHT;
+	default:                     return 0;
+	}
+}
+
+static void
+gfxcard_reg_write(uint32_t reg, uint16_t val)
+{
+	switch (reg) {
+	case GFXCARD_REG_CTRL:
+		gfx.ctrl = val & (GFXCARD_CTRL_ENABLE | GFXCARD_CTRL_BLANK |
+		                  GFXCARD_CTRL_VSYNC_IRQ);
+		if ((gfx.ctrl & GFXCARD_CTRL_VSYNC_IRQ) == 0) {
+			gfx.status &= (uint16_t) ~GFXCARD_STATUS_VSYNC;
+			if (gfx.podule != NULL) {
+				podule_irq_lower(gfx.podule);
+			}
+		}
+		break;
+
+	case GFXCARD_REG_STATUS:
+		/* Write-to-clear, so an interrupt is acknowledged by writing back the
+		   bit that caused it. */
+		gfx.status &= (uint16_t) ~val;
+		if ((gfx.status & GFXCARD_STATUS_VSYNC) == 0 && gfx.podule != NULL) {
+			podule_irq_lower(gfx.podule);
+		}
+		break;
+
+	case GFXCARD_REG_WIDTH:     gfx.width = val; break;
+	case GFXCARD_REG_HEIGHT:    gfx.height = val; break;
+	case GFXCARD_REG_BPP:       gfx.bpp = val; break;
+	case GFXCARD_REG_STRIDE_LO: gfx.stride = (gfx.stride & 0xffff0000u) | val; break;
+	case GFXCARD_REG_STRIDE_HI: gfx.stride = (gfx.stride & 0xffffu) | ((uint32_t) val << 16); break;
+	case GFXCARD_REG_START_LO:  gfx.start = (gfx.start & 0xffff0000u) | val; break;
+	case GFXCARD_REG_START_HI:  gfx.start = (gfx.start & 0xffffu) | ((uint32_t) val << 16); break;
+	case GFXCARD_REG_PAL_INDEX: gfx.pal_index = val & 0xff; break;
+	case GFXCARD_REG_PAL_LO:    gfx.pal_pending = (gfx.pal_pending & 0xffff0000u) | val; break;
+
+	case GFXCARD_REG_PAL_HI:
+		/* Writing the high half commits the entry, so a palette word always
+		   lands in one piece however the driver assembles it. */
+		gfx.pal_pending = (gfx.pal_pending & 0xffffu) | ((uint32_t) val << 16);
+		gfx.palette[gfx.pal_index] = gfx.pal_pending;
+		break;
+
+	default:
+		break;
+	}
+}
+
+/* ------------------------------------------------------------------------
+ * Expansion card access
+ * ------------------------------------------------------------------------ */
+
+/* ROM and registers share the card's ROM/IOC space. The ROM is read a byte per
+   word, as the other cards here are, so the registers sit above the window the
+   ROM occupies and are addressed directly. */
+#define GFXCARD_IOC_REG_BASE	0x2000u
+
+static uint8_t
+gfxcard_readb(podule *p, PoduleIoType io_type, uint32_t addr)
+{
+	NOT_USED(p);
+
+	if (io_type == PODULE_IO_TYPE_IOC) {
+		if (addr >= GFXCARD_IOC_REG_BASE) {
+			const uint32_t reg = addr - GFXCARD_IOC_REG_BASE;
+			const uint16_t v = gfxcard_reg_read(reg & ~1u);
+
+			return (uint8_t) ((reg & 1) ? (v >> 8) : v);
+		}
+		/* Interrupt status, as the identity byte promised. */
+		if ((addr & 0x3ffc) == 0) {
+			return (uint8_t) (0xfa | ((p != NULL && p->irq) ? 1 : 0));
+		}
+		return 0xff;
+	}
+
+	if (io_type == PODULE_IO_TYPE_EASI) {
+		if (addr < GFXCARD_ROM_WINDOW) {
+			const uint32_t off = addr >> 2;
+
+			return (off < gfx.rom_size) ? gfx.rom[off] : 0x00;
+		}
+		if (gfxcard_fb != NULL && addr >= GFXCARD_FB_OFFSET) {
+			return gfxcard_fb[addr - GFXCARD_FB_OFFSET];
+		}
+	}
+
+	return 0xff;
+}
+
+static uint16_t
+gfxcard_readw(podule *p, PoduleIoType io_type, uint32_t addr)
+{
+	NOT_USED(p);
+
+	if (io_type == PODULE_IO_TYPE_IOC) {
+		if (addr >= GFXCARD_IOC_REG_BASE) {
+			return gfxcard_reg_read(addr - GFXCARD_IOC_REG_BASE);
+		}
+		return 0xffff;
+	}
+
+	if (io_type == PODULE_IO_TYPE_EASI && gfxcard_fb != NULL &&
+	    addr >= GFXCARD_FB_OFFSET && addr + 1 < GFXCARD_EASI_SIZE)
+	{
+		const uint32_t off = addr - GFXCARD_FB_OFFSET;
+		uint16_t v;
+
+		memcpy(&v, &gfxcard_fb[off], sizeof(v));
+		return v;
+	}
+
+	return 0xffff;
+}
+
+static uint32_t
+gfxcard_readl(podule *p, PoduleIoType io_type, uint32_t addr)
+{
+	NOT_USED(p);
+
+	if (io_type == PODULE_IO_TYPE_EASI) {
+		if (addr < GFXCARD_ROM_WINDOW) {
+			const uint32_t off = addr >> 2;
+
+			return (off < gfx.rom_size) ? gfx.rom[off] : 0x00;
+		}
+		if (gfxcard_fb != NULL && addr + 3 < GFXCARD_EASI_SIZE) {
+			const uint32_t off = addr - GFXCARD_FB_OFFSET;
+			uint32_t v;
+
+			memcpy(&v, &gfxcard_fb[off], sizeof(v));
+			return v;
+		}
+	}
+
+	return 0xffffffffu;
+}
+
+static void
+gfxcard_writeb(podule *p, PoduleIoType io_type, uint32_t addr, uint8_t val)
+{
+	NOT_USED(p);
+
+	if (io_type == PODULE_IO_TYPE_IOC && addr >= GFXCARD_IOC_REG_BASE) {
+		const uint32_t reg = (addr - GFXCARD_IOC_REG_BASE) & ~1u;
+		const uint16_t cur = gfxcard_reg_read(reg);
+
+		if ((addr - GFXCARD_IOC_REG_BASE) & 1) {
+			gfxcard_reg_write(reg, (uint16_t) ((cur & 0x00ffu) | ((uint16_t) val << 8)));
+		} else {
+			gfxcard_reg_write(reg, (uint16_t) ((cur & 0xff00u) | val));
+		}
+		return;
+	}
+
+	if (io_type == PODULE_IO_TYPE_EASI && gfxcard_fb != NULL &&
+	    addr >= GFXCARD_FB_OFFSET && addr < GFXCARD_EASI_SIZE)
+	{
+		gfxcard_fb[addr - GFXCARD_FB_OFFSET] = val;
+	}
+}
+
+static void
+gfxcard_writew(podule *p, PoduleIoType io_type, uint32_t addr, uint16_t val)
+{
+	NOT_USED(p);
+
+	if (io_type == PODULE_IO_TYPE_IOC && addr >= GFXCARD_IOC_REG_BASE) {
+		gfxcard_reg_write(addr - GFXCARD_IOC_REG_BASE, val);
+		return;
+	}
+
+	if (io_type == PODULE_IO_TYPE_EASI && gfxcard_fb != NULL &&
+	    addr >= GFXCARD_FB_OFFSET && addr + 1 < GFXCARD_EASI_SIZE)
+	{
+		memcpy(&gfxcard_fb[addr - GFXCARD_FB_OFFSET], &val, sizeof(val));
+	}
+}
+
+static void
+gfxcard_writel(podule *p, PoduleIoType io_type, uint32_t addr, uint32_t val)
+{
+	NOT_USED(p);
+
+	if (io_type == PODULE_IO_TYPE_EASI && gfxcard_fb != NULL &&
+	    addr >= GFXCARD_FB_OFFSET && addr + 3 < GFXCARD_EASI_SIZE)
+	{
+		memcpy(&gfxcard_fb[addr - GFXCARD_FB_OFFSET], &val, sizeof(val));
+	}
+}
+
+static void
+gfxcard_podule_reset(podule *p)
+{
+	NOT_USED(p);
+
+	gfx.ctrl = 0;
+	gfx.status = 0;
+	gfx.width = 0;
+	gfx.height = 0;
+	gfx.bpp = 0;
+	gfx.stride = 0;
+	gfx.start = 0;
+	gfx.pal_index = 0;
+	gfx.pal_pending = 0;
+}
+
+/* ------------------------------------------------------------------------
+ * Emulator interface
+ * ------------------------------------------------------------------------ */
+
+const uint32_t *
+gfxcard_palette(void)
+{
+	return gfx.palette;
+}
+
+void
+gfxcard_init(void)
+{
+	unsigned i;
+
+	if (!config.gfxcard_enabled) {
+		return;
+	}
+
+	if (gfx.podule != NULL) {
+		return;			/* Already present; keep the framestore */
+	}
+
+	if (gfxcard_fb == NULL) {
+		gfxcard_fb = calloc(GFXCARD_FB_SIZE, 1);
+		if (gfxcard_fb == NULL) {
+			rpclog("gfxcard: could not allocate a %u MB framestore; "
+			       "the card is not available\n",
+			       (unsigned) (GFXCARD_FB_SIZE / (1024 * 1024)));
+			return;
+		}
+	}
+
+	gfxcard_rom_init();
+
+	gfx.podule = addpodule(gfxcard_writel, gfxcard_writew, gfxcard_writeb,
+	                       gfxcard_readl, gfxcard_readw, gfxcard_readb,
+	                       NULL, gfxcard_podule_reset);
+	if (gfx.podule == NULL) {
+		rpclog("gfxcard: no free expansion card slot\n");
+		return;
+	}
+
+	gfx.slot = podule_slot_number(gfx.podule);
+	gfx.easi_phys = 0x08000000u + ((uint32_t) gfx.slot * 0x01000000u);
+	gfxcard_fb_phys = gfx.easi_phys + GFXCARD_FB_OFFSET;
+
+	/* A sane greyscale ramp, so an 8bpp mode shows something recognisable
+	   before the driver writes a palette. */
+	for (i = 0; i < 256; i++) {
+		gfx.palette[i] = ((uint32_t) i << 8) | ((uint32_t) i << 16) |
+		                 ((uint32_t) i << 24);
+	}
+
+	gfxcard_podule_reset(gfx.podule);
+
+	rpclog("gfxcard: graphics card in slot %d, framestore %u MB at physical "
+	       "0x%08x, up to %ux%u\n",
+	       gfx.slot, (unsigned) (GFXCARD_FB_SIZE / (1024 * 1024)),
+	       (unsigned) gfxcard_fb_phys, GFXCARD_MAX_WIDTH, GFXCARD_MAX_HEIGHT);
+}
+
+void
+gfxcard_reset(void)
+{
+	if (gfx.podule != NULL) {
+		gfxcard_podule_reset(gfx.podule);
+	}
+}
+
+int
+gfxcard_active(void)
+{
+	return gfx.podule != NULL &&
+	       gfxcard_fb != NULL &&
+	       (gfx.ctrl & GFXCARD_CTRL_ENABLE) != 0 &&
+	       gfx.width != 0 && gfx.height != 0 && gfx.stride != 0;
+}
+
+int
+gfxcard_frame(GfxCardFrame *frame)
+{
+	uint32_t needed;
+
+	if (!gfxcard_active()) {
+		return 0;
+	}
+	if (gfx.bpp != 8 && gfx.bpp != 32) {
+		return 0;
+	}
+	if (gfx.width > GFXCARD_MAX_WIDTH || gfx.height > GFXCARD_MAX_HEIGHT) {
+		return 0;
+	}
+
+	/* The line the last row starts on has to be inside the framestore. Checked
+	   here rather than trusted, because these registers come from the guest. */
+	if (gfx.start >= GFXCARD_FB_SIZE) {
+		return 0;
+	}
+	needed = gfx.stride * (gfx.height - 1u) + gfx.width * (gfx.bpp / 8u);
+	if (needed > GFXCARD_FB_SIZE - gfx.start) {
+		return 0;
+	}
+
+	frame->fb = gfxcard_fb + gfx.start;
+	frame->available = GFXCARD_FB_SIZE - gfx.start;
+	frame->width = gfx.width;
+	frame->height = gfx.height;
+	frame->stride = gfx.stride;
+	frame->bpp = gfx.bpp;
+	frame->blanked = (gfx.ctrl & GFXCARD_CTRL_BLANK) != 0;
+
+	return 1;
+}
+
+void
+gfxcard_vsync(void)
+{
+	if (gfx.podule == NULL || (gfx.ctrl & GFXCARD_CTRL_ENABLE) == 0) {
+		return;
+	}
+
+	gfx.status |= GFXCARD_STATUS_VSYNC;
+
+	if ((gfx.ctrl & GFXCARD_CTRL_VSYNC_IRQ) != 0) {
+		podule_irq_raise(gfx.podule);
+	}
+}
