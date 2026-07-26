@@ -30,3 +30,25 @@ if(RPCEMU_DYNAREC AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|aarch64|arm64
 else()
     message(STATUS "Skipping JIT differential tests (requires a native dynarec backend)")
 endif()
+
+# Networking tests for the Access+/ShareFS path, where large copies drive IP
+# fragment reassembly. These compile the code under test directly rather than
+# linking rpcemu_core, because each replaces a symbol the core also defines.
+if(NOT WIN32)
+    set(SLIRP_TEST_SOURCES "")
+    foreach(slirp_src
+            bootp cksum cutils if ip_icmp ip_input ip_output mbuf misc sbuf
+            slirp socket tcp_input tcp_output tcp_subr tcp_timer udp)
+        list(APPEND SLIRP_TEST_SOURCES
+             ${CMAKE_CURRENT_SOURCE_DIR}/../src/slirp/${slirp_src}.c)
+    endforeach()
+
+    # SLiRP fragment reassembly, covering the two backported upstream fixes
+    add_executable(test_ip_reass test_ip_reass.c ${SLIRP_TEST_SOURCES})
+    target_include_directories(test_ip_reass PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/slirp
+    )
+    target_compile_definitions(test_ip_reass PRIVATE CONFIG_SLIRP _DEFAULT_SOURCE)
+    add_test(NAME test_ip_reass COMMAND test_ip_reass)
+endif()

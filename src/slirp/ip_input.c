@@ -38,6 +38,24 @@
  * terms and conditions of the copyright.
  */
 
+/*
+ * The IP fragment reassembly fixes below are backported from the libslirp
+ * project (https://gitlab.freedesktop.org/slirp/libslirp), which maintains the
+ * descendant of this code. Copyright for those changes remains with their
+ * authors and the libslirp contributors, under the same terms as above.
+ *
+ *   ip_reass(): dequeue a fragment before releasing its mbuf.
+ *     libslirp commit c5927943, "ip_reass: Fix use after free",
+ *     by Samuel Thibault; CVE-2019-15890, related to CVE-2019-14378.
+ *     First released in libslirp 4.1.0.
+ *
+ *   ip_reass(): re-derive the first fragment's link node from the live buffer
+ *     after m_cat() may have moved it.
+ *     libslirp commit 9bd6c591, "Fix use-afte-free in ip_reass()
+ *     (CVE-2020-1983)", by Marc-André Lureau, 2020-04-04.
+ *     First released in libslirp 4.3.0.
+ */
+
 #include "slirp.h"
 #include "ip_icmp.h"
 
@@ -247,6 +265,7 @@ ip_reass(Slirp *slirp, struct ip *ip, struct ipq *fp)
 	register struct ipasfrag *q;
 	int hlen = ip->ip_hl << 2;
 	int i, next;
+	int delta;
 
 	DEBUG_CALL("ip_reass");
 	DEBUG_ARG("ip = %lx", (long)ip);
@@ -313,6 +332,8 @@ ip_reass(Slirp *slirp, struct ip *ip, struct ipq *fp)
 	 */
 	while (q != (struct ipasfrag*)&fp->frag_link &&
             ip->ip_off + ip->ip_len > q->ipf_off) {
+		struct ipasfrag *prev;
+
 		i = (ip->ip_off + ip->ip_len) - q->ipf_off;
 		if (i < q->ipf_len) {
 			q->ipf_len -= i;
@@ -320,9 +341,13 @@ ip_reass(Slirp *slirp, struct ip *ip, struct ipq *fp)
 			m_adj(dtom(slirp, q), i);
 			break;
 		}
+		/* Dequeue before freeing: the list links live inside the
+		   mbuf's own payload, so reading them back out of a released
+		   mbuf can pick up pointers from an allocation reuse. */
+		prev = q;
 		q = q->ipf_next;
-		m_freem(dtom(slirp, q->ipf_prev));
-		ip_deq(q->ipf_prev);
+		ip_deq(prev);
+		m_freem(dtom(slirp, prev));
 	}
 
 insert:
@@ -347,6 +372,12 @@ insert:
     q = fp->frag_link.next;
 	m = dtom(slirp, q);
 
+	/* Record where the first fragment's link node sits within its mbuf
+	   buffer, before m_cat() below can move that buffer. It must be taken
+	   relative to whichever buffer is live now: m_dat for an ordinary mbuf,
+	   m_ext for one that already holds an external buffer. */
+	delta = (char *)q - ((m->m_flags & M_EXT) ? m->m_ext : m->m_dat);
+
 	q = (struct ipasfrag *) q->ipf_next;
 	while (q != (struct ipasfrag*)&fp->frag_link) {
 	  struct mbuf *t = dtom(slirp, q);
@@ -363,14 +394,13 @@ insert:
 	q = fp->frag_link.next;
 
 	/*
-	 * If the fragments concatenated to an mbuf that's
-	 * bigger than the total size of the fragment, then and
-	 * m_ext buffer was alloced. But fp->ipq_next points to
-	 * the old buffer (in the mbuf), so we must point ip
-	 * into the new buffer.
+	 * If the fragments concatenated to an mbuf that's bigger than the
+	 * total size of the fragment, an m_ext buffer was allocated - or, if
+	 * one was already in use, realloc()ed and possibly moved. Either way
+	 * fp->ipq_next still points into the old buffer, so re-derive q from
+	 * the live buffer using the offset recorded above.
 	 */
 	if (m->m_flags & M_EXT) {
-	  int delta = (char *)q - m->m_dat;
 	  q = (struct ipasfrag *)(m->m_ext + delta);
 	}
 

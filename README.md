@@ -443,5 +443,14 @@ networking features.
   **[Arculator](https://b-em.bbcmicro.com/arculator/)**, Sarah Walker's Acorn
   Archimedes emulator, also distributed under the GNU GPL v2. Copyright of that
   code remains with **Sarah Walker** and the Arculator contributors.
+- The bundled **SLiRP** user-mode networking stack under `src/slirp/` originates
+  with **Danny Gasparovski** and carries 4.4BSD-derived code from **The Regents
+  of the University of California**. Fixes to its IP fragment reassembly have
+  been backported from **[libslirp](https://gitlab.freedesktop.org/slirp/libslirp)**,
+  which maintains the descendant of that code: commit `c5927943` by **Samuel
+  Thibault** (CVE-2019-15890) and commit `9bd6c591` by **Marc-André Lureau**
+  (CVE-2020-1983). Copyright for those changes remains with their authors and the
+  libslirp contributors; see the provenance note at the top of
+  `src/slirp/ip_input.c`.
 - Spork Edition enhancements by Andy Timmins and contributors.
 - Machine save/load state (suspend & resume) contributed by **Nick Brown**.
