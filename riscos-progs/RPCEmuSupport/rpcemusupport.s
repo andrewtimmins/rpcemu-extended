@@ -199,10 +199,9 @@ title:
 	.string	"RPCEmuSupport"
 	.align
 
-	@ The "help" string the header points at is generated from VersionNum and
-	@ lives further down, next to *HostCmdStatus, so that command can reach the
-	@ matching banner with adr. Header fields are module-base offsets, so the
-	@ string's position in the module does not matter.
+	@ Defines "help", the *Help / *Modules string, generated from VersionNum by
+	@ the Makefile so the version and date live in one place.
+	.include "version.inc"
 
 	@ Help and Command keyword table
 table:
@@ -440,10 +439,6 @@ final:
 command_status:
 	stmfd	sp!, {r0-r1, lr}
 	ldr	wp, [r12]
-	@ Banner first (module name, version, date, copyright), then the state.
-	@ module_banner comes from version.inc and ends with its own newline.
-	adr	r0, module_banner
-	swi	XOS_Write0
 	adr	r0, status_text
 	swi	XOS_Write0
 	ldr	r0, [wp, #WS_STATE]
@@ -455,12 +450,6 @@ command_status:
 status_text:
 	.string	"HostCmd state "
 	.align
-
-	@ Generated from VersionNum by the Makefile: defines "help", which the module
-	@ header points at, and "module_banner", printed above. Kept here so both the
-	@ version and the date come from one place, and so module_banner is within
-	@ adr range of the command that prints it.
-	.include "version.inc"
 
 
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@

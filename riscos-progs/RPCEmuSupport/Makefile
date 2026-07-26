@@ -21,13 +21,11 @@ MODULE_DATE := $(shell awk '/^Module_Date/ { $$1 = ""; sub(/^[ \t]+/, ""); print
 
 all: $(MODULE),ffa
 
-# The help string (what *Help and *Modules show) and the banner printed by
-# *HostCmdStatus, generated so the version lives in exactly one place.
+# The help string, which is what *Help and *Modules show. Generated so the
+# version and date come from VersionNum alone.
 version.inc: VersionNum Makefile
 	@printf '@ Generated from VersionNum by the Makefile - do not edit.\n' > $@
 	@printf 'help:\n\t.string\t"%s\\t%s (%s)"\n\t.align\n' \
-		'$(TITLE)' '$(MODULE_VERSION)' '$(MODULE_DATE)' >> $@
-	@printf 'module_banner:\n\t.string\t"%s %s (%s)\\rCopyright (C) 2025-2026 Andy Timmins\\r"\n\t.align\n' \
 		'$(TITLE)' '$(MODULE_VERSION)' '$(MODULE_DATE)' >> $@
 	@echo "version.inc: $(TITLE) $(MODULE_VERSION) ($(MODULE_DATE))"
 
