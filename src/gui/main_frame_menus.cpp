@@ -159,14 +159,22 @@ void MainFrame::BuildMenus()
 	cdrom_menu->AppendSubMenu(recent_cdroms_menu, "Recent Images");
 	disc_menu->AppendSubMenu(cdrom_menu, "CD-ROM");
 
+	/* Two groups, in this order: items that open a window, then the toggles.
+	   Anything added later belongs in whichever group it behaves like, so the
+	   menu stays predictable rather than growing by accretion. */
 	auto *settings_menu = new wxMenu;
 	settings_menu->Append(ID_MENU_MACHINE, "&Machine...");
 #ifdef RPCEMU_NETWORKING
 	nat_list_item_ = settings_menu->Append(ID_MENU_NAT_LIST, "NAT Port Forwarding Rules...");
 #endif
+#ifdef RPCEMU_VNC
+	settings_menu->Append(ID_MENU_VNC, "&VNC Server...");
+#endif
+	settings_menu->Append(ID_MENU_SERIAL, "Serial...");
+	settings_menu->Append(ID_MENU_PARALLEL, "Parallel...");
 	settings_menu->AppendSeparator();
+
 	mute_menu_item_ = settings_menu->AppendCheckItem(ID_MENU_MUTE, "Mute Sound");
-	settings_menu->AppendSeparator();
 	fullscreen_menu_item_ = settings_menu->AppendCheckItem(ID_MENU_FULLSCREEN, "Full-screen Mode");
 	integer_scaling_menu_item_ =
 	    settings_menu->AppendCheckItem(ID_MENU_INTEGER_SCALING, "Pixel Perfect");
@@ -175,24 +183,12 @@ void MainFrame::BuildMenus()
 	follow_host_display_menu_item_ =
 	    settings_menu->AppendCheckItem(ID_MENU_FOLLOW_HOST_DISPLAY,
 	                                   "Follow Host Display Size");
-	settings_menu->AppendSeparator();
-#ifdef RPCEMU_VNC
-	settings_menu->Append(ID_MENU_VNC, "&VNC Server...");
-#endif
-	settings_menu->AppendSeparator();
-	settings_menu->Append(ID_MENU_SERIAL, "Serial...");
-	settings_menu->Append(ID_MENU_PARALLEL, "Parallel...");
-	settings_menu->AppendSeparator();
-	cpu_idle_menu_item_ = settings_menu->AppendCheckItem(ID_MENU_CPU_IDLE, "Reduce CPU Usage");
-	settings_menu->AppendSeparator();
-
-	auto *mouse_menu = new wxMenu;
 	/* Follow-mouse is now always on (it works windowed, scaled and full-screen),
-	   so the toggle is hidden. The mouse-capture / relative path is left in the
+	   so that toggle is hidden. The mouse-capture / relative path is left in the
 	   code (OnMouseMove, mouse_captured) and can be re-exposed here if needed. */
 	mouse_twobutton_menu_item_ =
-	    mouse_menu->AppendCheckItem(ID_MENU_MOUSE_TWOBUTTON, "Two-button Mouse Mode");
-	settings_menu->AppendSubMenu(mouse_menu, "Mouse");
+	    settings_menu->AppendCheckItem(ID_MENU_MOUSE_TWOBUTTON, "Two-button Mouse Mode");
+	cpu_idle_menu_item_ = settings_menu->AppendCheckItem(ID_MENU_CPU_IDLE, "Reduce CPU Usage");
 
 	auto *debug_menu = new wxMenu;
 	debug_run_item_ = debug_menu->Append(ID_MENU_DEBUG_RUN, "Run");
@@ -260,7 +256,7 @@ void MainFrame::BuildMenus()
 	             &MainFrame::OnFollowHostDisplay);
 	BindMenuItem(file_menu, ID_MENU_SUSPEND_ON_EXIT, this, &MainFrame::OnSuspendOnExit);
 	BindMenuItem(settings_menu, ID_MENU_CPU_IDLE, this, &MainFrame::OnCpuIdle);
-	BindMenuItem(mouse_menu, ID_MENU_MOUSE_TWOBUTTON, this, &MainFrame::OnMouseTwobutton);
+	BindMenuItem(settings_menu, ID_MENU_MOUSE_TWOBUTTON, this, &MainFrame::OnMouseTwobutton);
 #ifdef RPCEMU_VNC
 	BindMenuItem(settings_menu, ID_MENU_VNC, this, &MainFrame::OnVnc);
 #endif
