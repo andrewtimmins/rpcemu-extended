@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <chrono>
 #include <csignal>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -49,6 +50,7 @@
 
 extern "C" {
 #include "rpcemu.h"
+#include "savestate.h"
 }
 
 namespace {
@@ -212,23 +214,86 @@ std::string ResolveMachineConfig(const char *name)
 
 } // namespace
 
+/* Public wrappers: the GUI path needs these to validate --machine before
+   wxEntry(), but the implementations above stay internal to this file. */
+std::string HeadlessResolveMachineConfig(const char *machine_name)
+{
+	if (machine_name == nullptr || machine_name[0] == '\0') {
+		return std::string();
+	}
+	return ResolveMachineConfig(machine_name);
+}
+
+bool HeadlessInitPaths(void)
+{
+	return InitHeadlessPaths();
+}
+
+void HeadlessPrintNoDataError(void)
+{
+	PrintNoDataError();
+}
+
+/* Output sink for the two GUI-reachable listings; null means print to stdout. */
+static void (*g_output_sink)(const char *text) = nullptr;
+
+void HeadlessSetOutputSink(void (*sink)(const char *text))
+{
+	g_output_sink = sink;
+}
+
+/* printf() for the two functions below, honouring the sink when one is set. */
+static void HeadlessOutput(const char *fmt, ...)
+{
+	char buf[8192];
+	va_list args;
+
+	va_start(args, fmt);
+	vsnprintf(buf, sizeof(buf), fmt, args);
+	va_end(args);
+
+	if (g_output_sink != nullptr) {
+		g_output_sink(buf);
+	} else {
+		fputs(buf, stdout);
+	}
+}
+
 void HeadlessPrintUsage(const char *argv0)
 {
 	const char *name = (argv0 != nullptr && argv0[0] != '\0') ? argv0 : "rpcemu";
-	printf(
+	HeadlessOutput(
 	    "Usage: %s [options]\n"
 	    "\n"
 	    "With no options the graphical machine selector is shown.\n"
 	    "\n"
-	    "Headless options (run with no GUI and no X11/Wayland display):\n"
+	    "Options:\n"
+	    "  --machine <name>      Machine to run (config name in the configs dir,\n"
+	    "                        with or without the .cfg suffix). On its own it\n"
+	    "                        starts the GUI directly on that machine, skipping\n"
+	    "                        the machine selector. Required by --headless.\n"
+	    "  --resume              Resume the machine's saved state, as the selector's\n"
+	    "                        Resume does. The snapshot is consumed (kept as\n"
+	    "                        .bak). Requires --machine.\n"
+	    "  --state <file>        Load an explicit state file, as Load State does.\n"
+	    "                        The file is left in place. Requires --machine, and\n"
+	    "                        cannot be combined with --resume.\n"
 	    "  --headless            Run a machine without the GUI window; access it\n"
 	    "                        over the built-in VNC server. Requires --machine\n"
-	    "                        and a machine config with VNC enabled.\n"
-	    "  --machine <name>      Machine to run (config name in the configs dir,\n"
-	    "                        with or without the .cfg suffix). Required by\n"
-	    "                        --headless.\n"
+	    "                        and a machine config with VNC enabled. Needs no\n"
+	    "                        display or desktop session on any platform.\n"
 	    "  --list-machines       List available machine configs and exit.\n"
 	    "  -h, --help            Show this help and exit.\n"
+	    "\n"
+	    "Only long options are accepted, and there are no positional arguments, so an\n"
+	    "unrecognised option or a stray argument is reported rather than ignored.\n"
+	    "Exit status is 0 on success and 2 for a usage error.\n"
+#ifdef _WIN32
+	    "\n"
+	    "This is a GUI application, so it has no console to write to: these messages\n"
+	    "are shown in a message box. Set RPCEMU_NO_GUI_MESSAGES=1 to send them to\n"
+	    "stdout/stderr instead, and redirect the output, when scripting.\n"
+#endif
 	    "\n"
 	    "Data is located via $RPCEMU_DATADIR, else the executable directory or the\n"
 	    "current directory if it contains a 'configs/' folder, else the install prefix.\n",
@@ -246,7 +311,7 @@ int HeadlessListMachines(void)
 
 	DIR *dir = opendir(configs.c_str());
 	if (dir == nullptr) {
-		printf("No machines found in %s\n", configs.c_str());
+		HeadlessOutput("No machines found in %s\n", configs.c_str());
 		return 0;
 	}
 
@@ -260,22 +325,24 @@ int HeadlessListMachines(void)
 	closedir(dir);
 
 	if (names.empty()) {
-		printf("No machines found in %s\n", configs.c_str());
+		HeadlessOutput("No machines found in %s\n", configs.c_str());
 		return 0;
 	}
 
 	std::sort(names.begin(), names.end());
-	printf("Available machines (in %s):\n", configs.c_str());
+	HeadlessOutput("Available machines (in %s):\n", configs.c_str());
 	for (const std::string &n : names) {
-		printf("  %s\n", n.c_str());
+		HeadlessOutput("  %s\n", n.c_str());
 	}
 	return 0;
 }
 
-int RunHeadless(const char *machine_name)
+int RunHeadless(const char *machine_name, bool resume, const char *state_file)
 {
 #ifndef RPCEMU_VNC
 	(void)machine_name;
+	(void)resume;
+	(void)state_file;
 	fprintf(stderr,
 	        "error: this build was compiled without VNC support, so --headless\n"
 	        "       has no way to expose the machine. Rebuild with RPCEMU_ENABLE_VNC=ON.\n");
@@ -304,6 +371,31 @@ int RunHeadless(const char *machine_name)
 
 	config_set_path(config_path.c_str());
 	rpcemu_prestart(); /* loads the selected config into the global `config` */
+
+	/* Resolve the state to load, if any. config_load() has just pointed the
+	   machine data dir at this machine, so the machine's own snapshot sits
+	   beside its cmos.ram - the same file the GUI selector's Resume offers. */
+	std::string state_to_load;
+	bool consume_snapshot = false;
+	const std::string own_snapshot =
+	    std::string(rpcemu_get_machine_datadir()) + "suspend.state";
+
+	if (resume) {
+		if (!FileExists(own_snapshot)) {
+			fprintf(stderr, "error: machine '%s' has no saved state to resume.\n",
+			        config.name);
+			return 2;
+		}
+		state_to_load = own_snapshot;
+		consume_snapshot = true; /* the session is now live; keep a .bak */
+	} else if (state_file != nullptr && state_file[0] != '\0') {
+		if (!FileExists(state_file)) {
+			fprintf(stderr, "error: state file '%s' does not exist.\n", state_file);
+			return 2;
+		}
+		/* An explicitly named file is left in place, matching Load State. */
+		state_to_load = state_file;
+	}
 
 	/* The whole point of headless mode is VNC access, so refuse to start a
 	   machine that has no way to be reached. */
@@ -337,6 +429,34 @@ int RunHeadless(const char *machine_name)
 	std::signal(SIGTERM, HeadlessSignalHandler);
 
 	rpcemu_start();
+
+	/* Load the requested state before the emulator thread starts, so state_load()
+	   runs single-threaded (as it does on the GUI path). A failure here is not
+	   fatal: report it and continue with the normal boot already set up. */
+	if (!state_to_load.empty()) {
+		char errbuf[256];
+
+		if (state_check(state_to_load.c_str(), errbuf, sizeof(errbuf)) == 0 &&
+		    state_load(state_to_load.c_str()) == 0) {
+			printf("Loaded machine state '%s'.\n", state_to_load.c_str());
+			if (consume_snapshot) {
+				/* Consume the snapshot to .bak: recoverable, but not
+				   re-resumed on next launch. Mirrors the GUI. */
+				const std::string bak = own_snapshot + ".bak";
+				remove(bak.c_str());
+				if (rename(own_snapshot.c_str(), bak.c_str()) != 0) {
+					rpclog("headless: could not rename '%s' to .bak\n",
+					       own_snapshot.c_str());
+				}
+			}
+		} else {
+			fprintf(stderr,
+			        "warning: could not load the machine state '%s': %s\n"
+			        "         Performing a normal boot instead.\n",
+			        state_to_load.c_str(), errbuf);
+		}
+	}
+
 	emulator->Start();
 
 	/* Park the main thread until a signal arrives or the guest powers off

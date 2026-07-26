@@ -33,7 +33,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **Graphics card — display modes VRAM cannot reach** — an optional emulated expansion card with 15MB of its own display memory, so **2560 x 1440 in full colour** is available on a machine whose 2MB of VRAM otherwise stops at 800 x 600. An ordinary card in an ordinary EASI slot with its own GraphicsV driver in its ROM; off by default, and RISC OS keeps using VIDC20 until you run `*GfxCardOn`. See [docs/gfxcard.md](docs/gfxcard.md).
 - **Pixel Perfect scaling** — optional integer scaling for sharp pixels (*Settings → Pixel Perfect*).
 - **Built-in VNC server** — remote desktop access from any VNC client.
-- **Headless mode** — run a machine with no GUI window, accessed entirely over VNC (`--headless --machine <name>`). Genuinely display-less: needs no X11/Wayland, so it runs on a headless server. See [Headless mode](#headless-mode).
+- **Headless mode** — run a machine with no GUI window, accessed entirely over VNC (`--headless --machine <name>`). Genuinely display-less: no GUI toolkit is initialised at all, so it runs on a headless server (on Linux, with no X11/Wayland session). See [Headless mode](#headless-mode).
 - **HostCmd — drive the RISC OS command line from the host** — run guest commands from the host over a local socket and stream their output back, with the return code. Edit on the host (via HostFS), compile on the guest (`rpcemu-run -- cc -c hello`), or open an interactive RISC OS shell (`rpcemu-shell`). Ideal for IDE/LLM-driven development. See [docs/hostcmd.md](docs/hostcmd.md).
 - **MCP server — drive RISC OS from Claude / an agent** — a [Model Context Protocol](https://modelcontextprotocol.io) server exposing tools to run guest commands, read/write/list files (via HostFS), capture and click the screen, and inspect/control the emulated ARM CPU (registers, memory, disassembly, breakpoints, watchpoints, single-step). Point Claude Code / Desktop at it for agent-driven RISC OS development. Setup and tool reference in [tools/mcp/README.md](tools/mcp/README.md).
 - **Parallel port** — log raw output to a file, or a virtual printer that captures jobs to `.prn` files with optional in-process PDF conversion via Ghostscript.
@@ -102,6 +102,14 @@ machines, configs, ROMs, HostFS and logs are kept in a visible **`~/RPCEmu/`** f
 seeded from the shared templates on first run. An existing `~/.local/share/rpcemu` from
 an earlier version is migrated automatically. The **portable** `.tar.gz` instead keeps
 everything self-contained in its own folder.
+
+These environment variables override the defaults:
+
+| Variable | Meaning |
+| --- | --- |
+| `RPCEMU_DATADIR` | Writable data directory (machines, configs, logs). Otherwise the executable's directory or the current directory if it contains `configs/`, else the install prefix. |
+| `RPCEMU_RESOURCE_DIR` | Read-only support files (ROM/config/podule templates). |
+| `RPCEMU_NO_GUI_MESSAGES` | **Windows only.** Set to `1` to send `--help`, `--list-machines` and startup errors to stdout/stderr instead of a message box. See [Windows: messages appear in a dialog](#windows-messages-appear-in-a-dialog). |
 
 ---
 
@@ -248,6 +256,85 @@ needed for the portable tarball.)
 4. Place licensed RISC OS ROM files in `roms/<subdir>/` and select the ROM folder in
    the machine editor.
 
+### Skipping the machine selector
+
+To launch the GUI straight into a known machine, name it with `--machine`:
+
+```bash
+./rpcemu-recompiler --machine <name>
+```
+
+The selector is bypassed and the machine boots immediately. On its own, `--machine`
+performs a plain boot and leaves any saved state untouched. The selector's **Resume**
+and **Load State** actions have command-line equivalents:
+
+```bash
+./rpcemu-recompiler --machine <name> --resume          # resume its saved state
+./rpcemu-recompiler --machine <name> --state <file>    # load a specific state file
+```
+
+- `--resume` loads the machine's own snapshot (`machines/<name>/suspend.state`). As
+  in the GUI, the snapshot is **consumed** on success — renamed to `.bak`, so it is
+  recoverable but not resumed again on the next launch.
+- `--state <file>` loads an explicit state file and **leaves it in place**.
+- The two are mutually exclusive, and both require `--machine`.
+- Both also work with `--headless`.
+
+An unknown machine name is reported and exits with status 2 without opening a window;
+so does `--resume` with no saved state, or a `--state` file that does not exist. A
+state file that fails to load is a warning, not an error — the machine performs a
+normal boot instead, matching the GUI's behaviour.
+
+The name must match the config file's case on case-sensitive filesystems (most Linux
+setups); `--list-machines` prints the names as spelled.
+
+### Command-line reference
+
+The same options work on Linux, macOS and Windows, so a command line or a script is
+portable between them.
+
+| Option | Effect |
+| --- | --- |
+| `--machine <name>` | Run this machine, skipping the selector. Also accepts `--machine=<name>`. |
+| `--resume` | Resume the machine's own snapshot, consuming it to `.bak`. Requires `--machine`. |
+| `--state <file>` | Load an explicit state file, leaving it in place. Requires `--machine`. |
+| `--headless` | Run with no GUI window, over VNC. Requires `--machine`. |
+| `--list-machines` | List the available machine configs and exit. |
+| `-h`, `--help` | Show usage and exit. |
+
+Exit status is **0** on success and **2** for a usage error — an unknown option, a
+stray argument, an unknown machine, a missing state file, or `--resume`/`--state`
+without `--machine`. `--resume` and `--state` cannot be combined.
+
+Only long options are accepted. RPCEmu takes no positional arguments, so an
+unrecognised option or a stray argument is reported rather than ignored. On Windows,
+DOS-style switches such as `/H` are rejected too — use `--help`.
+
+### Windows: messages appear in a dialog
+
+On Windows the emulator is built as a GUI application so that double-clicking it
+never opens a console window. Such a program has no terminal to write to, so the
+messages above — `--help`, `--list-machines`, and any startup error — are shown in a
+**message box** instead. The options, the exit codes and the behaviour are identical
+to Linux and macOS; only the presentation differs.
+
+For scripting, set `RPCEMU_NO_GUI_MESSAGES=1` to send that text to stdout/stderr
+instead of a dialog:
+
+```bat
+set RPCEMU_NO_GUI_MESSAGES=1
+rpcemu-recompiler.exe --list-machines > machines.txt
+```
+
+This matters for automation: a message box waits for someone to click OK, which would
+otherwise block a script or a scheduled task indefinitely. Redirect the output (to a
+file or a pipe) when using it — a GUI application launched without redirection has
+nowhere to write, so the text is simply lost. The variable has no effect on Linux or
+macOS, where output always goes to the terminal.
+
+Headless mode (`--headless`) always writes to the console on every platform, since it
+is driven from a terminal or a service manager where a dialog would be useless.
+
 ### Headless mode
 
 A machine can be run without the GUI window and accessed entirely over the
@@ -259,7 +346,10 @@ built-in VNC server — useful for servers or always-on machines:
 
 - `--machine <name>` selects a machine by its config name (the file in `configs/`,
   with or without the `.cfg` suffix). It is required in headless mode, since there
-  is no interactive selector.
+  is no interactive selector. On its own — without `--headless` — it starts the GUI
+  on that machine, skipping the selector (see above).
+- `--resume` and `--state <file>` work here too, so a headless machine can be brought
+  back up from a snapshot — useful when a service manager restarts it.
 - `--list-machines` prints the available machine names and exits.
 - `--help` (or `-h`) prints usage and exits. All three of these run without a display.
 - The chosen machine **must have the VNC server enabled** (`vnc_enabled=1`) in its
@@ -269,9 +359,12 @@ built-in VNC server — useful for servers or always-on machines:
   configuration are saved on exit, just as when closing the GUI window.
 
 Headless mode is genuinely display-less: it is handled before any GUI toolkit is
-initialised, so it needs **no X11/Wayland display** and runs on a server with no
-desktop installed. Data is located via `$RPCEMU_DATADIR`, else the executable or
-current directory if it contains a `configs/` folder, else the install prefix.
+initialised, so it needs **no display or desktop session** on any platform — on Linux
+no X11/Wayland session, on Windows no interactive desktop, on macOS no window server.
+It therefore runs happily on a bare server or under a service manager.
+
+Data is located via `$RPCEMU_DATADIR`, else the executable or current directory if it
+contains a `configs/` folder, else the install prefix.
 
 ---
 
