@@ -32,21 +32,32 @@
 /* Standard display modes, largest area first. These are sizes RISC OS and
    monitors both expect, rather than arbitrary geometry: a computed 1385x779
    would be a strange thing to advertise and less likely to be accepted.
-   The largest entry also sets the ceiling for everything that calls here. */
+   The largest entry also sets the ceiling for everything that calls here.
+   Areas are in the comments, since the order is what makes "largest that fits"
+   work and it is not obvious by eye that 1920x1080 beats 1600x1200.
+
+   This list is kept in step with what edid.c advertises, because a guest
+   validates a mode against the monitor definition in force: a mode we may ask it
+   to adopt later has to be one the EDID declares. Everything here is an
+   established or standard timing in that block, except the top two - those
+   appear only when chosen at boot, as the preferred timing.
+
+   1400x1050 and 1366x768 were dropped for that reason. There is no spare
+   standard-timing slot for the first, and the second cannot be a standard timing
+   at all: the width field counts in units of 8 and 1366 is not a multiple of 8.
+   Their rungs are covered by the neighbours either side. */
 static const struct {
 	unsigned width;
 	unsigned height;
 } display_modes[] = {
-	{ 2560, 1440 },	/* 3686400 */
-	{ 1920, 1200 },	/* 2304000 */
+	{ 2560, 1440 },	/* 3686400 - preferred timing only */
+	{ 1920, 1200 },	/* 2304000 - preferred timing only */
 	{ 1920, 1080 },	/* 2073600 */
 	{ 1600, 1200 },	/* 1920000 */
 	{ 1680, 1050 },	/* 1764000 */
-	{ 1400, 1050 },	/* 1470000 */
 	{ 1280, 1024 },	/* 1310720 */
 	{ 1440,  900 },	/* 1296000 */
 	{ 1280,  960 },	/* 1228800 */
-	{ 1366,  768 },	/* 1049088 */
 	{ 1152,  864 },	/*  995328 */
 	{ 1280,  720 },	/*  921600 */
 	{ 1024,  768 },	/*  786432 */

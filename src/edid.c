@@ -137,15 +137,33 @@ edid_build_from_base(uint8_t out[EDID_BLOCK_SIZE],
 	out[0x24] = 0x09;
 	out[0x25] = 0x00;
 
-	/* Standard timings: a ladder of widescreen/legacy modes. */
-	set_standard_timing(&out[0x26], 1280, ASPECT_5_4,  60);
-	set_standard_timing(&out[0x28], 1440, ASPECT_16_10, 60);
-	set_standard_timing(&out[0x2a], 1600, ASPECT_4_3,  60);
-	set_standard_timing(&out[0x2c], 1680, ASPECT_16_10, 60);
-	set_standard_timing(&out[0x2e], 1920, ASPECT_16_9,  60);
-	set_standard_timing(&out[0x30], 0, 0, 0);
-	set_standard_timing(&out[0x32], 0, 0, 0);
-	set_standard_timing(&out[0x34], 0, 0, 0);
+	/* Standard timings: a ladder of widescreen/legacy modes.
+	 *
+	 * All eight slots are used, and deliberately: between these and the
+	 * established timings above, every mode display_mode.c can choose is
+	 * advertised here except the two largest. That matters because the guest
+	 * validates a mode against the monitor definition in force, so a mode we
+	 * might ask it to adopt later has to be one this block declares - not just
+	 * the preferred timing, which only covers whichever mode was chosen at boot.
+	 *
+	 * The exceptions are 2560x1440 and 1920x1200, which appear only when they are
+	 * the preferred timing. 2560x1440 cannot be expressed as a standard timing at
+	 * all (the width field stops at 2288), and there is no ninth slot for
+	 * 1920x1200. A host display that grows to one of those mid-session therefore
+	 * cannot be followed; that needs the monitor definition reloading, which is a
+	 * bigger job than this.
+	 *
+	 * Note a width appears more than once with different aspects: the height is
+	 * derived from the aspect code, so 1280 gives 1024 at 5:4, 960 at 4:3 and 720
+	 * at 16:9. */
+	set_standard_timing(&out[0x26], 1280, ASPECT_5_4,  60);	/* 1280x1024 */
+	set_standard_timing(&out[0x28], 1440, ASPECT_16_10, 60);	/* 1440x900  */
+	set_standard_timing(&out[0x2a], 1600, ASPECT_4_3,  60);	/* 1600x1200 */
+	set_standard_timing(&out[0x2c], 1680, ASPECT_16_10, 60);	/* 1680x1050 */
+	set_standard_timing(&out[0x2e], 1920, ASPECT_16_9,  60);	/* 1920x1080 */
+	set_standard_timing(&out[0x30], 1152, ASPECT_4_3,  60);	/* 1152x864  */
+	set_standard_timing(&out[0x32], 1280, ASPECT_4_3,  60);	/* 1280x960  */
+	set_standard_timing(&out[0x34], 1280, ASPECT_16_9,  60);	/* 1280x720  */
 
 	/* First detailed timing descriptor = the preferred (native) mode. */
 	build_detailed_timing(&out[0x36], x, y, hz);

@@ -37,8 +37,12 @@ endif()
 # core drags in SDL, and arm64 Homebrew has no separate SDL2main, so linking it
 # for a pure arithmetic test broke the macOS arm64 build. display_mode.c has no
 # dependencies of its own, which is the point of it being separate.
+# edid.c is included so the test can decode what the EDID actually advertises
+# and check the chooser cannot offer a mode the guest would refuse. Both files
+# are dependency-free, so this still links nothing.
 add_executable(test_mode_fit test_mode_fit.c
-               ${CMAKE_CURRENT_SOURCE_DIR}/../src/display_mode.c)
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/display_mode.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/edid.c)
 target_include_directories(test_mode_fit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 add_test(NAME test_mode_fit COMMAND test_mode_fit)
 

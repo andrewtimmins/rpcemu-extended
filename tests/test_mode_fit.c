@@ -33,8 +33,11 @@
 
 #include <stdio.h>
 #include <stddef.h>
+#include <stdint.h>
+#include <string.h>
 
 #include "display_mode.h"
+#include "edid.h"
 
 static int failures;
 
@@ -84,6 +87,121 @@ expect_nothing(const char *what, unsigned max_w, unsigned max_h, unsigned bpp,
 	printf("  %-44s ok (declined)\n", what);
 }
 
+
+/* Is this mode in display_mode.c's table? Ask the chooser for it exactly, with
+   no framebuffer limit: it can only answer with a table entry.
+
+   This doubles as a reachability check. A "no" also catches an entry that is in
+   the table but can never be chosen, because one listed earlier fits inside the
+   same bounds - dead weight worth knowing about either way. */
+static int
+table_has(unsigned want_w, unsigned want_h)
+{
+	unsigned w = 0, h = 0;
+
+	return display_mode_fit(want_w, want_h, 0, 0, &w, &h)
+	       && w == want_w && h == want_h;
+}
+
+/* Does the synthesised EDID declare this mode as an established or standard
+   timing? Decoded from the block rather than assumed, so the two files cannot
+   drift apart unnoticed. */
+static int
+edid_advertises(const uint8_t *block, unsigned want_w, unsigned want_h)
+{
+	static const struct { unsigned w, h, byte, bit; } established[] = {
+		{  640, 480, 0x23, 5 },
+		{  800, 600, 0x23, 0 },
+		{ 1024, 768, 0x24, 3 },
+		{ 1280, 1024, 0x24, 0 },
+	};
+	/* Standard timings: height comes from the aspect code, not the block. */
+	static const unsigned aspect_num[4] = { 16, 4, 5, 16 };
+	static const unsigned aspect_den[4] = { 10, 3, 4,  9 };
+	size_t i;
+
+	for (i = 0; i < sizeof(established) / sizeof(established[0]); i++) {
+		if (established[i].w == want_w && established[i].h == want_h
+		    && (block[established[i].byte] & (1u << established[i].bit)) != 0) {
+			return 1;
+		}
+	}
+
+	for (i = 0x26; i < 0x36; i += 2) {
+		unsigned w, h, aspect;
+
+		if (block[i] == 0x01 && block[i + 1] == 0x01) {
+			continue;			/* unused slot */
+		}
+		w = (block[i] + 31u) * 8u;
+		aspect = (block[i + 1] >> 6) & 0x03u;
+		h = w * aspect_den[aspect] / aspect_num[aspect];
+
+		if (w == want_w && h == want_h) {
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+/* Every mode the chooser can pick has to be one the guest will accept, because
+   RISC OS validates a mode against the monitor definition in force. The two
+   largest are exempt: they appear only as the preferred timing, which covers
+   whichever mode was chosen at boot. */
+static void
+check_edid_advertises_every_mode(void)
+{
+	static const struct { unsigned w, h; int preferred_only; } modes[] = {
+		{ 2560, 1440, 1 },
+		{ 1920, 1200, 1 },
+		{ 1920, 1080, 0 },
+		{ 1600, 1200, 0 },
+		{ 1680, 1050, 0 },
+		{ 1280, 1024, 0 },
+		{ 1440,  900, 0 },
+		{ 1280,  960, 0 },
+		{ 1152,  864, 0 },
+		{ 1280,  720, 0 },
+		{ 1024,  768, 0 },
+		{  800,  600, 0 },
+		{  640,  480, 0 },
+	};
+	uint8_t base[EDID_BLOCK_SIZE];
+	uint8_t block[EDID_BLOCK_SIZE];
+	size_t i;
+
+	/* A minimal well-formed base: the builder inherits from it and rewrites the
+	   timings and checksum. */
+	memset(base, 0, sizeof(base));
+	memset(base + 1, 0xff, 6);
+	base[18] = 1;			/* EDID version 1 */
+	edid_build_from_base(block, base, 1920, 1080, 60);
+
+	printf("\nevery mode the chooser can pick is one the EDID advertises\n");
+
+	for (i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
+		const unsigned w = modes[i].w, h = modes[i].h;
+		char label[64];
+
+		snprintf(label, sizeof(label), "%ux%u%s", w, h,
+		         modes[i].preferred_only ? " (preferred timing only)" : "");
+
+		if (!table_has(w, h)) {
+			printf("  %-44s FAIL (not offered by the chooser)\n", label);
+			failures++;
+			continue;
+		}
+		if (!modes[i].preferred_only && !edid_advertises(block, w, h)) {
+			printf("  %-44s FAIL (chooser can pick it, EDID does not declare it)\n",
+			       label);
+			failures++;
+			continue;
+		}
+		printf("  %-44s ok\n", label);
+	}
+}
+
 int
 main(void)
 {
@@ -120,6 +238,8 @@ main(void)
 	expect_mode("host exactly 800x600", 800, 600, 4, 8, 800, 600);
 	expect_mode("host one pixel under 800x600", 799, 599, 4, 8, 640, 480);
 	expect_nothing("host smaller than any mode", 320, 200, 4, 8);
+
+	check_edid_advertises_every_mode();
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
 	       failures, failures == 1 ? "" : "s");
