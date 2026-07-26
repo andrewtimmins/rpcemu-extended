@@ -11,7 +11,7 @@ from a modern IDE or an automation/LLM agent.
 host tool (rpcemu-run / your IDE / Claude Code)
         │   local AF_UNIX socket
         ▼
-   emulator (hostcmd.c)  ── ArcEm SWI 0x56ac5 ──▶  HostCmd gateway module
+   emulator (hostcmd.c)  ── ArcEm SWI 0x56ac5 ──▶  RPCEmuSupport module
         ▲                                                │  OS_CLI + WrchV capture
         └──────────────── streamed output ◀─────────────┘
 ```
@@ -24,7 +24,7 @@ host tool (rpcemu-run / your IDE / Claude Code)
    ./build.sh --podules
    ```
 2. Start a machine. HostCmd is **on by default**; the emulator creates a socket
-   at `<data-dir>/hostcmd.sock` and the `HostCmd` module auto-loads at boot.
+   at `<data-dir>/hostcmd.sock` and the `RPCEmuSupport` module auto-loads at boot.
 3. From the host:
    ```bash
    # one-shot: run a command, print its output, exit with the guest return code
@@ -47,7 +47,7 @@ so it drops straight into Makefiles, scripts and agent tool-calls.
 - The emulator traps a custom **ArcEm SWI** (`0x56ac5`, chunk `0x56ac0 + 5`),
   the same mechanism HostFS and networking use. The handler and the socket are
   serviced on the emulator thread, so no locking is involved.
-- A small RISC OS **gateway module** (`riscos-progs/HostCmd`) runs a `~1cs`
+- A small RISC OS **guest module** (`riscos-progs/RPCEmuSupport`) runs a `~1cs`
   ticker that polls the emulator for a submitted command. When one arrives it is
   run from a **transient callback** (a safe foreground context) with **WrchV**
   claimed, so all VDU output is captured — and still shown on the emulated

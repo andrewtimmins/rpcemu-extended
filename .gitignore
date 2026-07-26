@@ -39,6 +39,13 @@
 # Local tool / editor settings
 /.claude/
 
+# Intermediates from assembling the guest modules. The assembled ,ffa modules
+# are tracked (poduleroms/ ships them; build.sh --podules regenerates them), but
+# the object files and the version include generated from VersionNum are not.
+/riscos-progs/*/*.o
+/riscos-progs/*/*.elf
+/riscos-progs/*/version.inc
+
 # Editor swap files / patch leftovers
 *.swp
 *~

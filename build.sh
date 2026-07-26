@@ -276,14 +276,14 @@ build_podules() {
 		cp -f hostfs,ffa hostfsfiler,ffa "$SCRIPT_DIR/poduleroms/"
 	)
 
-	local hostcmd_dir="riscos-progs/HostCmd"
-	if [ -d "$hostcmd_dir" ]; then
-		echo "Building HostCmd podule ROM..."
+	local support_dir="riscos-progs/RPCEmuSupport"
+	if [ -d "$support_dir" ]; then
+		echo "Building RPCEmuSupport podule ROM..."
 		(
-			cd "$hostcmd_dir"
+			cd "$support_dir"
 			make clean
 			make AS=arm-linux-gnueabi-as LD=arm-linux-gnueabi-ld OBJCOPY=arm-linux-gnueabi-objcopy
-			cp -f hostcmd,ffa "$SCRIPT_DIR/poduleroms/"
+			cp -f rpcemusupport,ffa "$SCRIPT_DIR/poduleroms/"
 		)
 	fi
 	echo "✓ Podule ROMs copied to poduleroms/"
