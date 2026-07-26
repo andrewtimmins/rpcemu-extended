@@ -60,6 +60,7 @@
 	XOS_CLI			= 0x20005
 	XOS_ReadModeVariable	= 0x20035
 	XOS_ReadVarVal		= 0x20023
+	XOS_ReadSysInfo		= 0x20058
 	XOS_ConvertCardinal4	= 0x200d8
 	XPodule_ReadInfo	= 0x6028d
 
@@ -86,6 +87,14 @@
 	@ for it as 0xa1, that address shifted up with the read bit set, in bits
 	@ 16-23 of the IICOp request (see readedidblock() in ScreenModes).
 	EDID_IIC_READ		= 0xa1
+
+	@ Monitor types, as RISC OS numbers them (see monitors.h in ScreenModes).
+	@ Only EDID makes it read the monitor's own EDID - which is the one this card
+	@ serves. Under any other type the modes on offer are whatever that type
+	@ defines, however much the card could show.
+	MONITOR_FILE		= 7	@ a loaded monitor definition file
+	MONITOR_EDID		= 16
+	MONITOR_AUTO		= 31
 
 	@ GraphicsV
 	GraphicsV		= 0x2a
@@ -1070,6 +1079,19 @@ command_on:
 	ldmvsfd	sp!, {r5, pc}		@ refused: report it as it stands
 
 	bl	restore_wimp_mode
+
+	@ The modes on offer are the monitor's, not the card's, so a monitor type
+	@ that does not read the card's EDID quietly limits what can be selected.
+	@ Worth saying at the moment of switching rather than leaving it to be
+	@ discovered by a mode that will not take.
+	bl	monitor_type
+	teq	r1, #MONITOR_EDID
+	teqne	r1, #MONITOR_FILE
+	beq	1f
+	adrl	r0, msg_mon_hint
+	swi	XOS_Write0
+	swi	XOS_NewLine
+1:
 	cmp	pc, #0			@ clear V
 	ldmfd	sp!, {r5, pc}
 
@@ -1078,6 +1100,15 @@ command_on_no_ws:
 	cmp	r0, #NBIT		@ set V
 	cmnvc	r0, #NBIT
 	ldmfd	sp!, {r5, pc}
+
+@ The configured monitor type.
+@ out: r1 = type, as monitors.h numbers them
+monitor_type:
+	stmfd	sp!, {r0, r2, lr}
+	mov	r0, #1
+	swi	XOS_ReadSysInfo		@ out: r1 = monitor type, r2 = sync
+	movvs	r1, #MONITOR_AUTO	@ unreadable: assume the default
+	ldmfd	sp!, {r0, r2, pc}
 
 @ Note the geometry of the mode in use, so it can be asked for again after the
 @ switch. A variable that cannot be read leaves zero, which restore_wimp_mode
@@ -1295,6 +1326,27 @@ command_status:
 2:
 	swi	XOS_Write0
 
+	@ ...and whether RISC OS is set up to read it. This is the one piece of
+	@ configuration that decides whether the card's modes are reachable.
+	bl	monitor_type
+	adrl	r0, msg_monitor
+	swi	XOS_Write0
+	mov	r0, r1
+	bl	print_number
+	teq	r1, #MONITOR_EDID
+	bne	3f
+	adrl	r0, msg_mon_edid
+	b	5f
+3:
+	teq	r1, #MONITOR_FILE
+	bne	4f
+	adrl	r0, msg_mon_file
+	b	5f
+4:
+	adrl	r0, msg_mon_other
+5:
+	swi	XOS_Write0
+
 	@ Driver number, and whether it is the one in use.
 	adrl	r0, msg_driver
 	swi	XOS_Write0
@@ -1436,6 +1488,21 @@ msg_edid:
 	.align
 msg_no_edid:
 	.string	"  Monitor EDID: not available from the card, so RISC OS will fall back to a default monitor\r\n"
+	.align
+msg_monitor:
+	.string	"  Monitor type: "
+	.align
+msg_mon_edid:
+	.string	" (EDID - RISC OS reads the card's, so every mode it can show is offered)\r\n"
+	.align
+msg_mon_file:
+	.string	" (a monitor definition file - the modes on offer are the ones it defines)\r\n"
+	.align
+msg_mon_other:
+	.string	" - RISC OS is not reading the card's EDID, so the modes on offer are whatever this monitor type defines. *Configure MonitorType EDID and reset for the full set, or load a monitor definition file.\r\n"
+	.align
+msg_mon_hint:
+	.string	"Note: the configured monitor type does not read the card's EDID, so only that monitor's modes can be selected. *Configure MonitorType EDID and reset, or *LoadModeFile a definition."
 	.align
 msg_driver:
 	.string	"  Display driver "

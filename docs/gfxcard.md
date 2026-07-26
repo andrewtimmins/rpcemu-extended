@@ -36,10 +36,27 @@ now scanning out of the card. Afterwards, any mode the monitor offers:
 *WimpMode X1920 Y1080 C256
 ```
 
-Modes are still offered by the monitor definition in force, so the mode you want
-has to be one your monitor type advertises. The card serves the same monitor
-definition the machine booted with, so switching to it does not change what is on
-offer. *Settings → Follow Host Display Size*
+### The monitor type decides what you can select
+
+Modes are offered by the **monitor definition in force**, not by the card. The
+card can hold 2560 x 1440; whether RISC OS will let you select it depends on the
+configured monitor type:
+
+| Monitor type | What is offered |
+| --- | --- |
+| `EDID` | The card's own EDID: every mode it can show. This is the one to use. |
+| A loaded definition (`*LoadModeFile`) | Whatever that file defines |
+| `VGA`, `SVGA`, `Auto`, ... | Whatever that monitor type defines - `VGA` is 640x480 and nothing else |
+
+So on a machine configured for VGA or Auto the card appears not to work, when in
+fact nothing larger is on offer to select. One command and a reset fixes it:
+
+```
+*Configure MonitorType EDID
+```
+
+`*GfxCardStatus` reports the monitor type and says when it is the thing standing
+in the way, and `*GfxCardOn` says so at the moment of switching. *Settings → Follow Host Display Size*
 with `MonitorType EDID` is the easy route: the emulator synthesises a monitor
 definition from the host's real display, up to 2560 x 1440.
 
