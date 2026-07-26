@@ -1230,13 +1230,13 @@ var_base_name:
 @ then the data. A single zero word ends the list.
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
-	LOAD_OBEY	= 0xfffffeb00 & 0xffffffff	@ filetype &FEB in the load address
-	LOAD_TEXT	= 0xffffff00			@ filetype &FFF
-	ATTR_READ	= 3				@ read/write, as ROM files are
+	LOAD_OBEY	= 0xffffeb00		@ filetype &FEB in the load address
+	LOAD_ABS	= 0xfffff800		@ filetype &FF8, an application
+	ATTR_READ	= 3			@ read/write, as ROM files are
 
 resfs_files:
 rf_run:
-	.int	rf_end - rf_run
+	.int	rf_image - rf_run
 	.int	LOAD_OBEY
 	.int	0
 	.int	rf_run_end - rf_run_data
@@ -1246,10 +1246,23 @@ rf_run:
 	.int	rf_run_end - rf_run_data + 4
 rf_run_data:
 	.ascii	"| The graphics card's own utility, out of the card's ROM.\n"
-	.ascii	"| A task window, so the card's state can be read and its commands run\n"
-	.ascii	"| without leaving the desktop.\n"
-	.ascii	"TaskWindow \"GfxCardStatus\" -wimpslot 96k -name \"Graphics card\"\n"
+	.ascii	"WimpSlot -min 64k -max 64k\n"
+	.ascii	"Run <Obey$Dir>.!RunImage\n"
 rf_run_end:
+	.balign	4, 0
+
+rf_image:
+	.int	rf_end - rf_image
+	.int	LOAD_ABS
+	.int	0
+	.int	rf_image_end - rf_image_data
+	.int	ATTR_READ
+	.string	"Apps.!GfxCard.!RunImage"
+	.balign	4, 0
+	.int	rf_image_end - rf_image_data + 4
+rf_image_data:
+	.incbin	"gfxapp"
+rf_image_end:
 	.balign	4, 0
 
 rf_end:

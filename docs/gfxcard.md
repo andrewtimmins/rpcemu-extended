@@ -82,9 +82,29 @@ initialisation, so it appears as `Resources:$.Apps.!GfxCard` - the Apps folder o
 the icon bar. Nothing is installed on a disc, and it is there exactly when the
 card is.
 
-Double-clicking it opens a task window showing the card's state and leaving a `*`
-prompt, so `GfxCardOn`, `GfxCardOff` and `GfxCardStatus` are to hand without
-leaving the desktop.
+Double-clicking it puts an icon on the icon bar. Its menu carries the card's
+figures, refreshed as the menu opens, and the two commands worth having to hand:
+
+```
+GfxCard
+-------------------------------
+1920 x 1080, 32bpp
+Framestore 8100K of 15360K
+Frames displayed 18195
+-------------------------------
+Display on the card
+Display on VIDC20
+-------------------------------
+Quit
+```
+
+Frames displayed is the card actually scanning out, so it is the quickest way to
+tell whether the card is driving the screen or merely fitted.
+
+The application is `riscos-progs/RPCEmuGfx/app.s`, an absolute file assembled
+alongside the driver and carried in the same ROM. It is written in assembler like
+the rest of the guest code here; there is no RISC OS C toolchain in this build
+environment, and BASIC would have to be tokenised at every launch.
 
 ### Reading the card's state from a program
 

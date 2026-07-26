@@ -182,7 +182,7 @@ main(int argc, char **argv)
 		      "  help text starts with the command");
 		commands++;
 	}
-	check(commands == 3, "three commands: status, on and off");
+	check(commands == 4, "four commands: status, on, off and vars");
 
 	printf("\nthe driver and the card agree\n");
 	check(contains_word(GFXCARD_ID),

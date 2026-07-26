@@ -28,6 +28,10 @@ ROM_IMAGE = RPCEmuGfx,ffa
 MODULE_VERSION := $(shell awk '$$1 == "Module_MajorVersion" { print $$2 }' VersionNum)
 MODULE_DATE := $(shell awk '/^Module_Date/ { $$1 = ""; sub(/^[ \t]+/, ""); print }' VersionNum)
 
+# The desktop utility is a separate application, assembled and linked to run at
+# &8000 (an absolute file), then carried inside the module's ROM image.
+APP_IMAGE = gfxapp
+
 all: $(ROM_IMAGE)
 
 # The help string, which is what *Help and *Modules show. Generated so the
@@ -44,8 +48,13 @@ $(ROM_IMAGE): $(MODULE).elf
 %.elf: %.o
 	$(LD) --section-start .text=0 -o $@ $<
 
-$(MODULE).o: $(MODULE).s version.inc
+$(MODULE).o: $(MODULE).s version.inc $(APP_IMAGE)
 	$(AS) -o $@ $<
 
+$(APP_IMAGE): app.s
+	$(AS) -o app.o app.s
+	$(LD) --section-start .text=0x8000 -o app.elf app.o
+	$(OBJCOPY) -O binary app.elf $@
+
 clean:
-	rm -f *.o *.elf $(ROM_IMAGE) version.inc
+	rm -f *.o *.elf $(ROM_IMAGE) $(APP_IMAGE) version.inc

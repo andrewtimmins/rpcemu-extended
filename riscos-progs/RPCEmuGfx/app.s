@@ -188,8 +188,11 @@ make_icon:
 	str	r0, [r4, #20]
 	adrl	r0, icon_text
 	str	r0, [r4, #24]
-	mvn	r0, #0
-	str	r0, [r4, #28]		@ no validation string
+	@ The validation pointer must point at a string, even an empty one: this Wimp
+	@ walks it looking for a terminator, so -1 ("none") aborts inside
+	@ Wimp_CreateIcon rather than being understood.
+	adrl	r0, empty_string
+	str	r0, [r4, #28]
 	mov	r0, #TEXT_SIZE
 	str	r0, [r4, #32]
 
@@ -379,6 +382,10 @@ string_equal:
 @ Text and tables
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
+	@ An empty validation string, for indirected icons that need none.
+empty_string:
+	.byte	13, 0, 0, 0
+
 task_name:
 	.string	"GfxCard"
 	.balign	4, 0
@@ -460,7 +467,7 @@ menu_block:
 	.int	-1			@ no submenu
 	.int	MENU_ITEM_FLAGS
 	.int	item_text + \index * TEXT_SIZE
-	.int	-1			@ no validation string
+	.int	empty_string		@ never -1: the Wimp walks this
 	.int	TEXT_SIZE
 	.endm
 
