@@ -88,11 +88,15 @@ else
 	MODE=cross
 fi
 
-# Per-arch build knobs. The x86_64 slice is the recompiler and carries the
-# unit tests (they exercise the x86 JIT); the arm64 slice is the interpreter.
+# Per-arch build knobs. The x86_64 slice is the recompiler, so it is the one that
+# exercises the JIT differential tests; the arm64 slice is the interpreter.
 slice_binname() { [ "$1" = "x86_64" ] && echo rpcemu-recompiler || echo rpcemu-interpreter; }
 slice_dynarec() { [ "$1" = "x86_64" ] && echo ON || echo OFF; }
-slice_tests()   { [ "$1" = "x86_64" ] && echo ON || echo OFF; }
+# Tests are built for both slices. The JIT differential tests need a native
+# dynarec backend and CMake skips them by itself when RPCEMU_DYNAREC is off, so
+# on the arm64 (interpreter) slice this builds the architecture-neutral tests -
+# which is better than the slice having no test coverage at all.
+slice_tests()   { echo ON; }
 slice_deploy()  { [ "$1" = "x86_64" ] && echo 10.15 || echo 11.0; }
 
 build_slice() {
@@ -133,12 +137,25 @@ build_slice() {
 	echo "==> [$arch] building"
 	cmake --build "$build_dir" -j"$(njobs)"
 
-	# Run the JIT unit test where we can (native host of a matching arch).
+	# Run the unit tests where we can: a native build, of an architecture this
+	# machine can actually execute. Decide that up front so a real failure can be
+	# fatal. Previously the result was piped into an "or echo", which meant a
+	# genuine test failure was indistinguishable from "could not run here" and
+	# macOS could go green with tests failing.
 	if [ "$tests" = ON ] && [ "$MODE" = native ]; then
-		if [ "$(uname -m)" = "$arch" ] || [ "$arch" = x86_64 ]; then
+		local can_run=false
+
+		if [ "$(uname -m)" = "$arch" ]; then
+			can_run=true
+		elif [ "$arch" = x86_64 ] && arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+			can_run=true	# Apple Silicon host with Rosetta 2 installed
+		fi
+
+		if [ "$can_run" = true ]; then
 			echo "==> [$arch] ctest"
-			( cd "$build_dir" && ctest --output-on-failure ) || \
-				echo "!! [$arch] ctest failed or could not run (arch mismatch / no Rosetta)"
+			( cd "$build_dir" && ctest --output-on-failure )
+		else
+			echo "Note: [$arch] skipping tests - cannot execute $arch binaries on $(uname -m) (Rosetta 2 not available)."
 		fi
 	fi
 }

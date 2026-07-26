@@ -34,31 +34,44 @@ endif()
 # Networking tests for the Access+/ShareFS path, where large copies drive IP
 # fragment reassembly. These compile the code under test directly rather than
 # linking rpcemu_core, because each replaces a symbol the core also defines: the
-# SLiRP output callbacks in one case, sendto() in the other.
-if(NOT WIN32)
-    set(SLIRP_TEST_SOURCES "")
-    foreach(slirp_src
-            bootp cksum cutils if ip_icmp ip_input ip_output mbuf misc sbuf
-            slirp socket tcp_input tcp_output tcp_subr tcp_timer udp)
-        list(APPEND SLIRP_TEST_SOURCES
-             ${CMAKE_CURRENT_SOURCE_DIR}/../src/slirp/${slirp_src}.c)
-    endforeach()
-
-    # SLiRP fragment reassembly, covering the two backported upstream fixes
-    add_executable(test_ip_reass test_ip_reass.c ${SLIRP_TEST_SOURCES})
-    target_include_directories(test_ip_reass PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../src
-        ${CMAKE_CURRENT_SOURCE_DIR}/../src/slirp
-    )
-    target_compile_definitions(test_ip_reass PRIVATE CONFIG_SLIRP _DEFAULT_SOURCE)
-    add_test(NAME test_ip_reass COMMAND test_ip_reass)
-
-    # Relay-side reassembly of guest-originated Access+ datagrams
-    add_executable(test_relay_reasm test_relay_reasm.c)
-    target_include_directories(test_relay_reasm PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../src
-        ${CMAKE_CURRENT_SOURCE_DIR}/../src/slirp
-    )
-    target_compile_definitions(test_relay_reasm PRIVATE CONFIG_SLIRP _DEFAULT_SOURCE)
-    add_test(NAME test_relay_reasm COMMAND test_relay_reasm)
+# SLiRP output callbacks in one case, sendto() in the other. That also means the
+# Windows socket libraries have to be named here rather than inherited.
+#
+# These run on Windows too, deliberately: broadcast_relay.c has a whole separate
+# _WIN32 branch, and the Access+/ShareFS reports that prompted this code came
+# from Windows users, so it is the last platform that should go untested.
+# pthread is needed for MinGW's clock_gettime (used by slirp/misc.c), which
+# rpcemu_core otherwise supplies for the rest of the build.
+if(WIN32)
+    set(NET_TEST_LIBS ws2_32 iphlpapi pthread)
+else()
+    set(NET_TEST_LIBS "")
 endif()
+
+set(SLIRP_TEST_SOURCES "")
+foreach(slirp_src
+        bootp cksum cutils if ip_icmp ip_input ip_output mbuf misc sbuf
+        slirp socket tcp_input tcp_output tcp_subr tcp_timer udp)
+    list(APPEND SLIRP_TEST_SOURCES
+         ${CMAKE_CURRENT_SOURCE_DIR}/../src/slirp/${slirp_src}.c)
+endforeach()
+
+# SLiRP fragment reassembly, covering the two backported upstream fixes
+add_executable(test_ip_reass test_ip_reass.c ${SLIRP_TEST_SOURCES})
+target_include_directories(test_ip_reass PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/slirp
+)
+target_compile_definitions(test_ip_reass PRIVATE CONFIG_SLIRP _DEFAULT_SOURCE)
+target_link_libraries(test_ip_reass PRIVATE ${NET_TEST_LIBS})
+add_test(NAME test_ip_reass COMMAND test_ip_reass)
+
+# Relay-side reassembly of guest-originated Access+ datagrams
+add_executable(test_relay_reasm test_relay_reasm.c)
+target_include_directories(test_relay_reasm PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/slirp
+)
+target_compile_definitions(test_relay_reasm PRIVATE CONFIG_SLIRP _DEFAULT_SOURCE)
+target_link_libraries(test_relay_reasm PRIVATE ${NET_TEST_LIBS})
+add_test(NAME test_relay_reasm COMMAND test_relay_reasm)

@@ -55,11 +55,13 @@ njobs() { nproc 2>/dev/null || echo 4; }
 # Mode detection: native MSYS2/MINGW64 vs Linux->Windows cross.
 if [ "${MSYSTEM:-}" = "MINGW64" ]; then
 	MODE="native (MSYS2 $MSYSTEM)"
+	NATIVE=true
 	OBJDUMP=objdump
 	SEARCH_DIRS=(/mingw64/bin)
 	CMAKE_TC_ARGS=()
 else
 	MODE="cross ($TARGET)"
+	NATIVE=false
 	SYSROOT=/usr/${TARGET}
 	OBJDUMP=${TARGET}-objdump
 	GCCDIR=$(dirname "$(${TARGET}-gcc -print-libgcc-file-name)")
@@ -79,11 +81,23 @@ cmake -B "$BUILD_DIR" -G "$GEN" \
 	"${CMAKE_TC_ARGS[@]}" \
 	-DCMAKE_BUILD_TYPE=Release \
 	"$DYNAREC_ARG" \
-	-DRPCEMU_BUILD_TESTS=OFF \
+	-DRPCEMU_BUILD_TESTS=ON \
 	-DRPCEMU_ENABLE_GHOSTPDL=OFF
 cmake --build "$BUILD_DIR" -j"$(njobs)"
 
 [ -f "$BUILD_DIR/bin/$BIN" ] || { echo "error: $BIN not built"; exit 1; }
+
+# Run the test suite. Only possible on a native MSYS2 build, since a cross build
+# produces .exe files this host cannot execute. A failure is fatal: Windows spent
+# a long time as the one platform that built without ever being tested.
+if [ "$NATIVE" = true ]; then
+	if [ -f "$BUILD_DIR/CTestTestfile.cmake" ]; then
+		echo "==> ctest"
+		( cd "$BUILD_DIR" && ctest --output-on-failure )
+	fi
+else
+	echo "Note: skipping tests (cross-compiled binaries cannot run on this host)."
+fi
 
 echo "==> Staging $WIN_RELEASE"
 rm -rf "$WIN_RELEASE"

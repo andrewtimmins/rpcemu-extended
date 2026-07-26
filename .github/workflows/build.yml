@@ -31,6 +31,11 @@ jobs:
         run: |
           file releases/linux/amd64/rpcemu-recompiler | grep -i ELF
           ls -la releases/linux/amd64/
+          # Actually execute it. --help and --list-machines run before any
+          # wxWidgets/GTK initialisation, so they work with no display and catch
+          # a binary that cannot start at all (bad link, missing library).
+          ./releases/linux/amd64/rpcemu-recompiler --help
+          ./releases/linux/amd64/rpcemu-recompiler --list-machines
 
       - name: Upload Linux amd64 release
         uses: actions/upload-artifact@v4
@@ -65,6 +70,8 @@ jobs:
         run: |
           file releases/linux/arm64/rpcemu-interpreter | grep -i ELF
           ls -la releases/linux/arm64/
+          ./releases/linux/arm64/rpcemu-interpreter --help
+          ./releases/linux/arm64/rpcemu-interpreter --list-machines
 
       - name: Upload Linux arm64 release
         uses: actions/upload-artifact@v4
@@ -112,6 +119,13 @@ jobs:
           # Windows ships the recompiler (full-speed dynarec; the JIT now
           # supports the Windows x64 ABI).
           file releases/windows/amd64/rpcemu-recompiler.exe | grep -i 'PE32'
+          # Actually run it. This exercises the staged release as a user gets it,
+          # so it also catches a DLL that build-windows.sh failed to copy
+          # alongside the executable. --help and --list-machines return before
+          # any wxWidgets initialisation. Note the exit code is what is being
+          # checked; a GUI-subsystem binary has no console to print to.
+          ./releases/windows/amd64/rpcemu-recompiler.exe --help
+          ./releases/windows/amd64/rpcemu-recompiler.exe --list-machines
 
       - name: Upload Windows amd64 release
         uses: actions/upload-artifact@v4
@@ -220,6 +234,12 @@ jobs:
           test -f "$APP/Contents/Info.plist"
           codesign --verify --deep --strict "$APP"
           ls -la releases/macos/*.dmg
+          # Actually run the fused binary, so a lipo or signing step that
+          # produces something unloadable is caught here rather than by a user.
+          # Both slices are exercised: arm64 natively, x86_64 under Rosetta.
+          "$APP/Contents/MacOS/rpcemu" --help
+          arch -arm64 "$APP/Contents/MacOS/rpcemu" --help
+          arch -x86_64 "$APP/Contents/MacOS/rpcemu" --help
 
       - name: Upload macOS universal release
         uses: actions/upload-artifact@v4

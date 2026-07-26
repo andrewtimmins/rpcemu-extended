@@ -36,13 +36,21 @@
 #include <string.h>
 #include <stdint.h>
 #include <assert.h>
+
+/* Pull in the platform's socket declarations before sendto is redefined below,
+   so the real prototype is already in place and the macro only rewrites the
+   call inside the unit under test. */
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <sys/types.h>
 #include <sys/socket.h>
+#endif
 
-/* Capture what the relay sends. Declared with the platform's own prototype
-   types, since the macro below also renames the declaration in <sys/socket.h>. */
-static ssize_t test_sendto(int fd, const void *buf, size_t len, int flags,
-                           const struct sockaddr *dest, socklen_t addrlen);
+/* Capture what the relay sends, rather than putting it on the network */
+static int test_sendto(int fd, const void *buf, size_t len, int flags,
+                       const struct sockaddr *dest, size_t addrlen);
 #define sendto test_sendto
 
 #include "broadcast_relay.c"
@@ -55,9 +63,9 @@ static int sent_count;
 static uint16_t sent_port;
 static uint32_t sent_addr;
 
-static ssize_t
+static int
 test_sendto(int fd, const void *buf, size_t len, int flags,
-            const struct sockaddr *dest, socklen_t addrlen)
+            const struct sockaddr *dest, size_t addrlen)
 {
 	const struct sockaddr_in *d = (const struct sockaddr_in *) dest;
 
@@ -72,7 +80,7 @@ test_sendto(int fd, const void *buf, size_t len, int flags,
 	sent_addr = ntohl(d->sin_addr.s_addr);
 	sent_count++;
 
-	return (ssize_t) len;
+	return (int) len;
 }
 
 /* Stubs for the rest of the emulator */
