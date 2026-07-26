@@ -73,6 +73,11 @@
 uint8_t *gfxcard_fb = NULL;
 uint32_t gfxcard_fb_phys = 0;
 
+/* The framestore itself, kept for the life of the process (a real card's memory
+   survives a reset). gfxcard_fb points at this only while a card is fitted, so
+   that turning the card off in the configuration really does remove it. */
+static uint8_t *gfxcard_store;
+
 static struct {
 	podule		*podule;	/**< Backplane slot, NULL if no card */
 	int		slot;		/**< Slot number, -1 if none */
@@ -118,7 +123,7 @@ gfxcard_makechunk(uint8_t type, uint32_t filebase, uint32_t size)
 
 /**
  * Build the card's ROM: identity bytes, a description, and the GraphicsV driver
- * module if it can be found. Mirrors how the network card presents its own
+ * module if it can be found. Built once, since it never changes. Mirrors how the network card presents its own
  * driver, so RISC OS starts it at boot without anything being installed.
  */
 static void
@@ -450,17 +455,22 @@ gfxcard_init(void)
 {
 	unsigned i;
 
+	/* Called on every machine reset, from resetrpc() after the expansion card
+	   slots have been cleared. Any previous registration is gone by then, so
+	   the card takes a slot again from scratch - and if the configuration has
+	   turned it off since, it simply does not come back. */
+	gfx.podule = NULL;
+	gfx.slot = -1;
+	gfxcard_fb = NULL;
+	gfxcard_fb_phys = 0;
+
 	if (!config.gfxcard_enabled) {
 		return;
 	}
 
-	if (gfx.podule != NULL) {
-		return;			/* Already present; keep the framestore */
-	}
-
-	if (gfxcard_fb == NULL) {
-		gfxcard_fb = calloc(GFXCARD_FB_SIZE, 1);
-		if (gfxcard_fb == NULL) {
+	if (gfxcard_store == NULL) {
+		gfxcard_store = calloc(GFXCARD_FB_SIZE, 1);
+		if (gfxcard_store == NULL) {
 			rpclog("gfxcard: could not allocate a %u MB framestore; "
 			       "the card is not available\n",
 			       (unsigned) (GFXCARD_FB_SIZE / (1024 * 1024)));
@@ -468,7 +478,12 @@ gfxcard_init(void)
 		}
 	}
 
-	gfxcard_rom_init();
+	if (gfx.rom == NULL) {
+		gfxcard_rom_init();
+		if (gfx.rom == NULL) {
+			return;
+		}
+	}
 
 	gfx.podule = addpodule(gfxcard_writel, gfxcard_writew, gfxcard_writeb,
 	                       gfxcard_readl, gfxcard_readw, gfxcard_readb,
@@ -480,6 +495,7 @@ gfxcard_init(void)
 
 	gfx.slot = podule_slot_number(gfx.podule);
 	gfx.easi_phys = 0x08000000u + ((uint32_t) gfx.slot * 0x01000000u);
+	gfxcard_fb = gfxcard_store;
 	gfxcard_fb_phys = gfx.easi_phys + GFXCARD_FB_OFFSET;
 
 	/* A sane greyscale ramp, so an 8bpp mode shows something recognisable

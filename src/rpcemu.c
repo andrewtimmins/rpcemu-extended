@@ -135,6 +135,26 @@ rpcemu_get_host_display(unsigned *width, unsigned *height)
  *
  * @return non-zero if a mode is available to report
  */
+/**
+ * How much memory a display mode has to fit in, in bytes.
+ *
+ * The fitted VRAM, unless the graphics card is present: the card carries its own
+ * framestore and is the whole reason for it, so with the card fitted the modes
+ * worth offering are the ones it can hold rather than the ones VRAM can.
+ *
+ * @return Budget in bytes, or 0 if there is no figure to reason about (a machine
+ *         with no VRAM takes screen memory from DRAM instead)
+ */
+size_t
+rpcemu_display_memory(void)
+{
+	if (config.gfxcard_enabled) {
+		return GFXCARD_FB_SIZE;
+	}
+
+	return (size_t) config.vram_size * 1024 * 1024;
+}
+
 int
 rpcemu_guest_display_target(unsigned *width, unsigned *height, unsigned *hz,
                             uint32_t *generation)
@@ -157,8 +177,7 @@ rpcemu_guest_display_target(unsigned *width, unsigned *height, unsigned *hz,
 	}
 
 	return display_mode_fit(host_display_width, host_display_height, 4,
-	                               (size_t) config.vram_size * 1024 * 1024,
-	                               width, height);
+	                               rpcemu_display_memory(), width, height);
 }
 
 /** Array of details of models the emulator can emulate, must be kept in sync with
@@ -843,6 +862,11 @@ resetrpc(void)
 	cmos_reset();
         podules_reset();
         podulerom_reset(); // must be called after podules_reset()
+        /* The graphics card takes the next slot after the extension-ROM card,
+           and must be registered here rather than at start-up: podules_reset()
+           clears every slot, so a card registered before this point would be
+           overwritten by whatever claimed a slot afterwards. */
+        gfxcard_init();
         hostfs_reset();
         hostcmd_reset();
         debugcmd_reset();
@@ -998,7 +1022,6 @@ rpcemu_start(void)
         if (config.cdromtype == 2) /* ISO */
                 iso_open(config.isoname);
         initpodulerom();
-        gfxcard_init();
         podule_build_list();
 
 	/* Other components are initialised in the same way as the hardware

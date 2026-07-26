@@ -25,6 +25,7 @@
 #define _rpc_h
 
 #include <stdio.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -219,6 +220,7 @@ typedef struct {
 	int fit_to_window;	/**< Scale the display to fit a freely-resizable window, preserving aspect ratio */
 	int follow_host_display;	/**< Guest changes screen mode to match the host display when it changes */
 	int gfxcard_enabled;	/**< Present the graphics expansion card (its own framestore, modes beyond VRAM) */
+
 	char *network_capture;		///< Path to capture network traffic file, or NULL to disable
 	int vnc_enabled;	/**< Enable the built-in VNC server */
 	int vnc_port;		/**< Port for the VNC server (default 5900) */
@@ -295,9 +297,15 @@ extern const char *rpcemu_get_resourcedir(void);
 extern void rpcemu_set_host_display(unsigned width, unsigned height, unsigned hz);
 extern int rpcemu_get_host_display(unsigned *width, unsigned *height);
 
+/* How much display memory a mode has to fit in: the fitted VRAM, or the graphics
+   card's own framestore when that card is present. Both the synthesised EDID and
+   the run-time mode chooser ask here, so the two cannot disagree. */
+extern size_t rpcemu_display_memory(void);
+
 /* The mode the guest should adopt to follow the host, already bounded by the
-   host display and by VRAM, plus a generation that changes when the host
-   display does. Read by the guest support module through its SWI. */
+   host display and by the display memory available, plus a generation that
+   changes when the host display does. Read by the guest support module through
+   its SWI. */
 extern int rpcemu_guest_display_target(unsigned *width, unsigned *height,
                                        unsigned *hz, uint32_t *generation);
 
