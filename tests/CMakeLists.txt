@@ -33,7 +33,8 @@ endif()
 
 # Networking tests for the Access+/ShareFS path, where large copies drive IP
 # fragment reassembly. These compile the code under test directly rather than
-# linking rpcemu_core, because each replaces a symbol the core also defines.
+# linking rpcemu_core, because each replaces a symbol the core also defines: the
+# SLiRP output callbacks in one case, sendto() in the other.
 if(NOT WIN32)
     set(SLIRP_TEST_SOURCES "")
     foreach(slirp_src
@@ -51,4 +52,13 @@ if(NOT WIN32)
     )
     target_compile_definitions(test_ip_reass PRIVATE CONFIG_SLIRP _DEFAULT_SOURCE)
     add_test(NAME test_ip_reass COMMAND test_ip_reass)
+
+    # Relay-side reassembly of guest-originated Access+ datagrams
+    add_executable(test_relay_reasm test_relay_reasm.c)
+    target_include_directories(test_relay_reasm PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/slirp
+    )
+    target_compile_definitions(test_relay_reasm PRIVATE CONFIG_SLIRP _DEFAULT_SOURCE)
+    add_test(NAME test_relay_reasm COMMAND test_relay_reasm)
 endif()

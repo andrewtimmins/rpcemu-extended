@@ -153,6 +153,9 @@ static relay_state_t relay = {
     .enabled = 0
 };
 
+/* Outgoing fragment reassembly, defined further down with the transmit path */
+static void reasm_reset(void);
+
 /**
  * Find a socket index for a given port.
  * Returns -1 if port not in our list.
@@ -399,6 +402,8 @@ broadcast_relay_init(void)
     relay.last_rate_reset = time(NULL);
     relay.guest_ip = 0;  /* Will be learned from first outgoing packet */
 
+    reasm_reset();
+
     relay.enabled = 1;
 
     return 0;
@@ -417,6 +422,7 @@ broadcast_relay_close(void)
             relay.sockets[i] = RELAY_INVALID_SOCKET;
         }
     }
+    reasm_reset();
     relay.enabled = 0;
 }
 
@@ -822,6 +828,250 @@ broadcast_relay_poll(void)
     }
 }
 
+/*
+ * Reassembly of guest-originated fragmented Access+ datagrams.
+ *
+ * RISC OS fragments ShareFS bulk writes that exceed the Ethernet MTU. Only the
+ * first fragment carries a UDP header, so the remaining fragments cannot be
+ * matched to an Access+ port on their own. Handing them to SLiRP instead is not
+ * good enough: SLiRP would reassemble the datagram and re-emit it from its own
+ * NAT socket under a masqueraded source port, splitting the ShareFS
+ * conversation across two ports and stalling the transfer. So collect the
+ * fragments here and send the completed datagram from the correct port.
+ *
+ * Fragments are expected in ascending offset order, which is what the guest
+ * emits. Anything else (a gap, an overlap, a datagram whose first fragment was
+ * not ours) is declined and left to SLiRP.
+ */
+#define REASM_SLOTS     4
+#define REASM_MAX_LEN   65535   /* Largest IP payload a datagram can carry */
+#define REASM_TIMEOUT   8       /* Seconds to wait for the rest of a datagram */
+
+typedef struct {
+    int      in_use;
+    uint32_t src_ip;        /* Datagram identity, host byte order */
+    uint32_t dst_ip;
+    uint16_t ip_id;
+    uint16_t dst_port;      /* Learned from the first fragment */
+    int      sock_idx;
+    uint32_t next_offset;   /* Offset the next fragment must start at */
+    uint32_t total_len;     /* IP payload length, 0 until the last fragment */
+    time_t   started;
+    uint8_t  data[REASM_MAX_LEN];
+} reasm_slot_t;
+
+static reasm_slot_t reasm[REASM_SLOTS];
+
+static void
+reasm_reset(void)
+{
+    int i;
+
+    for (i = 0; i < REASM_SLOTS; i++) {
+        reasm[i].in_use = 0;
+    }
+}
+
+static reasm_slot_t *
+reasm_lookup(uint32_t src_ip, uint32_t dst_ip, uint16_t ip_id)
+{
+    int i;
+
+    for (i = 0; i < REASM_SLOTS; i++) {
+        if (reasm[i].in_use && reasm[i].src_ip == src_ip &&
+            reasm[i].dst_ip == dst_ip && reasm[i].ip_id == ip_id)
+        {
+            return &reasm[i];
+        }
+    }
+    return NULL;
+}
+
+/**
+ * Drop any datagram that has been waiting too long for its remaining
+ * fragments, so a lost fragment cannot tie up a slot indefinitely.
+ */
+static void
+reasm_expire(time_t now)
+{
+    int i;
+
+    for (i = 0; i < REASM_SLOTS; i++) {
+        if (reasm[i].in_use && now - reasm[i].started > REASM_TIMEOUT) {
+            reasm[i].in_use = 0;
+            relay.dropped++;
+        }
+    }
+}
+
+/**
+ * Claim a slot for a datagram, restarting it if it is already known (which is
+ * what a retransmission looks like). Falls back to displacing the oldest
+ * incomplete datagram when every slot is busy.
+ */
+static reasm_slot_t *
+reasm_claim(uint32_t src_ip, uint32_t dst_ip, uint16_t ip_id, time_t now)
+{
+    reasm_slot_t *slot = reasm_lookup(src_ip, dst_ip, ip_id);
+    int i;
+
+    if (slot == NULL) {
+        for (i = 0; i < REASM_SLOTS; i++) {
+            if (!reasm[i].in_use) {
+                slot = &reasm[i];
+                break;
+            }
+        }
+    }
+    if (slot == NULL) {
+        slot = &reasm[0];
+        for (i = 1; i < REASM_SLOTS; i++) {
+            if (reasm[i].started < slot->started) {
+                slot = &reasm[i];
+            }
+        }
+        relay.dropped++; /* The datagram being displaced never completed */
+    }
+
+    slot->in_use = 1;
+    slot->src_ip = src_ip;
+    slot->dst_ip = dst_ip;
+    slot->ip_id = ip_id;
+    slot->next_offset = 0;
+    slot->total_len = 0;
+    slot->started = now;
+
+    return slot;
+}
+
+/**
+ * Absorb one fragment of a guest-originated datagram, sending the datagram on
+ * once the last fragment has arrived.
+ *
+ * @param ip_hdr      Start of the IP header
+ * @param ip_hdr_len  Length of the IP header in bytes
+ * @param avail       Bytes of IP payload actually present in the frame
+ * @param src_ip      Source address, host byte order
+ * @param dst_ip      Destination address, host byte order
+ * @param ip_id       IP identification field
+ * @param frag_offset Offset of this fragment within the IP payload, in bytes
+ * @param more_frags  Non-zero if the More Fragments flag is set
+ * @param now         Current time
+ *
+ * @return 1 if the relay has taken ownership of this fragment, else 0
+ */
+static int
+relay_tx_fragment(const uint8_t *ip_hdr, int ip_hdr_len, int avail,
+                  uint32_t src_ip, uint32_t dst_ip, uint16_t ip_id,
+                  uint32_t frag_offset, int more_frags, time_t now)
+{
+    reasm_slot_t *slot;
+    const uint8_t *frag;
+    struct sockaddr_in dest;
+    int frag_len;
+    int total_ip_len;
+    int sent;
+
+    /* Prefer the length the frame actually carries over the header's claim. */
+    total_ip_len = (ip_hdr[2] << 8) | ip_hdr[3];
+    frag_len = total_ip_len - ip_hdr_len;
+    if (frag_len <= 0 || frag_len > avail) {
+        frag_len = avail;
+    }
+    if (frag_len <= 0) {
+        return 0;
+    }
+    frag = ip_hdr + ip_hdr_len;
+
+    if (frag_offset == 0) {
+        uint16_t src_port, dst_port;
+        int sock_idx;
+
+        /* Only the first fragment has the ports we match Access+ traffic on */
+        if (frag_len < 8) {
+            return 0;
+        }
+        src_port = (frag[0] << 8) | frag[1];
+        dst_port = (frag[2] << 8) | frag[3];
+
+        sock_idx = find_socket_for_port(dst_port);
+        if (sock_idx < 0) {
+            sock_idx = find_socket_for_port(src_port);
+        }
+        if (sock_idx < 0 || relay.sockets[sock_idx] == RELAY_INVALID_SOCKET) {
+            return 0; /* Not Access+ traffic */
+        }
+
+        slot = reasm_claim(src_ip, dst_ip, ip_id, now);
+        slot->dst_port = dst_port;
+        slot->sock_idx = sock_idx;
+    } else {
+        slot = reasm_lookup(src_ip, dst_ip, ip_id);
+        if (slot == NULL) {
+            return 0; /* First fragment was not ours, or was missed */
+        }
+        if (frag_offset != slot->next_offset) {
+            /* Out of order or overlapping - let SLiRP deal with the datagram */
+            slot->in_use = 0;
+            relay.dropped++;
+            return 0;
+        }
+    }
+
+    if (frag_offset + (uint32_t) frag_len > REASM_MAX_LEN) {
+        slot->in_use = 0;
+        relay.dropped++;
+        return 1; /* Ours, but larger than a datagram may be */
+    }
+
+    memcpy(slot->data + frag_offset, frag, (size_t) frag_len);
+    slot->next_offset = frag_offset + (uint32_t) frag_len;
+    if (!more_frags) {
+        slot->total_len = slot->next_offset;
+    }
+
+    if (slot->total_len == 0 || slot->next_offset < slot->total_len) {
+        return 1; /* Still waiting for the rest */
+    }
+
+    /* Complete. The IP payload starts with the UDP header; the relay's socket
+       is already bound to the right port, so only the UDP payload is sent. */
+    slot->in_use = 0;
+
+    if (slot->total_len < 8) {
+        relay.dropped++;
+        return 1;
+    }
+
+    /* Rate limiting is applied per datagram rather than per fragment, so a
+       fragmented transfer is not charged several times over. */
+    if (now != relay.last_rate_reset) {
+        relay.packets_this_second = 0;
+        relay.last_rate_reset = now;
+    }
+    if (relay.packets_this_second >= MAX_PACKETS_PER_SECOND) {
+        relay.dropped++;
+        return 1;
+    }
+    relay.packets_this_second++;
+
+    memset(&dest, 0, sizeof(dest));
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(slot->dst_port);
+    dest.sin_addr.s_addr = htonl(slot->dst_ip);
+
+    sent = sendto(relay.sockets[slot->sock_idx], (const char *) (slot->data + 8),
+                  slot->total_len - 8, 0,
+                  (struct sockaddr *) &dest, sizeof(dest));
+    if (sent < 0) {
+        relay.dropped++;
+    } else {
+        relay.tx_count++;
+    }
+
+    return 1;
+}
+
 /**
  * Check if an outgoing packet is Access+ traffic we should relay.
  * Handles both broadcasts (discovery) and unicast (file operations).
@@ -836,9 +1086,15 @@ broadcast_relay_tx(const uint8_t *pkt, int pkt_len)
     uint16_t src_port;
     uint16_t dst_port;
     uint32_t dst_ip;
+    uint32_t src_ip;
+    uint16_t ip_id;
+    uint16_t frag_field;
+    uint32_t frag_offset;
+    int more_frags;
     int ip_hdr_len;
     int udp_len;
     int payload_len;
+    int avail;
     const uint8_t *payload;
     struct sockaddr_in dest;
     int sent;
@@ -871,14 +1127,18 @@ broadcast_relay_tx(const uint8_t *pkt, int pkt_len)
         return 0;
     }
 
+    /* The header length is taken from the frame, so check it is sane and that
+       the frame really holds a header of that size before reading past it. */
+    if (ip_hdr_len < IP_HDR_LEN || pkt_len < ETH_HLEN + ip_hdr_len) {
+        return 0;
+    }
+
     /* Get source IP (guest's IP) and learn it for responses */
-    {
-        uint32_t src_ip = ((uint32_t)ip_hdr[12] << 24) | ((uint32_t)ip_hdr[13] << 16) |
-                          ((uint32_t)ip_hdr[14] << 8) | (uint32_t)ip_hdr[15];
-        /* Only learn if it's in SLiRP range and not broadcast */
-        if ((src_ip & SLIRP_MASK) == SLIRP_NET && src_ip != SLIRP_BROADCAST) {
-            relay.guest_ip = src_ip;
-        }
+    src_ip = ((uint32_t)ip_hdr[12] << 24) | ((uint32_t)ip_hdr[13] << 16) |
+             ((uint32_t)ip_hdr[14] << 8) | (uint32_t)ip_hdr[15];
+    /* Only learn if it's in SLiRP range and not broadcast */
+    if ((src_ip & SLIRP_MASK) == SLIRP_NET && src_ip != SLIRP_BROADCAST) {
+        relay.guest_ip = src_ip;
     }
 
     /* Get destination IP */
@@ -893,6 +1153,30 @@ broadcast_relay_tx(const uint8_t *pkt, int pkt_len)
     /* Check if this is unicast to an external (non-SLiRP) IP */
     is_external_unicast = !is_broadcast &&
                           ((dst_ip & SLIRP_MASK) != SLIRP_NET);
+
+    now = time(NULL);
+    reasm_expire(now);
+
+    /* A fragmented datagram has no UDP header to match on except in its first
+       fragment, so it is collected separately. Only unicast to an external peer
+       is taken: Access+ discovery broadcasts are small enough not to fragment,
+       and SLiRP still needs to see broadcasts for local delivery. */
+    ip_id = (uint16_t) ((ip_hdr[4] << 8) | ip_hdr[5]);
+    frag_field = (uint16_t) ((ip_hdr[6] << 8) | ip_hdr[7]);
+    frag_offset = (uint32_t) (frag_field & 0x1fff) * 8;
+    more_frags = (frag_field & 0x2000) != 0;
+
+    if ((more_frags || frag_offset != 0) && is_external_unicast) {
+        return relay_tx_fragment(ip_hdr, ip_hdr_len,
+                                 pkt_len - ETH_HLEN - ip_hdr_len,
+                                 src_ip, dst_ip, ip_id,
+                                 frag_offset, more_frags, now);
+    }
+
+    /* Unfragmented from here on, so a UDP header must be present */
+    if (pkt_len < ETH_HLEN + ip_hdr_len + 8) {
+        return 0;
+    }
 
     /* Parse UDP header */
     udp_hdr = ip_hdr + ip_hdr_len;
@@ -923,7 +1207,6 @@ broadcast_relay_tx(const uint8_t *pkt, int pkt_len)
     }
 
     /* Rate limiting */
-    now = time(NULL);
     if (now != relay.last_rate_reset) {
         relay.packets_this_second = 0;
         relay.last_rate_reset = now;
@@ -934,12 +1217,18 @@ broadcast_relay_tx(const uint8_t *pkt, int pkt_len)
     }
     relay.packets_this_second++;
 
-    /* Extract UDP payload */
+    /* Extract UDP payload. The length field is only the guest's claim, so clamp
+       it to what the frame actually holds rather than reading past the end of
+       it and sending unrelated transmit-buffer bytes onto the network. */
+    avail = pkt_len - ETH_HLEN - ip_hdr_len - 8;
     udp_len = (udp_hdr[4] << 8) | udp_hdr[5];
     payload_len = udp_len - 8;
     payload = udp_hdr + 8;
 
-    if (payload_len <= 0 || payload_len > 1500) {
+    if (payload_len > avail) {
+        payload_len = avail;
+    }
+    if (payload_len <= 0) {
         return 0;
     }
 
