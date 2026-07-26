@@ -162,6 +162,217 @@ find_unique_sequence(size_t words, const uint32_t *seq, size_t n, size_t *out)
 }
 
 /* -------------------------------------------------------------------------
+ * Video memory the mode list is vetted against
+ * ------------------------------------------------------------------------- */
+
+/* RISC OS decides which screen modes exist by measuring each one against the
+   video memory it believes the machine has, and that figure comes from the
+   fitted VRAM. A GraphicsV driver with a framestore of its own is invisible to
+   it: with 2MB of VRAM the graphics card is held to 2MB of screen however much
+   it carries, so the deeper modes it exists to provide are never offered.
+
+   The figure is produced by the kernel's GetBandwidthAndSize macro, which reads
+   VideoSizeFlags (the VRAM size) out of low memory and rounds it down to a page.
+   Its own source carries the note "Sort out GetBandwidthAndSize", and the sorting
+   out is already sitting in the workspace next door: TotalScreenSize, which the
+   kernel maintains as the screen memory of whichever display driver is current -
+   the screen dynamic area under VIDC20, and whatever GraphicsV_FramestoreAddress
+   reported under a card. The kernel's own OS_CheckModeValid uses it for exactly
+   this purpose.
+
+   So this patch redirects the load. It leaves VIDC20 behaving as before (there
+   TotalScreenSize is the VRAM), and lets the card offer what it can actually
+   hold. Applied only when the card is fitted, so a machine without one is
+   untouched.
+
+     mov  r5, #0                 ->  mov  r5, #<workspace base>
+     ldr  r5, [r5, #VideoSize..] ->  ldr  r5, [r5, #TotalScreenSize]
+     mov  r4, #100*1024*1024         (bandwidth, left alone: ScreenModes
+     mov  r5, r5, lsr #12             ignores it)
+     mov  r5, r5, lsl #12
+
+   Both replacements are single words in the slots already there, so nothing
+   moves. The offsets are read out of the ROM rather than assumed, and the patch
+   is skipped unless every part of the pattern is found. */
+
+#define GBS_MOV_R5_0		0xe3a05000u	/* mov r5, #0 (ZeroPage) */
+#define GBS_LDR_R5_MASK		0xfffff000u	/* ldr r5, [r5, #imm12] */
+#define GBS_LDR_R5_MATCH	0xe5955000u
+#define GBS_MOV_R4_100MB	0xe3a04519u	/* mov r4, #100*1024*1024 */
+#define GBS_LSR_R5_12		0xe1a05625u	/* mov r5, r5, lsr #12 */
+#define GBS_LSL_R5_12		0xe1a05605u	/* mov r5, r5, lsl #12 */
+
+/* The anchor that tells us where TotalScreenSize lives: OS_CheckModeValid's own
+   memory check, which is unmistakable.
+
+     ldr   r9, [ip, #GraphicsVFeatures]
+     tst   r9, #GVDisplayFeature_VariableFramestore
+     mvnne r9, #0
+     ldreq r9, [ip, #TotalScreenSize]
+     cmp   r9, fp, lsl sl                     */
+#define CMV_TST_R9_20		0xe3190020u
+#define CMV_MVNNE_R9_0		0x13e09000u
+#define CMV_LDREQ_R9_MASK	0xfffff000u
+#define CMV_LDREQ_R9_MATCH	0x059c9000u
+#define CMV_CMP_R9_FP_LSL_SL	0xe1590a1bu
+#define CMV_MOV_IP_MASK		0xfffff000u	/* mov ip, #imm (the VDU workspace) */
+#define CMV_MOV_IP_MATCH	0xe3a0c000u
+
+static uint32_t
+rotr32(uint32_t v, unsigned n)
+{
+	n &= 31;
+
+	return n ? ((v >> n) | (v << (32 - n))) : v;
+}
+
+static uint32_t
+rotl32(uint32_t v, unsigned n)
+{
+	n &= 31;
+
+	return n ? ((v << n) | (v >> (32 - n))) : v;
+}
+
+/** Decode an ARM data-processing immediate: an 8-bit value rotated right. */
+static uint32_t
+arm_immediate(uint32_t instr)
+{
+	return rotr32(instr & 0xffu, ((instr >> 8) & 0xfu) * 2);
+}
+
+/**
+ * Encode "mov Rd, #value", or 0 if the value is not one an ARM immediate can
+ * express.
+ */
+static uint32_t
+arm_encode_mov(unsigned rd, uint32_t value)
+{
+	unsigned rot;
+
+	for (rot = 0; rot < 16; rot++) {
+		const uint32_t imm = rotl32(value, rot * 2);
+
+		if (imm <= 0xffu) {
+			return 0xe3a00000u | (rd << 12) | (rot << 8) | imm;
+		}
+	}
+
+	return 0;
+}
+
+/**
+ * Find where the kernel keeps TotalScreenSize, by reading it out of the one
+ * place that already uses it.
+ *
+ * @param words     Size of the loaded ROM image in words
+ * @param base      Filled in with the VDU workspace address
+ * @param offset    Filled in with TotalScreenSize's offset within it
+ * @return non-zero if both were found
+ */
+static int
+rom_find_total_screen_size(size_t words, uint32_t *base, uint32_t *offset)
+{
+	size_t i;
+
+	for (i = 0; i + 3 < words; i++) {
+		size_t back;
+
+		if (rom[i] != CMV_TST_R9_20 || rom[i + 1] != CMV_MVNNE_R9_0) {
+			continue;
+		}
+		if ((rom[i + 2] & CMV_LDREQ_R9_MASK) != CMV_LDREQ_R9_MATCH) {
+			continue;
+		}
+		if (rom[i + 3] != CMV_CMP_R9_FP_LSL_SL) {
+			continue;
+		}
+
+		/* The workspace pointer is set up earlier in the same routine. */
+		for (back = 1; back <= 128 && back <= i; back++) {
+			const uint32_t instr = rom[i - back];
+
+			if ((instr & CMV_MOV_IP_MASK) != CMV_MOV_IP_MATCH) {
+				continue;
+			}
+			*base = arm_immediate(instr);
+			*offset = rom[i + 2] & 0xfffu;
+
+			/* Sanity: a page-aligned low-memory workspace, and an offset
+			   the replacement instructions can encode. */
+			if (*base == 0 || (*base & 0xfffu) != 0 || *base > 0x10000u) {
+				return 0;
+			}
+			return 1;
+		}
+		return 0;
+	}
+	return 0;
+}
+
+/**
+ * Point the mode list's video memory limit at the current display driver's
+ * screen memory rather than at the fitted VRAM.
+ *
+ * @param rom_bytes Number of bytes actually loaded into the ROM image
+ */
+static void
+rom_patch_video_memory_limit(size_t rom_bytes)
+{
+	const size_t words = rom_bytes / 4;
+	uint32_t ws_base = 0, tss_offset = 0;
+	uint32_t mov_ws;
+	unsigned patched = 0;
+	size_t i;
+
+	if (!config.gfxcard_enabled) {
+		return;
+	}
+
+	if (!rom_find_total_screen_size(words, &ws_base, &tss_offset)) {
+		rpclog("rom_patch: could not locate TotalScreenSize - the graphics card "
+		       "will be limited to modes the fitted VRAM could hold\n");
+		return;
+	}
+
+	mov_ws = arm_encode_mov(5, ws_base);
+	if (mov_ws == 0) {
+		rpclog("rom_patch: VDU workspace at 0x%x is not an encodable immediate - "
+		       "leaving the mode list's memory limit alone\n", (unsigned) ws_base);
+		return;
+	}
+
+	for (i = 0; i + 4 < words; i++) {
+		if (rom[i] != GBS_MOV_R5_0) {
+			continue;
+		}
+		if ((rom[i + 1] & GBS_LDR_R5_MASK) != GBS_LDR_R5_MATCH) {
+			continue;
+		}
+		if (rom[i + 2] != GBS_MOV_R4_100MB ||
+		    rom[i + 3] != GBS_LSR_R5_12 || rom[i + 4] != GBS_LSL_R5_12)
+		{
+			continue;
+		}
+
+		rom[i] = mov_ws;			/* mov r5, #<workspace> */
+		rom[i + 1] = GBS_LDR_R5_MATCH | tss_offset;	/* ldr r5, [r5, #TSS] */
+		patched++;
+	}
+
+	if (patched == 0) {
+		rpclog("rom_patch: video memory limit pattern not found - the graphics "
+		       "card will be limited to modes the fitted VRAM could hold\n");
+		return;
+	}
+
+	rpclog("rom_patch: applied: mode list vetted against the current display "
+	       "driver's memory (TotalScreenSize at 0x%x + 0x%x), %u site%s\n",
+	       (unsigned) ws_base, (unsigned) tss_offset, patched,
+	       patched == 1 ? "" : "s");
+}
+
+/* -------------------------------------------------------------------------
  * VRAM cap (fixed-offset table)
  * ------------------------------------------------------------------------- */
 
@@ -571,6 +782,7 @@ rom_patch_apply(size_t rom_bytes)
 
 	/* Advertise a capable monitor to MonitorType Auto via a populated EDID. */
 	rom_patch_monitor_edid(rom_bytes);
+	rom_patch_video_memory_limit(rom_bytes);
 
 	/* Let the desktop "Shutdown" quit the application cleanly. */
 	rom_patch_software_poweroff(rom_bytes);

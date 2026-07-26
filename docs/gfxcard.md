@@ -10,12 +10,8 @@ Risc PC can show are limited by how much VRAM is fitted, and this card is not.
 | 8MB of VRAM | 1920 x 1080 |
 | The card's own 15MB | 2560 x 1440 |
 
-The card holds that much. What RISC OS will currently *offer* is another matter:
-it vets every mode against the video memory it thinks the machine has, which is
-the fitted VRAM, so today the card displays any width and height the monitor
-offers at 256 colours but not the deeper modes its framestore could hold. See
-[Current limit](#current-limit-the-os-still-counts-vram) below - that ceiling is
-in the OS, not the card.
+Verified on a Kinetic with 2MB of VRAM: 1920 x 1080 in 16M colours (8.3MB of
+screen) is refused by VIDC20 and displayed by the card.
 
 The card is off by default. Turn it on in *Settings → Machine → Graphics card*,
 and the machine gains an expansion card in the next free EASI slot. RISC OS keeps
@@ -116,16 +112,27 @@ The card therefore serves the same EDID block the emulator presents to the ROM
 available, an index, and a data register that steps the index on. Switching to
 the card leaves the machine believing in exactly the monitor it booted with.
 
-### Current limit: the OS still counts VRAM
+### Why one ROM word is patched
 
-One ceiling is not the card's to lift. RISC OS vets each mode's screen size
-against the video memory it believes the machine has, which comes from the fitted
-VRAM and takes no account of a card-hosted framestore (`GetBandwidthAndSize` in
-the kernel, whose figure reaches ScreenModes' `mode_valid` as `maxdatasize`).
-So on a machine with 2MB of VRAM the card will display any mode up to 2MB - the
-full width and height range, at 256 colours - but not the deeper modes its 15MB
-could hold. Raising that needs the emulator to report more video memory to the
-guest, which is a separate decision because it affects VIDC20 too.
+RISC OS decides which modes exist by measuring each one against the video memory
+it believes the machine has, and that figure is the fitted VRAM: a driver with a
+framestore of its own is invisible to it. With 2MB of VRAM the card would be held
+to 2MB of screen however much it carries.
+
+The figure comes from the kernel's `GetBandwidthAndSize`, which reads the VRAM
+size out of low memory. The sorting-out its own source asks for ("Sort out
+GetBandwidthAndSize") is sitting in the workspace next door: `TotalScreenSize`,
+which the kernel maintains as the screen memory of whichever display driver is
+current - the screen dynamic area under VIDC20, and whatever
+`GraphicsV_FramestoreAddress` reported under a card. The kernel's own
+`OS_CheckModeValid` already uses it for exactly this comparison.
+
+So `rom_patch.c` redirects that load, in the two places the macro appears. It is
+two words per site, in the slots already there, and it changes nothing for VIDC20
+(where `TotalScreenSize` is the VRAM). It is applied only when the card is fitted,
+and only when every part of the pattern is found: the offsets are read out of the
+ROM rather than assumed, so an image this does not recognise is left alone and the
+card simply keeps the VRAM-sized ceiling.
 
 Two GraphicsV features are deliberately not claimed, so RISC OS does them in
 software as it would on any card without them: the hardware pointer, and
