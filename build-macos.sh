@@ -158,6 +158,139 @@ build_slice() {
 			echo "Note: [$arch] skipping tests - cannot execute $arch binaries on $(uname -m) (Rosetta 2 not available)."
 		fi
 	fi
+
+	# Stage this slice and its dependencies now, while we are on the machine that
+	# has this architecture's libraries installed. The CI job that fuses the
+	# slices installs no dependencies of its own, so it relies on this.
+	stage_slice "$arch"
+}
+
+# Discovered before any staging: stage_slice() uses these to walk and rewrite
+# dependencies. Absent on an osxcross host, where the app cannot be run anyway,
+# so bundling is skipped there rather than treated as fatal.
+OTOOL=$(command -v otool || command -v x86_64-apple-darwin*-otool || true)
+INSTALL_NAME_TOOL=$(command -v install_name_tool || \
+                    command -v x86_64-apple-darwin*-install_name_tool || true)
+
+#
+# Dependency bundling.
+#
+# The slices link against Homebrew, so the emulator records absolute paths such
+# as /opt/homebrew/opt/sdl2-compat/lib/libSDL2-2.0.0.dylib. Those exist only on a
+# machine with the same formulae installed, so an app built this way aborts on
+# launch anywhere else:
+#
+#   dyld: Library not loaded: /opt/homebrew/opt/sdl2-compat/lib/libSDL2-2.0.0.dylib
+#
+# Copy each non-system dependency into Contents/Frameworks and repoint every
+# reference at it, which is the macOS counterpart of the DLL bundling that
+# build-windows.sh does.
+#
+# The complication is that this is a universal binary fused from two slices built
+# against different prefixes (/usr/local for x86_64, /opt/homebrew for arm64), so
+# there is no single old path to rewrite and no single-architecture library to
+# copy. Each slice is therefore staged and rewritten while it is still thin, with
+# its own prefix, and the collected libraries are made universal with lipo
+# afterwards. Signing has to follow all of this, since editing a load command
+# invalidates a signature.
+#
+# Note: no associative arrays or other bash 4 features here, because macOS still
+# ships bash 3.2.
+
+# Recursively record a thin object's bundle-able dependencies into a map file
+# holding "basename<tab>path" lines.
+collect_deps() {
+	local obj="$1" map="$2" dep base
+
+	while read -r dep; do
+		case "$dep" in
+			/usr/lib/*|/System/*) continue ;;	# provided by the OS
+			/*) : ;;
+			@executable_path/*) continue ;;		# already pointed into the bundle
+			*)
+				# Resolved through a runtime search path, so there is no file
+				# here to copy. Flagged rather than passed over silently: it
+				# would otherwise be a dependency that still escapes the bundle.
+				echo "   ! ${obj##*/} references $dep via a runtime search path; not bundled"
+				continue ;;
+		esac
+
+		base=${dep##*/}
+		if awk -F'\t' -v b="$base" '$1 == b { found = 1 } END { exit !found }' "$map"; then
+			continue				# already collected
+		fi
+		if [ ! -f "$dep" ]; then
+			echo "   ! dependency not found, leaving reference alone: $dep"
+			continue
+		fi
+
+		printf '%s\t%s\n' "$base" "$dep" >> "$map"
+		collect_deps "$dep" "$map"
+	done < <("$OTOOL" -L "$obj" | tail -n +2 | awk '{ print $1 }')
+}
+
+# Repoint every bundle-able dependency of a thin object at Contents/Frameworks.
+# Driven by what the object actually records, so a reference through a Cellar
+# path is rewritten as readily as one through an opt path.
+rewrite_deps() {
+	local obj="$1" libdir="$2" dep base
+
+	"$OTOOL" -L "$obj" | tail -n +2 | awk '{ print $1 }' | while read -r dep; do
+		case "$dep" in
+			/usr/lib/*|/System/*) continue ;;
+			/*) : ;;
+			*) continue ;;
+		esac
+		base=${dep##*/}
+		if [ -f "$libdir/$base" ]; then
+			"$INSTALL_NAME_TOOL" -change "$dep" "@executable_path/../Frameworks/$base" "$obj"
+		fi
+	done
+}
+
+# Stage one slice's binaries and their dependencies, rewritten and ready to fuse.
+# Leaves build-mac-<arch>/appstage/{bin,libs} populated.
+stage_slice() {
+	local arch="$1"
+	local build_dir="build-mac-$arch"
+	local stage="$build_dir/appstage"
+	local map="$build_dir/appstage-deps.map"
+	local src base obj
+
+	rm -rf "$stage"
+	mkdir -p "$stage/bin" "$stage/libs"
+	: > "$map"
+
+	# The emulator is renamed to "rpcemu" in the bundle regardless of which
+	# variant this slice built.
+	cp -f "$build_dir/bin/$(slice_binname "$arch")" "$stage/bin/rpcemu"
+	if [ -f "$build_dir/bin/rpcemu-run" ]; then
+		cp -f "$build_dir/bin/rpcemu-run" "$stage/bin/rpcemu-run"
+	fi
+	chmod u+w "$stage/bin/"*
+
+	if [ -z "$OTOOL" ] || [ -z "$INSTALL_NAME_TOOL" ]; then
+		echo "Note: [$arch] otool/install_name_tool unavailable, skipping dependency bundling."
+		return
+	fi
+
+	for obj in "$stage/bin/"*; do
+		collect_deps "$obj" "$map"
+	done
+
+	while IFS=$'\t' read -r base src; do
+		[ -n "$base" ] || continue
+		cp -f "$src" "$stage/libs/$base"
+		chmod u+w "$stage/libs/$base"
+		"$INSTALL_NAME_TOOL" -id "@executable_path/../Frameworks/$base" "$stage/libs/$base"
+	done < "$map"
+
+	for obj in "$stage/bin/"* "$stage/libs/"*; do
+		[ -f "$obj" ] || continue
+		rewrite_deps "$obj" "$stage/libs"
+	done
+
+	echo "==> [$arch] bundling $(wc -l < "$map" | tr -d ' ') dependencies"
 }
 
 if [ "$DO_BUILD" = true ]; then
@@ -173,14 +306,30 @@ fi
 if [ "$DO_FUSE" = true ]; then
 	X86_DIR=build-mac-x86_64
 	ARM_DIR=build-mac-arm64
-	x86_bin="$X86_DIR/bin/$(slice_binname x86_64)"
-	arm_bin="$ARM_DIR/bin/$(slice_binname arm64)"
-	for f in "$x86_bin" "$arm_bin"; do
-		[ -f "$f" ] || { echo "error: missing slice '$f' (build it first, or use CI per-arch jobs)"; exit 1; }
-	done
+	X86_STAGE="$X86_DIR/appstage"
+	ARM_STAGE="$ARM_DIR/appstage"
 
 	LIPO=$(command -v lipo || command -v x86_64-apple-darwin*-lipo || true)
 	[ -n "$LIPO" ] || { echo "error: lipo not found (need Apple cctools or osxcross)"; exit 1; }
+
+	# Staging normally happens in build_slice, on the machine that has that
+	# architecture's libraries installed - which matters because the CI job doing
+	# the fuse has no Homebrew dependencies of its own, only the staged slices.
+	# Stage here only if it has not been done, for a tree where the slices were
+	# built by an earlier invocation.
+	for arch in x86_64 arm64; do
+		if [ ! -f "build-mac-$arch/appstage/bin/rpcemu" ]; then
+			[ -f "build-mac-$arch/bin/$(slice_binname "$arch")" ] || {
+				echo "error: no slice for $arch (build it first, or use the CI per-arch jobs)"
+				exit 1
+			}
+			stage_slice "$arch"
+		fi
+	done
+
+	for f in "$X86_STAGE/bin/rpcemu" "$ARM_STAGE/bin/rpcemu"; do
+		[ -f "$f" ] || { echo "error: missing staged slice '$f'"; exit 1; }
+	done
 
 	# Assemble a proper macOS application bundle:
 	#   RPCEmu.app/Contents/MacOS/rpcemu      (universal emulator + CLI helpers)
@@ -222,16 +371,41 @@ if [ "$DO_FUSE" = true ]; then
 	fi
 
 	# Fuse the emulator: x86_64(dynarec) + arm64(interpreter) -> universal.
+	# The staged copies are used, so the rewritten dependency paths are carried
+	# through into the bundle.
 	echo "==> lipo universal emulator binary"
-	"$LIPO" -create "$x86_bin" "$arm_bin" -output "$MACOSD/rpcemu"
+	"$LIPO" -create "$X86_STAGE/bin/rpcemu" "$ARM_STAGE/bin/rpcemu" -output "$MACOSD/rpcemu"
 	chmod +x "$MACOSD/rpcemu"
 
 	# Fuse the HostCmd host client if both slices built it.
-	if [ -f "$X86_DIR/bin/rpcemu-run" ] && [ -f "$ARM_DIR/bin/rpcemu-run" ]; then
-		"$LIPO" -create "$X86_DIR/bin/rpcemu-run" "$ARM_DIR/bin/rpcemu-run" \
+	if [ -f "$X86_STAGE/bin/rpcemu-run" ] && [ -f "$ARM_STAGE/bin/rpcemu-run" ]; then
+		"$LIPO" -create "$X86_STAGE/bin/rpcemu-run" "$ARM_STAGE/bin/rpcemu-run" \
 			-output "$MACOSD/rpcemu-run"
 		chmod +x "$MACOSD/rpcemu-run"
 		ln -sf rpcemu-run "$MACOSD/rpcemu-shell"
+	fi
+
+	# Make each bundled dependency universal in the same way. A library present
+	# for only one architecture is copied through thin, which keeps that slice
+	# working rather than failing the whole build.
+	FRAMEWORKSD="$CONTENTS/Frameworks"
+	bundled=0
+	for lib in "$X86_STAGE/libs/"* "$ARM_STAGE/libs/"*; do
+		[ -f "$lib" ] || continue
+		base=${lib##*/}
+		[ -f "$FRAMEWORKSD/$base" ] && continue
+		mkdir -p "$FRAMEWORKSD"
+		if [ -f "$X86_STAGE/libs/$base" ] && [ -f "$ARM_STAGE/libs/$base" ]; then
+			"$LIPO" -create "$X86_STAGE/libs/$base" "$ARM_STAGE/libs/$base" \
+				-output "$FRAMEWORKSD/$base"
+		else
+			echo "   ! $base is single-architecture (present in only one slice)"
+			cp -f "$lib" "$FRAMEWORKSD/$base"
+		fi
+		bundled=$((bundled + 1))
+	done
+	if [ "$bundled" -gt 0 ]; then
+		echo "==> Bundled $bundled libraries into Contents/Frameworks"
 	fi
 
 	write_info_plist "$CONTENTS/Info.plist"

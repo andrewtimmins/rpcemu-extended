@@ -176,7 +176,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-slice-x86_64
-          path: build-mac-x86_64/bin/
+          # The staged tree, not just bin/: it carries this slice's bundled
+          # dependencies, which only exist on this runner. The job that fuses the
+          # slices installs no Homebrew packages of its own.
+          path: build-mac-x86_64/appstage/
           if-no-files-found: error
 
   macos-arm64:
@@ -199,7 +202,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-slice-arm64
-          path: build-mac-arm64/bin/
+          path: build-mac-arm64/appstage/
           if-no-files-found: error
 
   macos-universal:
@@ -213,13 +216,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: macos-slice-x86_64
-          path: build-mac-x86_64/bin
+          path: build-mac-x86_64/appstage
 
       - name: Download arm64 slice
         uses: actions/download-artifact@v4
         with:
           name: macos-slice-arm64
-          path: build-mac-arm64/bin
+          path: build-mac-arm64/appstage
 
       - name: Fuse (lipo) + build RPCEmu.app + DMG
         run: |
