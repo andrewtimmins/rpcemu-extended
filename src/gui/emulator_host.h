@@ -64,6 +64,7 @@ enum class EmuCommandType {
 	CpuIdle,
 	IntegerScaling,
 	FitToWindow,
+	FollowHostDisplay,
 	ReloadIdeImages,
 	SwitchMachine,
 	NatRuleAdd,
@@ -155,6 +156,7 @@ public:
 	void CpuIdle();
 	void IntegerScaling();
 	void FitToWindow();
+	void FollowHostDisplay();
 	void SwitchMachine(const std::string &config_path);
 	void NatRuleAdd(const PortForwardRule &rule);
 	void NatRuleEdit(const PortForwardRule &old_rule, const PortForwardRule &new_rule);

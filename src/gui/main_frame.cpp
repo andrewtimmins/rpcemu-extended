@@ -1174,6 +1174,28 @@ void MainFrame::OnActivate(wxActivateEvent &event)
 	}
 }
 
+/* Let the guest change screen mode to match the host display.
+ *
+ * Not mutually exclusive with the scaling options, because they answer the same
+ * question differently rather than incompatibly: these two keep the guest's mode
+ * and scale the picture, this changes the guest's mode. The combination worth
+ * having is full-screen plus this, which gives a crisp desktop at the monitor's
+ * own resolution with no scaling at all.
+ *
+ * Takes effect from the next display change: switching it on does not retune the
+ * mode the desktop is already in, which also means ticking it never reflows
+ * anyone's windows by surprise. */
+void MainFrame::OnFollowHostDisplay(wxCommandEvent &event)
+{
+	config_copy_.follow_host_display = event.IsChecked() ? 1 : 0;
+	if (follow_host_display_menu_item_ != nullptr) {
+		follow_host_display_menu_item_->Check(config_copy_.follow_host_display != 0);
+	}
+	if (emulator_) {
+		emulator_->FollowHostDisplay();
+	}
+}
+
 /* The host's displays changed: a monitor was attached or removed, or its
    resolution was altered. Republish the geometry so the guest support module can
    follow it, using the display this window is now on.

@@ -217,6 +217,7 @@ typedef struct {
 	int show_fullscreen_message;	/**< Show explanation of how to leave fullscreen, on entering fullscreen */
 	int integer_scaling;	/**< Use integer scaling (2x, 3x) for sharp pixels instead of smooth scaling */
 	int fit_to_window;	/**< Scale the display to fit a freely-resizable window, preserving aspect ratio */
+	int follow_host_display;	/**< Guest changes screen mode to match the host display when it changes */
 	char *network_capture;		///< Path to capture network traffic file, or NULL to disable
 	int vnc_enabled;	/**< Enable the built-in VNC server */
 	int vnc_port;		/**< Port for the VNC server (default 5900) */

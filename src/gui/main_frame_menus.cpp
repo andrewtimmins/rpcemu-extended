@@ -172,6 +172,9 @@ void MainFrame::BuildMenus()
 	    settings_menu->AppendCheckItem(ID_MENU_INTEGER_SCALING, "Pixel Perfect");
 	fit_to_window_menu_item_ =
 	    settings_menu->AppendCheckItem(ID_MENU_FIT_TO_WINDOW, "Fit to Window");
+	follow_host_display_menu_item_ =
+	    settings_menu->AppendCheckItem(ID_MENU_FOLLOW_HOST_DISPLAY,
+	                                   "Follow Host Display Size");
 	settings_menu->AppendSeparator();
 #ifdef RPCEMU_VNC
 	settings_menu->Append(ID_MENU_VNC, "&VNC Server...");
@@ -253,6 +256,8 @@ void MainFrame::BuildMenus()
 	BindMenuItem(settings_menu, ID_MENU_FULLSCREEN, this, &MainFrame::OnFullscreen);
 	BindMenuItem(settings_menu, ID_MENU_INTEGER_SCALING, this, &MainFrame::OnIntegerScaling);
 	BindMenuItem(settings_menu, ID_MENU_FIT_TO_WINDOW, this, &MainFrame::OnFitToWindow);
+	BindMenuItem(settings_menu, ID_MENU_FOLLOW_HOST_DISPLAY, this,
+	             &MainFrame::OnFollowHostDisplay);
 	BindMenuItem(file_menu, ID_MENU_SUSPEND_ON_EXIT, this, &MainFrame::OnSuspendOnExit);
 	BindMenuItem(settings_menu, ID_MENU_CPU_IDLE, this, &MainFrame::OnCpuIdle);
 	BindMenuItem(mouse_menu, ID_MENU_MOUSE_TWOBUTTON, this, &MainFrame::OnMouseTwobutton);
@@ -406,6 +411,9 @@ void MainFrame::SyncSettingsMenuChecks()
 	}
 	if (fit_to_window_menu_item_ != nullptr) {
 		fit_to_window_menu_item_->Check(config_copy_.fit_to_window != 0);
+	}
+	if (follow_host_display_menu_item_ != nullptr) {
+		follow_host_display_menu_item_->Check(config_copy_.follow_host_display != 0);
 	}
 	if (suspend_on_exit_menu_item_ != nullptr) {
 		suspend_on_exit_menu_item_->Check(config_copy_.suspend_on_exit != 0);

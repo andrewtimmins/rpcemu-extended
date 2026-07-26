@@ -92,6 +92,7 @@ enum MainFrameMenuId {
 	ID_MENU_FULLSCREEN,
 	ID_MENU_INTEGER_SCALING,
 	ID_MENU_FIT_TO_WINDOW,
+	ID_MENU_FOLLOW_HOST_DISPLAY,
 	ID_MENU_SUSPEND_ON_EXIT,
 	ID_MENU_VNC,
 	ID_MENU_SERIAL,
@@ -186,6 +187,7 @@ private:
 	void OnFullscreen(wxCommandEvent &event);
 	void OnIntegerScaling(wxCommandEvent &event);
 	void OnFitToWindow(wxCommandEvent &event);
+	void OnFollowHostDisplay(wxCommandEvent &event);
 	void OnSuspendOnExit(wxCommandEvent &event);
 	void OnCpuIdle(wxCommandEvent &event);
 	void OnMouseHack(wxCommandEvent &event);
@@ -266,6 +268,7 @@ private:
 	wxMenuItem *fullscreen_menu_item_ = nullptr;
 	wxMenuItem *integer_scaling_menu_item_ = nullptr;
 	wxMenuItem *fit_to_window_menu_item_ = nullptr;
+	wxMenuItem *follow_host_display_menu_item_ = nullptr;
 	wxMenuItem *suspend_on_exit_menu_item_ = nullptr;
 	wxMenuItem *cpu_idle_menu_item_ = nullptr;
 	wxMenuItem *mouse_hack_menu_item_ = nullptr;

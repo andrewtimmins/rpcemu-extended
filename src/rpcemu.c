@@ -141,6 +141,16 @@ rpcemu_guest_display_target(unsigned *width, unsigned *height, unsigned *hz,
 	*generation = host_display_generation;
 	*hz = host_display_hz;
 
+	/* Off by default: a mode change reflows every window on the guest desktop,
+	   so it happens only when asked for. Reporting nothing keeps the whole
+	   business out of the guest module's way - it never even takes a baseline,
+	   and so has nothing to act on if the setting is switched on later. That
+	   also gives the setting its meaning: follow changes from now on, rather
+	   than retune the mode the desktop is already in. */
+	if (!config.follow_host_display) {
+		return 0;
+	}
+
 	if (host_display_width == 0 || host_display_height == 0) {
 		return 0;
 	}
@@ -185,6 +195,7 @@ Config config = {
 	1,			/* show_fullscreen_message */
 	0,			/* integer_scaling */
 	0,			/* fit_to_window */
+	0,			/* follow_host_display (OFF: it reflows the guest desktop) */
 	NULL,			/* network_capture */
 	0,			/* vnc_enabled */
 	5900,			/* vnc_port */
