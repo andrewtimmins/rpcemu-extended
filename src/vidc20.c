@@ -210,11 +210,21 @@ initvideo(void)
 /**
  * Return the width in pixels of the displayed portion of the screen.
  *
+ * With the graphics card scanning out, VIDC's own registers describe a mode
+ * nothing is using: they are whatever the display was in before the card took
+ * over. Everything that asks here is reasoning about what is on the screen -
+ * the mousehack coordinate maths above all - so answer for the display that is
+ * actually being shown.
+ *
  * @return width
  */
 int
 vidc_get_xsize(void)
 {
+	if (thr.gfx_active && thr.vidc_xsize > 0) {
+		return thr.vidc_xsize;
+	}
+
 	return vidc.hder - vidc.hdsr;
 }
 
@@ -226,6 +236,10 @@ vidc_get_xsize(void)
 int
 vidc_get_ysize(void)
 {
+	if (thr.gfx_active && thr.vidc_ysize > 0) {
+		return thr.vidc_ysize;
+	}
+
 	return vidc.vder - vidc.vdsr;
 }
 
