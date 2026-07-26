@@ -89,7 +89,8 @@ drive a display:
 | SetMode (2) | Programs the geometry and starts scanning out |
 | SetDMAAddress (6) | Moves the displayed window, which is how RISC OS scrolls |
 | SetBlank (4) | Blanks the output |
-| WritePaletteEntry / Entries / Read (10-12) | The 256-entry palette |
+| UpdatePointer (5) | Position and shape of the pointer, which the card draws |
+| WritePaletteEntry / Entries / Read (10-12) | The screen palette, and the pointer's three colours |
 | IICOp (14) | Serves the monitor's EDID, so the mode list survives the switch |
 
 The vsync interrupt the card raises is passed on as `GraphicsV_VSync`, which is
@@ -134,9 +135,24 @@ and only when every part of the pattern is found: the offsets are read out of th
 ROM rather than assumed, so an image this does not recognise is left alone and the
 card simply keeps the VRAM-sized ceiling.
 
-Two GraphicsV features are deliberately not claimed, so RISC OS does them in
-software as it would on any card without them: the hardware pointer, and
-rendering (rectangle copy and fill).
+### Why the card draws the pointer
+
+The pointer is the card's, not RISC OS's. That is not just an optimisation: this
+emulator's mouse-following works by drawing the *hardware* pointer wherever the
+host's mouse is, while telling the guest the same position through `OS_Mouse`. A
+driver that leaves the pointer to RISC OS gets a software pointer plotted at the
+position the kernel maintains from mouse movement - which mouse-following
+suppresses - so the pointer sits still while the host's mouse moves.
+
+So the driver claims `GraphicsV_UpdatePointer` and hands the card the shape's
+physical address, its size and where to put it; the card's scan-out composites it,
+at the host's pointer position when the front-end is placing it. The shape is
+2bpp as GraphicsV defines, four pixels to a byte, colour 0 transparent and 1-3
+from the pointer palette, and it stays where RISC OS built it - the card fetches
+it, as real hardware would.
+
+One GraphicsV feature is deliberately not claimed, so RISC OS does it in
+software as it would on any card without it: rendering (rectangle copy and fill).
 
 GraphicsV and `OS_ScreenMode 64` are RISC OS 5 features. On an older RISC OS the
 driver declines to initialise and says so; the card is simply unused.

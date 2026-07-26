@@ -94,6 +94,7 @@
 	@ GraphicsV_DisplayFeatures flags
 	GVFeature_HardwareScroll	= 1 << 0
 	GVFeature_SeparateFramestore	= 1 << 3
+	GVFeature_HardwarePointer	= 1 << 1
 	GVFeature_NoVsyncIRQ		= 1 << 4
 	GVFeature_VariableFramestore	= 1 << 5
 
@@ -147,6 +148,14 @@
 	REG_EDID_SIZE	= 0x44
 	REG_EDID_INDEX	= 0x48
 	REG_EDID_DATA	= 0x4c
+	REG_PTR_CTRL	= 0x50
+	REG_PTR_X	= 0x54
+	REG_PTR_Y	= 0x58
+	REG_PTR_WIDTH	= 0x5c
+	REG_PTR_HEIGHT	= 0x60
+	REG_PTR_PHYS	= 0x64
+	REG_PTR_PAL_IDX	= 0x68
+	REG_PTR_PAL	= 0x6c
 
 	@ Where the register window sits in the card's EASI space, and what the
 	@ card's registers mean.
@@ -159,6 +168,7 @@
 	GFXCARD_CAP_HW_SCROLL	= 0x0100
 	GFXCARD_CAP_VSYNC	= 0x0200
 	GFXCARD_CAP_EDID	= 0x0400
+	GFXCARD_CAP_HW_POINTER	= 0x0800
 
 	GFXCARD_CTRL_ENABLE	= 0x0001
 	GFXCARD_CTRL_BLANK	= 0x0002
@@ -310,8 +320,7 @@ gv_table:
 	b	gv_setmode	@  2 SetMode
 	ldmfd	sp!, {pc}	@  3 SetInterlace (deprecated)
 	b	gv_setblank	@  4 SetBlank
-	ldmfd	sp!, {pc}	@  5 UpdatePointer (we have no hardware pointer,
-				@    so the kernel plots one in software)
+	b	gv_updatepointer @  5 UpdatePointer
 	b	gv_setdma	@  6 SetDMAAddress
 	b	gv_vetmode	@  7 VetMode
 	b	gv_features	@  8 DisplayFeatures
@@ -355,6 +364,51 @@ pixel_formats:
 	.int	-1, 0, 5			@ 32bpp, 16M colours
 pixel_formats_end:
 
+	@ UpdatePointer: r0 = flags (bit 0 show, bit 1 the shape has changed),
+	@ r1 = x, r2 = y, r3 -> shape descriptor:
+	@
+	@	+0  width in bytes (2bpp, so four pixels each)
+	@	+1  height in rows
+	@	+4  logical address of the pixel data
+	@	+8  physical address of the same
+	@
+	@ The card is given the physical address and fetches the shape itself, so
+	@ the data stays where RISC OS built it. Claiming this call is what lets the
+	@ front-end put the pointer where the host's mouse is: without it RISC OS
+	@ plots a pointer into the framestore at a position the emulator's
+	@ mouse-following does not drive, and the pointer sits still.
+gv_updatepointer:
+	stmfd	sp!, {r0, r5, r6}
+	ldr	r5, [ws, #WS_REGS]
+
+	tst	r0, #1
+	beq	gv_up_hide
+
+	tst	r0, #2			@ new shape?
+	beq	gv_up_place
+	ldrb	r6, [r3, #0]
+	str	r6, [r5, #REG_PTR_WIDTH]
+	ldrb	r6, [r3, #1]
+	str	r6, [r5, #REG_PTR_HEIGHT]
+	ldr	r6, [r3, #8]		@ physical address of the pixel data
+	str	r6, [r5, #REG_PTR_PHYS]
+
+gv_up_place:
+	str	r1, [r5, #REG_PTR_X]
+	str	r2, [r5, #REG_PTR_Y]
+	mov	r6, #1
+	str	r6, [r5, #REG_PTR_CTRL]
+	b	gv_up_done
+
+gv_up_hide:
+	mov	r6, #0
+	str	r6, [r5, #REG_PTR_CTRL]
+
+gv_up_done:
+	mov	r4, #0
+	ldmfd	sp!, {r0, r5, r6}
+	ldmfd	sp!, {pc}
+
 	@ SetBlank: r0 = 0 unblank / 1 blank, r1 = DPMS state (which we cannot
 	@ act on: there is no monitor to put to sleep).
 gv_setblank:
@@ -391,17 +445,18 @@ gv_setdma_done:
 	ldmfd	sp!, {pc}
 
 	@ WritePaletteEntry: r0 = type, r1 = &BBGGRRSS, r2 = index.
-	@ Only the normal palette reaches the framestore; the border and pointer
-	@ palettes are claimed and dropped, since the card has neither.
+	@ Type 0 is the screen palette and type 2 the pointer's three colours; the
+	@ border (type 1) is claimed and dropped, since the card has no border.
 gv_writepal:
-	teq	r0, #0
-	bne	gv_writepal_done
 	stmfd	sp!, {r3}
 	ldr	r3, [ws, #WS_REGS]
-	str	r2, [r3, #REG_PAL_INDEX]
-	str	r1, [r3, #REG_PAL_ENTRY]
+	teq	r0, #0
+	streq	r2, [r3, #REG_PAL_INDEX]
+	streq	r1, [r3, #REG_PAL_ENTRY]
+	teq	r0, #2
+	streq	r2, [r3, #REG_PTR_PAL_IDX]
+	streq	r1, [r3, #REG_PTR_PAL]
 	ldmfd	sp!, {r3}
-gv_writepal_done:
 	mov	r4, #0
 	ldmfd	sp!, {pc}
 
@@ -410,19 +465,27 @@ gv_writepal_done:
 	@ write of the index and then one word per colour.
 gv_writepals:
 	teq	r0, #0
+	teqne	r0, #2
 	bne	gv_writepals_done
-	stmfd	sp!, {r0, r1, r3, r5}
+	stmfd	sp!, {r0, r1, r3, r5, r6}
 	ldr	r5, [ws, #WS_REGS]
-	str	r2, [r5, #REG_PAL_INDEX]
+	@ Which index and data register this run goes to.
+	teq	r0, #2
+	moveq	r6, #REG_PTR_PAL_IDX
+	movne	r6, #REG_PAL_INDEX
+	str	r2, [r5, r6]
+	teq	r0, #2
+	moveq	r6, #REG_PTR_PAL
+	movne	r6, #REG_PAL_ENTRY
 	teq	r3, #0
 	beq	gv_writepals_end
 1:
 	ldr	r0, [r1], #4
-	str	r0, [r5, #REG_PAL_ENTRY]
+	str	r0, [r5, r6]
 	subs	r3, r3, #1
 	bne	1b
 gv_writepals_end:
-	ldmfd	sp!, {r0, r1, r3, r5}
+	ldmfd	sp!, {r0, r1, r3, r5, r6}
 gv_writepals_done:
 	mov	r4, #0
 	ldmfd	sp!, {pc}
@@ -772,6 +835,8 @@ init:
 	mov	r1, #GVFeature_SeparateFramestore
 	tst	r0, #GFXCARD_CAP_HW_SCROLL
 	orrne	r1, r1, #GVFeature_HardwareScroll
+	tst	r0, #GFXCARD_CAP_HW_POINTER
+	orrne	r1, r1, #GVFeature_HardwarePointer
 	str	r1, [r5, #WS_FEATURES]
 
 	@ Start from a known state: not displaying, not blanked, no interrupt.
