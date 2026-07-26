@@ -290,8 +290,14 @@ extern const char *rpcemu_get_resourcedir(void);
 
 /* Host display geometry, used to advertise a matching native mode via the
    synthesised monitor EDID (see romload.c / edid.c). */
-extern void rpcemu_set_host_display(unsigned width, unsigned height);
+extern void rpcemu_set_host_display(unsigned width, unsigned height, unsigned hz);
 extern int rpcemu_get_host_display(unsigned *width, unsigned *height);
+
+/* The mode the guest should adopt to follow the host, already bounded by the
+   host display and by VRAM, plus a generation that changes when the host
+   display does. Read by the guest support module through its SWI. */
+extern int rpcemu_guest_display_target(unsigned *width, unsigned *height,
+                                       unsigned *hz, uint32_t *generation);
 
 /* Largest standard mode fitting given bounds and a framebuffer budget. Screen
    memory comes out of VRAM, so a mode is only displayable if its framebuffer

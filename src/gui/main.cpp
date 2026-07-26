@@ -97,10 +97,14 @@ bool RpcemuApp::OnInit()
 			index = 0;
 		}
 
-		const wxRect geom = wxDisplay((unsigned) index).GetGeometry();
+		const wxDisplay display((unsigned) index);
+		const wxRect geom = display.GetGeometry();
 
 		if (geom.width > 0 && geom.height > 0) {
-			rpcemu_set_host_display((unsigned) geom.width, (unsigned) geom.height);
+			const wxVideoMode mode = display.GetCurrentMode();
+
+			rpcemu_set_host_display((unsigned) geom.width, (unsigned) geom.height,
+			                        mode.refresh > 0 ? (unsigned) mode.refresh : 0);
 			rpclog("main: host display %dx%d (display %d of %u)\n",
 			       geom.width, geom.height, index, wxDisplay::GetCount());
 		}

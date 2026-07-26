@@ -98,6 +98,7 @@ wxBEGIN_EVENT_TABLE(MainFrame, wxFrame)
 	EVT_TIMER(ID_TIMER_IDE_LED, MainFrame::OnIdeLedTimer)
 	EVT_TIMER(ID_TIMER_HOSTFS_LED, MainFrame::OnHostfsLedTimer)
 	EVT_TIMER(ID_TIMER_NETWORK_LED, MainFrame::OnNetworkLedTimer)
+	EVT_DISPLAY_CHANGED(MainFrame::OnDisplayChanged)
 wxEND_EVENT_TABLE()
 
 MainFrame::MainFrame()
@@ -1171,6 +1172,34 @@ void MainFrame::OnActivate(wxActivateEvent &event)
 	} else if (panel_ != nullptr) {
 		panel_->FocusPanel();
 	}
+}
+
+/* The host's displays changed: a monitor was attached or removed, or its
+   resolution was altered. Republish the geometry so the guest support module can
+   follow it, using the display this window is now on.
+
+   No debounce is needed here: this event fires on an actual display change, not
+   while a window is being dragged, and rpcemu_set_host_display() ignores a
+   value that has not changed, so a spurious event costs nothing. */
+void MainFrame::OnDisplayChanged(wxDisplayChangedEvent &event)
+{
+	int index = wxDisplay::GetFromWindow(this);
+
+	if (index == wxNOT_FOUND) {
+		index = 0;
+	}
+
+	const wxDisplay display((unsigned) index);
+	const wxRect geom = display.GetGeometry();
+
+	if (geom.width > 0 && geom.height > 0) {
+		const wxVideoMode mode = display.GetCurrentMode();
+
+		rpcemu_set_host_display((unsigned) geom.width, (unsigned) geom.height,
+		                        mode.refresh > 0 ? (unsigned) mode.refresh : 0);
+	}
+
+	event.Skip();
 }
 
 void MainFrame::OnMenuOpen(wxMenuEvent &)

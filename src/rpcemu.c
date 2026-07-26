@@ -76,15 +76,34 @@ char discname[2][260]={"boot.adf","notboot.adf"};
 Machine machine; /**< The details of the current machine being emulated */
 
 /* Host display geometry, published by the front-end so the synthesised monitor
-   EDID can advertise a native mode matching the real screen. Zero until set. */
+   EDID can advertise a native mode matching the real screen. Zero until set.
+
+   The generation counter changes whenever the geometry does, which is how the
+   guest support module notices it should follow: it records the generation it
+   last acted on and compares. A counter rather than a flag, so a change that
+   arrives while the guest is busy is not lost, and so nothing has to be
+   "consumed" by a reader. */
 static unsigned host_display_width = 0;
 static unsigned host_display_height = 0;
+static unsigned host_display_hz = 0;
+static uint32_t host_display_generation = 0;
 
 void
-rpcemu_set_host_display(unsigned width, unsigned height)
+rpcemu_set_host_display(unsigned width, unsigned height, unsigned hz)
 {
+	if (width == host_display_width && height == host_display_height &&
+	    hz == host_display_hz)
+	{
+		return;		/* Unchanged: leave the generation alone */
+	}
+
 	host_display_width = width;
 	host_display_height = height;
+	host_display_hz = hz;
+	host_display_generation++;
+
+	rpclog("Display: host display now %ux%u@%u (generation %u)\n",
+	       width, height, hz, (unsigned) host_display_generation);
 }
 
 int
@@ -172,6 +191,38 @@ rpcemu_display_mode_fit(unsigned max_width, unsigned max_height,
 	}
 
 	return 0;
+}
+
+/**
+ * The display mode the guest should adopt to match the host, and the generation
+ * that identifies it.
+ *
+ * Bounded by the host display and by what the fitted VRAM can hold, so the guest
+ * can act on the answer without knowing anything about either. Deliberately the
+ * same calculation the synthesised EDID uses, budgeting 32bpp, so the mode
+ * offered at boot and the mode requested later agree.
+ *
+ * @param[out] width      Mode width, untouched if there is nothing to report
+ * @param[out] height     Mode height
+ * @param[out] hz         Refresh rate, 0 if the front-end did not supply one
+ * @param[out] generation Changes whenever the host display changes
+ *
+ * @return non-zero if a mode is available to report
+ */
+int
+rpcemu_guest_display_target(unsigned *width, unsigned *height, unsigned *hz,
+                            uint32_t *generation)
+{
+	*generation = host_display_generation;
+	*hz = host_display_hz;
+
+	if (host_display_width == 0 || host_display_height == 0) {
+		return 0;
+	}
+
+	return rpcemu_display_mode_fit(host_display_width, host_display_height, 4,
+	                               (size_t) config.vram_size * 1024 * 1024,
+	                               width, height);
 }
 
 /** Array of details of models the emulator can emulate, must be kept in sync with

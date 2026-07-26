@@ -207,6 +207,7 @@ private:
 	void OnKeyDown(wxKeyEvent &event);
 	void OnKeyUp(wxKeyEvent &event);
 	void OnActivate(wxActivateEvent &event);
+	void OnDisplayChanged(wxDisplayChangedEvent &event);
 	void OnMenuOpen(wxMenuEvent &event);
 	void OnMenuClose(wxMenuEvent &event);
 	void OnLeftDown(wxMouseEvent &event);

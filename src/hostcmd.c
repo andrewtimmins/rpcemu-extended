@@ -47,6 +47,7 @@
 #define HC_OP_POLL	0u
 #define HC_OP_OUTPUT	1u
 #define HC_OP_STATUS	2u
+#define HC_OP_DISPLAY	3u
 
 /* STATUS markers, in R0. */
 #define HC_STATUS_START	0u
@@ -251,6 +252,28 @@ hostcmd(ARMul_State *state)
 		}
 		/* START needs no frame: the 'O'/'D' framing already delimits output. */
 		state->Reg[0] = 0;
+		break;
+	}
+
+	case HC_OP_DISPLAY: {
+		/* Report the display mode the guest should adopt to follow the host.
+		   R0 out: 1 if a mode is being reported, else 0.
+		   R1 out: generation - changes when the host display changes, so the
+		           module compares it against the one it last acted on rather
+		           than us having to track what it has seen.
+		   R2/R3 out: width and height, already bounded by the host display and
+		           by VRAM, so the guest can use them as they stand.
+		   R4 out: refresh in Hz, 0 if the front-end did not supply one. */
+		unsigned width = 0, height = 0, hz = 0;
+		uint32_t generation = 0;
+		const int have = rpcemu_guest_display_target(&width, &height, &hz,
+		                                             &generation);
+
+		state->Reg[0] = have ? 1u : 0u;
+		state->Reg[1] = generation;
+		state->Reg[2] = width;
+		state->Reg[3] = height;
+		state->Reg[4] = hz;
 		break;
 	}
 
