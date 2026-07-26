@@ -220,6 +220,7 @@ typedef struct {
 	int fit_to_window;	/**< Scale the display to fit a freely-resizable window, preserving aspect ratio */
 	int follow_host_display;	/**< Guest changes screen mode to match the host display when it changes */
 	int gfxcard_enabled;	/**< Present the graphics expansion card (its own framestore, modes beyond VRAM) */
+	int gfxcard_boot_display;	/**< Let the card take the display as the machine boots */
 
 	char *network_capture;		///< Path to capture network traffic file, or NULL to disable
 	int vnc_enabled;	/**< Enable the built-in VNC server */

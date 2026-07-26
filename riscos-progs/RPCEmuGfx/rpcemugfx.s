@@ -69,6 +69,7 @@
 	Module_Free	= 7
 
 	@ OS_ScreenMode reason codes
+	ScreenMode_SelectMonitorType	= 3
 	ScreenMode_SelectDevice		= 11
 	ScreenMode_RegisterDriver	= 64
 	ScreenMode_StartDriver		= 65
@@ -165,6 +166,7 @@
 	REG_PTR_PHYS	= 0x64
 	REG_PTR_PAL_IDX	= 0x68
 	REG_PTR_PAL	= 0x6c
+	REG_OPTIONS	= 0x70
 
 	@ Where the register window sits in the card's EASI space, and what the
 	@ card's registers mean.
@@ -184,6 +186,9 @@
 	GFXCARD_CTRL_VSYNC_IRQ	= 0x0004
 
 	GFXCARD_STATUS_VSYNC	= 0x0001
+
+	@ What the user asked the card to do, as opposed to what it can do.
+	GFXCARD_OPT_BOOT_DISPLAY = 0x0001
 
 	@ Workspace
 	WS_REGS		= 0	@ logical address of the card's registers
@@ -922,6 +927,44 @@ init_start:
 	orr	r0, r0, #FLAG_STARTED
 	str	r0, [r5, #WS_FLAGS]
 
+	@ Take the display now, if that is how the card is configured. Doing it here
+	@ rather than leaving it to *GfxCardOn means the machine boots onto the card -
+	@ splash, desktop and all - instead of changing mode once the desktop is up
+	@ and reflowing every window.
+	@
+	@ The mode list is the monitor's, so the EDID monitor type is selected too
+	@ when the configured one would not offer what the card can show. That is a
+	@ selection for this session only (OS_ScreenMode 3), not a change to the
+	@ configuration: a boot without the card behaves exactly as before.
+	@ From the workspace, not r2: the registration calls above have had r2 for
+	@ their own purposes since it last held the register base.
+	ldr	r0, [r5, #WS_REGS]
+	ldr	r0, [r0, #REG_OPTIONS]
+	tst	r0, #GFXCARD_OPT_BOOT_DISPLAY
+	beq	init_banner
+
+	bl	monitor_type
+	teq	r1, #MONITOR_EDID
+	teqne	r1, #MONITOR_FILE
+	beq	init_take_display
+	mov	r0, #ScreenMode_SelectMonitorType
+	mov	r1, #MONITOR_EDID
+	swi	XOS_ScreenMode		@ an error here is not fatal: the card still
+					@ works, with fewer modes on offer
+
+init_take_display:
+	mov	r0, #ScreenMode_SelectDevice
+	ldr	r1, [r5, #WS_DRIVER]
+	swi	XOS_ScreenMode
+	@ Also not fatal. If the display cannot be handed over this early the card
+	@ is still registered and *GfxCardOn will do it later, so say so rather than
+	@ leaving the user to wonder.
+	bvc	init_banner
+	adrl	r0, msg_boot_failed
+	swi	XOS_Write0
+	swi	XOS_NewLine
+
+init_banner:
 	@ Say hello on the startup screen, among the lines RISC OS prints as it finds
 	@ what the machine has. Expansion cards conventionally announce themselves
 	@ here, and it is the one place the card is visible without going looking for
@@ -936,6 +979,10 @@ init_start:
 
 msg_banner:
 	.string	"High Resolution Graphics Card Installed..."
+	.align
+
+msg_boot_failed:
+	.string	"High Resolution Graphics Card: could not take the display this early - use *GfxCardOn"
 	.align
 
 	@ Failure paths. Each undoes exactly what had been done, then returns the

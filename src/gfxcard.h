@@ -103,7 +103,8 @@
 #define GFXCARD_REG_PTR_PHYS	25	/* RW physical address of the shape data */
 #define GFXCARD_REG_PTR_PAL_IDX	26	/* RW pointer colour to write (1-3) */
 #define GFXCARD_REG_PTR_PAL	27	/* RW &BBGGRRSS; writing steps the index on */
-#define GFXCARD_REG_COUNT	28
+#define GFXCARD_REG_OPTIONS	28	/* R  GFXCARD_OPT_*: how the user configured us */
+#define GFXCARD_REG_COUNT	29
 
 /* Where each register sits in the card's EASI space. */
 #define GFXCARD_REG_ADDR(n)	(GFXCARD_REG_BASE + (n) * 4)
@@ -130,6 +131,10 @@
 #define GFXCARD_CTRL_VSYNC_IRQ	0x0004u		/* interrupt on vsync */
 
 #define GFXCARD_STATUS_VSYNC	0x0001u		/* vsync since last cleared */
+
+/* Configuration the guest driver needs to know about. Capabilities say what the
+   card can do; these say what the user asked it to do. */
+#define GFXCARD_OPT_BOOT_DISPLAY 0x0001u	/* take the display as the machine boots */
 
 /* The pointer, as GraphicsV describes one: a 2bpp shape, four pixels to a byte,
    colour 0 transparent and 1-3 taken from the pointer palette. The shape data

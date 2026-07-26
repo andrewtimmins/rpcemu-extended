@@ -281,6 +281,9 @@ gfxcard_reg_read(int reg)
 	case GFXCARD_REG_PTR_PAL_IDX: return gfx.ptr_pal_index;
 	case GFXCARD_REG_PTR_PAL:     return gfx.ptr_palette[gfx.ptr_pal_index & 3];
 
+	case GFXCARD_REG_OPTIONS:
+		return config.gfxcard_boot_display ? GFXCARD_OPT_BOOT_DISPLAY : 0;
+
 	case GFXCARD_REG_EDID_DATA: {
 		const uint8_t *block = edid_published();
 		uint32_t v = 0;

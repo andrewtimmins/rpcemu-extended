@@ -14,9 +14,17 @@ Verified on a Kinetic with 2MB of VRAM: 1920 x 1080 in 16M colours (8.3MB of
 screen) is refused by VIDC20 and displayed by the card.
 
 The card is off by default. Turn it on in *Settings → Machine → Graphics card*,
-and the machine gains an expansion card in the next free EASI slot. RISC OS keeps
-using VIDC20 until you ask it to switch, so nothing about an existing machine
-changes until you do.
+and the machine gains an expansion card in the next free EASI slot. Nothing about
+an existing machine changes until you do.
+
+Tick **"...and make it the display at boot"** as well and there is nothing else to
+do: RISC OS comes up on the card, at whatever mode the desktop is configured for,
+with no `*GfxCardOn` and no mode change once the desktop is already up. The driver
+also selects the EDID monitor type for that session if the configured one would not
+offer the card's modes - a selection, not a change to your configuration, so a boot
+without the card behaves exactly as before.
+
+Leave it unticked and RISC OS keeps using VIDC20 until you run `*GfxCardOn`.
 
 ## Using it
 

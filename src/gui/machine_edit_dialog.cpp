@@ -188,6 +188,13 @@ void MachineEditDialog::BuildUi()
 	/* The graphics card carries its own display memory, so it is the answer to
 	   the VRAM limit rather than another size of it - hence its place here. */
 	gfxcard_check_ = new wxCheckBox(this, wxID_ANY, "Graphics card (display modes beyond VRAM)");
+	gfxcard_boot_check_ = new wxCheckBox(this, wxID_ANY, "...and make it the display at boot");
+	gfxcard_boot_check_->SetToolTip(
+	    "Hand the display to the card as the machine boots, so RISC OS comes up on "
+	    "it rather than on VIDC20 - no *GfxCardOn needed.\n\n"
+	    "The driver also selects the EDID monitor type for the session if the "
+	    "configured one would not offer the card's modes. Your configuration is "
+	    "left as it is.");
 	gfxcard_check_->SetToolTip(
 	    "Fit an expansion card with 15MB of its own display memory, for modes the "
 	    "fitted VRAM cannot reach (up to 2560 x 1440 in full colour).\n\n"
@@ -212,6 +219,8 @@ void MachineEditDialog::BuildUi()
 	form->Add(vram_combo_, 1, wxEXPAND);
 	form->Add(new wxStaticText(this, wxID_ANY, ""), 0);
 	form->Add(gfxcard_check_, 1, wxEXPAND);
+	form->Add(new wxStaticText(this, wxID_ANY, ""), 0);
+	form->Add(gfxcard_boot_check_, 1, wxEXPAND);
 	form->Add(new wxStaticText(this, wxID_ANY, ""), 0);
 	form->Add(compat_label_, 1, wxEXPAND);
 	auto *refresh_row = new wxBoxSizer(wxHORIZONTAL);
@@ -256,6 +265,10 @@ void MachineEditDialog::BuildUi()
 
 	refresh_slider_->Bind(wxEVT_SLIDER, [this](wxCommandEvent &) {
 		refresh_label_->SetLabel(wxString::Format("%d Hz", refresh_slider_->GetValue()));
+	});
+	gfxcard_check_->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent &event) {
+		gfxcard_boot_check_->Enable(gfxcard_check_->GetValue());
+		event.Skip();
 	});
 	network_combo_->Bind(wxEVT_COMBOBOX, &MachineEditDialog::OnNetworkChanged, this);
 	rom_combo_->Bind(wxEVT_COMBOBOX, &MachineEditDialog::OnRomOrModelChanged, this);
@@ -730,6 +743,10 @@ void MachineEditDialog::LoadSettings()
 	long gfxcard = 0;
 	settings.Read("gfxcard_enabled", &gfxcard, 0L);
 	gfxcard_check_->SetValue(gfxcard != 0);
+	long gfxcard_boot = 0;
+	settings.Read("gfxcard_boot_display", &gfxcard_boot, 0L);
+	gfxcard_boot_check_->SetValue(gfxcard_boot != 0);
+	gfxcard_boot_check_->Enable(gfxcard != 0);
 
 	long refresh = 60;
 	settings.Read("refresh_rate", &refresh, 60L);
@@ -837,6 +854,8 @@ void MachineEditDialog::SaveSettings()
 	settings.Write("vram_size", wxString::Format("%d", vram_mb));
 	settings.Write("gfxcard_enabled",
 	               static_cast<long>(gfxcard_check_->GetValue() ? 1 : 0));
+	settings.Write("gfxcard_boot_display",
+	               static_cast<long>(gfxcard_boot_check_->GetValue() ? 1 : 0));
 	settings.Write("refresh_rate", refresh_slider_->GetValue());
 	settings.Write("network_type", network_type);
 	settings.Write("bridgename", bridge_edit_->GetValue());
@@ -872,6 +891,7 @@ void MachineEditDialog::ApplySavedSettingsToGlobalConfig(const wxString &rom_dir
 	/* Whether the graphics card is fitted is read when the machine resets, so
 	   applying it here means a reset is enough - no need to restart. */
 	config.gfxcard_enabled = gfxcard_check_->GetValue() ? 1 : 0;
+	config.gfxcard_boot_display = gfxcard_boot_check_->GetValue() ? 1 : 0;
 }
 
 wxString MachineEditDialog::CurrentMachineNameForHd() const
