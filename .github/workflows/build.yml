@@ -247,11 +247,16 @@ jobs:
           # Done by reading the load commands rather than by launching anything,
           # so it is deterministic and cannot hang.
           echo "==> checking every dependency resolves inside the bundle or in macOS"
-          bad=0
           for f in "$MACOSD"/* "$APP/Contents/Frameworks"/*; do
             [ -f "$f" ] || continue
             file "$f" | grep -q Mach-O || continue
-            otool -L "$f" | tail -n +2 | awk '{print $1}' | while read -r dep; do
+            # Only the indented lines are dependencies. otool prints a header
+            # line per architecture for a universal binary, and for a library its
+            # own install name as the first entry, so both are filtered out -
+            # taking them for dependencies is what made the first version of this
+            # check report every file as depending on itself.
+            otool -L "$f" | grep -E '^[[:space:]]' | awk '{print $1}' | while read -r dep; do
+              [ "$(basename "$dep")" = "$(basename "$f")" ] && continue
               case "$dep" in
                 /usr/lib/*|/System/*) ;;                      # part of macOS
                 @executable_path/*|@loader_path/*|@rpath/*) ;; # inside the bundle
