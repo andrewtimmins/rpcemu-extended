@@ -92,7 +92,19 @@
 #define GFXCARD_REG_MAX_WIDTH	14	/* R  largest mode the card accepts */
 #define GFXCARD_REG_MAX_HEIGHT	15
 #define GFXCARD_REG_FRAMES	16	/* R  frames displayed, for diagnostics */
-#define GFXCARD_REG_COUNT	17
+#define GFXCARD_REG_EDID_SIZE	17	/* R  EDID bytes the card can serve, 0 if none */
+#define GFXCARD_REG_EDID_INDEX	18	/* RW byte the next EDID_DATA read returns */
+#define GFXCARD_REG_EDID_DATA	19	/* R  that byte; reading steps EDID_INDEX on */
+#define GFXCARD_REG_PTR_CTRL	20	/* RW bit 0: show the pointer */
+#define GFXCARD_REG_PTR_X	21	/* RW pointer position, pixels */
+#define GFXCARD_REG_PTR_Y	22
+#define GFXCARD_REG_PTR_WIDTH	23	/* RW shape width in BYTES (2bpp, 4 per byte) */
+#define GFXCARD_REG_PTR_HEIGHT	24	/* RW shape height in rows */
+#define GFXCARD_REG_PTR_PHYS	25	/* RW physical address of the shape data */
+#define GFXCARD_REG_PTR_PAL_IDX	26	/* RW pointer colour to write (1-3) */
+#define GFXCARD_REG_PTR_PAL	27	/* RW &BBGGRRSS; writing steps the index on */
+#define GFXCARD_REG_OPTIONS	28	/* R  GFXCARD_OPT_*: how the user configured us */
+#define GFXCARD_REG_COUNT	29
 
 /* Where each register sits in the card's EASI space. */
 #define GFXCARD_REG_ADDR(n)	(GFXCARD_REG_BASE + (n) * 4)
@@ -111,12 +123,26 @@
 #define GFXCARD_CAP_32BPP	0x0004u
 #define GFXCARD_CAP_HW_SCROLL	0x0100u		/* display start register works */
 #define GFXCARD_CAP_VSYNC	0x0200u		/* raises a vsync interrupt */
+#define GFXCARD_CAP_EDID	0x0400u		/* can serve the monitor's EDID */
+#define GFXCARD_CAP_HW_POINTER	0x0800u		/* draws the pointer itself */
 
 #define GFXCARD_CTRL_ENABLE	0x0001u		/* scan out from the framestore */
 #define GFXCARD_CTRL_BLANK	0x0002u		/* output blanked */
 #define GFXCARD_CTRL_VSYNC_IRQ	0x0004u		/* interrupt on vsync */
 
 #define GFXCARD_STATUS_VSYNC	0x0001u		/* vsync since last cleared */
+
+/* Configuration the guest driver needs to know about. Capabilities say what the
+   card can do; these say what the user asked it to do. */
+#define GFXCARD_OPT_BOOT_DISPLAY 0x0001u	/* take the display as the machine boots */
+
+/* The pointer, as GraphicsV describes one: a 2bpp shape, four pixels to a byte,
+   colour 0 transparent and 1-3 taken from the pointer palette. The shape data
+   stays where RISC OS put it and the card is given its physical address, which
+   is how a real card would fetch it. */
+#define GFXCARD_PTR_MAX_WIDTH	32u		/* bytes: RISC OS pads to 32 pixels */
+#define GFXCARD_PTR_MAX_HEIGHT	64u
+#define GFXCARD_PTR_CTRL_SHOW	0x0001u
 
 /* ------------------------------------------------------------------------
  * Emulator interface
@@ -138,6 +164,16 @@ typedef struct {
 	unsigned stride;	/**< Bytes per line */
 	unsigned bpp;		/**< Bits per pixel: 8, 16 or 32 */
 	int blanked;		/**< Output is blanked; show nothing */
+
+	/* The pointer, taken with the same snapshot so it cannot change halfway
+	   through a frame. */
+	int ptr_visible;	/**< Draw it at all */
+	unsigned ptr_x;		/**< Where the card was told to put it */
+	unsigned ptr_y;
+	unsigned ptr_width;	/**< Shape width in bytes (4 pixels each) */
+	unsigned ptr_height;	/**< Shape height in rows */
+	uint32_t ptr_phys;	/**< Physical address of the shape data */
+	const uint32_t *ptr_palette;	/**< 4 entries; entry 0 is transparent */
 } GfxCardFrame;
 
 /** The card's 256-entry palette, as &BBGGRRSS words. Valid for 8bpp modes. */

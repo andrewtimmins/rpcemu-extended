@@ -144,6 +144,16 @@ static struct cached_state {
         unsigned gfx_stride;
         unsigned gfx_bpp;
         int gfx_blanked;
+        /* The card's pointer. RISC OS leaves the shape where it built it and
+           gives the card its physical address, so the video thread reads it out
+           of guest memory the way real hardware would fetch it. */
+        int gfx_ptr_visible;
+        int gfx_ptr_x;
+        int gfx_ptr_y;
+        unsigned gfx_ptr_width;		/* bytes per shape row, 4 pixels each */
+        unsigned gfx_ptr_height;
+        uint32_t gfx_ptr_phys;
+        uint32_t gfx_ptr_palette[4];
 } thr;
 
 /* One entry per 4KB page of VRAM, sized for the maximum supported VRAM
@@ -200,11 +210,21 @@ initvideo(void)
 /**
  * Return the width in pixels of the displayed portion of the screen.
  *
+ * With the graphics card scanning out, VIDC's own registers describe a mode
+ * nothing is using: they are whatever the display was in before the card took
+ * over. Everything that asks here is reasoning about what is on the screen -
+ * the mousehack coordinate maths above all - so answer for the display that is
+ * actually being shown.
+ *
  * @return width
  */
 int
 vidc_get_xsize(void)
 {
+	if (thr.gfx_active && thr.vidc_xsize > 0) {
+		return thr.vidc_xsize;
+	}
+
 	return vidc.hder - vidc.hdsr;
 }
 
@@ -216,6 +236,10 @@ vidc_get_xsize(void)
 int
 vidc_get_ysize(void)
 {
+	if (thr.gfx_active && thr.vidc_ysize > 0) {
+		return thr.vidc_ysize;
+	}
+
 	return vidc.vder - vidc.vdsr;
 }
 
@@ -336,6 +360,14 @@ drawscr(void)
 			thr.gfx_stride = frame.stride;
 			thr.gfx_bpp = frame.bpp;
 			thr.gfx_blanked = frame.blanked;
+			thr.gfx_ptr_visible = frame.ptr_visible;
+			thr.gfx_ptr_x = (int) frame.ptr_x;
+			thr.gfx_ptr_y = (int) frame.ptr_y;
+			thr.gfx_ptr_width = frame.ptr_width;
+			thr.gfx_ptr_height = frame.ptr_height;
+			thr.gfx_ptr_phys = frame.ptr_phys;
+			memcpy(thr.gfx_ptr_palette, frame.ptr_palette,
+			       sizeof(thr.gfx_ptr_palette));
 			thr.vidc_xsize = (int) frame.width;
 			thr.vidc_ysize = (int) frame.height;
 		}
@@ -343,6 +375,12 @@ drawscr(void)
 
 	thr.cursorx = vidc.hcsr - vidc.hdsr;
 	thr.cursory = vidc.vcsr - vidc.vdsr;
+	/* With the card displaying, VIDC's cursor registers mean nothing: the
+	   pointer is where the card was told to put it. */
+	if (thr.gfx_active) {
+		thr.cursorx = thr.gfx_ptr_x;
+		thr.cursory = thr.gfx_ptr_y;
+	}
 	if (mousehack) {
 		mouse_hack_get_pos(&thr.cursorx, &thr.cursory);
 	}
@@ -389,6 +427,25 @@ drawscr(void)
 
 	// Store the value of this screen's pixel doubling, used in keyboard.c for mousehack
 	doublesize = thr.doublesize;
+
+	/* With the graphics card scanning out, everything below belongs to VIDC and
+	   none of it applies. In particular VIDC's video DMA is off - RISC OS has no
+	   reason to keep it running once another driver owns the display - which
+	   sends the border path below straight over the card's frame, filling the
+	   host bitmap with the border colour. That is what made the card's display
+	   go black, and the two paths writing the same bitmap from different threads
+	   is what made it look like noise while it did.
+
+	   lastframeborder is left set so that whenever VIDC does take the display
+	   back, it rebuilds the whole frame rather than trusting the dirty-block
+	   bookkeeping, none of which has been maintained meanwhile. */
+	if (thr.gfx_active) {
+		lastframeborder = 1;
+		thr.threadpending = 1;
+		iomd_flyback(0);
+		vidcwakeupthread();
+		goto unlock_mutex_return;
+	}
 
 	// Handle full screen border plotting
 	// If not Video cursor DMA enabled or vertical start > vertical end
@@ -483,6 +540,76 @@ unlock_mutex_return:
  * Every line is redrawn - the card has no dirty-page tracking, the guest writing
  * to its framestore through mem.c's fast path rather than anything we can see.
  */
+/**
+ * Read a byte of the pointer shape out of guest memory.
+ *
+ * The shape lives wherever RISC OS built it and the card holds only its physical
+ * address, so this is the fetch a real card would do over the bus.
+ */
+static uint8_t
+gfx_shape_byte(uint32_t addr)
+{
+	const uint32_t word = mem_phys_read32(addr & ~3u);
+
+#ifdef _RPCEMU_BIG_ENDIAN
+	return (uint8_t) (word >> (8 * (3 - (addr & 3))));
+#else
+	return (uint8_t) (word >> (8 * (addr & 3)));
+#endif
+}
+
+/**
+ * Draw the card's pointer over the frame just rendered.
+ *
+ * Two bits per pixel, four to a byte, colour 0 transparent and 1-3 from the
+ * pointer palette - the shape format GraphicsV defines. Clipped against the
+ * display rather than trusted: the position comes from the guest, or from the
+ * front-end when it is placing the pointer itself.
+ *
+ * thread: video
+ */
+static void
+gfxcard_draw_pointer(void)
+{
+	unsigned row;
+
+	if (!thr.gfx_ptr_visible || thr.gfx_blanked) {
+		return;
+	}
+
+	for (row = 0; row < thr.gfx_ptr_height; row++) {
+		const int y = thr.cursory + (int) row;
+		uint32_t *vidp;
+		unsigned byte;
+
+		if (y < 0 || y >= thr.vidc_ysize) {
+			continue;
+		}
+		vidp = video_image_scanline(y);
+
+		for (byte = 0; byte < thr.gfx_ptr_width; byte++) {
+			const uint8_t bits = gfx_shape_byte(thr.gfx_ptr_phys +
+			                                    row * thr.gfx_ptr_width + byte);
+			unsigned pix;
+
+			for (pix = 0; pix < 4; pix++) {
+				const unsigned colour = (bits >> (pix * 2)) & 3;
+				const int x = thr.cursorx + (int) (byte * 4 + pix);
+
+				if (colour == 0) {
+					continue;	/* transparent */
+				}
+				if (x < 0 || x >= thr.vidc_xsize) {
+					continue;
+				}
+				vidp[x] = makecol(thr.gfx_ptr_palette[colour] >> 8 & 0xff,
+				                  thr.gfx_ptr_palette[colour] >> 16 & 0xff,
+				                  thr.gfx_ptr_palette[colour] >> 24 & 0xff);
+			}
+		}
+	}
+}
+
 static void
 vidcthread_gfxcard(void)
 {
@@ -549,6 +676,8 @@ vidcthread_gfxcard(void)
 			break;
 		}
 	}
+
+	gfxcard_draw_pointer();
 
 	video_update(0, thr.vidc_ysize);
 }

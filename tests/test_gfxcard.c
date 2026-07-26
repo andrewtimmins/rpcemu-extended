@@ -39,6 +39,7 @@
 #include <string.h>
 
 #include "rpcemu.h"
+#include "edid.h"
 #include "gfxcard.h"
 #include "podules.h"
 
@@ -226,6 +227,96 @@ main(void)
 	wr(GFXCARD_REG_STATUS, GFXCARD_STATUS_VSYNC);
 	check((rd(GFXCARD_REG_STATUS) & GFXCARD_STATUS_VSYNC) == 0,
 	      "cleared by writing the bit back");
+
+	printf("\nthe monitor's EDID is served over the card\n");
+	check(rd(GFXCARD_REG_EDID_SIZE) == 0,
+	      "nothing to serve until the emulator publishes a block");
+	check((rd(GFXCARD_REG_CAPS) & GFXCARD_CAP_EDID) == 0,
+	      "and the card does not claim it can");
+	{
+		/* A block built the way the emulator builds the one it installs in
+		   the ROM, so the card and the ROM answer for the same monitor. */
+		uint8_t base[EDID_BLOCK_SIZE], block[EDID_BLOCK_SIZE];
+		unsigned i;
+
+		memset(base, 0, sizeof(base));
+		memcpy(base, "\x00\xff\xff\xff\xff\xff\xff\x00", 8);
+		base[18] = 1;			/* EDID version 1 */
+		edid_build_from_base(block, base, 2560, 1440, 60);
+		check(edid_block_is_valid(block), "the block built for the test is sound");
+		edid_publish(block);
+
+		check(rd(GFXCARD_REG_EDID_SIZE) == EDID_BLOCK_SIZE,
+		      "a published block is offered whole");
+		check((rd(GFXCARD_REG_CAPS) & GFXCARD_CAP_EDID) != 0,
+		      "and the card now claims it");
+
+		wr(GFXCARD_REG_EDID_INDEX, 0);
+		for (i = 0; i < EDID_BLOCK_SIZE; i++) {
+			if (rd(GFXCARD_REG_EDID_DATA) != block[i]) {
+				break;
+			}
+		}
+		check(i == EDID_BLOCK_SIZE, "every byte reads back, in order");
+		check(rd(GFXCARD_REG_EDID_INDEX) == EDID_BLOCK_SIZE,
+		      "the index stops at the end rather than wrapping");
+		check(rd(GFXCARD_REG_EDID_DATA) == 0,
+		      "reading past the end gives zero, not the start again");
+
+		wr(GFXCARD_REG_EDID_INDEX, 8);
+		check(rd(GFXCARD_REG_EDID_DATA) == block[8],
+		      "the index can be set to read part of the block");
+		wr(GFXCARD_REG_EDID_INDEX, 0x1000);
+		check(rd(GFXCARD_REG_EDID_INDEX) == EDID_BLOCK_SIZE,
+		      "an index beyond the block is clamped");
+	}
+
+	printf("\nthe pointer is the card's to draw\n");
+	check((rd(GFXCARD_REG_CAPS) & GFXCARD_CAP_HW_POINTER) != 0,
+	      "the card claims it draws the pointer");
+	set_mode(640, 480, 8, 640, 0);
+	wr(GFXCARD_REG_CTRL, GFXCARD_CTRL_ENABLE);
+	check(gfxcard_frame(&frame) && !frame.ptr_visible,
+	      "nothing drawn until there is a shape to draw");
+
+	wr(GFXCARD_REG_PTR_WIDTH, 8);		/* 32 pixels, as RISC OS pads to */
+	wr(GFXCARD_REG_PTR_HEIGHT, 12);
+	wr(GFXCARD_REG_PTR_PHYS, 0x18000000u);
+	wr(GFXCARD_REG_PTR_X, 100);
+	wr(GFXCARD_REG_PTR_Y, 50);
+	check(gfxcard_frame(&frame) && !frame.ptr_visible,
+	      "nor until it is switched on");
+	wr(GFXCARD_REG_PTR_CTRL, GFXCARD_PTR_CTRL_SHOW);
+	check(gfxcard_frame(&frame) && frame.ptr_visible &&
+	      frame.ptr_x == 100 && frame.ptr_y == 50 &&
+	      frame.ptr_width == 8 && frame.ptr_height == 12 &&
+	      frame.ptr_phys == 0x18000000u,
+	      "shape, place and address reported with the frame");
+
+	wr(GFXCARD_REG_PTR_WIDTH, 0x1000);
+	check(rd(GFXCARD_REG_PTR_WIDTH) == GFXCARD_PTR_MAX_WIDTH,
+	      "an absurd shape width is clamped, not trusted");
+	wr(GFXCARD_REG_PTR_HEIGHT, 0x1000);
+	check(rd(GFXCARD_REG_PTR_HEIGHT) == GFXCARD_PTR_MAX_HEIGHT,
+	      "and so is the height");
+
+	printf("\nthe pointer has its own three colours\n");
+	check(gfxcard_frame(&frame) && frame.ptr_palette[0] == 0,
+	      "colour 0 is transparent");
+	wr(GFXCARD_REG_PTR_PAL_IDX, 1);
+	wr(GFXCARD_REG_PTR_PAL, 0x11223300u);
+	wr(GFXCARD_REG_PTR_PAL, 0x44556600u);
+	wr(GFXCARD_REG_PTR_PAL, 0x77889900u);
+	check(gfxcard_frame(&frame) && frame.ptr_palette[1] == 0x11223300u &&
+	      frame.ptr_palette[2] == 0x44556600u && frame.ptr_palette[3] == 0x77889900u,
+	      "three colours written as a run from index 1");
+	wr(GFXCARD_REG_PTR_PAL_IDX, 0);
+	wr(GFXCARD_REG_PTR_PAL, 0xdeadbeefu);
+	check(gfxcard_frame(&frame) && frame.ptr_palette[0] == 0,
+	      "and colour 0 stays transparent however it is written");
+
+	wr(GFXCARD_REG_PTR_CTRL, 0);
+	check(gfxcard_frame(&frame) && !frame.ptr_visible, "switched off again");
 
 	printf("\nframes displayed are counted, for diagnostics\n");
 	{

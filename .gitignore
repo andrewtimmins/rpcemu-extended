@@ -45,6 +45,8 @@
 /riscos-progs/*/*.o
 /riscos-progs/*/*.elf
 /riscos-progs/*/version.inc
+/riscos-progs/*/resfs.inc
+/riscos-progs/RPCEmuGfx/gfxapp
 
 # Editor swap files / patch leftovers
 *.swp

@@ -97,7 +97,10 @@ add_test(NAME test_relay_reasm COMMAND test_relay_reasm)
 # linking podules.c would drag in every bundled expansion card and the plugin
 # loader with them - and rpcemu_core would drag in SDL, which is what broke the
 # macOS arm64 build once already (see test_mode_fit above).
-add_executable(test_gfxcard test_gfxcard.c)
+# edid.c comes along because the card serves the monitor's EDID over DDC; like
+# display_mode.c it is dependency-free, so this still links nothing.
+add_executable(test_gfxcard test_gfxcard.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/edid.c)
 target_include_directories(test_gfxcard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 add_test(NAME test_gfxcard COMMAND test_gfxcard)
 

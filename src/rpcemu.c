@@ -217,6 +217,7 @@ Config config = {
 	0,			/* fit_to_window */
 	0,			/* follow_host_display (OFF: it reflows the guest desktop) */
 	0,			/* gfxcard_enabled (OFF: needs its guest driver) */
+	0,			/* gfxcard_boot_display (OFF: the card is taken up on request) */
 	NULL,			/* network_capture */
 	0,			/* vnc_enabled */
 	5900,			/* vnc_port */

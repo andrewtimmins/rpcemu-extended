@@ -1,0 +1,6 @@
+| The graphics card's own utility, out of the card's ROM.
+IconSprites <Obey$Dir>.!Sprites
+Set GfxCard$Dir <Obey$Dir>
+Set GfxCard$Path <GfxCard$Dir>.
+WimpSlot -min 64k -max 64k
+Run <GfxCard$Dir>.!RunImage

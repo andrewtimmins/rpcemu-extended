@@ -52,6 +52,7 @@
 #include <string.h>
 
 #include "rpcemu.h"
+#include "edid.h"
 #include "gfxcard.h"
 #include "podules.h"
 
@@ -96,6 +97,17 @@ static struct {
 	uint32_t	start;
 	uint32_t	pal_index;
 	uint32_t	frames;		/**< Frames displayed, for diagnostics */
+	uint32_t	edid_index;	/**< Byte the next EDID_DATA read returns */
+
+	/* Pointer */
+	uint32_t	ptr_ctrl;
+	uint32_t	ptr_x;
+	uint32_t	ptr_y;
+	uint32_t	ptr_width;	/**< Bytes per shape row */
+	uint32_t	ptr_height;
+	uint32_t	ptr_phys;
+	uint32_t	ptr_pal_index;
+	uint32_t	ptr_palette[4];
 
 	uint32_t	palette[256];
 } gfx;
@@ -232,7 +244,9 @@ gfxcard_reg_read(int reg)
 		   out and only 8 and 32 are implemented. A depth the card does not
 		   claim is simply one the OS will not ask it for. */
 		return GFXCARD_CAP_8BPP | GFXCARD_CAP_32BPP |
-		       GFXCARD_CAP_HW_SCROLL | GFXCARD_CAP_VSYNC;
+		       GFXCARD_CAP_HW_SCROLL | GFXCARD_CAP_VSYNC |
+		       GFXCARD_CAP_HW_POINTER |
+		       (edid_published() != NULL ? GFXCARD_CAP_EDID : 0);
 	case GFXCARD_REG_FB_PHYS:    return gfxcard_fb_phys;
 	case GFXCARD_REG_FB_SIZE:    return GFXCARD_FB_SIZE;
 	case GFXCARD_REG_CTRL:       return gfx.ctrl;
@@ -247,6 +261,44 @@ gfxcard_reg_read(int reg)
 	case GFXCARD_REG_MAX_WIDTH:  return GFXCARD_MAX_WIDTH;
 	case GFXCARD_REG_MAX_HEIGHT: return GFXCARD_MAX_HEIGHT;
 	case GFXCARD_REG_FRAMES:     return gfx.frames;
+
+	/* The monitor's EDID, as a byte at a time through an index that steps on.
+	   This is what lets the card answer a DDC read: RISC OS re-reads the EDID
+	   from the display driver whenever the driver changes, and a card that
+	   cannot answer leaves the machine with a fallback monitor definition and
+	   only the handful of modes that go with it. */
+	case GFXCARD_REG_EDID_SIZE:
+		return (edid_published() != NULL) ? EDID_BLOCK_SIZE : 0;
+
+	case GFXCARD_REG_EDID_INDEX: return gfx.edid_index;
+
+	case GFXCARD_REG_PTR_CTRL:    return gfx.ptr_ctrl;
+	case GFXCARD_REG_PTR_X:       return gfx.ptr_x;
+	case GFXCARD_REG_PTR_Y:       return gfx.ptr_y;
+	case GFXCARD_REG_PTR_WIDTH:   return gfx.ptr_width;
+	case GFXCARD_REG_PTR_HEIGHT:  return gfx.ptr_height;
+	case GFXCARD_REG_PTR_PHYS:    return gfx.ptr_phys;
+	case GFXCARD_REG_PTR_PAL_IDX: return gfx.ptr_pal_index;
+	case GFXCARD_REG_PTR_PAL:     return gfx.ptr_palette[gfx.ptr_pal_index & 3];
+
+	case GFXCARD_REG_OPTIONS:
+		return config.gfxcard_boot_display ? GFXCARD_OPT_BOOT_DISPLAY : 0;
+
+	case GFXCARD_REG_EDID_DATA: {
+		const uint8_t *block = edid_published();
+		uint32_t v = 0;
+
+		if (block != NULL && gfx.edid_index < EDID_BLOCK_SIZE) {
+			v = block[gfx.edid_index];
+		}
+		/* Steps on even past the end, so a driver reading a run of bytes
+		   cannot be made to spin by a short block. */
+		if (gfx.edid_index < EDID_BLOCK_SIZE) {
+			gfx.edid_index++;
+		}
+		return v;
+	}
+
 	default:                     return 0;
 	}
 }
@@ -281,6 +333,38 @@ gfxcard_reg_write(int reg, uint32_t val)
 	case GFXCARD_REG_STRIDE:    gfx.stride = val; break;
 	case GFXCARD_REG_START:     gfx.start = val; break;
 	case GFXCARD_REG_PAL_INDEX: gfx.pal_index = val & 0xff; break;
+
+	case GFXCARD_REG_EDID_INDEX:
+		gfx.edid_index = (val < EDID_BLOCK_SIZE) ? val : EDID_BLOCK_SIZE;
+		break;
+
+	case GFXCARD_REG_PTR_CTRL:   gfx.ptr_ctrl = val & GFXCARD_PTR_CTRL_SHOW; break;
+	case GFXCARD_REG_PTR_X:      gfx.ptr_x = val; break;
+	case GFXCARD_REG_PTR_Y:      gfx.ptr_y = val; break;
+	case GFXCARD_REG_PTR_PHYS:   gfx.ptr_phys = val; break;
+
+	/* Clamped rather than trusted: these come from the guest and the video code
+	   walks the shape with them. */
+	case GFXCARD_REG_PTR_WIDTH:
+		gfx.ptr_width = (val <= GFXCARD_PTR_MAX_WIDTH) ? val : GFXCARD_PTR_MAX_WIDTH;
+		break;
+
+	case GFXCARD_REG_PTR_HEIGHT:
+		gfx.ptr_height = (val <= GFXCARD_PTR_MAX_HEIGHT) ? val : GFXCARD_PTR_MAX_HEIGHT;
+		break;
+
+	case GFXCARD_REG_PTR_PAL_IDX:
+		gfx.ptr_pal_index = val & 3;
+		break;
+
+	case GFXCARD_REG_PTR_PAL:
+		/* Entry 0 is transparent and cannot be written, so a driver setting the
+		   three pointer colours writes the index once and then three words. */
+		if ((gfx.ptr_pal_index & 3) != 0) {
+			gfx.ptr_palette[gfx.ptr_pal_index & 3] = val;
+		}
+		gfx.ptr_pal_index = (gfx.ptr_pal_index + 1) & 3;
+		break;
 
 	case GFXCARD_REG_PAL_ENTRY:
 		/* The index steps on after each entry, so a driver setting a run of
@@ -438,6 +522,22 @@ gfxcard_podule_reset(podule *p)
 	gfx.start = 0;
 	gfx.pal_index = 0;
 	gfx.frames = 0;
+	gfx.edid_index = 0;
+
+	gfx.ptr_ctrl = 0;
+	gfx.ptr_x = 0;
+	gfx.ptr_y = 0;
+	gfx.ptr_width = 0;
+	gfx.ptr_height = 0;
+	gfx.ptr_phys = 0;
+	gfx.ptr_pal_index = 1;
+
+	/* A visible default, so a pointer appears even before its colours are set:
+	   white with a black edge, as RISC OS's own pointer is. */
+	gfx.ptr_palette[0] = 0;
+	gfx.ptr_palette[1] = 0xffffff00u;	/* &BBGGRRSS: white */
+	gfx.ptr_palette[2] = 0x00000000u;	/* black */
+	gfx.ptr_palette[3] = 0x8080ff00u;	/* light blue, as the OS uses */
 }
 
 /* ------------------------------------------------------------------------
@@ -572,6 +672,19 @@ gfxcard_frame(GfxCardFrame *frame)
 	frame->stride = gfx.stride;
 	frame->bpp = gfx.bpp;
 	frame->blanked = (gfx.ctrl & GFXCARD_CTRL_BLANK) != 0;
+
+	/* The pointer, only if there is a shape to draw and it was placed on the
+	   display. Taken in the same snapshot as the geometry so it cannot change
+	   halfway through a frame. */
+	frame->ptr_visible = (gfx.ptr_ctrl & GFXCARD_PTR_CTRL_SHOW) != 0 &&
+	                     gfx.ptr_width != 0 && gfx.ptr_height != 0 &&
+	                     gfx.ptr_phys != 0;
+	frame->ptr_x = gfx.ptr_x;
+	frame->ptr_y = gfx.ptr_y;
+	frame->ptr_width = gfx.ptr_width;
+	frame->ptr_height = gfx.ptr_height;
+	frame->ptr_phys = gfx.ptr_phys;
+	frame->ptr_palette = gfx.ptr_palette;
 
 	return 1;
 }
