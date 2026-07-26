@@ -74,6 +74,11 @@
 	@ The icon bar, as a window handle
 	ICONBAR_RIGHT	= -1
 
+	@ Mouse buttons, as Wimp_Poll reports a click on a click-type icon
+	BUTTON_ADJUST	= 1 << 0
+	BUTTON_MENU	= 1 << 1
+	BUTTON_SELECT	= 1 << 2
+
 	@ Icon flags: text and sprite, centred, indirected, reporting clicks. The
 	@ sprite is named in the validation string ("S<name>") rather than through
 	@ the sprite-only form of the icon data: that is how the Wimp finds a sprite
@@ -324,8 +329,8 @@ close_window:
 @ The menu
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
-@ A click on our icon opens the menu, whichever button it was: the menu is all
-@ there is.
+@ Menu on our icon opens the menu. Select and Adjust are left alone, as they are
+@ on any icon bar icon that has nothing to open.
 mouse_click:
 	stmfd	sp!, {r4, lr}
 	adrl	r4, poll_block
@@ -337,6 +342,9 @@ mouse_click:
 	ldr	r1, [r1]
 	teq	r0, r1
 	bne	1f
+	ldr	r0, [r4, #8]		@ which button
+	tst	r0, #BUTTON_MENU
+	beq	1f			@ Select and Adjust are not ours
 
 	adrl	r1, menu_block
 	ldr	r0, [r4, #0]		@ pointer x
