@@ -39,6 +39,11 @@ public:
 
 	void AddNatRule(PortForwardRule rule);
 
+	/* Show the dialog, re-reading the rules first. The dialog is built once at
+	   startup and reused, so its list would otherwise keep whatever it was
+	   populated with then. */
+	int ShowRules();
+
 	bool ValidateAdd(PortForwardRule rule);
 	bool ValidateEdit(PortForwardRule old_rule, PortForwardRule new_rule);
 	void ProcessAdd(PortForwardRule rule);
@@ -48,6 +53,7 @@ private:
 	void BuildUi();
 	void LoadRulesFromConfig();
 	PortForwardRule RuleFromRow(long row) const;
+	long FindRuleRow(PortForwardRule rule) const;
 	long SelectedRow() const;
 
 	void OnAddRule(wxCommandEvent &event);

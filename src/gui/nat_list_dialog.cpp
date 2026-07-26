@@ -93,6 +93,12 @@ void NatListDialog::BuildUi()
 	rules_list_->Bind(wxEVT_LIST_ITEM_ACTIVATED, &NatListDialog::OnListActivated, this);
 }
 
+int NatListDialog::ShowRules()
+{
+	LoadRulesFromConfig();
+	return ShowModal();
+}
+
 void NatListDialog::LoadRulesFromConfig()
 {
 	rules_list_->DeleteAllItems();
@@ -101,6 +107,25 @@ void NatListDialog::LoadRulesFromConfig()
 			AddNatRule(port_forward_rules[i]);
 		}
 	}
+}
+
+/* Row showing this exact rule, or wxNOT_FOUND. The list is the display of a
+   set, so both adding and editing need to ask this rather than assume. */
+long NatListDialog::FindRuleRow(PortForwardRule rule) const
+{
+	const long count = rules_list_->GetItemCount();
+
+	for (long i = 0; i < count; ++i) {
+		const PortForwardRule row_rule = RuleFromRow(i);
+
+		if (row_rule.type == rule.type
+		    && row_rule.emu_port == rule.emu_port
+		    && row_rule.host_port == rule.host_port) {
+			return i;
+		}
+	}
+
+	return wxNOT_FOUND;
 }
 
 PortForwardRule NatListDialog::RuleFromRow(long row) const
@@ -183,6 +208,15 @@ void NatListDialog::OnListActivated(wxListEvent &)
 void NatListDialog::AddNatRule(PortForwardRule rule)
 {
 	long insert_row = 0;
+
+	/* Already shown: nothing to do. The dialog is built once at startup and
+	   populated from the configuration, then the emulator replays the same rules
+	   to it when NAT networking comes up, so without this every configured rule
+	   appeared twice before the dialog had even been opened. */
+	if (FindRuleRow(rule) != wxNOT_FOUND) {
+		return;
+	}
+
 	const long count = rules_list_->GetItemCount();
 	while (insert_row < count) {
 		unsigned long row_emu = 0;
@@ -263,15 +297,10 @@ void NatListDialog::ProcessAdd(PortForwardRule rule)
 
 void NatListDialog::ProcessEdit(PortForwardRule old_rule, PortForwardRule new_rule)
 {
-	const long count = rules_list_->GetItemCount();
-	for (long i = 0; i < count; ++i) {
-		const PortForwardRule row_rule = RuleFromRow(i);
-		if (row_rule.type == old_rule.type
-		    && row_rule.emu_port == old_rule.emu_port
-		    && row_rule.host_port == old_rule.host_port) {
-			rules_list_->DeleteItem(i);
-			break;
-		}
+	const long row = FindRuleRow(old_rule);
+
+	if (row != wxNOT_FOUND) {
+		rules_list_->DeleteItem(row);
 	}
 
 	AddNatRule(new_rule);

@@ -596,7 +596,7 @@ void MainFrame::OnNatList(wxCommandEvent &)
 {
 #ifdef RPCEMU_NETWORKING
 	if (nat_list_dialog_) {
-		nat_list_dialog_->ShowModal();
+		nat_list_dialog_->ShowRules();
 	}
 #else
 	/* Networking (and the NAT list) is not compiled in - nothing to do.
