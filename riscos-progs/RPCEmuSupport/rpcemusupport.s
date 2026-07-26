@@ -306,10 +306,19 @@ command_desktop_hostcmd:
 	ldmfd	sp!, {pc}
 
 tw_prefix:
-	.string	"TaskWindow -wimpslot 640k -quit -name HostCmd -ctrl -txt 1 -task "
+	.string	"TaskWindow -wimpslot 640k -quit -name RPCEmuSupport -ctrl -txt 1 -task "
 	.align
+
+	@ Passed to Wimp_Initialise, so this is the name the Task Manager lists us
+	@ under in Module tasks. Display only, nothing looks the task up by name, so
+	@ it can read as two words even though the module name cannot (a module name
+	@ has to stay a single token for *RMKill, *RMEnsure and friends).
+	@
+	@ Note the -name in tw_prefix above stays one word: it is an argument on a
+	@ command line, so a space would end it early and TaskWindow would take
+	@ "Support" as the start of the command to run.
 task_name:
-	.string	"HostCmd"
+	.string	"RPCEmu Support"
 	.align
 
 	@ Messages we must receive from TaskWindow children. For a Wimp >= 3.00

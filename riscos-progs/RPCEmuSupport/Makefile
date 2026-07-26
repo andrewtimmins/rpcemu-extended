@@ -12,7 +12,12 @@ LD = armld
 OBJCOPY = armobjcopy
 
 MODULE = rpcemusupport
+
+# The module name is a single token, because *RMKill / *RMEnsure and the header
+# title need one. The help string uses the readable form, as RISC OS modules
+# conventionally do (compare "SharedCLibrary" against "Shared C Library").
 TITLE = RPCEmuSupport
+DISPLAY_NAME = RPCEmu Support
 
 # Version and date come from VersionNum. Either can be overridden on the command
 # line, e.g. make MODULE_DATE="$(shell date +'%d %b %Y')" for a true build stamp.
@@ -26,8 +31,8 @@ all: $(MODULE),ffa
 version.inc: VersionNum Makefile
 	@printf '@ Generated from VersionNum by the Makefile - do not edit.\n' > $@
 	@printf 'help:\n\t.string\t"%s\\t%s (%s)"\n\t.align\n' \
-		'$(TITLE)' '$(MODULE_VERSION)' '$(MODULE_DATE)' >> $@
-	@echo "version.inc: $(TITLE) $(MODULE_VERSION) ($(MODULE_DATE))"
+		'$(DISPLAY_NAME)' '$(MODULE_VERSION)' '$(MODULE_DATE)' >> $@
+	@echo "version.inc: $(DISPLAY_NAME) $(MODULE_VERSION) ($(MODULE_DATE))"
 
 %,ffa: %.elf
 	$(OBJCOPY) -O binary $< $@
