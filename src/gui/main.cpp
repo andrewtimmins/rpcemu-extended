@@ -19,6 +19,7 @@
  */
 
 #include <wx/wx.h>
+#include <wx/display.h>
 
 #include <cstdio>
 #include <cstring>
@@ -77,6 +78,33 @@ bool RpcemuApp::OnInit()
 	auto *frame = new MainFrame();
 	frame->Show(true);
 	SetTopWindow(frame);
+
+	// Tell the core the size of the display the window opened on, before
+	// rpcemu_start() loads the ROMs: the synthesised monitor EDID is patched in
+	// during loadroms(), and without this it falls back to a fixed 1920x1080 and
+	// the guest's "Auto" monitor detection learns the wrong native mode.
+	//
+	// The monitor's full geometry is used rather than its client area, because
+	// that is what an EDID's preferred timing means - the display's native mode,
+	// not the space left over beside a taskbar. rom_patch.c clamps it.
+	{
+		// Show() is asynchronous on some platforms, so the frame may not be
+		// mapped yet and GetFromWindow() can answer wxNOT_FOUND. Fall back to
+		// the primary display rather than constructing an invalid wxDisplay.
+		int index = wxDisplay::GetFromWindow(frame);
+
+		if (index == wxNOT_FOUND) {
+			index = 0;
+		}
+
+		const wxRect geom = wxDisplay((unsigned) index).GetGeometry();
+
+		if (geom.width > 0 && geom.height > 0) {
+			rpcemu_set_host_display((unsigned) geom.width, (unsigned) geom.height);
+			rpclog("main: host display %dx%d (display %d of %u)\n",
+			       geom.width, geom.height, index, wxDisplay::GetCount());
+		}
+	}
 
 	rpcemu_start();
 
