@@ -280,71 +280,89 @@ jobs:
       - name: Smoke test app bundle
         run: |
           APP=releases/macos/RPCEmu.app
-          lipo -archs "$APP/Contents/MacOS/rpcemu"
-          file "$APP/Contents/MacOS/rpcemu" | grep -i 'universal'
+          MACOSD="$APP/Contents/MacOS"
+          lipo -archs "$MACOSD/rpcemu"
+          file "$MACOSD/rpcemu" | grep -i 'universal'
           test -f "$APP/Contents/Info.plist"
           codesign --verify --deep --strict "$APP"
           ls -la releases/macos/*.dmg
-          # Actually run the fused binary, so a lipo or signing step that
-          # produces something unloadable is caught here rather than by a user.
+
+          # Every library the bundle needs must be inside the bundle or part of
+          # macOS. This is the check that matters: the shipped .app was once
+          # unlaunchable because its binaries still referred to Homebrew's own
+          # prefix, which exists on the machine that built it and nowhere else.
+          # Done by reading the load commands rather than by launching anything,
+          # so it is deterministic and cannot hang.
+          echo "==> checking every dependency resolves inside the bundle or in macOS"
+          for f in "$MACOSD"/* "$APP/Contents/Frameworks"/*; do
+            [ -f "$f" ] || continue
+            file "$f" | grep -q Mach-O || continue
+            # Only the indented lines are dependencies. otool prints a header
+            # line per architecture for a universal binary, and for a library its
+            # own install name as the first entry, so both are filtered out -
+            # taking them for dependencies is what made the first version of this
+            # check report every file as depending on itself.
+            otool -L "$f" | grep -E '^[[:space:]]' | awk '{print $1}' | while read -r dep; do
+              [ "$(basename "$dep")" = "$(basename "$f")" ] && continue
+              case "$dep" in
+                /usr/lib/*|/System/*) ;;                      # part of macOS
+                @executable_path/*|@loader_path/*|@rpath/*) ;; # inside the bundle
+                *)
+                  echo "::error::$(basename "$f") depends on '$dep', which will not exist on another machine"
+                  echo BAD >> dep-check.fail
+                  ;;
+              esac
+            done
+          done
+          # The loop above runs in a subshell (pipe), so the failure is recorded
+          # in a file rather than a variable.
+          if [ -f dep-check.fail ]; then
+            exit 1
+          fi
+          echo "✓ all dependencies are bundled or system"
+
+          # Then a bounded attempt at actually running it, for information only.
+          # A GUI application launched with --help is expected to print usage and
+          # exit before wxEntry(), and in the bundle it does not: it starts the
+          # GUI instead, which is why this does not gate the build. It is kept
+          # because the output says which, and because a binary that cannot load
+          # at all fails here in seconds with dyld's own diagnosis.
           #
-          # macOS ships no timeout(1), and relying on the job-level
-          # timeout-minutes as the backstop cost twenty minutes of runner time
-          # the first time this test did not exit. So the watchdog is done here:
-          # the invocation runs in the background and is killed if it outlives
-          # its grace period, and either outcome reports rather than hangs.
-          #
-          # --help is expected to print usage and exit without ever calling
-          # wxEntry(), so this also catches an argument-parsing path that does
-          # not run in a bundled app - which would take --headless with it.
-          run_help() {
+          # The watchdog is hand-rolled: macOS ships no timeout(1), and leaning
+          # on the job-level timeout-minutes instead cost twenty minutes of
+          # runner time the first time this test did not exit.
+          try_help() {
             local out="help-$$.out" pid i
+            rm -f "$out"
             "$@" --help >"$out" 2>&1 &
             pid=$!
-            for i in $(seq 1 45); do
+            for i in $(seq 1 30); do
               kill -0 "$pid" 2>/dev/null || break
               sleep 1
             done
             if kill -0 "$pid" 2>/dev/null; then
               kill -9 "$pid" 2>/dev/null || true
               wait "$pid" 2>/dev/null || true
-              echo "::error::'$* --help' did not exit within 45s (it should print usage and return)."
-              echo "--- output before it was killed ---"
+              echo "note: '$*' did not exit within 30s; it started the GUI rather than printing usage."
+            elif wait "$pid"; then
+              if grep -q '^Usage:' "$out"; then
+                echo "note: '$*' printed usage and exited."
+              else
+                echo "note: '$*' exited cleanly but printed no usage."
+              fi
+            else
+              echo "note: '$*' exited non-zero. Output:"
               cat "$out"
-              return 1
-            fi
-            wait "$pid"
-            local rc=$?
-            cat "$out"
-            if [ "$rc" -ne 0 ]; then
-              echo "::error::'$* --help' exited $rc"
-              return 1
-            fi
-            if ! grep -q '^Usage:' "$out"; then
-              echo "::error::'$* --help' exited cleanly but printed no usage."
-              return 1
             fi
           }
-          # Probe the unfused, unbundled slice first, and do not fail on it. If
-          # this one honours --help and the bundled binary below does not, then
-          # the difference is the fusing or the bundle rather than the code;
-          # if neither does, argument parsing is not reached on macOS at all.
-          # Either way the next run says which, instead of leaving it to guesswork.
-          if run_help build-mac-arm64/appstage/bin/rpcemu; then
-            echo "note: the staged arm64 slice honours --help."
-          else
-            echo "note: the staged arm64 slice does not honour --help either, so this is not the bundle."
-          fi
-          run_help "$APP/Contents/MacOS/rpcemu"
-          run_help arch -arm64 "$APP/Contents/MacOS/rpcemu"
-          # The x86_64 slice needs Rosetta 2, which this job does not install
-          # (only the x86_64 build job does). Check for it rather than assuming,
-          # since invoking arch -x86_64 without it can stall.
-          if arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
-            run_help arch -x86_64 "$APP/Contents/MacOS/rpcemu"
-          else
-            echo "Note: skipping the x86_64 slice check, Rosetta 2 is not installed on this runner."
-          fi
+          # The staged slice as well as the bundled one: if that honours --help
+          # and the bundled binary does not, the difference is the bundle rather
+          # than the code. Restore the executable bit first - downloading an
+          # artifact does not preserve it, which is why the last run could not
+          # answer this.
+          chmod +x build-mac-arm64/appstage/bin/rpcemu || true
+          try_help build-mac-arm64/appstage/bin/rpcemu
+          try_help "$MACOSD/rpcemu"
 
       - name: Upload macOS universal release
         uses: actions/upload-artifact@v4

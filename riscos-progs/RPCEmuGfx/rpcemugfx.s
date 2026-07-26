@@ -873,6 +873,11 @@ command_on:
 
 @ ...and back to VIDC20, which is driver 0: it registers from ROM before
 @ anything in an expansion card can.
+@
+@ The card is then told to stop displaying. RISC OS has no call for this - there
+@ is no way for the kernel to tell a driver it is no longer the one in use (see
+@ the GVTODO in ScreenMode_SelectDevice) - so a card left scanning out would keep
+@ putting its own framestore on the screen after the OS had moved on.
 command_off:
 	stmfd	sp!, {r5, lr}
 	ldr	r5, [r12]
@@ -881,6 +886,10 @@ command_off:
 	mov	r0, #ScreenMode_SelectDevice
 	mov	r1, #0
 	swi	XOS_ScreenMode
+	ldmvsfd	sp!, {r5, pc}		@ still the display: leave it scanning out
+	ldr	r0, [r5, #WS_REGS]
+	mov	r1, #0
+	str	r1, [r0, #REG_CTRL]
 	ldmfd	sp!, {r5, pc}
 
 command_no_ws:
