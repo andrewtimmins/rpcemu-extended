@@ -100,3 +100,16 @@ add_test(NAME test_relay_reasm COMMAND test_relay_reasm)
 add_executable(test_gfxcard test_gfxcard.c)
 target_include_directories(test_gfxcard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 add_test(NAME test_gfxcard COMMAND test_gfxcard)
+
+# The graphics card's driver module, as RISC OS will read it. The image is
+# assembled by hand and committed (build.sh --podules), so nothing in an ordinary
+# build would notice it going stale or truncated; this reads it the way the module
+# system does. Guarded on the file existing so a tree without it still configures.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../gfxroms/RPCEmuGfx,ffa")
+    add_executable(test_gfxrom test_gfxrom.c)
+    target_include_directories(test_gfxrom PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+    add_test(NAME test_gfxrom COMMAND test_gfxrom
+             "${CMAKE_CURRENT_SOURCE_DIR}/../gfxroms/RPCEmuGfx,ffa")
+else()
+    message(STATUS "Skipping test_gfxrom (gfxroms/RPCEmuGfx,ffa not built)")
+endif()

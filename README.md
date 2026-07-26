@@ -29,6 +29,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **Access/ShareFS networking** — NAT-mode relay for Acorn Access and ShareFS file sharing between emulated and real machines.
 - **Expansion cards (podules)** — assign emulated podules per machine (*Settings → Machine → Podules*): ROM, MIDI (AKA16/AKA12/MIDI Max, host MIDI via ALSA), and the Computer Concepts Lark sampler. Plugin ABI for adding more. See [docs/podules.md](docs/podules.md).
 - **Full FPA10 emulation** — floating-point coprocessor with cycle-accurate timing; works with interpreter and dynarec.
+- **Graphics card — display modes VRAM cannot reach** — an optional emulated expansion card with 15MB of its own display memory, so **2560 x 1440 in full colour** is available on a machine whose 2MB of VRAM otherwise stops at 800 x 600. An ordinary card in an ordinary EASI slot with its own GraphicsV driver in its ROM; off by default, and RISC OS keeps using VIDC20 until you run `*GfxCardOn`. See [docs/gfxcard.md](docs/gfxcard.md).
 - **Pixel Perfect scaling** — optional integer scaling for sharp pixels (*Settings → Pixel Perfect*).
 - **Built-in VNC server** — remote desktop access from any VNC client.
 - **Headless mode** — run a machine with no GUI window, accessed entirely over VNC (`--headless --machine <name>`). Genuinely display-less: needs no X11/Wayland, so it runs on a headless server. See [Headless mode](#headless-mode).
@@ -74,13 +75,15 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `resources/` | Blank floppy/disc templates for *Disc → Floppy → Create Blank* |
 | `poduleroms/` | Compiled extension ROM images (HostFS, ScrollWheel — the built-in Support podule) |
 | `podules/` | Expansion-card (podule) ROMs — shipped system components, selectable per machine |
-| `riscos-progs/` | RISC OS module source (HostFS, HostFSFiler, ScrollWheel, EtherRPCEm) |
+| `gfxroms/` | The graphics card's display driver, carried in that card's own ROM |
+| `riscos-progs/` | RISC OS module source (HostFS, HostFSFiler, ScrollWheel, EtherRPCEm, RPCEmuSupport, RPCEmuGfx) |
 | `packaging/` | Desktop entry and other packaging files |
 | `build.sh` | Unified build and release script |
 | `docs/dynarec.md` | ARM dynamic recompiler (build, behaviour, limitations) |
 | `docs/arm64-dynarec.md` | AArch64 (arm64) dynarec backend |
 | `docs/peripherals.md` | Serial and parallel ports (file logging, TCP modem, printer) |
 | `docs/podules.md` | Expansion cards (podules): bundled devices, configuration, plugin ABI |
+| `docs/gfxcard.md` | Graphics card: display modes beyond what VRAM allows, and its GraphicsV driver |
 | `docs/hostcmd.md` | HostCmd: drive the RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`) |
 | `tools/mcp/README.md` | MCP server: drive a RISC OS machine from Claude / an agent (commands, files, screen, debugger). Setup + tool reference. |
 | `docs/debugcmd.md` | DebugCmd: control the emulated CPU over a socket (registers, memory, disassembly, breakpoints, single-step) |
@@ -452,5 +455,13 @@ networking features.
   (CVE-2020-1983). Copyright for those changes remains with their authors and the
   libslirp contributors; see the provenance note at the top of
   `src/slirp/ip_input.c`.
+- The **graphics card** follows the precedent set by
+  **[ViewFinder](https://www.zeridajh.org/hardware/viewfinder/)**, **John
+  Kortink's** graphics expansion card for the Acorn Risc PC, which showed that a
+  card-hosted framestore driven by its own display driver could take the machine
+  well beyond VIDC20's limits. No ViewFinder code, firmware or programming
+  interface is used: the register interface here is our own and the driver is
+  written from the GraphicsV documentation in the RISC OS sources. The
+  acknowledgement is to the idea, gratefully.
 - Spork Edition enhancements by Andy Timmins and contributors.
 - Machine save/load state (suspend & resume) contributed by **Nick Brown**.

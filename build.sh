@@ -183,6 +183,9 @@ stage_linux_release() {
 	mkdir -p "$LINUX_RELEASE"
 	cp -a configs "$LINUX_RELEASE/"
 	cp -a poduleroms "$LINUX_RELEASE/"
+	# The graphics card driver, which lives in that card's own ROM rather
+	# than the general-purpose expansion card (see src/gfxcard.c).
+	[ -d gfxroms ] && cp -a gfxroms "$LINUX_RELEASE/" || true
 	cp -a netroms "$LINUX_RELEASE/"
 	cp -a resources "$LINUX_RELEASE/"
 	cp -a roms "$LINUX_RELEASE/"
@@ -287,6 +290,22 @@ build_podules() {
 		)
 	fi
 	echo "✓ Podule ROMs copied to poduleroms/"
+
+	# The graphics card's display driver goes in gfxroms/, NOT poduleroms/: it
+	# is carried in that card's own ROM, and poduleroms/ is scanned into the
+	# general-purpose expansion card, which would present the module twice.
+	local gfx_dir="riscos-progs/RPCEmuGfx"
+	if [ -d "$gfx_dir" ]; then
+		echo "Building RPCEmuGfx display driver..."
+		mkdir -p gfxroms
+		(
+			cd "$gfx_dir"
+			make clean
+			make AS=arm-linux-gnueabi-as LD=arm-linux-gnueabi-ld OBJCOPY=arm-linux-gnueabi-objcopy
+			cp -f "RPCEmuGfx,ffa" "$SCRIPT_DIR/gfxroms/"
+		)
+		echo "✓ Display driver copied to gfxroms/"
+	fi
 }
 
 build_linux() {

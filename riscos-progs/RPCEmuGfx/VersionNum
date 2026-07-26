@@ -1,0 +1,13 @@
+# RPCEmuGfx module version, in the RISC OS VersionNum style.
+#
+# The Makefile turns this into version.inc, which supplies the module's help
+# string. Bump both fields together when the module changes.
+#
+# The date is deliberate rather than a true build stamp: the assembled module is
+# committed to the repository as gfxroms/RPCEmuGfx,ffa and only rebuilt when
+# someone runs build.sh --podules, so a real build date would record when that
+# last happened rather than anything a user could act on. Override at build time
+# with `make MODULE_DATE="..."` if you do want a stamp.
+
+Module_MajorVersion	0.01
+Module_Date		26 Jul 2026

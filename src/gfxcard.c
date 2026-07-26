@@ -82,15 +82,15 @@ static struct {
 	uint32_t	rom_size;
 
 	/* Registers */
-	uint16_t	ctrl;
-	uint16_t	status;
-	uint16_t	width;
-	uint16_t	height;
-	uint16_t	bpp;
+	uint32_t	ctrl;
+	uint32_t	status;
+	uint32_t	width;
+	uint32_t	height;
+	uint32_t	bpp;
 	uint32_t	stride;
 	uint32_t	start;
-	uint16_t	pal_index;
-	uint32_t	pal_pending;	/**< Assembled from PAL_LO/PAL_HI */
+	uint32_t	pal_index;
+	uint32_t	frames;		/**< Frames displayed, for diagnostics */
 
 	uint32_t	palette[256];
 } gfx;
@@ -196,12 +196,31 @@ gfxcard_rom_init(void)
  * Registers
  * ------------------------------------------------------------------------ */
 
-static uint16_t
-gfxcard_reg_read(uint32_t reg)
+/**
+ * Which register, if any, an EASI address selects.
+ *
+ * Registers are one word apart and word access only, which is the only way the
+ * driver reaches them.
+ *
+ * @param addr Offset within the card's EASI space
+ * @return Register number, or -1 if the address is not a register
+ */
+static int
+gfxcard_reg_number(uint32_t addr)
+{
+	if (addr < GFXCARD_REG_BASE || (addr & 3) != 0) {
+		return -1;
+	}
+	addr = (addr - GFXCARD_REG_BASE) >> 2;
+
+	return (addr < GFXCARD_REG_COUNT) ? (int) addr : -1;
+}
+
+static uint32_t
+gfxcard_reg_read(int reg)
 {
 	switch (reg) {
-	case GFXCARD_REG_ID_LO:      return GFXCARD_ID_LO;
-	case GFXCARD_REG_ID_HI:      return GFXCARD_ID_HI;
+	case GFXCARD_REG_ID:         return GFXCARD_ID;
 	case GFXCARD_REG_VERSION:    return GFXCARD_VERSION;
 	case GFXCARD_REG_CAPS:
 		/* 16bpp is deliberately not claimed: the card would have to scan it
@@ -209,37 +228,33 @@ gfxcard_reg_read(uint32_t reg)
 		   claim is simply one the OS will not ask it for. */
 		return GFXCARD_CAP_8BPP | GFXCARD_CAP_32BPP |
 		       GFXCARD_CAP_HW_SCROLL | GFXCARD_CAP_VSYNC;
-	case GFXCARD_REG_FB_PHYS_LO: return (uint16_t) gfxcard_fb_phys;
-	case GFXCARD_REG_FB_PHYS_HI: return (uint16_t) (gfxcard_fb_phys >> 16);
-	case GFXCARD_REG_FB_SIZE_LO: return (uint16_t) GFXCARD_FB_SIZE;
-	case GFXCARD_REG_FB_SIZE_HI: return (uint16_t) (GFXCARD_FB_SIZE >> 16);
+	case GFXCARD_REG_FB_PHYS:    return gfxcard_fb_phys;
+	case GFXCARD_REG_FB_SIZE:    return GFXCARD_FB_SIZE;
 	case GFXCARD_REG_CTRL:       return gfx.ctrl;
 	case GFXCARD_REG_STATUS:     return gfx.status;
 	case GFXCARD_REG_WIDTH:      return gfx.width;
 	case GFXCARD_REG_HEIGHT:     return gfx.height;
 	case GFXCARD_REG_BPP:        return gfx.bpp;
-	case GFXCARD_REG_STRIDE_LO:  return (uint16_t) gfx.stride;
-	case GFXCARD_REG_STRIDE_HI:  return (uint16_t) (gfx.stride >> 16);
-	case GFXCARD_REG_START_LO:   return (uint16_t) gfx.start;
-	case GFXCARD_REG_START_HI:   return (uint16_t) (gfx.start >> 16);
+	case GFXCARD_REG_STRIDE:     return gfx.stride;
+	case GFXCARD_REG_START:      return gfx.start;
 	case GFXCARD_REG_PAL_INDEX:  return gfx.pal_index;
-	case GFXCARD_REG_PAL_LO:     return (uint16_t) gfx.pal_pending;
-	case GFXCARD_REG_PAL_HI:     return (uint16_t) (gfx.pal_pending >> 16);
+	case GFXCARD_REG_PAL_ENTRY:  return gfx.palette[gfx.pal_index];
 	case GFXCARD_REG_MAX_WIDTH:  return GFXCARD_MAX_WIDTH;
 	case GFXCARD_REG_MAX_HEIGHT: return GFXCARD_MAX_HEIGHT;
+	case GFXCARD_REG_FRAMES:     return gfx.frames;
 	default:                     return 0;
 	}
 }
 
 static void
-gfxcard_reg_write(uint32_t reg, uint16_t val)
+gfxcard_reg_write(int reg, uint32_t val)
 {
 	switch (reg) {
 	case GFXCARD_REG_CTRL:
 		gfx.ctrl = val & (GFXCARD_CTRL_ENABLE | GFXCARD_CTRL_BLANK |
 		                  GFXCARD_CTRL_VSYNC_IRQ);
 		if ((gfx.ctrl & GFXCARD_CTRL_VSYNC_IRQ) == 0) {
-			gfx.status &= (uint16_t) ~GFXCARD_STATUS_VSYNC;
+			gfx.status &= ~GFXCARD_STATUS_VSYNC;
 			if (gfx.podule != NULL) {
 				podule_irq_lower(gfx.podule);
 			}
@@ -249,7 +264,7 @@ gfxcard_reg_write(uint32_t reg, uint16_t val)
 	case GFXCARD_REG_STATUS:
 		/* Write-to-clear, so an interrupt is acknowledged by writing back the
 		   bit that caused it. */
-		gfx.status &= (uint16_t) ~val;
+		gfx.status &= ~val;
 		if ((gfx.status & GFXCARD_STATUS_VSYNC) == 0 && gfx.podule != NULL) {
 			podule_irq_lower(gfx.podule);
 		}
@@ -258,18 +273,15 @@ gfxcard_reg_write(uint32_t reg, uint16_t val)
 	case GFXCARD_REG_WIDTH:     gfx.width = val; break;
 	case GFXCARD_REG_HEIGHT:    gfx.height = val; break;
 	case GFXCARD_REG_BPP:       gfx.bpp = val; break;
-	case GFXCARD_REG_STRIDE_LO: gfx.stride = (gfx.stride & 0xffff0000u) | val; break;
-	case GFXCARD_REG_STRIDE_HI: gfx.stride = (gfx.stride & 0xffffu) | ((uint32_t) val << 16); break;
-	case GFXCARD_REG_START_LO:  gfx.start = (gfx.start & 0xffff0000u) | val; break;
-	case GFXCARD_REG_START_HI:  gfx.start = (gfx.start & 0xffffu) | ((uint32_t) val << 16); break;
+	case GFXCARD_REG_STRIDE:    gfx.stride = val; break;
+	case GFXCARD_REG_START:     gfx.start = val; break;
 	case GFXCARD_REG_PAL_INDEX: gfx.pal_index = val & 0xff; break;
-	case GFXCARD_REG_PAL_LO:    gfx.pal_pending = (gfx.pal_pending & 0xffff0000u) | val; break;
 
-	case GFXCARD_REG_PAL_HI:
-		/* Writing the high half commits the entry, so a palette word always
-		   lands in one piece however the driver assembles it. */
-		gfx.pal_pending = (gfx.pal_pending & 0xffffu) | ((uint32_t) val << 16);
-		gfx.palette[gfx.pal_index] = gfx.pal_pending;
+	case GFXCARD_REG_PAL_ENTRY:
+		/* The index steps on after each entry, so a driver setting a run of
+		   colours writes the index once and then one word per colour. */
+		gfx.palette[gfx.pal_index] = val;
+		gfx.pal_index = (gfx.pal_index + 1) & 0xff;
 		break;
 
 	default:
@@ -281,23 +293,15 @@ gfxcard_reg_write(uint32_t reg, uint16_t val)
  * Expansion card access
  * ------------------------------------------------------------------------ */
 
-/* ROM and registers share the card's ROM/IOC space. The ROM is read a byte per
-   word, as the other cards here are, so the registers sit above the window the
-   ROM occupies and are addressed directly. */
-#define GFXCARD_IOC_REG_BASE	0x2000u
-
+/* The ROM, the registers and the framestore all live in EASI space, which is
+   where the driver reaches them. The ROM is read a byte per word, as the other
+   cards here are; the registers and the framestore are addressed directly. */
 static uint8_t
 gfxcard_readb(podule *p, PoduleIoType io_type, uint32_t addr)
 {
 	NOT_USED(p);
 
 	if (io_type == PODULE_IO_TYPE_IOC) {
-		if (addr >= GFXCARD_IOC_REG_BASE) {
-			const uint32_t reg = addr - GFXCARD_IOC_REG_BASE;
-			const uint16_t v = gfxcard_reg_read(reg & ~1u);
-
-			return (uint8_t) ((reg & 1) ? (v >> 8) : v);
-		}
 		/* Interrupt status, as the identity byte promised. */
 		if ((addr & 0x3ffc) == 0) {
 			return (uint8_t) (0xfa | ((p != NULL && p->irq) ? 1 : 0));
@@ -324,12 +328,6 @@ gfxcard_readw(podule *p, PoduleIoType io_type, uint32_t addr)
 {
 	NOT_USED(p);
 
-	if (io_type == PODULE_IO_TYPE_IOC) {
-		if (addr >= GFXCARD_IOC_REG_BASE) {
-			return gfxcard_reg_read(addr - GFXCARD_IOC_REG_BASE);
-		}
-		return 0xffff;
-	}
 
 	if (io_type == PODULE_IO_TYPE_EASI && gfxcard_fb != NULL &&
 	    addr >= GFXCARD_FB_OFFSET && addr + 1 < GFXCARD_EASI_SIZE)
@@ -350,12 +348,19 @@ gfxcard_readl(podule *p, PoduleIoType io_type, uint32_t addr)
 	NOT_USED(p);
 
 	if (io_type == PODULE_IO_TYPE_EASI) {
+		const int reg = gfxcard_reg_number(addr);
+
+		if (reg >= 0) {
+			return gfxcard_reg_read(reg);
+		}
 		if (addr < GFXCARD_ROM_WINDOW) {
 			const uint32_t off = addr >> 2;
 
 			return (off < gfx.rom_size) ? gfx.rom[off] : 0x00;
 		}
-		if (gfxcard_fb != NULL && addr + 3 < GFXCARD_EASI_SIZE) {
+		if (gfxcard_fb != NULL && addr >= GFXCARD_FB_OFFSET &&
+		    addr + 3 < GFXCARD_EASI_SIZE)
+		{
 			const uint32_t off = addr - GFXCARD_FB_OFFSET;
 			uint32_t v;
 
@@ -372,18 +377,6 @@ gfxcard_writeb(podule *p, PoduleIoType io_type, uint32_t addr, uint8_t val)
 {
 	NOT_USED(p);
 
-	if (io_type == PODULE_IO_TYPE_IOC && addr >= GFXCARD_IOC_REG_BASE) {
-		const uint32_t reg = (addr - GFXCARD_IOC_REG_BASE) & ~1u;
-		const uint16_t cur = gfxcard_reg_read(reg);
-
-		if ((addr - GFXCARD_IOC_REG_BASE) & 1) {
-			gfxcard_reg_write(reg, (uint16_t) ((cur & 0x00ffu) | ((uint16_t) val << 8)));
-		} else {
-			gfxcard_reg_write(reg, (uint16_t) ((cur & 0xff00u) | val));
-		}
-		return;
-	}
-
 	if (io_type == PODULE_IO_TYPE_EASI && gfxcard_fb != NULL &&
 	    addr >= GFXCARD_FB_OFFSET && addr < GFXCARD_EASI_SIZE)
 	{
@@ -395,11 +388,6 @@ static void
 gfxcard_writew(podule *p, PoduleIoType io_type, uint32_t addr, uint16_t val)
 {
 	NOT_USED(p);
-
-	if (io_type == PODULE_IO_TYPE_IOC && addr >= GFXCARD_IOC_REG_BASE) {
-		gfxcard_reg_write(addr - GFXCARD_IOC_REG_BASE, val);
-		return;
-	}
 
 	if (io_type == PODULE_IO_TYPE_EASI && gfxcard_fb != NULL &&
 	    addr >= GFXCARD_FB_OFFSET && addr + 1 < GFXCARD_EASI_SIZE)
@@ -413,8 +401,19 @@ gfxcard_writel(podule *p, PoduleIoType io_type, uint32_t addr, uint32_t val)
 {
 	NOT_USED(p);
 
-	if (io_type == PODULE_IO_TYPE_EASI && gfxcard_fb != NULL &&
-	    addr >= GFXCARD_FB_OFFSET && addr + 3 < GFXCARD_EASI_SIZE)
+	if (io_type != PODULE_IO_TYPE_EASI) {
+		return;
+	}
+	{
+		const int reg = gfxcard_reg_number(addr);
+
+		if (reg >= 0) {
+			gfxcard_reg_write(reg, val);
+			return;
+		}
+	}
+	if (gfxcard_fb != NULL && addr >= GFXCARD_FB_OFFSET &&
+	    addr + 3 < GFXCARD_EASI_SIZE)
 	{
 		memcpy(&gfxcard_fb[addr - GFXCARD_FB_OFFSET], &val, sizeof(val));
 	}
@@ -433,7 +432,7 @@ gfxcard_podule_reset(podule *p)
 	gfx.stride = 0;
 	gfx.start = 0;
 	gfx.pal_index = 0;
-	gfx.pal_pending = 0;
+	gfx.frames = 0;
 }
 
 /* ------------------------------------------------------------------------
@@ -518,7 +517,7 @@ gfxcard_active(void)
 int
 gfxcard_frame(GfxCardFrame *frame)
 {
-	uint32_t needed;
+	uint64_t needed;
 
 	if (!gfxcard_active()) {
 		return 0;
@@ -526,17 +525,27 @@ gfxcard_frame(GfxCardFrame *frame)
 	if (gfx.bpp != 8 && gfx.bpp != 32) {
 		return 0;
 	}
+	if (gfx.width == 0 || gfx.height == 0) {
+		return 0;
+	}
 	if (gfx.width > GFXCARD_MAX_WIDTH || gfx.height > GFXCARD_MAX_HEIGHT) {
 		return 0;
 	}
+	/* A stride narrower than a row would have the rows overlap, which is not a
+	   display, and it would make the size check below meaningless. */
+	if (gfx.stride < gfx.width * (gfx.bpp / 8u)) {
+		return 0;
+	}
 
-	/* The line the last row starts on has to be inside the framestore. Checked
-	   here rather than trusted, because these registers come from the guest. */
+	/* The last row has to end inside the framestore. Checked here rather than
+	   trusted, because these registers come from the guest, and computed at 64
+	   bits so a stride chosen to overflow the arithmetic cannot pass. */
 	if (gfx.start >= GFXCARD_FB_SIZE) {
 		return 0;
 	}
-	needed = gfx.stride * (gfx.height - 1u) + gfx.width * (gfx.bpp / 8u);
-	if (needed > GFXCARD_FB_SIZE - gfx.start) {
+	needed = (uint64_t) gfx.stride * (gfx.height - 1u) +
+	         (uint64_t) gfx.width * (gfx.bpp / 8u);
+	if (needed > (uint64_t) (GFXCARD_FB_SIZE - gfx.start)) {
 		return 0;
 	}
 
@@ -558,6 +567,7 @@ gfxcard_vsync(void)
 		return;
 	}
 
+	gfx.frames++;
 	gfx.status |= GFXCARD_STATUS_VSYNC;
 
 	if ((gfx.ctrl & GFXCARD_CTRL_VSYNC_IRQ) != 0) {

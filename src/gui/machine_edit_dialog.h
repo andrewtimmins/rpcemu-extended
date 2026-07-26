@@ -115,6 +115,7 @@ private:
 	wxComboBox *model_combo_ = nullptr;
 	wxComboBox *mem_combo_ = nullptr;
 	wxComboBox *vram_combo_ = nullptr;
+	wxCheckBox *gfxcard_check_ = nullptr;
 	wxSlider *refresh_slider_ = nullptr;
 	wxStaticText *refresh_label_ = nullptr;
 	wxComboBox *network_combo_ = nullptr;

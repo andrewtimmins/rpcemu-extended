@@ -185,6 +185,14 @@ void MachineEditDialog::BuildUi()
 	vram_combo_->Append("8 MB");
 	vram_combo_->Append("16 MB");
 
+	/* The graphics card carries its own display memory, so it is the answer to
+	   the VRAM limit rather than another size of it - hence its place here. */
+	gfxcard_check_ = new wxCheckBox(this, wxID_ANY, "Graphics card (display modes beyond VRAM)");
+	gfxcard_check_->SetToolTip(
+	    "Fit an expansion card with 15MB of its own display memory, for modes the "
+	    "fitted VRAM cannot reach (up to 2560 x 1440 in full colour).\n\n"
+	    "RISC OS keeps using VIDC20 until you run *GfxCardOn. Needs RISC OS 5.");
+
 	network_combo_->Append("Off");
 	network_combo_->Append("NAT");
 	network_combo_->Append("Ethernet Bridging");
@@ -202,6 +210,8 @@ void MachineEditDialog::BuildUi()
 	form->Add(mem_combo_, 1, wxEXPAND);
 	form->Add(new wxStaticText(this, wxID_ANY, "VRAM:"), 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(vram_combo_, 1, wxEXPAND);
+	form->Add(new wxStaticText(this, wxID_ANY, ""), 0);
+	form->Add(gfxcard_check_, 1, wxEXPAND);
 	form->Add(new wxStaticText(this, wxID_ANY, ""), 0);
 	form->Add(compat_label_, 1, wxEXPAND);
 	auto *refresh_row = new wxBoxSizer(wxHORIZONTAL);
@@ -717,6 +727,10 @@ void MachineEditDialog::LoadSettings()
 	}
 	vram_combo_->SetSelection(vram_index);
 
+	long gfxcard = 0;
+	settings.Read("gfxcard_enabled", &gfxcard, 0L);
+	gfxcard_check_->SetValue(gfxcard != 0);
+
 	long refresh = 60;
 	settings.Read("refresh_rate", &refresh, 60L);
 	refresh = std::max(20L, std::min(100L, refresh));
@@ -821,6 +835,8 @@ void MachineEditDialog::SaveSettings()
 	settings.Write("model", wxString::FromUTF8(models[model_sel].name_config));
 	settings.Write("mem_size", wxString::Format("%d", mem_values[mem_sel]));
 	settings.Write("vram_size", wxString::Format("%d", vram_mb));
+	settings.Write("gfxcard_enabled",
+	               static_cast<long>(gfxcard_check_->GetValue() ? 1 : 0));
 	settings.Write("refresh_rate", refresh_slider_->GetValue());
 	settings.Write("network_type", network_type);
 	settings.Write("bridgename", bridge_edit_->GetValue());
@@ -853,6 +869,9 @@ void MachineEditDialog::ApplySavedSettingsToGlobalConfig(const wxString &rom_dir
 	                          static_cast<unsigned>(mem_size),
 	                          static_cast<unsigned>(vram_internal), refresh, network_type,
 	                          bridge_utf8.data(), ip_utf8.data());
+	/* Whether the graphics card is fitted is read when the machine resets, so
+	   applying it here means a reset is enough - no need to restart. */
+	config.gfxcard_enabled = gfxcard_check_->GetValue() ? 1 : 0;
 }
 
 wxString MachineEditDialog::CurrentMachineNameForHd() const

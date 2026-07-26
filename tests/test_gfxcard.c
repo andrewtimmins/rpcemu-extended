@@ -39,6 +39,7 @@
 #include <string.h>
 
 #include "rpcemu.h"
+#include "gfxcard.h"
 #include "podules.h"
 
 /* ---- the backplane, and the little of the emulator the card touches ---- */
@@ -90,31 +91,29 @@ check(int cond, const char *what)
 	}
 }
 
-/* The card's registers live in its ROM/IOC space, above the ROM window. */
-#define REG(off)	(0x2000u + (off))
+/* Registers are one word apart in the card's EASI space. */
+#define REG(n)		GFXCARD_REG_ADDR(n)
 
 static void
-wr(uint32_t reg, uint16_t val)
+wr(int reg, uint32_t val)
 {
-	gfxcard_writew(&test_podule, PODULE_IO_TYPE_IOC, REG(reg), val);
+	gfxcard_writel(&test_podule, PODULE_IO_TYPE_EASI, REG(reg), val);
 }
 
-static uint16_t
-rd(uint32_t reg)
+static uint32_t
+rd(int reg)
 {
-	return gfxcard_readw(&test_podule, PODULE_IO_TYPE_IOC, REG(reg));
+	return gfxcard_readl(&test_podule, PODULE_IO_TYPE_EASI, REG(reg));
 }
 
 static void
 set_mode(unsigned w, unsigned h, unsigned bpp, unsigned stride, uint32_t start)
 {
-	wr(GFXCARD_REG_WIDTH, (uint16_t) w);
-	wr(GFXCARD_REG_HEIGHT, (uint16_t) h);
-	wr(GFXCARD_REG_BPP, (uint16_t) bpp);
-	wr(GFXCARD_REG_STRIDE_LO, (uint16_t) stride);
-	wr(GFXCARD_REG_STRIDE_HI, (uint16_t) (stride >> 16));
-	wr(GFXCARD_REG_START_LO, (uint16_t) start);
-	wr(GFXCARD_REG_START_HI, (uint16_t) (start >> 16));
+	wr(GFXCARD_REG_WIDTH, w);
+	wr(GFXCARD_REG_HEIGHT, h);
+	wr(GFXCARD_REG_BPP, bpp);
+	wr(GFXCARD_REG_STRIDE, stride);
+	wr(GFXCARD_REG_START, start);
 }
 
 int
@@ -137,8 +136,7 @@ main(void)
 	      "framestore starts above the card ROM");
 
 	printf("\nidentity and capabilities are readable\n");
-	check(rd(GFXCARD_REG_ID_HI) == GFXCARD_ID_HI &&
-	      rd(GFXCARD_REG_ID_LO) == GFXCARD_ID_LO, "identity registers read back");
+	check(rd(GFXCARD_REG_ID) == GFXCARD_ID, "identity register reads \"RPGx\"");
 	check(rd(GFXCARD_REG_VERSION) == GFXCARD_VERSION, "interface version");
 	check((rd(GFXCARD_REG_CAPS) & GFXCARD_CAP_32BPP) != 0, "32bpp offered");
 	check((rd(GFXCARD_REG_CAPS) & GFXCARD_CAP_16BPP) == 0,
@@ -146,8 +144,9 @@ main(void)
 	check(rd(GFXCARD_REG_MAX_WIDTH) == GFXCARD_MAX_WIDTH &&
 	      rd(GFXCARD_REG_MAX_HEIGHT) == GFXCARD_MAX_HEIGHT,
 	      "largest accepted mode is readable");
-	check(((uint32_t) rd(GFXCARD_REG_FB_PHYS_HI) << 16 | rd(GFXCARD_REG_FB_PHYS_LO))
-	      == gfxcard_fb_phys, "framestore address readable as two halves");
+	check(rd(GFXCARD_REG_FB_PHYS) == gfxcard_fb_phys &&
+	      rd(GFXCARD_REG_FB_SIZE) == GFXCARD_FB_SIZE,
+	      "framestore address and size readable");
 
 	printf("\nnothing is displayed until the guest enables the card\n");
 	set_mode(1920, 1080, 32, 1920 * 4, 0);
@@ -169,7 +168,7 @@ main(void)
 	set_mode(4096, 2160, 32, 4096 * 4, 0);
 	check(!gfxcard_frame(&frame), "a mode larger than the card allows is refused");
 
-	set_mode(1920, 1080, 32, 0xffffu, 0);
+	set_mode(1920, 1080, 32, 0x100000u, 0);
 	check(!gfxcard_frame(&frame), "an absurd stride is refused");
 
 	set_mode(1920, 1080, 32, 1920 * 4, GFXCARD_FB_SIZE);
@@ -177,6 +176,19 @@ main(void)
 
 	set_mode(1920, 1080, 24, 1920 * 3, 0);
 	check(!gfxcard_frame(&frame), "a depth the card does not claim is refused");
+
+	set_mode(1920, 0, 32, 1920 * 4, 0);
+	check(!gfxcard_frame(&frame), "no lines is not a display");
+	set_mode(0, 1080, 32, 0, 0);
+	check(!gfxcard_frame(&frame), "no pixels either");
+
+	set_mode(1920, 1080, 32, 1920 * 2, 0);
+	check(!gfxcard_frame(&frame), "a stride narrower than a row is refused");
+
+	/* A stride chosen so that stride * (height - 1) is exactly 2^32, which at
+	   32 bits looks like a mode needing almost no memory at all. */
+	set_mode(64, 257, 32, 0x01000000u, 0);
+	check(!gfxcard_frame(&frame), "a stride that overflows the arithmetic is refused");
 
 	printf("\nhardware scroll moves the window, within bounds\n");
 	set_mode(640, 480, 8, 640, 0);
@@ -192,14 +204,18 @@ main(void)
 	wr(GFXCARD_REG_CTRL, GFXCARD_CTRL_ENABLE);
 	check(gfxcard_frame(&frame) && !frame.blanked, "and cleared again");
 
-	printf("\npalette entries are committed as whole words\n");
+	printf("\nthe palette index steps on after each entry\n");
 	wr(GFXCARD_REG_PAL_INDEX, 7);
-	wr(GFXCARD_REG_PAL_LO, 0x1234);
-	check(gfxcard_palette()[7] != 0x56781234u,
-	      "a half-written entry is not committed");
-	wr(GFXCARD_REG_PAL_HI, 0x5678);
-	check(gfxcard_palette()[7] == 0x56781234u,
-	      "writing the high half commits it");
+	wr(GFXCARD_REG_PAL_ENTRY, 0x56781234u);
+	wr(GFXCARD_REG_PAL_ENTRY, 0x11223344u);
+	check(gfxcard_palette()[7] == 0x56781234u &&
+	      gfxcard_palette()[8] == 0x11223344u,
+	      "a run of colours needs the index written once");
+	check(rd(GFXCARD_REG_PAL_INDEX) == 9, "and the index has moved on");
+	wr(GFXCARD_REG_PAL_INDEX, 255);
+	wr(GFXCARD_REG_PAL_ENTRY, 0xdeadbeefu);
+	check(gfxcard_palette()[255] == 0xdeadbeefu && rd(GFXCARD_REG_PAL_INDEX) == 0,
+	      "the index wraps rather than running off the end");
 
 	printf("\nvsync is latched, and cleared by writing the bit back\n");
 	wr(GFXCARD_REG_CTRL, GFXCARD_CTRL_ENABLE);
@@ -210,6 +226,15 @@ main(void)
 	wr(GFXCARD_REG_STATUS, GFXCARD_STATUS_VSYNC);
 	check((rd(GFXCARD_REG_STATUS) & GFXCARD_STATUS_VSYNC) == 0,
 	      "cleared by writing the bit back");
+
+	printf("\nframes displayed are counted, for diagnostics\n");
+	{
+		const uint32_t before = rd(GFXCARD_REG_FRAMES);
+
+		gfxcard_vsync();
+		gfxcard_vsync();
+		check(rd(GFXCARD_REG_FRAMES) == before + 2, "two frames counted");
+	}
 
 	printf("\nthe framestore is reachable through the card, byte and word\n");
 	gfxcard_writeb(&test_podule, PODULE_IO_TYPE_EASI, GFXCARD_FB_OFFSET + 5, 0xa5);

@@ -36,19 +36,29 @@
 
      0x000000 - 0x03ffff   expansion card ROM, read a byte per word as the other
                            cards here are, so 64KB of ROM
-     0x080000 - 0xffffff   framestore, 15.5MB
+     0x080000 - 0x0800ff   registers, 32-bit, one word each
+     0x100000 - 0xffffff   framestore, 15MB
 
    The ROM has to start at offset zero, because that is where RISC OS looks for
-   the identity bytes. The framestore starts far enough above it to leave room
-   for the ROM to grow, and what is left still holds 2560x1440 at 32bpp (14.06MB)
-   with room to spare - well beyond anything VIDC20 can reach from VRAM.
+   the identity bytes. The framestore starts at a megabyte boundary because that
+   is how the kernel maps a card-hosted framestore: it rounds the address down
+   and the size up to megabytes (see ModeChangeSub in the RISC OS kernel), so an
+   unaligned base would pull the ROM and register windows into the screen
+   mapping. What is left still holds 2560x1440 at 32bpp (14.06MB) with room to
+   spare - well beyond anything VIDC20 can reach from VRAM.
 
-   Registers are in the card's ROM/IOC space rather than EASI, because a module
-   loaded from an expansion card's ROM is entered with that address in R11. The
-   driver therefore needs no SWI, and no logical mapping, to find them. */
+   The registers are in EASI space rather than the card's IOC space because EASI
+   is a 32-bit bus: a register is one word, read and written as one word. The
+   IOC side of an expansion card here is 16 bits wide and word-addressed, with
+   write data taken from the top half of the word, so every value wider than 16
+   bits would have to be split and every write shifted. The driver finds this
+   window through the EASI address the Podule manager reports for the slot.
+   Only the interrupt status byte remains in IOC space, where the identity bytes
+   promise it. */
 #define GFXCARD_EASI_SIZE	0x01000000u	/* 16MB, one EASI slot */
 #define GFXCARD_ROM_WINDOW	0x00040000u	/* EASI bytes the ROM answers */
-#define GFXCARD_FB_OFFSET	0x00080000u	/* framestore start within EASI */
+#define GFXCARD_REG_BASE	0x00080000u	/* registers start here within EASI */
+#define GFXCARD_FB_OFFSET	0x00100000u	/* framestore start within EASI */
 #define GFXCARD_FB_SIZE		(GFXCARD_EASI_SIZE - GFXCARD_FB_OFFSET)
 
 /* Largest mode the card will accept, which is what its framestore can hold at
@@ -58,42 +68,38 @@
 #define GFXCARD_MAX_HEIGHT	1440u
 
 /* ------------------------------------------------------------------------
- * Register map (card ROM/IOC space, 16-bit registers)
+ * Register map (EASI space, 32-bit registers)
  *
- * Sixteen bits because expansion card space is byte and half-word only on this
- * machine (mem.c reaches it through podules_read8 / podules_read16). Values
- * wider than that are split into _LO and _HI halves; none of them are written
- * often enough for that to matter, a mode change being the busiest case.
+ * The numbers below are register indices: register n is at EASI offset
+ * GFXCARD_REG_BASE + n * 4 and is read and written as a word. Word access only;
+ * a byte or half-word access to this window is not a register access.
  * ------------------------------------------------------------------------ */
 
-#define GFXCARD_REG_ID_LO	0x00	/* R  "Gx" - together with ID_HI, "RPGx" */
-#define GFXCARD_REG_ID_HI	0x02	/* R  "RP" */
-#define GFXCARD_REG_VERSION	0x04	/* R  interface version */
-#define GFXCARD_REG_CAPS	0x06	/* R  GFXCARD_CAP_* */
-#define GFXCARD_REG_FB_PHYS_LO	0x08	/* R  framestore physical base */
-#define GFXCARD_REG_FB_PHYS_HI	0x0a
-#define GFXCARD_REG_FB_SIZE_LO	0x0c	/* R  framestore size in bytes */
-#define GFXCARD_REG_FB_SIZE_HI	0x0e
-#define GFXCARD_REG_CTRL	0x10	/* RW GFXCARD_CTRL_* */
-#define GFXCARD_REG_STATUS	0x12	/* RW GFXCARD_STATUS_*, write to clear */
-#define GFXCARD_REG_WIDTH	0x14	/* RW active pixels across */
-#define GFXCARD_REG_HEIGHT	0x16	/* RW active lines */
-#define GFXCARD_REG_BPP		0x18	/* RW bits per pixel: 8, 16 or 32 */
-#define GFXCARD_REG_STRIDE_LO	0x1a	/* RW bytes per line */
-#define GFXCARD_REG_STRIDE_HI	0x1c
-#define GFXCARD_REG_START_LO	0x1e	/* RW display start, bytes into store */
-#define GFXCARD_REG_START_HI	0x20
-#define GFXCARD_REG_PAL_INDEX	0x22	/* RW palette entry to write */
-#define GFXCARD_REG_PAL_LO	0x24	/* RW &BBGGRRSS, low half */
-#define GFXCARD_REG_PAL_HI	0x26	/* RW high half; writing commits the entry */
-#define GFXCARD_REG_MAX_WIDTH	0x28	/* R  largest mode the card accepts */
-#define GFXCARD_REG_MAX_HEIGHT	0x2a
-#define GFXCARD_REG_LAST	0x2b
+#define GFXCARD_REG_ID		0	/* R  "RPGx" */
+#define GFXCARD_REG_VERSION	1	/* R  interface version */
+#define GFXCARD_REG_CAPS	2	/* R  GFXCARD_CAP_* */
+#define GFXCARD_REG_FB_PHYS	3	/* R  framestore physical base */
+#define GFXCARD_REG_FB_SIZE	4	/* R  framestore size in bytes */
+#define GFXCARD_REG_CTRL	5	/* RW GFXCARD_CTRL_* */
+#define GFXCARD_REG_STATUS	6	/* RW GFXCARD_STATUS_*, write to clear */
+#define GFXCARD_REG_WIDTH	7	/* RW active pixels across */
+#define GFXCARD_REG_HEIGHT	8	/* RW active lines */
+#define GFXCARD_REG_BPP		9	/* RW bits per pixel: 8 or 32 */
+#define GFXCARD_REG_STRIDE	10	/* RW bytes per line */
+#define GFXCARD_REG_START	11	/* RW display start, bytes into the store */
+#define GFXCARD_REG_PAL_INDEX	12	/* RW palette entry the next write lands on */
+#define GFXCARD_REG_PAL_ENTRY	13	/* RW &BBGGRRSS; writing steps PAL_INDEX on */
+#define GFXCARD_REG_MAX_WIDTH	14	/* R  largest mode the card accepts */
+#define GFXCARD_REG_MAX_HEIGHT	15
+#define GFXCARD_REG_FRAMES	16	/* R  frames displayed, for diagnostics */
+#define GFXCARD_REG_COUNT	17
 
-/* ID_HI/ID_LO read as "RP" and "Gx": a driver can identify the card without
-   knowing anything else about it. */
-#define GFXCARD_ID_HI		0x5250u		/* "RP" */
-#define GFXCARD_ID_LO		0x4778u		/* "Gx" */
+/* Where each register sits in the card's EASI space. */
+#define GFXCARD_REG_ADDR(n)	(GFXCARD_REG_BASE + (n) * 4)
+
+/* ID reads as "RPGx", so a driver can identify the card without knowing
+   anything else about it. */
+#define GFXCARD_ID		0x52504778u	/* "RPGx" */
 #define GFXCARD_VERSION		1u
 
 /* Capabilities. Depths the card can scan out, and the extras it offers. The
@@ -101,7 +107,7 @@
    calls, so a capability the card does not claim is one the OS will do in
    software instead. */
 #define GFXCARD_CAP_8BPP	0x0001u
-#define GFXCARD_CAP_16BPP	0x0002u
+#define GFXCARD_CAP_16BPP	0x0002u	/* not claimed: only 8 and 32 are scanned out */
 #define GFXCARD_CAP_32BPP	0x0004u
 #define GFXCARD_CAP_HW_SCROLL	0x0100u		/* display start register works */
 #define GFXCARD_CAP_VSYNC	0x0200u		/* raises a vsync interrupt */

@@ -103,7 +103,7 @@ echo "==> Staging $WIN_RELEASE"
 rm -rf "$WIN_RELEASE"
 mkdir -p "$WIN_RELEASE"
 # Shared resources - identical set to the Linux release.
-for d in configs poduleroms netroms resources roms podules default; do
+for d in configs poduleroms netroms gfxroms resources roms podules default; do
 	cp -a "$d" "$WIN_RELEASE/"
 done
 # Common HostFS "Shared" disc (shared across machines). Normally created on

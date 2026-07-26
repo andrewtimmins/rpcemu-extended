@@ -49,6 +49,12 @@ install(DIRECTORY configs/ DESTINATION share/rpcemu/configs)
 install(DIRECTORY resources/ DESTINATION share/rpcemu/resources)
 install(DIRECTORY poduleroms/ DESTINATION share/rpcemu/poduleroms)
 install(DIRECTORY netroms/ DESTINATION share/rpcemu/netroms)
+# The graphics card's display driver, carried in that card's own ROM. Kept out of
+# poduleroms/, which is scanned into the general-purpose expansion card and would
+# present the module a second time.
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/gfxroms)
+    install(DIRECTORY gfxroms/ DESTINATION share/rpcemu/gfxroms)
+endif()
 install(DIRECTORY roms/ DESTINATION share/rpcemu/roms)
 # Expansion-card (podule) ROMs are shipped system components, read from the
 # shared resource dir; users select which podules to use per machine config.

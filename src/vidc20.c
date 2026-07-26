@@ -503,19 +503,19 @@ vidcthread_gfxcard(void)
 		return;
 	}
 
+	/* The card's own palette, not VIDC's: once this driver is the display, the
+	   OS writes colours through GraphicsV to the card and VIDC's palette goes
+	   stale. Entries are &BBGGRRSS, as GraphicsV specifies for a palette word.
+	   Folded to host pixels once per frame rather than per pixel. */
 	if (thr.gfx_bpp == 8) {
-		/* Fold the card's palette through the host channel tables once, rather
-		   than three lookups per pixel. Entries are &BBGGRRSS, as GraphicsV
-		   specifies for a palette word. */
 		const uint32_t *cpal = gfxcard_palette();
 		int i;
 
 		for (i = 0; i < 256; i++) {
 			const uint32_t e = cpal[i];
 
-			host_pal[i] = thr.pal[(e >> 8) & 0xff].r |
-			              thr.pal[(e >> 16) & 0xff].g |
-			              thr.pal[(e >> 24) & 0xff].b;
+			host_pal[i] = makecol((e >> 8) & 0xff, (e >> 16) & 0xff,
+			                      (e >> 24) & 0xff);
 		}
 	}
 
@@ -531,12 +531,16 @@ vidcthread_gfxcard(void)
 			break;
 
 		case 32:
-			/* Byte order matches VIDC's own 32bpp framestore: red first, then
-			   green and blue, with the fourth byte unused. */
+			/* Byte order as VIDC's own 32bpp framestore: a pixel word is
+			   &xxBBGGRR, so red is the lowest-addressed byte. */
 			for (x = 0; x < thr.vidc_xsize; x++) {
 				const uint8_t *p = line + ((size_t) x * 4);
 
-				vidp[x] = thr.pal[p[0]].r | thr.pal[p[1]].g | thr.pal[p[2]].b;
+#ifdef _RPCEMU_BIG_ENDIAN
+				vidp[x] = makecol(p[3], p[2], p[1]);
+#else
+				vidp[x] = makecol(p[0], p[1], p[2]);
+#endif
 			}
 			break;
 

@@ -398,7 +398,7 @@ if [ "$DO_FUSE" = true ]; then
 	rm -rf "$APP"
 	mkdir -p "$MACOSD" "$RESD"
 
-	for d in configs poduleroms netroms resources roms podules default; do
+	for d in configs poduleroms netroms gfxroms resources roms podules default; do
 		[ -e "$d" ] && cp -a "$d" "$RESD/"
 	done
 	mkdir -p "$RESD/machines/Default"
