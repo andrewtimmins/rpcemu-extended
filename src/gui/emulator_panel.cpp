@@ -298,13 +298,21 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 		recalculate_needed = true;
 	} else {
 		copy_rgb32_rows_to_image(update.buffer, update.xsize, update.yl, update.yh, display_image_);
-		/* Incremental update (e.g. a moving pointer): refresh only the changed
-		   rows of the cached bitmap instead of rebuilding the whole thing -
-		   converting a full 1920x1080 image every frame is what made scaled
-		   modes crawl. */
+
 		const int y0 = std::max(0, update.yl);
 		const int y1 = std::min(update.yh, image_height_);
-		if (y1 > y0) {
+
+		if (y0 <= 0 && y1 >= image_height_) {
+			/* The whole frame changed, so convert it once. Going through
+			   GetSubImage and a Blit here costs two more full-frame copies,
+			   which at 2560x1440 was enough that the panel never finished a
+			   paint before the next frame arrived: the display stayed black
+			   while the emulator was producing perfectly good frames. */
+			display_bitmap_ = wxBitmap(display_image_);
+		} else if (y1 > y0) {
+			/* Part of the frame changed (e.g. a moving pointer): refresh only
+			   those rows of the cached bitmap rather than rebuilding it all,
+			   which is what made scaled modes crawl. */
 			wxBitmap sub(display_image_.GetSubImage(wxRect(0, y0, image_width_, y1 - y0)));
 			wxMemoryDC dst(display_bitmap_);
 			wxMemoryDC srcdc(sub);

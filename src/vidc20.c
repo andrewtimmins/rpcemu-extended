@@ -390,6 +390,25 @@ drawscr(void)
 	// Store the value of this screen's pixel doubling, used in keyboard.c for mousehack
 	doublesize = thr.doublesize;
 
+	/* With the graphics card scanning out, everything below belongs to VIDC and
+	   none of it applies. In particular VIDC's video DMA is off - RISC OS has no
+	   reason to keep it running once another driver owns the display - which
+	   sends the border path below straight over the card's frame, filling the
+	   host bitmap with the border colour. That is what made the card's display
+	   go black, and the two paths writing the same bitmap from different threads
+	   is what made it look like noise while it did.
+
+	   lastframeborder is left set so that whenever VIDC does take the display
+	   back, it rebuilds the whole frame rather than trusting the dirty-block
+	   bookkeeping, none of which has been maintained meanwhile. */
+	if (thr.gfx_active) {
+		lastframeborder = 1;
+		thr.threadpending = 1;
+		iomd_flyback(0);
+		vidcwakeupthread();
+		goto unlock_mutex_return;
+	}
+
 	// Handle full screen border plotting
 	// If not Video cursor DMA enabled or vertical start > vertical end
 	if ((thr.iomd_vidcr & 0x20) == 0 || vidc.vdsr > vidc.vder) {
