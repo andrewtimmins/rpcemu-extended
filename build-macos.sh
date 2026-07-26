@@ -197,49 +197,97 @@ INSTALL_NAME_TOOL=$(command -v install_name_tool || \
 # Note: no associative arrays or other bash 4 features here, because macOS still
 # ships bash 3.2.
 
+# Turn a dependency recorded through a runtime search path into a real file, so
+# there is something to copy into the bundle. @loader_path is relative to the
+# object holding the reference; @rpath is searched through that object's LC_RPATH
+# entries, which Homebrew sets to @loader_path/../lib.
+#
+# These have to be followed rather than skipped. Homebrew's webp libraries refer
+# to each other this way, and leaving them out produced an app that still would
+# not start, with dyld looking for Contents/Frameworks/../lib.
+resolve_dep() {
+	local obj="$1" dep="$2" origin="$3" entry candidate
+
+	case "$dep" in
+	@loader_path/*)
+		candidate="$origin/${dep#@loader_path/}"
+		if [ -f "$candidate" ]; then
+			echo "$candidate"
+			return 0
+		fi
+		;;
+	@rpath/*)
+		while read -r entry; do
+			case "$entry" in
+				@loader_path/*)     entry="$origin/${entry#@loader_path/}" ;;
+				@executable_path/*) entry="$origin/${entry#@executable_path/}" ;;
+			esac
+			candidate="$entry/${dep#@rpath/}"
+			if [ -f "$candidate" ]; then
+				echo "$candidate"
+				return 0
+			fi
+		done < <("$OTOOL" -l "$obj" | \
+		         awk '/LC_RPATH/ { rp = 1; next } rp && $1 == "path" { print $2; rp = 0 }')
+		;;
+	esac
+
+	return 1
+}
+
 # Recursively record a thin object's bundle-able dependencies into a map file
-# holding "basename<tab>path" lines.
+# holding "basename<tab>path" lines. "origin" is the directory that
+# @loader_path refers to for this object.
 collect_deps() {
-	local obj="$1" map="$2" dep base
+	local obj="$1" map="$2" origin="$3" dep base resolved
 
 	while read -r dep; do
 		case "$dep" in
 			/usr/lib/*|/System/*) continue ;;	# provided by the OS
-			/*) : ;;
 			@executable_path/*) continue ;;		# already pointed into the bundle
-			*)
-				# Resolved through a runtime search path, so there is no file
-				# here to copy. Flagged rather than passed over silently: it
-				# would otherwise be a dependency that still escapes the bundle.
-				echo "   ! ${obj##*/} references $dep via a runtime search path; not bundled"
-				continue ;;
 		esac
 
+		# Checked before resolving, which also disposes of the object's own id:
+		# otool lists that first for a dylib, and by the time we recurse into one
+		# its name is already recorded.
 		base=${dep##*/}
 		if awk -F'\t' -v b="$base" '$1 == b { found = 1 } END { exit !found }' "$map"; then
 			continue				# already collected
 		fi
-		if [ ! -f "$dep" ]; then
-			echo "   ! dependency not found, leaving reference alone: $dep"
+
+		case "$dep" in
+			/*) resolved="$dep" ;;
+			@rpath/*|@loader_path/*)
+				if ! resolved=$(resolve_dep "$obj" "$dep" "$origin"); then
+					echo "   ! ${obj##*/} references $dep and it could not be resolved; not bundled"
+					continue
+				fi
+				;;
+			*)
+				echo "   ! ${obj##*/} references $dep in a form we do not handle; not bundled"
+				continue ;;
+		esac
+
+		if [ ! -f "$resolved" ]; then
+			echo "   ! dependency not found, leaving reference alone: $resolved"
 			continue
 		fi
 
-		printf '%s\t%s\n' "$base" "$dep" >> "$map"
-		collect_deps "$dep" "$map"
+		printf '%s\t%s\n' "$base" "$resolved" >> "$map"
+		collect_deps "$resolved" "$map" "$(dirname "$resolved")"
 	done < <("$OTOOL" -L "$obj" | tail -n +2 | awk '{ print $1 }')
 }
 
-# Repoint every bundle-able dependency of a thin object at Contents/Frameworks.
-# Driven by what the object actually records, so a reference through a Cellar
-# path is rewritten as readily as one through an opt path.
+# Repoint every bundled dependency of a thin object at Contents/Frameworks.
+# Driven by what the object actually records, and matched on basename, so a
+# reference through a Cellar path, an opt path or an @rpath is rewritten alike.
 rewrite_deps() {
 	local obj="$1" libdir="$2" dep base
 
 	"$OTOOL" -L "$obj" | tail -n +2 | awk '{ print $1 }' | while read -r dep; do
 		case "$dep" in
 			/usr/lib/*|/System/*) continue ;;
-			/*) : ;;
-			*) continue ;;
+			@executable_path/*) continue ;;		# already done
 		esac
 		base=${dep##*/}
 		if [ -f "$libdir/$base" ]; then
@@ -274,8 +322,11 @@ stage_slice() {
 		return
 	fi
 
+	# The executables' own @loader_path is their directory in the finished bundle,
+	# Contents/MacOS, alongside which nothing is installed; their dependencies are
+	# recorded as absolute paths in practice.
 	for obj in "$stage/bin/"*; do
-		collect_deps "$obj" "$map"
+		collect_deps "$obj" "$map" "$build_dir/bin"
 	done
 
 	while IFS=$'\t' read -r base src; do
