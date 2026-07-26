@@ -33,8 +33,13 @@ endif()
 
 # Display mode selection against a VRAM budget. Architecture-neutral and needs
 # no dynarec, so unlike the JIT tests it builds everywhere.
-add_executable(test_mode_fit test_mode_fit.c test_stubs.c)
-target_link_libraries(test_mode_fit PRIVATE rpcemu_core m)
+# Compiles the unit under test directly rather than linking rpcemu_core: the
+# core drags in SDL, and arm64 Homebrew has no separate SDL2main, so linking it
+# for a pure arithmetic test broke the macOS arm64 build. display_mode.c has no
+# dependencies of its own, which is the point of it being separate.
+add_executable(test_mode_fit test_mode_fit.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/display_mode.c)
+target_include_directories(test_mode_fit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 add_test(NAME test_mode_fit COMMAND test_mode_fit)
 
 # Networking tests for the Access+/ShareFS path, where large copies drive IP

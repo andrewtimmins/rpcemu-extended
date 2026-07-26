@@ -45,6 +45,7 @@
 #include "rpcemu.h"
 #include "mem.h"
 #include "edid.h"
+#include "display_mode.h"
 #include "rom_patch.h"
 
 /* -------------------------------------------------------------------------
@@ -319,7 +320,7 @@ rom_patch_monitor_edid(size_t rom_bytes)
 	   advertised mode has to work whichever depth is configured. A machine with
 	   no VRAM fitted takes screen memory from DRAM instead, so there is no
 	   figure to reason about and the limit is skipped. */
-	if (!rpcemu_display_mode_fit(bound_x, bound_y, 4,
+	if (!display_mode_fit(bound_x, bound_y, 4,
 	                             (size_t) config.vram_size * 1024 * 1024,
 	                             &native_x, &native_y))
 	{

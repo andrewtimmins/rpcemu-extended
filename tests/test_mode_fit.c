@@ -26,7 +26,7 @@
  * "not suitable for displaying the desktop", which is what a Kinetic clamped to
  * 2MB does when handed 2560x1440.
  *
- * rpcemu_display_mode_fit() is what keeps the synthesised monitor EDID, and any
+ * display_mode_fit() is what keeps the synthesised monitor EDID, and any
  * mode requested later, inside that limit. The arithmetic is easy to break
  * without noticing, hence these.
  */
@@ -34,7 +34,7 @@
 #include <stdio.h>
 #include <stddef.h>
 
-#include "rpcemu.h"
+#include "display_mode.h"
 
 static int failures;
 
@@ -43,7 +43,7 @@ expect_mode(const char *what, unsigned max_w, unsigned max_h, unsigned bpp,
             unsigned vram_mb, unsigned want_w, unsigned want_h)
 {
 	unsigned w = 0, h = 0;
-	const int ok = rpcemu_display_mode_fit(max_w, max_h, bpp,
+	const int ok = display_mode_fit(max_w, max_h, bpp,
 	                                       (size_t) vram_mb * 1024 * 1024, &w, &h);
 
 	if (!ok || w != want_w || h != want_h) {
@@ -72,7 +72,7 @@ expect_nothing(const char *what, unsigned max_w, unsigned max_h, unsigned bpp,
                unsigned vram_mb)
 {
 	unsigned w = 0, h = 0;
-	const int ok = rpcemu_display_mode_fit(max_w, max_h, bpp,
+	const int ok = display_mode_fit(max_w, max_h, bpp,
 	                                       (size_t) vram_mb * 1024 * 1024, &w, &h);
 
 	if (ok) {

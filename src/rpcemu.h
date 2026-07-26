@@ -299,13 +299,6 @@ extern int rpcemu_get_host_display(unsigned *width, unsigned *height);
 extern int rpcemu_guest_display_target(unsigned *width, unsigned *height,
                                        unsigned *hz, uint32_t *generation);
 
-/* Largest standard mode fitting given bounds and a framebuffer budget. Screen
-   memory comes out of VRAM, so a mode is only displayable if its framebuffer
-   fits; pass budget_bytes 0 to skip that limit. */
-extern int rpcemu_display_mode_fit(unsigned max_width, unsigned max_height,
-                                   unsigned bytes_per_pixel, size_t budget_bytes,
-                                   unsigned *width, unsigned *height);
-
 /* Request a clean application quit from the emulator core (e.g. the guest
    asking to power off via OS_Reset "&OFF"). Routed to the front-end. */
 extern void rpcemu_request_poweroff(void);
