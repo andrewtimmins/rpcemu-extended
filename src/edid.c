@@ -180,3 +180,22 @@ edid_build_from_base(uint8_t out[EDID_BLOCK_SIZE],
 	}
 	out[0x7f] = (uint8_t) ((256 - (sum & 0xff)) & 0xff);
 }
+
+/* The block in force, for anything that must answer for the same monitor. Kept
+   here rather than in either caller, because both the ROM patch that installs it
+   and the graphics card that serves it over DDC are downstream of this file. */
+static uint8_t edid_in_force[EDID_BLOCK_SIZE];
+static int edid_in_force_valid;
+
+void
+edid_publish(const uint8_t block[EDID_BLOCK_SIZE])
+{
+	memcpy(edid_in_force, block, EDID_BLOCK_SIZE);
+	edid_in_force_valid = 1;
+}
+
+const uint8_t *
+edid_published(void)
+{
+	return edid_in_force_valid ? edid_in_force : NULL;
+}

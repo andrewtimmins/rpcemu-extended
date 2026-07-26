@@ -39,6 +39,7 @@
 #include <string.h>
 
 #include "rpcemu.h"
+#include "edid.h"
 #include "gfxcard.h"
 #include "podules.h"
 
@@ -226,6 +227,49 @@ main(void)
 	wr(GFXCARD_REG_STATUS, GFXCARD_STATUS_VSYNC);
 	check((rd(GFXCARD_REG_STATUS) & GFXCARD_STATUS_VSYNC) == 0,
 	      "cleared by writing the bit back");
+
+	printf("\nthe monitor's EDID is served over the card\n");
+	check(rd(GFXCARD_REG_EDID_SIZE) == 0,
+	      "nothing to serve until the emulator publishes a block");
+	check((rd(GFXCARD_REG_CAPS) & GFXCARD_CAP_EDID) == 0,
+	      "and the card does not claim it can");
+	{
+		/* A block built the way the emulator builds the one it installs in
+		   the ROM, so the card and the ROM answer for the same monitor. */
+		uint8_t base[EDID_BLOCK_SIZE], block[EDID_BLOCK_SIZE];
+		unsigned i;
+
+		memset(base, 0, sizeof(base));
+		memcpy(base, "\x00\xff\xff\xff\xff\xff\xff\x00", 8);
+		base[18] = 1;			/* EDID version 1 */
+		edid_build_from_base(block, base, 2560, 1440, 60);
+		check(edid_block_is_valid(block), "the block built for the test is sound");
+		edid_publish(block);
+
+		check(rd(GFXCARD_REG_EDID_SIZE) == EDID_BLOCK_SIZE,
+		      "a published block is offered whole");
+		check((rd(GFXCARD_REG_CAPS) & GFXCARD_CAP_EDID) != 0,
+		      "and the card now claims it");
+
+		wr(GFXCARD_REG_EDID_INDEX, 0);
+		for (i = 0; i < EDID_BLOCK_SIZE; i++) {
+			if (rd(GFXCARD_REG_EDID_DATA) != block[i]) {
+				break;
+			}
+		}
+		check(i == EDID_BLOCK_SIZE, "every byte reads back, in order");
+		check(rd(GFXCARD_REG_EDID_INDEX) == EDID_BLOCK_SIZE,
+		      "the index stops at the end rather than wrapping");
+		check(rd(GFXCARD_REG_EDID_DATA) == 0,
+		      "reading past the end gives zero, not the start again");
+
+		wr(GFXCARD_REG_EDID_INDEX, 8);
+		check(rd(GFXCARD_REG_EDID_DATA) == block[8],
+		      "the index can be set to read part of the block");
+		wr(GFXCARD_REG_EDID_INDEX, 0x1000);
+		check(rd(GFXCARD_REG_EDID_INDEX) == EDID_BLOCK_SIZE,
+		      "an index beyond the block is clamped");
+	}
 
 	printf("\nframes displayed are counted, for diagnostics\n");
 	{

@@ -50,4 +50,22 @@ void edid_build_from_base(uint8_t out[EDID_BLOCK_SIZE],
  */
 int edid_block_is_valid(const uint8_t block[EDID_BLOCK_SIZE]);
 
+/**
+ * Keep a copy of the block the emulator has decided to present as the monitor,
+ * so anything else that has to answer for that same monitor serves exactly what
+ * the ROM does. The graphics card's DDC is the reason this exists: RISC OS
+ * re-reads the EDID from the display driver whenever the driver changes, and a
+ * card answering with a different monitor to the one the machine booted with
+ * would offer a different set of modes.
+ *
+ * @param block The 128-byte block now in force
+ */
+void edid_publish(const uint8_t block[EDID_BLOCK_SIZE]);
+
+/**
+ * The block published by edid_publish(), or NULL if the emulator never built
+ * one (an ROM with no EDID to work from, for instance).
+ */
+const uint8_t *edid_published(void);
+
 #endif

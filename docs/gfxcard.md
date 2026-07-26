@@ -84,12 +84,38 @@ drive a display:
 | SetDMAAddress (6) | Moves the displayed window, which is how RISC OS scrolls |
 | SetBlank (4) | Blanks the output |
 | WritePaletteEntry / Entries / Read (10-12) | The 256-entry palette |
+| IICOp (14) | Serves the monitor's EDID, so the mode list survives the switch |
 
 The vsync interrupt the card raises is passed on as `GraphicsV_VSync`, which is
 what makes the pointer move smoothly and palette changes land on a frame
 boundary. If the driver cannot claim the card's interrupt it tells the kernel so,
 and the kernel makes its own vsyncs from the centisecond ticker instead:
 `*GfxCardStatus` says which is happening.
+
+### Why the driver serves the EDID
+
+RISC OS re-reads the monitor's EDID **from the display driver** whenever the
+display driver changes: ScreenModes calls `readedid()` from its
+Service_DisplayChanged handler, which is a DDC read over `GraphicsV_IICOp`. A
+driver that cannot answer leaves the machine with a fallback monitor definition
+and only the handful of modes that go with it - so switching to the card would
+*lose* modes rather than gain them.
+
+The card therefore serves the same EDID block the emulator presents to the ROM
+(`src/edid.c`, published by `rom_patch.c`), through three registers: the size
+available, an index, and a data register that steps the index on. Switching to
+the card leaves the machine believing in exactly the monitor it booted with.
+
+### Current limit: the OS still counts VRAM
+
+One ceiling is not the card's to lift. RISC OS vets each mode's screen size
+against the video memory it believes the machine has, which comes from the fitted
+VRAM and takes no account of a card-hosted framestore (`GetBandwidthAndSize` in
+the kernel, whose figure reaches ScreenModes' `mode_valid` as `maxdatasize`).
+So on a machine with 2MB of VRAM the card will display any mode up to 2MB - the
+full width and height range, at 256 colours - but not the deeper modes its 15MB
+could hold. Raising that needs the emulator to report more video memory to the
+guest, which is a separate decision because it affects VIDC20 too.
 
 Two GraphicsV features are deliberately not claimed, so RISC OS does them in
 software as it would on any card without them: the hardware pointer, and

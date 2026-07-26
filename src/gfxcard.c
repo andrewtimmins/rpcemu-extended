@@ -52,6 +52,7 @@
 #include <string.h>
 
 #include "rpcemu.h"
+#include "edid.h"
 #include "gfxcard.h"
 #include "podules.h"
 
@@ -96,6 +97,7 @@ static struct {
 	uint32_t	start;
 	uint32_t	pal_index;
 	uint32_t	frames;		/**< Frames displayed, for diagnostics */
+	uint32_t	edid_index;	/**< Byte the next EDID_DATA read returns */
 
 	uint32_t	palette[256];
 } gfx;
@@ -232,7 +234,8 @@ gfxcard_reg_read(int reg)
 		   out and only 8 and 32 are implemented. A depth the card does not
 		   claim is simply one the OS will not ask it for. */
 		return GFXCARD_CAP_8BPP | GFXCARD_CAP_32BPP |
-		       GFXCARD_CAP_HW_SCROLL | GFXCARD_CAP_VSYNC;
+		       GFXCARD_CAP_HW_SCROLL | GFXCARD_CAP_VSYNC |
+		       (edid_published() != NULL ? GFXCARD_CAP_EDID : 0);
 	case GFXCARD_REG_FB_PHYS:    return gfxcard_fb_phys;
 	case GFXCARD_REG_FB_SIZE:    return GFXCARD_FB_SIZE;
 	case GFXCARD_REG_CTRL:       return gfx.ctrl;
@@ -247,6 +250,32 @@ gfxcard_reg_read(int reg)
 	case GFXCARD_REG_MAX_WIDTH:  return GFXCARD_MAX_WIDTH;
 	case GFXCARD_REG_MAX_HEIGHT: return GFXCARD_MAX_HEIGHT;
 	case GFXCARD_REG_FRAMES:     return gfx.frames;
+
+	/* The monitor's EDID, as a byte at a time through an index that steps on.
+	   This is what lets the card answer a DDC read: RISC OS re-reads the EDID
+	   from the display driver whenever the driver changes, and a card that
+	   cannot answer leaves the machine with a fallback monitor definition and
+	   only the handful of modes that go with it. */
+	case GFXCARD_REG_EDID_SIZE:
+		return (edid_published() != NULL) ? EDID_BLOCK_SIZE : 0;
+
+	case GFXCARD_REG_EDID_INDEX: return gfx.edid_index;
+
+	case GFXCARD_REG_EDID_DATA: {
+		const uint8_t *block = edid_published();
+		uint32_t v = 0;
+
+		if (block != NULL && gfx.edid_index < EDID_BLOCK_SIZE) {
+			v = block[gfx.edid_index];
+		}
+		/* Steps on even past the end, so a driver reading a run of bytes
+		   cannot be made to spin by a short block. */
+		if (gfx.edid_index < EDID_BLOCK_SIZE) {
+			gfx.edid_index++;
+		}
+		return v;
+	}
+
 	default:                     return 0;
 	}
 }
@@ -281,6 +310,10 @@ gfxcard_reg_write(int reg, uint32_t val)
 	case GFXCARD_REG_STRIDE:    gfx.stride = val; break;
 	case GFXCARD_REG_START:     gfx.start = val; break;
 	case GFXCARD_REG_PAL_INDEX: gfx.pal_index = val & 0xff; break;
+
+	case GFXCARD_REG_EDID_INDEX:
+		gfx.edid_index = (val < EDID_BLOCK_SIZE) ? val : EDID_BLOCK_SIZE;
+		break;
 
 	case GFXCARD_REG_PAL_ENTRY:
 		/* The index steps on after each entry, so a driver setting a run of
@@ -438,6 +471,7 @@ gfxcard_podule_reset(podule *p)
 	gfx.start = 0;
 	gfx.pal_index = 0;
 	gfx.frames = 0;
+	gfx.edid_index = 0;
 }
 
 /* ------------------------------------------------------------------------

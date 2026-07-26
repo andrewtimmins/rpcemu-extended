@@ -335,6 +335,11 @@ rom_patch_monitor_edid(size_t rom_bytes)
 	edid_build_from_base(block, base, native_x, native_y, EDID_NATIVE_HZ);
 	memcpy(&rb[found], block, EDID_BLOCK_SIZE);
 
+	/* Publish it: the graphics card serves this same block over DDC, because
+	   RISC OS re-reads the EDID from the display driver when the driver
+	   changes and would otherwise end up with a different monitor. */
+	edid_publish(block);
+
 	rpclog("rom_patch: applied: monitor EDID replaced, native %ux%u@%u (block at 0x%06x)\n",
 	       native_x, native_y, EDID_NATIVE_HZ, (unsigned) found);
 }

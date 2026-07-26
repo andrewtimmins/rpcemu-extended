@@ -92,7 +92,10 @@
 #define GFXCARD_REG_MAX_WIDTH	14	/* R  largest mode the card accepts */
 #define GFXCARD_REG_MAX_HEIGHT	15
 #define GFXCARD_REG_FRAMES	16	/* R  frames displayed, for diagnostics */
-#define GFXCARD_REG_COUNT	17
+#define GFXCARD_REG_EDID_SIZE	17	/* R  EDID bytes the card can serve, 0 if none */
+#define GFXCARD_REG_EDID_INDEX	18	/* RW byte the next EDID_DATA read returns */
+#define GFXCARD_REG_EDID_DATA	19	/* R  that byte; reading steps EDID_INDEX on */
+#define GFXCARD_REG_COUNT	20
 
 /* Where each register sits in the card's EASI space. */
 #define GFXCARD_REG_ADDR(n)	(GFXCARD_REG_BASE + (n) * 4)
@@ -111,6 +114,7 @@
 #define GFXCARD_CAP_32BPP	0x0004u
 #define GFXCARD_CAP_HW_SCROLL	0x0100u		/* display start register works */
 #define GFXCARD_CAP_VSYNC	0x0200u		/* raises a vsync interrupt */
+#define GFXCARD_CAP_EDID	0x0400u		/* can serve the monitor's EDID */
 
 #define GFXCARD_CTRL_ENABLE	0x0001u		/* scan out from the framestore */
 #define GFXCARD_CTRL_BLANK	0x0002u		/* output blanked */

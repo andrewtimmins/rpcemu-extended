@@ -82,6 +82,11 @@
 	Podule_ReadInfo_IntDeviceVector	= 1 << 17
 	READINFO_ITEMS = Podule_ReadInfo_EASILogical | Podule_ReadInfo_IntMask | Podule_ReadInfo_IntValue | Podule_ReadInfo_IntDeviceVector
 
+	@ The monitor's EDID lives in an EEPROM at IIC address 0x50; RISC OS asks
+	@ for it as 0xa1, that address shifted up with the read bit set, in bits
+	@ 16-23 of the IICOp request (see readedidblock() in ScreenModes).
+	EDID_IIC_READ		= 0xa1
+
 	@ GraphicsV
 	GraphicsV		= 0x2a
 	GraphicsV_VSync		= 1
@@ -90,6 +95,7 @@
 	GVFeature_HardwareScroll	= 1 << 0
 	GVFeature_SeparateFramestore	= 1 << 3
 	GVFeature_NoVsyncIRQ		= 1 << 4
+	GVFeature_VariableFramestore	= 1 << 5
 
 	@ Depths we can scan out, as GraphicsV states them: bit n set means 2^n
 	@ bits per pixel is available, so 8bpp and 32bpp.
@@ -138,6 +144,9 @@
 	REG_MAX_WIDTH	= 0x38
 	REG_MAX_HEIGHT	= 0x3c
 	REG_FRAMES	= 0x40
+	REG_EDID_SIZE	= 0x44
+	REG_EDID_INDEX	= 0x48
+	REG_EDID_DATA	= 0x4c
 
 	@ Where the register window sits in the card's EASI space, and what the
 	@ card's registers mean.
@@ -149,6 +158,7 @@
 	GFXCARD_CAP_32BPP	= 0x0004
 	GFXCARD_CAP_HW_SCROLL	= 0x0100
 	GFXCARD_CAP_VSYNC	= 0x0200
+	GFXCARD_CAP_EDID	= 0x0400
 
 	GFXCARD_CTRL_ENABLE	= 0x0001
 	GFXCARD_CTRL_BLANK	= 0x0002
@@ -176,14 +186,15 @@
 	WS_GVHANDLER	= 64	@ our GraphicsV handler, as OS_Claim was given it
 	WS_VSHANDLER	= 68	@ our vsync handler, likewise
 	WS_SCRATCH	= 72	@ 4 words: Podule_ReadInfo results, number buffer
+	WS_EDID_SIZE	= 96	@ EDID bytes the card can serve, 0 if none
 	WS_VET_W	= 100	@ the last mode vetted, and what came of it, so a
 	WS_VET_H	= 104	@ refusal can be explained rather than guessed at
 	WS_VET_STRIDE	= 108
 	WS_VET_L2BPP	= 112
 	WS_VET_REASON	= 116
-	WS_SAVE_W	= 88	@ geometry in use before a switch, so it survives it
-	WS_SAVE_H	= 92
-	WS_SAVE_L2BPP	= 96
+	WS_SAVE_W	= 84	@ geometry in use before a switch, so it survives it
+	WS_SAVE_H	= 88
+	WS_SAVE_L2BPP	= 92
 	WS_CMD		= 120	@ CMD_SIZE bytes: *WimpMode command builder
 	WORKSPACE_SIZE	= WS_CMD + CMD_SIZE
 
@@ -309,7 +320,7 @@ gv_table:
 	b	gv_writepals	@ 11 WritePaletteEntries
 	b	gv_readpal	@ 12 ReadPaletteEntry
 	ldmfd	sp!, {pc}	@ 13 Render (no acceleration)
-	ldmfd	sp!, {pc}	@ 14 IICOp (no IIC bus on this card)
+	b	gv_iicop	@ 14 IICOp
 	ldmfd	sp!, {pc}	@ 15 SelectHead (one head)
 	ldmfd	sp!, {pc}	@ 16 StartupMode
 	b	gv_pixelformats	@ 17 PixelFormats
@@ -427,6 +438,63 @@ gv_readpal:
 	ldmfd	sp!, {r3}
 gv_readpal_done:
 	mov	r4, #0
+	ldmfd	sp!, {pc}
+
+	@ IICOp: r0 = command and device in bits 16-23, byte offset within the
+	@ device in bits 0-15; r1 -> buffer; r2 = byte count.
+	@ Out: r0 = 0 if the transfer worked, r1 and r2 updated.
+	@
+	@ Only a read of the monitor's EDID is answered, which is the one IIC
+	@ transaction that matters here. RISC OS re-reads the EDID from the display
+	@ driver whenever the driver changes (readedid() in ScreenModes); a driver
+	@ that cannot answer leaves the machine with a fallback monitor definition
+	@ and only the few modes that come with it, however much the card could
+	@ show. The card serves the same block the emulator presents to the ROM, so
+	@ switching to the card does not change which monitor the machine thinks it
+	@ has.
+gv_iicop:
+	stmfd	sp!, {r3, r5, r6}
+	ldr	r5, [ws, #WS_EDID_SIZE]
+	teq	r5, #0
+	beq	gv_iicop_pass		@ no EDID to serve: let something else try
+
+	mov	r3, r0, lsr #16
+	and	r3, r3, #0xff
+	teq	r3, #EDID_IIC_READ
+	bne	gv_iicop_pass		@ not the monitor, or not a read
+
+	mov	r6, r0, lsl #16
+	mov	r6, r6, lsr #16		@ byte offset within the EEPROM
+	adds	r3, r6, r2
+	bcs	gv_iicop_fail
+	cmp	r3, r5
+	bhi	gv_iicop_fail		@ past the end of what the card holds
+
+	ldr	r3, [ws, #WS_REGS]
+	str	r6, [r3, #REG_EDID_INDEX]
+1:
+	teq	r2, #0
+	beq	2f
+	ldr	r6, [r3, #REG_EDID_DATA]
+	strb	r6, [r1], #1
+	sub	r2, r2, #1
+	b	1b
+2:
+	mov	r0, #0			@ transfer complete, no IIC error
+	mov	r4, #0			@ claimed
+	ldmfd	sp!, {r3, r5, r6}
+	ldmfd	sp!, {pc}
+
+	@ Claimed, but the device did not answer: r0 non-zero says so, and the
+	@ untouched r2 says how much did not arrive.
+gv_iicop_fail:
+	mov	r0, #1
+	mov	r4, #0
+	ldmfd	sp!, {r3, r5, r6}
+	ldmfd	sp!, {pc}
+
+gv_iicop_pass:
+	ldmfd	sp!, {r3, r5, r6}
 	ldmfd	sp!, {pc}
 
 	@ VetMode: r0 -> VIDC list type 3; out r0 = 0 if the mode is usable.
@@ -692,7 +760,14 @@ init:
 	str	r0, [r5, #WS_MAX_WIDTH]
 	ldr	r0, [r2, #REG_MAX_HEIGHT]
 	str	r0, [r5, #WS_MAX_HEIGHT]
+	ldr	r0, [r2, #REG_EDID_SIZE]
+	str	r0, [r5, #WS_EDID_SIZE]
 
+	@ The features we report. VariableFramestore is deliberately NOT claimed:
+	@ this card's framestore is fixed, and claiming otherwise makes the kernel
+	@ stop reading its address and size at initialisation without lifting the
+	@ limit that matters (the video memory figure ScreenModes vets modes
+	@ against comes from the fitted VRAM, which no driver flag changes).
 	ldr	r0, [r2, #REG_CAPS]
 	mov	r1, #GVFeature_SeparateFramestore
 	tst	r0, #GFXCARD_CAP_HW_SCROLL
@@ -1143,6 +1218,18 @@ command_status:
 	bl	print_number
 	swi	XOS_NewLine
 
+	@ Whether the card can answer for the monitor. This decides which modes
+	@ RISC OS believes exist, so it belongs in the status.
+	ldr	r0, [r5, #WS_EDID_SIZE]
+	teq	r0, #0
+	bne	1f
+	adrl	r0, msg_no_edid
+	b	2f
+1:
+	adrl	r0, msg_edid
+2:
+	swi	XOS_Write0
+
 	@ Driver number, and whether it is the one in use.
 	adrl	r0, msg_driver
 	swi	XOS_Write0
@@ -1278,6 +1365,12 @@ msg_at:
 	.align
 msg_bpp:
 	.string	" bpp\r\n"
+	.align
+msg_edid:
+	.string	"  Monitor EDID: served by the card\r\n"
+	.align
+msg_no_edid:
+	.string	"  Monitor EDID: not available from the card, so RISC OS will fall back to a default monitor\r\n"
 	.align
 msg_driver:
 	.string	"  Display driver "
