@@ -922,8 +922,21 @@ init_start:
 	orr	r0, r0, #FLAG_STARTED
 	str	r0, [r5, #WS_FLAGS]
 
+	@ Say hello on the startup screen, among the lines RISC OS prints as it finds
+	@ what the machine has. Expansion cards conventionally announce themselves
+	@ here, and it is the one place the card is visible without going looking for
+	@ it. Only on success: there is nothing to announce if the card could not be
+	@ taken on.
+	adrl	r0, msg_banner
+	swi	XOS_Write0
+	swi	XOS_NewLine
+
 	cmp	pc, #0			@ clear V for a successful return
 	ldmfd	sp!, {r4, r5, r6, pc}
+
+msg_banner:
+	.string	"High Resolution Graphics Card Installed..."
+	.align
 
 	@ Failure paths. Each undoes exactly what had been done, then returns the
 	@ error it was given (or one of ours) with V set.
