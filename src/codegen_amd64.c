@@ -29,6 +29,11 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifdef __APPLE__
+#include <errno.h>
+#include <sys/mman.h>
+#endif
+
 #include "rpcemu.h"
 #include "arm.h"
 #include "arm_common.h"
@@ -37,7 +42,30 @@
 
 int lastflagchange;
 
+/*
+ * The code cache.
+ *
+ * Everywhere except macOS this is a static array made executable once with
+ * mprotect()/VirtualProtect().
+ *
+ * macOS refuses to make a static array RWX. It is rejected outright for a
+ * process running in translation under Rosetta, and by the hardened runtime on
+ * native Intel, which is why every JIT test failed with "mprotect: Permission
+ * denied" on the macOS x86_64 CI job and why the recompiler would not start on a
+ * reporter's Intel Mac (issue #30). Allocating the cache with mmap(MAP_JIT) is
+ * the supported way to hold JIT-generated code, and it is what the arm64 backend
+ * already does; this brings the amd64 backend into line.
+ *
+ * Unlike Apple Silicon there is no per-thread W^X toggling to do here:
+ * pthread_jit_write_protect_np() is an Apple Silicon interface, and generated
+ * x86_64 code is executed through Rosetta or natively from a mapping that stays
+ * both writable and executable.
+ */
+#if defined(__APPLE__)
+uint8_t (*rcodeblock)[1792];	/* MAP_JIT code cache, allocated in initcodeblocks() */
+#else
 uint8_t rcodeblock[BLOCKS][1792] __attribute__ ((aligned (4096)));
+#endif
 static const void *codeblockaddr[BLOCKS];
 uint32_t codeblockpc[0x8000];
 int codeblocknum[0x8000];
@@ -202,19 +230,38 @@ gen_call_c_function(const void *addr)
 void
 initcodeblocks(void)
 {
+	const size_t rcodeblock_size = (size_t) BLOCKS * sizeof(rcodeblock[0]);
 	int c;
 
 	// Clear all blocks
 	memset(codeblockpc, 0xff, sizeof(codeblockpc));
 	memset(blocks, 0xff, sizeof(blocks));
+
+#if defined(__APPLE__)
+	// Allocate the code cache as MAP_JIT memory; a static RWX array is refused
+	// under Rosetta and the hardened runtime. Allocated once, for the life of
+	// the process.
+	if (rcodeblock == NULL) {
+		rcodeblock = mmap(NULL, rcodeblock_size, PROT_READ | PROT_WRITE | PROT_EXEC,
+		                  MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
+		if (rcodeblock == MAP_FAILED) {
+			rcodeblock = NULL;
+			fatal("Unable to allocate MAP_JIT code cache: %s", strerror(errno));
+		}
+	}
+#endif
+
 	for (c = 0; c < BLOCKS; c++) {
 		codeblockaddr[c] = &rcodeblock[c][0];
 	}
 	blockpoint = 0;
 
+#if !defined(__APPLE__)
 	// Set memory pages containing rcodeblock[]s executable -
-	// necessary when NX/XD feature is active on CPU(s)
-	set_memory_executable(rcodeblock, sizeof(rcodeblock));
+	// necessary when NX/XD feature is active on CPU(s).
+	// The MAP_JIT mapping above is already executable.
+	set_memory_executable(rcodeblock, rcodeblock_size);
+#endif
 }
 
 void

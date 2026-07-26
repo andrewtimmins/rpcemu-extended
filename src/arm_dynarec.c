@@ -562,12 +562,11 @@ arm_unpredictable(uint32_t opcode)
 /**
  * Grant executable privilege to a region of memory.
  *
- * macOS note: the dynarec is the x86_64 slice only (the arm64 slice is
- * interpreter, RPCEMU_DYNAREC=OFF). On an unsigned/ad-hoc Intel build, POSIX
- * mprotect(RWX) on the static JIT buffer works exactly as on Linux. A
- * hardened-runtime / notarised build would instead need an mmap(MAP_JIT)
- * buffer plus pthread_jit_write_protect_np() toggling; that is deferred until
- * we sign for distribution.
+ * macOS note: neither code generator calls this any more. Both allocate their
+ * code cache with mmap(MAP_JIT) instead, because macOS refuses to make a static
+ * array RWX: under Rosetta and under the hardened runtime this function fails
+ * with EACCES. See codegen_amd64.c and codegen_arm64.c. It is still used by
+ * Linux and by the 32-bit x86 backend.
  *
  * @param ptr Pointer to region of memory
  * @param len Length of region of memory

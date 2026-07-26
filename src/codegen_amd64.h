@@ -23,7 +23,13 @@
 
 #define BLOCKS 1024
 
+#if defined(__APPLE__)
+/* macOS: the code cache is a MAP_JIT allocation (see codegen_amd64.c), so
+   rcodeblock is a pointer to it rather than a static array. */
+extern uint8_t (*rcodeblock)[1792];
+#else
 extern uint8_t rcodeblock[BLOCKS][1792];
+#endif
 extern uint32_t codeblockpc[0x8000];
 extern int codeblocknum[0x8000];
 
