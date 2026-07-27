@@ -9,6 +9,19 @@ on:
 permissions:
   contents: read
 
+# Push again while a run is still going and the first one is now building a
+# commit nobody is waiting on, so stop it and let the new one have the runners.
+# Each ref gets its own group, so a push to main never cancels a pull request.
+#
+# Tags are the exception. A tag run is the one that publishes a release, and it
+# uploads the assets one at a time, so cancelling it half way leaves a release
+# carrying some of its files - worse than the runner time it saves. Nothing
+# supersedes a tag anyway, each one being its own ref, so there is nothing to
+# gain by cancelling it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   linux-amd64:
     runs-on: ubuntu-latest
