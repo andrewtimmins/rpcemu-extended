@@ -140,8 +140,20 @@
    colour 0 transparent and 1-3 taken from the pointer palette. The shape data
    stays where RISC OS put it and the card is given its physical address, which
    is how a real card would fetch it. */
-#define GFXCARD_PTR_MAX_WIDTH	32u		/* bytes: RISC OS pads to 32 pixels */
-#define GFXCARD_PTR_MAX_HEIGHT	64u
+/* Rows in the shape buffer are always GFXCARD_PTR_ROW_BYTES apart, whatever
+   width the guest declared. RISC OS keeps the width unpadded - the kernel calls
+   PointerWidth the "actual (unpadded) shape width in bytes" - but when a shape
+   is defined it zero-fills each row out to a multiple of eight (the OS_Word 21
+   handler in the kernel's vdupointer: "are we on a multiple of 8"), and it
+   refuses any width above eight. So eight bytes is both the largest shape and
+   the distance from one row to the next.
+
+   Reading rows a declared-width apart therefore only looks right when the shape
+   happens to be the full eight bytes wide, as the Wimp's arrow is. The
+   Hourglass declares six, and its rows would each come out two bytes early. */
+#define GFXCARD_PTR_ROW_BYTES	8u		/* stride: rows are padded to this */
+#define GFXCARD_PTR_MAX_WIDTH	8u		/* bytes, so 32 pixels at 2bpp */
+#define GFXCARD_PTR_MAX_HEIGHT	32u		/* rows; the buffer holds 8 x 32 */
 #define GFXCARD_PTR_CTRL_SHOW	0x0001u
 
 /* ------------------------------------------------------------------------

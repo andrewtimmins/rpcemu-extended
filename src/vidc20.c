@@ -588,8 +588,10 @@ gfxcard_draw_pointer(void)
 		vidp = video_image_scanline(y);
 
 		for (byte = 0; byte < thr.gfx_ptr_width; byte++) {
+			/* Row stride is the padded width, not the declared one:
+			   see GFXCARD_PTR_ROW_BYTES. */
 			const uint8_t bits = gfx_shape_byte(thr.gfx_ptr_phys +
-			                                    row * thr.gfx_ptr_width + byte);
+			                                    row * GFXCARD_PTR_ROW_BYTES + byte);
 			unsigned pix;
 
 			for (pix = 0; pix < 4; pix++) {

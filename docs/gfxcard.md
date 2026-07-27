@@ -289,6 +289,16 @@ at the host's pointer position when the front-end is placing it. The shape is
 from the pointer palette, and it stays where RISC OS built it - the card fetches
 it, as real hardware would.
 
+One detail of that format is easy to get wrong, and did go wrong here: the width
+RISC OS reports is the width the shape was *defined* with, unpadded, but rows in
+the buffer are always eight bytes apart. The kernel zero-fills each row out to a
+multiple of eight when the shape is defined, and refuses any width above eight.
+Stepping from row to row by the reported width therefore only looks right for a
+shape that happens to be the full eight bytes wide, as the Wimp's arrow is. The
+Hourglass declares six, so its rows each came out two bytes early and the shape
+sheared into stripes. Use the padded stride to walk the rows, and the reported
+width only to decide how much of each row to draw.
+
 One GraphicsV feature is deliberately not claimed, so RISC OS does it in
 software as it would on any card without it: rendering (rectangle copy and fill).
 
