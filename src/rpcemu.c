@@ -1386,8 +1386,10 @@ rpcemu_config_apply_new_settings(Config *new_config, Model new_model)
 
 	/* Kinetic + VRAM > 2MB faults on some ROMs: the HAL miscomputes its
 	   physical-memory table when the 512MB SDRAM map and >2MB VRAM are both
-	   present (the R4=0xc0000000 abort). Clamp to 2MB until the HAL VRAMWidth
-	   ROM patch lands to fix it properly. */
+	   present (the R4=0xc0000000 abort), so the VRAM is fixed at 2MB.
+	   Permanently: the graphics card answers this better than more VRAM would,
+	   carrying its own 15MB framestore and reaching modes no VRAM setting here
+	   offers (see src/gfxcard.c and docs/gfxcard.md). */
 	if (machine.model == Model_Kinetic) {
 		new_config->vram_size = 2;
 	}

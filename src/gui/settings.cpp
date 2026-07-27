@@ -528,8 +528,9 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 		cfg->mem_size = 256;
 		cfg->vram_size = 4;
 	}
-	/* Kinetic + VRAM > 2MB faults on some ROMs (HAL physical-map bug). Clamp
-	   until the HAL VRAMWidth ROM patch lands. */
+	/* Kinetic + VRAM > 2MB faults on some ROMs (HAL physical-map bug), so it is
+	   fixed at 2MB. The graphics card is the answer to the ceiling that leaves,
+	   not a larger figure here - see config_apply() in rpcemu.c. */
 	if (model == Model_Kinetic) {
 		cfg->vram_size = 2;
 	}

@@ -120,47 +120,6 @@ find_unique_word(size_t words, uint32_t value, size_t *out)
 	return 0;
 }
 
-/**
- * Find a contiguous run of words that occurs exactly once in the loaded ROM.
- *
- * @param words Number of 32-bit words loaded
- * @param seq   Sequence of words to match
- * @param n     Length of seq
- * @param out   Set to the word index where the single match begins
- * @return 1 if found exactly once, 0 otherwise
- */
-static int
-find_unique_sequence(size_t words, const uint32_t *seq, size_t n, size_t *out)
-{
-	size_t hits = 0;
-	size_t match = 0;
-	size_t i;
-
-	if (n == 0 || words < n) {
-		return 0;
-	}
-
-	for (i = 0; i + n <= words; i++) {
-		size_t j;
-
-		for (j = 0; j < n; j++) {
-			if (rom[i + j] != seq[j]) {
-				break;
-			}
-		}
-		if (j == n) {
-			match = i;
-			hits++;
-		}
-	}
-
-	if (hits == 1) {
-		*out = match;
-		return 1;
-	}
-	return 0;
-}
-
 /* -------------------------------------------------------------------------
  * Video memory the mode list is vetted against
  * ------------------------------------------------------------------------- */
@@ -627,119 +586,6 @@ rom_patch_software_poweroff(size_t rom_bytes)
 }
 
 /* -------------------------------------------------------------------------
- * Kinetic 16MB VRAM (content-located prototype)
- * ------------------------------------------------------------------------- */
-
-/*
- * PROTOTYPE - content-located Kinetic 16MB VRAM enablement.
- *
- * Background: on the Kinetic model RISC OS relocates itself into the on-card
- * SDRAM and rebuilds its memory map from the HAL physical-memory table. That
- * path re-derives the VRAM size from the HAL's VRAMWidth readback and discards
- * the kernel's own sizer result, so a 16MB VRAM fitting is not honoured and the
- * desktop is left with a tiny screen allocation. Enabling it needs three
- * co-operating edits (mirroring what a fixed-offset patcher would do, but
- * located by content so it is not welded to one ROM build):
- *
- *   1. Kernel VRAM sizer cap: the "MOVEQ R6,#8" that caps the sizer result.
- *      Located via its unique preamble
- *          MOV r0,#0x02000000 / MOV r2,#0x41 / STRB r2,[ip,#0x8c] /
- *          ADD r1,r0,#0x400000
- *      then the MOVEQ R6 a fixed few words later. Raise #8 -> #16.
- *   2. HAL VRAMWidth cap: a "MOVEQ IP,#8" that clamps the readback decode.
- *      Raise #8 -> #16.
- *   3. HAL physinfo gap-fill: the "fill end-of-VRAM..0x03000000" loop is a
- *      do-while; with 16MB VRAM the region fills the whole window so the count
- *      is zero and the loop would wrap. Made conditional (LSR->LSRS, BL->BLNE),
- *      located via the unique "RSB r3,r3,#0x1000000 / LSR r1,r3,#15" pair.
- *
- * STATUS: this is scaffolding, deliberately gated to do nothing on a normal
- * build. It only writes when the machine is Kinetic AND 16MB VRAM is actually
- * configured - and Kinetic VRAM is currently hard-clamped to 2MB elsewhere
- * (the HAL VRAM>2MB path still faults on some ROM builds during a full !Boot,
- * an abort we have not yet traced). So in practice it locates + logs but does
- * not fire until that clamp is lifted, which awaits (a) a ROM to validate
- * against and (b) the residual abort being tracked down. Keeping the patch
- * here, content-located and logging, is the foundation for that work.
- */
-#define KVRAM_SIZER_MOV_R0	0xe3a00402u	/* MOV r0,#0x02000000    */
-#define KVRAM_SIZER_MOV_R2	0xe3a02041u	/* MOV r2,#0x41          */
-#define KVRAM_SIZER_STRB_R2	0xe5cc208cu	/* STRB r2,[ip,#0x8c]    */
-#define KVRAM_SIZER_ADD_R1	0xe2801501u	/* ADD r1,r0,#0x400000   */
-#define KVRAM_SIZER_MOVEQ_R6_8	0x03a06008u	/* MOVEQ r6,#8           */
-#define KVRAM_SIZER_MOVEQ_R6_16	0x03a06010u	/* MOVEQ r6,#16          */
-#define KVRAM_SIZER_MOVEQ_OFF	5u		/* words from preamble start to MOVEQ */
-
-#define KVRAM_WIDTH_MOVEQ_IP_8	0x03a0c008u	/* MOVEQ ip,#8           */
-#define KVRAM_WIDTH_MOVEQ_IP_16	0x03a0c010u	/* MOVEQ ip,#16          */
-
-#define KVRAM_GAP_RSB_R3	0xe2633401u	/* RSB r3,r3,#0x1000000  */
-#define KVRAM_GAP_LSR_R1	0xe1a017a3u	/* LSR r1,r3,#15         */
-#define KVRAM_GAP_LSRS_R1	0xe1b017a3u	/* LSRS r1,r3,#15        */
-#define KVRAM_GAP_BL_MASK	0xff000000u
-#define KVRAM_GAP_BL		0xeb000000u	/* BL <offset>           */
-#define KVRAM_GAP_BLNE		0x1b000000u	/* BLNE <offset>         */
-#define KVRAM_GAP_BL_OFF	2u		/* words from LSR to the BL */
-
-static void
-rom_patch_kinetic_vram(size_t rom_bytes)
-{
-	const size_t words = rom_bytes / 4;
-	uint32_t seq[4];
-	size_t at;
-	int applied = 0;
-
-	/* Only relevant to a Kinetic machine actually fitted with >8MB VRAM. */
-	if (machine.model != Model_Kinetic || config.vram_size < 16) {
-		return;
-	}
-
-	/* 1. Kernel VRAM sizer cap #8 -> #16, anchored on its unique preamble. */
-	seq[0] = KVRAM_SIZER_MOV_R0;
-	seq[1] = KVRAM_SIZER_MOV_R2;
-	seq[2] = KVRAM_SIZER_STRB_R2;
-	seq[3] = KVRAM_SIZER_ADD_R1;
-	if (find_unique_sequence(words, seq, 4, &at) &&
-	    at + KVRAM_SIZER_MOVEQ_OFF < words &&
-	    rom[at + KVRAM_SIZER_MOVEQ_OFF] == KVRAM_SIZER_MOVEQ_R6_8)
-	{
-		rom[at + KVRAM_SIZER_MOVEQ_OFF] = KVRAM_SIZER_MOVEQ_R6_16;
-		rpclog("rom_patch: applied: Kinetic 16MB VRAM sizer cap (at 0x%06x)\n",
-		       (unsigned) ((at + KVRAM_SIZER_MOVEQ_OFF) * 4));
-		applied++;
-	}
-
-	/* 2. HAL VRAMWidth cap #8 -> #16 (only if unambiguous). */
-	if (find_unique_word(words, KVRAM_WIDTH_MOVEQ_IP_8, &at)) {
-		rom[at] = KVRAM_WIDTH_MOVEQ_IP_16;
-		rpclog("rom_patch: applied: Kinetic 16MB VRAM HAL VRAMWidth cap (at 0x%06x)\n",
-		       (unsigned) (at * 4));
-		applied++;
-	}
-
-	/* 3. HAL physinfo gap-fill: make the do-while conditional. Anchored on
-	      the unique RSB/LSR pair, with the BL a fixed couple of words on. */
-	seq[0] = KVRAM_GAP_RSB_R3;
-	seq[1] = KVRAM_GAP_LSR_R1;
-	if (find_unique_sequence(words, seq, 2, &at) &&
-	    at + KVRAM_GAP_BL_OFF < words &&
-	    (rom[at + KVRAM_GAP_BL_OFF] & KVRAM_GAP_BL_MASK) == KVRAM_GAP_BL)
-	{
-		rom[at + 1] = KVRAM_GAP_LSRS_R1;
-		rom[at + KVRAM_GAP_BL_OFF] =
-		    (rom[at + KVRAM_GAP_BL_OFF] & ~KVRAM_GAP_BL_MASK) | KVRAM_GAP_BLNE;
-		rpclog("rom_patch: applied: Kinetic 16MB VRAM HAL gap-fill guard (at 0x%06x)\n",
-		       (unsigned) (at * 4));
-		applied++;
-	}
-
-	if (applied != 3) {
-		rpclog("rom_patch: Kinetic 16MB VRAM: %d/3 sites located - not fully enabled on this ROM\n",
-		       applied);
-	}
-}
-
-/* -------------------------------------------------------------------------
  * NCOS POST bypass
  * ------------------------------------------------------------------------- */
 
@@ -772,9 +618,6 @@ rom_patch_apply(size_t rom_bytes)
 {
 	/* Fixed-offset VRAM cap (RISC OS 3/4/6). */
 	rom_patch_vram_cap();
-
-	/* Kinetic 16MB VRAM prototype (Kinetic + 16MB VRAM only). */
-	rom_patch_kinetic_vram(rom_bytes);
 
 	/* Free the desktop from the emulated-away VIDC20 pixel-clock limit so the
 	   larger monitor-definition modes become selectable. */
