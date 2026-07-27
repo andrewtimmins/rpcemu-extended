@@ -90,8 +90,8 @@ GfxCard
 Info                          >
 Display                       >
 -------------------------------
-Display on the card
-Display on VIDC20
+Use Card
+Use VIDC20
 -------------------------------
 Quit
 ```

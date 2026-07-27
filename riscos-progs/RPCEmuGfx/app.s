@@ -795,17 +795,22 @@ indirect_free:
 	.int	indirect_ws
 
 	@ The menu's item text. It never changes: the figures are in the windows.
+	@
+	@ Each entry has to be exactly TEXT_SIZE bytes, because the menu items point
+	@ at item_text + item * TEXT_SIZE. The padding is worked out here rather than
+	@ written down, so the wording can be changed without counting characters.
+	.macro	item_string text
+1:
+	.asciz	"\text"
+	.space	TEXT_SIZE - (. - 1b), 0
+	.endm
+
 item_text:
-	.asciz	"Info"
-	.space	TEXT_SIZE - 5
-	.asciz	"Display"
-	.space	TEXT_SIZE - 8
-	.asciz	"Display on the card"
-	.space	TEXT_SIZE - 20
-	.asciz	"Display on VIDC20"
-	.space	TEXT_SIZE - 18
-	.asciz	"Quit"
-	.space	TEXT_SIZE - 5
+	item_string "Info"
+	item_string "Display"
+	item_string "Use Card"
+	item_string "Use VIDC20"
+	item_string "Quit"
 
 var_buf:
 	.space	VAR_SIZE, 0
