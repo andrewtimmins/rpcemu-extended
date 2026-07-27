@@ -25,7 +25,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **Multi-machine configuration** — create, edit, clone, and delete machine profiles from a startup selector; each machine has isolated CMOS, HostFS, and hard disc storage.
 - **Quick machine switching** — switch between machines via *File → Recent Machines* without restarting.
 - **Save/load state, suspend & resume** — snapshot a machine's complete running state (CPU, RAM, VRAM, devices, and networking) to disk and restore it exactly. Use *File → Save State* / *Load State* for named snapshots, or *File → Suspend* to save and exit and pick up right where you left off via the machine's **Resume** button in the selector. Contributed by Nick Brown.
-- **Shared clipboard** — copy text on the host and paste it in RISC OS, or the other way about. Off by default (*Settings → Share Clipboard with RISC OS*), since it puts your host clipboard within the guest's reach; the guest half loads itself and needs nothing installed. Text only for now. RiscOS Cloverleaf's design and interface, credited below. See [docs/clipboard.md](docs/clipboard.md).
+- **Shared clipboard** — copy text on the host and paste it in RISC OS, or the other way about. Off by default (*Settings → Share Clipboard with RISC OS*), since it puts your host clipboard within the guest's reach; the guest half loads itself and needs nothing installed. Text and images (PNG or JPEG). RiscOS Cloverleaf's design and interface, credited below. See [docs/clipboard.md](docs/clipboard.md).
 - **Dual HostFS drives** — per-machine **HostFS** plus a common **Shared** drive (`shared/`) visible to all machines.
 - **Access/ShareFS networking** — NAT-mode relay for Acorn Access and ShareFS file sharing between emulated and real machines.
 - **Expansion cards (podules)** — assign emulated podules per machine (*Settings → Machine → Podules*): ROM, MIDI (AKA16/AKA12/MIDI Max, host MIDI via ALSA), and the Computer Concepts Lark sampler. Plugin ABI for adding more. See [docs/podules.md](docs/podules.md).
@@ -33,6 +33,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **Graphics card — display modes VRAM cannot reach** — an optional emulated expansion card with 15MB of its own display memory, so **2560 x 1440 in full colour** is available on a machine whose 2MB of VRAM otherwise stops at 800 x 600. An ordinary card in an ordinary EASI slot with its own GraphicsV driver in its ROM; off by default, and RISC OS keeps using VIDC20 until you run `*GfxCardOn`. See [docs/gfxcard.md](docs/gfxcard.md).
 - **Pixel Perfect scaling** — optional integer scaling for sharp pixels (*Settings → Pixel Perfect*).
 - **Built-in VNC server** — remote desktop access from any VNC client.
+- **Command-line control** — launch straight into a named machine (`--machine <name>`), and resume its saved state (`--resume`) or load a specific one (`--state <file>`), in either the GUI or headless. Options, messages and exit statuses are the same on all three platforms. Contributed by David Ramsden. See [Command-line reference](#command-line-reference).
 - **Headless mode** — run a machine with no GUI window, accessed entirely over VNC (`--headless --machine <name>`). Genuinely display-less: no GUI toolkit is initialised at all, so it runs on a headless server (on Linux, with no X11/Wayland session). See [Headless mode](#headless-mode).
 - **HostCmd — drive the RISC OS command line from the host** — run guest commands from the host over a local socket and stream their output back, with the return code. Edit on the host (via HostFS), compile on the guest (`rpcemu-run -- cc -c hello`), or open an interactive RISC OS shell (`rpcemu-shell`). Ideal for IDE/LLM-driven development. See [docs/hostcmd.md](docs/hostcmd.md).
 - **MCP server — drive RISC OS from Claude / an agent** — a [Model Context Protocol](https://modelcontextprotocol.io) server exposing tools to run guest commands, read/write/list files (via HostFS), capture and click the screen, and inspect/control the emulated ARM CPU (registers, memory, disassembly, breakpoints, watchpoints, single-step). Point Claude Code / Desktop at it for agent-driven RISC OS development. Setup and tool reference in [tools/mcp/README.md](tools/mcp/README.md).
@@ -574,3 +575,10 @@ networking features.
   Cloverleaf's `ucstables.c`. See `docs/clipboard.md`.
 - Spork Edition enhancements by Andy Timmins and contributors.
 - Machine save/load state (suspend & resume) contributed by **Nick Brown**.
+- Command-line options (`--machine` for the GUI as well as headless, `--resume`
+  and `--state`), with consistent messages and exit statuses across Linux,
+  Windows and macOS; the macOS application bundle fixes that made the shipped
+  `.app` runnable on a Mac other than the one that built it, along with the
+  bundling and verification work behind them; and the cross-platform
+  command-line and VNC smoke tests (`tests/cli_smoke.sh`, `tests/vnc_smoke.py`).
+  Contributed by **David Ramsden**.
