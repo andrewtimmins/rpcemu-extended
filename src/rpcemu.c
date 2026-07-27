@@ -54,6 +54,7 @@
 #include "cdrom-iso.h"
 #include "podulerom.h"
 #include "gfxcard.h"
+#include "hostclipboard.h"
 #include "podules.h"
 #include "fdc.h"
 #include "hostfs.h"
@@ -869,6 +870,12 @@ resetrpc(void)
            clears every slot, so a card registered before this point would be
            overwritten by whatever claimed a slot afterwards. */
         gfxcard_init();
+
+	/* The guest module's pollword address goes with the machine that
+	   registered it. Without this the host keeps writing "the clipboard
+	   changed" into whatever is at that address in the new machine, until a
+	   module sets up again. */
+	clipboard_reset();
         hostfs_reset();
         hostcmd_reset();
         debugcmd_reset();
