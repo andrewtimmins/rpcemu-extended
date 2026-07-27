@@ -39,6 +39,7 @@
 	OS_Exit			= 0x00011
 	XOS_CLI			= 0x20005
 	XOS_Byte		= 0x20006
+	XOS_ReadMonotonicTime	= 0x20042
 	XOS_File		= 0x20008
 	XOS_Module		= 0x2001e
 	XOS_Claim		= 0x2001f
@@ -46,6 +47,7 @@
 	XOS_ConvertCardinal4	= 0x200d8
 	XWimp_Initialise	= 0x600c0
 	XWimp_Poll		= 0x600c7
+	XWimp_PollIdle		= 0x600e1
 	XWimp_CloseDown		= 0x600dd
 	XWimp_StartTask		= 0x600de
 	XWimp_SendMessage	= 0x600e7
@@ -100,9 +102,13 @@
 	EVENT_POLLWORD		= 13
 
 	@ Wimp_Poll mask: no nulls, no redraws (we have no windows), and R3 is a
-	@ pollword.
+	@ pollword. The idle form wants nulls, since that is how the wait ends.
 	POLL_MASK		= 0x00400001
-	POLL_MASK_FP		= 0x01400001
+	POLL_MASK_IDLE		= 0x00400000
+
+	@ How long to leave an application to finish claiming the clipboard before
+	@ asking it what it has, in centiseconds.
+	CHECK_DELAY		= 25
 
 	@ Wimp_SendMessage event codes
 	SEND_USER		= 17
@@ -590,10 +596,23 @@ task_start:
 	str	r1, [r0]
 
 poll_loop:
+	@ With a check pending, wake when it is due; otherwise sleep until something
+	@ happens.
+	adrl	r0, check_at
+	ldr	r2, [r0]
+	teq	r2, #0
+	beq	1f
+	ldr	r0, =POLL_MASK_IDLE
+	adrl	r1, poll_block
+	adrl	r3, pollword
+	swi	XWimp_PollIdle
+	b	2f
+1:
 	ldr	r0, =POLL_MASK
 	adrl	r1, poll_block
 	adrl	r3, pollword
 	swi	XWimp_Poll
+2:
 	bvs	poll_loop
 
 	mov	r4, r0			@ the event, kept clear of the handlers
@@ -601,6 +620,8 @@ poll_loop:
 	orr	r0, r4, #0x1000		@ 1xx: an event from Wimp_Poll
 	bl	trace
 
+	teq	r4, #0			@ Null: the wait is over
+	bleq	handle_null
 	teq	r4, #EVENT_POLLWORD
 	bleq	handle_pollword
 	teq	r4, #EVENT_USERMSG
@@ -675,9 +696,45 @@ handle_pollword:
 	blne	take_host_clipboard
 
 	tst	r4, #POLL_TICK
-	blne	ask_who_owns_it
+	blne	schedule_check
 
 	ldmfd	sp!, {r4, pc}
+
+@ Ask again shortly. Whoever copied needs a moment to claim the clipboard before
+@ there is anything to ask them for.
+schedule_check:
+	stmfd	sp!, {r0, r1, lr}
+	adrl	r1, check_at
+	ldr	r0, [r1]
+	teq	r0, #0
+	bne	1f			@ already waiting
+	swi	XOS_ReadMonotonicTime
+	add	r0, r0, #CHECK_DELAY
+	teq	r0, #0			@ never store the "nothing pending" value
+	moveq	r0, #1
+	str	r0, [r1]
+1:
+	ldmfd	sp!, {r0, r1, pc}
+
+	.ltorg
+
+@ The wait is over: go and ask.
+handle_null:
+	stmfd	sp!, {r0, r1, r2, lr}
+	adrl	r2, check_at
+	ldr	r1, [r2]
+	teq	r1, #0
+	beq	1f
+	swi	XOS_ReadMonotonicTime
+	subs	r0, r0, r1
+	bmi	1f			@ not yet
+	mov	r0, #0
+	str	r0, [r2]
+	bl	ask_who_owns_it
+1:
+	ldmfd	sp!, {r0, r1, r2, pc}
+
+	.ltorg
 
 @ The host has new text. Fetch it and tell the desktop we are holding the
 @ clipboard, so applications come to us when they paste.
@@ -841,7 +898,7 @@ msg_claim_entity:
 	adrl	r0, own_clipboard
 	mov	r1, #0
 	str	r1, [r0]
-	bl	ask_who_owns_it
+	bl	schedule_check
 1:
 	ldmfd	sp!, {r0, r1, pc}
 
@@ -1206,8 +1263,10 @@ text_put_ok:
 	.align
 
 	@ Messages we want to hear about.
+	@ Message_Quit is not listed: its number is 0, which is what ends the list,
+	@ and the Wimp delivers it whether or not it is asked for. Listing it first
+	@ registers for nothing, which is a quiet way to receive no messages at all.
 msg_list:
-	.int	Message_Quit
 	.int	Message_DataSave
 	.int	Message_DataSaveAck
 	.int	Message_DataLoad
@@ -1248,6 +1307,8 @@ clip_buffer:
 clip_len:
 	.int	0
 check_ref:
+	.int	0
+check_at:
 	.int	0
 paste_ref:
 	.int	0
