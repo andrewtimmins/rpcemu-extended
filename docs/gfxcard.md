@@ -165,19 +165,25 @@ environment, and BASIC would have to be tokenised at every launch.
 
 ### Reading the card's state from a program
 
-`*GfxCardVars` puts the card's state into three system variables, ready for
+`*GfxCardVars` puts the card's state into four system variables, ready for
 anything that wants to display it:
 
 ```
 *GfxCardVars
 *Show GfxCard*
-GfxCard$Frames : 1526
-GfxCard$Mode   : 1920 x 1080, 32bpp
-GfxCard$Store  : 8100K of 15360K
+GfxCard$Display : Card
+GfxCard$Frames  : 1526
+GfxCard$Mode    : 1920 x 1080, 32bpp
+GfxCard$Store   : 8100K of 15360K
 ```
 
 The values are bare, with no words around them, so whatever displays them can
 label them itself - which is what the application's window does.
+
+`GfxCard$Display` reads `Card` or `VIDC20`, and is how the menu knows which of
+its two display entries to tick. It is asked of the kernel - which driver is
+currently in use - rather than read off the card's enable bit, so it agrees with
+`*GfxCardStatus` by construction.
 
 That indirection is necessary rather than decorative. The card's registers are in
 expansion card space, which RISC OS maps for **privileged access only**: a desktop
@@ -299,8 +305,33 @@ Hourglass declares six, so its rows each came out two bytes early and the shape
 sheared into stripes. Use the padded stride to walk the rows, and the reported
 width only to decide how much of each row to draw.
 
-One GraphicsV feature is deliberately not claimed, so RISC OS does it in
-software as it would on any card without it: rendering (rectangle copy and fill).
+### Copying and filling rectangles
+
+RISC OS asks the display driver to copy a rectangle when it scrolls a window, and
+to fill one when it clears a window or the screen, through `GraphicsV_Render`. A
+driver that does not answer leaves the kernel to do it on the ARM, a word at a
+time over the bus; at 1920x1080 a full-screen scroll is eight megabytes moved
+that way. The card does both itself.
+
+Two things about the interface are worth writing down, because neither is
+obvious from the call:
+
+- **RISC OS counts pixels up from the bottom of the screen, and both edges of a
+  rectangle are inclusive.** The card counts rows down from the top, as a
+  framebuffer does, so the driver turns every y over on the way in and adds one
+  to the sizes. Keeping the card in its own terms is what makes its bounds checks
+  the obvious ones.
+- **The fill colour is not a colour.** It is eight `(ora, eor)` pairs, one per row
+  of the pattern, applied as `(destination OR ora) EOR eor` - `FgEcfOraEor` in the
+  kernel's workspace, "interleaved zgora & zgeor". A plain colour is that rule
+  with `ora` all ones and `eor` the colour's complement, which is how the kernel
+  clears the screen; the eight rows are what makes a two-colour hatch possible,
+  and the same rule gives inversion for free, which is how the Filer highlights a
+  selected icon.
+
+The driver also claims `CopyRectangleIsFast`, which is a hint rather than a
+feature: it tells `OS_SpriteOp 65` that copying pixels already on the screen
+beats plotting them again.
 
 GraphicsV and `OS_ScreenMode 64` are RISC OS 5 features. On an older RISC OS the
 driver declines to initialise and says so; the card is simply unused.

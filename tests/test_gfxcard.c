@@ -388,6 +388,132 @@ main(void)
 	check(gfxcard_readb(&test_podule, PODULE_IO_TYPE_EASI, 4) == 3,
 	      "identity byte 1: chunk directories present");
 
+	printf("\nrectangles are copied and filled in the framestore\n");
+	{
+		/* A small 8bpp mode, so a pixel is a byte and the arithmetic below is
+		   readable. The card is told rows down from the top; turning RISC OS's
+		   bottom-up coordinates over is the driver's job, not the card's. */
+		const unsigned w = 64, h = 16, stride = 64;
+		unsigned x, y;
+		int ok;
+
+		set_mode(w, h, 8, stride, 0);
+		wr(GFXCARD_REG_CTRL, GFXCARD_CTRL_ENABLE);
+
+		/* Every pixel its own value, so a copy that slips by a row or a column
+		   cannot go unnoticed. */
+		for (y = 0; y < h; y++) {
+			for (x = 0; x < w; x++) {
+				gfxcard_fb[y * stride + x] = (uint8_t) (y * 16u + (x & 15u));
+			}
+		}
+
+		/* Copy an 8x4 block four columns to the right and two rows down. */
+		wr(GFXCARD_REG_RENDER_SRC_X, 0);
+		wr(GFXCARD_REG_RENDER_SRC_Y, 0);
+		wr(GFXCARD_REG_RENDER_X, 4);
+		wr(GFXCARD_REG_RENDER_Y, 2);
+		wr(GFXCARD_REG_RENDER_W, 8);
+		wr(GFXCARD_REG_RENDER_H, 4);
+		wr(GFXCARD_REG_RENDER_OP, GFXCARD_RENDER_COPY);
+
+		ok = 1;
+		for (y = 0; y < 4; y++) {
+			for (x = 0; x < 8; x++) {
+				if (gfxcard_fb[(y + 2) * stride + (x + 4)] !=
+				    (uint8_t) (y * 16u + (x & 15u))) {
+					ok = 0;
+				}
+			}
+		}
+		check(ok, "a rectangle copies to where it was told");
+		check(gfxcard_fb[0] == 0 && gfxcard_fb[stride * 8] == (uint8_t) (8 * 16),
+		      "and nothing outside it is disturbed");
+
+		/* Overlapping, which is what scrolling a window is: the rows have to be
+		   walked away from the overlap or the copy eats its own source. */
+		for (y = 0; y < h; y++) {
+			memset(gfxcard_fb + y * stride, (int) y, w);
+		}
+		wr(GFXCARD_REG_RENDER_SRC_X, 0);
+		wr(GFXCARD_REG_RENDER_SRC_Y, 0);
+		wr(GFXCARD_REG_RENDER_X, 0);
+		wr(GFXCARD_REG_RENDER_Y, 1);	/* down one row, rectangles overlap */
+		wr(GFXCARD_REG_RENDER_W, w);
+		wr(GFXCARD_REG_RENDER_H, h - 1);
+		wr(GFXCARD_REG_RENDER_OP, GFXCARD_RENDER_COPY);
+
+		ok = 1;
+		for (y = 1; y < h; y++) {
+			if (gfxcard_fb[y * stride] != (uint8_t) (y - 1)) {
+				ok = 0;
+			}
+		}
+		check(ok, "an overlapping copy does not eat its own source");
+
+		/* Fill: (destination OR ora) EOR eor, which with ora all ones and eor
+		   the complement of a colour is how RISC OS clears the screen. */
+		{
+			const uint8_t colour = 0x5a;
+			unsigned i;
+
+			memset(gfxcard_fb, 0x11, stride * h);
+			wr(GFXCARD_REG_RENDER_PAT_IDX, 0);
+			for (i = 0; i < GFXCARD_PATTERN_WORDS; i += 2) {
+				wr(GFXCARD_REG_RENDER_PAT, 0xffffffffu);	/* ora */
+				wr(GFXCARD_REG_RENDER_PAT, ~(0x5a5a5a5au));	/* eor */
+			}
+			wr(GFXCARD_REG_RENDER_X, 8);
+			wr(GFXCARD_REG_RENDER_Y, 3);
+			wr(GFXCARD_REG_RENDER_W, 16);
+			wr(GFXCARD_REG_RENDER_H, 5);
+			wr(GFXCARD_REG_RENDER_OP, GFXCARD_RENDER_FILL);
+
+			ok = 1;
+			for (y = 3; y < 8; y++) {
+				for (x = 8; x < 24; x++) {
+					if (gfxcard_fb[y * stride + x] != colour) {
+						ok = 0;
+					}
+				}
+			}
+			check(ok, "a fill paints the colour the pattern describes");
+			check(gfxcard_fb[3 * stride + 7] == 0x11 &&
+			      gfxcard_fb[3 * stride + 24] == 0x11 &&
+			      gfxcard_fb[2 * stride + 8] == 0x11 &&
+			      gfxcard_fb[8 * stride + 8] == 0x11,
+			      "and stops exactly at its edges");
+		}
+
+		printf("\na rectangle that would leave the display is refused\n");
+		memset(gfxcard_fb, 0x22, stride * h);
+		wr(GFXCARD_REG_RENDER_X, w - 4);
+		wr(GFXCARD_REG_RENDER_Y, 0);
+		wr(GFXCARD_REG_RENDER_W, 8);		/* runs off the right */
+		wr(GFXCARD_REG_RENDER_H, 1);
+		wr(GFXCARD_REG_RENDER_OP, GFXCARD_RENDER_FILL);
+		check(gfxcard_fb[w - 4] == 0x22, "one wider than the display does nothing");
+
+		wr(GFXCARD_REG_RENDER_X, 0);
+		wr(GFXCARD_REG_RENDER_Y, h - 1);
+		wr(GFXCARD_REG_RENDER_W, 4);
+		wr(GFXCARD_REG_RENDER_H, 4);		/* runs off the bottom */
+		wr(GFXCARD_REG_RENDER_OP, GFXCARD_RENDER_FILL);
+		check(gfxcard_fb[(h - 1) * stride] == 0x22,
+		      "and one taller than the display does nothing");
+
+		wr(GFXCARD_REG_RENDER_X, 0);
+		wr(GFXCARD_REG_RENDER_Y, 0);
+		wr(GFXCARD_REG_RENDER_W, 4);
+		wr(GFXCARD_REG_RENDER_H, 4);
+		wr(GFXCARD_REG_RENDER_SRC_X, w - 2);	/* source runs off the right */
+		wr(GFXCARD_REG_RENDER_SRC_Y, 0);
+		wr(GFXCARD_REG_RENDER_OP, GFXCARD_RENDER_COPY);
+		check(gfxcard_fb[0] == 0x22, "nor does a copy from outside it");
+
+		wr(GFXCARD_REG_CTRL, 0);
+	}
+
 	printf("\nthe card's state survives suspend and resume\n");
 	{
 		/* A card that is only half restored is worse than one that is not

@@ -59,13 +59,14 @@
 #include "romload.h"
 
 #define SNAPSHOT_MAGIC		"RPCESTAT"
-/* Version written by this build. v6: the graphics card's state travels with the
-   snapshot (the "GFX " chunk), and the header records whether the machine had
-   one. v5: ROM-identity CRC is taken over the raw ROM image (before rom_patch.c
+/* Version written by this build. v7: the graphics card's chunk gained the
+   operands of a rectangle copy or fill. v6: the graphics card's state travels
+   with the snapshot (the "GFX " chunk), and the header records whether the
+   machine had one. v5: ROM-identity CRC is taken over the raw ROM image (before rom_patch.c
    applies host-dependent patches such as the display-derived EDID). v4 hashed
    the patched image, so a resume on different host display geometry falsely
    reported a ROM mismatch. */
-#define SNAPSHOT_VERSION	6
+#define SNAPSHOT_VERSION	7
 /* Oldest snapshot we can still load. v4's chunk payload is byte-for-byte
    identical to v5 - only the ROM-CRC field's meaning changed - so v4 files load
    fine; we just cannot reproduce their host-dependent ROM CRC, so the ROM-image

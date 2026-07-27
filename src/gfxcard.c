@@ -111,6 +111,12 @@ static struct {
 	uint32_t	ptr_palette[4];
 
 	uint32_t	palette[256];
+
+	/* Rectangle copy and fill */
+	uint32_t	render_x, render_y, render_w, render_h;
+	uint32_t	render_src_x, render_src_y;
+	uint32_t	render_pat_index;
+	uint32_t	render_pattern[GFXCARD_PATTERN_WORDS];
 } gfx;
 
 /* ------------------------------------------------------------------------
@@ -246,7 +252,7 @@ gfxcard_reg_read(int reg)
 		   claim is simply one the OS will not ask it for. */
 		return GFXCARD_CAP_8BPP | GFXCARD_CAP_32BPP |
 		       GFXCARD_CAP_HW_SCROLL | GFXCARD_CAP_VSYNC |
-		       GFXCARD_CAP_HW_POINTER |
+		       GFXCARD_CAP_HW_POINTER | GFXCARD_CAP_RENDER |
 		       (edid_published() != NULL ? GFXCARD_CAP_EDID : 0);
 	case GFXCARD_REG_FB_PHYS:    return gfxcard_fb_phys;
 	case GFXCARD_REG_FB_SIZE:    return GFXCARD_FB_SIZE;
@@ -282,6 +288,15 @@ gfxcard_reg_read(int reg)
 	case GFXCARD_REG_PTR_PAL_IDX: return gfx.ptr_pal_index;
 	case GFXCARD_REG_PTR_PAL:     return gfx.ptr_palette[gfx.ptr_pal_index & 3];
 
+	case GFXCARD_REG_RENDER_X:     return gfx.render_x;
+	case GFXCARD_REG_RENDER_Y:     return gfx.render_y;
+	case GFXCARD_REG_RENDER_W:     return gfx.render_w;
+	case GFXCARD_REG_RENDER_H:     return gfx.render_h;
+	case GFXCARD_REG_RENDER_SRC_X: return gfx.render_src_x;
+	case GFXCARD_REG_RENDER_SRC_Y: return gfx.render_src_y;
+	case GFXCARD_REG_RENDER_PAT_IDX: return gfx.render_pat_index;
+	case GFXCARD_REG_RENDER_PAT:   return gfx.render_pattern[gfx.render_pat_index];
+
 	case GFXCARD_REG_OPTIONS:
 		return config.gfxcard_boot_display ? GFXCARD_OPT_BOOT_DISPLAY : 0;
 
@@ -301,6 +316,121 @@ gfxcard_reg_read(int reg)
 	}
 
 	default:                     return 0;
+	}
+}
+
+/**
+ * Is the geometry of a rectangle operation one the framestore can actually hold?
+ *
+ * The numbers come from the guest, so nothing is taken on trust: every rectangle
+ * has to sit inside the mode being displayed, and the mode itself has to be one
+ * that scans out. Computed in 64 bits so that a width chosen to wrap cannot pass.
+ *
+ * @param x     Left edge, pixels from the left of the display
+ * @param y     Top edge, pixels down from the top of the display
+ * @param w     Width in pixels
+ * @param h     Height in pixels
+ * @return non-zero if the rectangle is wholly inside the displayed area
+ */
+static int
+gfxcard_render_fits(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
+{
+	return (uint64_t) x + w <= (uint64_t) gfx.width &&
+	       (uint64_t) y + h <= (uint64_t) gfx.height;
+}
+
+/** Where a row of the displayed area starts in the framestore. */
+static uint8_t *
+gfxcard_render_row(uint32_t row)
+{
+	return gfxcard_fb + gfx.start + (size_t) row * gfx.stride;
+}
+
+/**
+ * Copy a rectangle within the framestore, and fill one through the pattern.
+ *
+ * This is what RISC OS asks a card to do when it scrolls a window or clears one,
+ * and what it otherwise does itself a word at a time over the bus. Doing it here
+ * is worth having at 1920x1080, where a full-screen scroll is eight megabytes the
+ * ARM no longer has to move.
+ *
+ * @param op GFXCARD_RENDER_COPY or GFXCARD_RENDER_FILL
+ */
+static void
+gfxcard_render(uint32_t op)
+{
+	const uint32_t bytes_per_pixel = gfx.bpp / 8u;
+	GfxCardFrame frame;
+	uint32_t row;
+
+	/* Only while the card is displaying something it could draw into: the mode
+	   registers are what the addresses below are built from. gfxcard_frame()
+	   applies every check that makes them safe. */
+	if (!gfxcard_frame(&frame)) {
+		return;
+	}
+	if (gfx.render_w == 0 || gfx.render_h == 0) {
+		return;		/* nothing to do, and not an error */
+	}
+	if (!gfxcard_render_fits(gfx.render_x, gfx.render_y, gfx.render_w, gfx.render_h)) {
+		return;
+	}
+
+	if (op == GFXCARD_RENDER_COPY) {
+		const size_t bytes = (size_t) gfx.render_w * bytes_per_pixel;
+
+		if (!gfxcard_render_fits(gfx.render_src_x, gfx.render_src_y,
+		                         gfx.render_w, gfx.render_h))
+		{
+			return;
+		}
+
+		/* The two rectangles may overlap - scrolling a window is exactly
+		   that - so the rows are walked away from the overlap, and each row
+		   moved with memmove rather than memcpy. */
+		if (gfx.render_src_y < gfx.render_y) {
+			for (row = gfx.render_h; row-- > 0; ) {
+				memmove(gfxcard_render_row(gfx.render_y + row) +
+				            (size_t) gfx.render_x * bytes_per_pixel,
+				        gfxcard_render_row(gfx.render_src_y + row) +
+				            (size_t) gfx.render_src_x * bytes_per_pixel,
+				        bytes);
+			}
+		} else {
+			for (row = 0; row < gfx.render_h; row++) {
+				memmove(gfxcard_render_row(gfx.render_y + row) +
+				            (size_t) gfx.render_x * bytes_per_pixel,
+				        gfxcard_render_row(gfx.render_src_y + row) +
+				            (size_t) gfx.render_src_x * bytes_per_pixel,
+				        bytes);
+			}
+		}
+		return;
+	}
+
+	if (op != GFXCARD_RENDER_FILL) {
+		return;
+	}
+
+	/* (destination OR ora) EOR eor, a pair per pattern row. Done a byte at a
+	   time against the pattern's own byte, which keeps the horizontal phase
+	   right at 8bpp (four pixels to the word) without the ends of the rectangle
+	   needing a case of their own. */
+	for (row = 0; row < gfx.render_h; row++) {
+		const uint32_t pat = (gfx.render_y + row) & (GFXCARD_PATTERN_ROWS - 1u);
+		const uint32_t ora = gfx.render_pattern[pat * 2u];
+		const uint32_t eor = gfx.render_pattern[pat * 2u + 1u];
+		uint8_t *line = gfxcard_render_row(gfx.render_y + row);
+		size_t i;
+
+		for (i = 0; i < (size_t) gfx.render_w * bytes_per_pixel; i++) {
+			const size_t offset = (size_t) gfx.render_x * bytes_per_pixel + i;
+			const unsigned shift = 8u * (unsigned) (offset & 3u);
+			const uint8_t o = (uint8_t) (ora >> shift);
+			const uint8_t e = (uint8_t) (eor >> shift);
+
+			line[offset] = (uint8_t) ((line[offset] | o) ^ e);
+		}
 	}
 }
 
@@ -365,6 +495,29 @@ gfxcard_reg_write(int reg, uint32_t val)
 			gfx.ptr_palette[gfx.ptr_pal_index & 3] = val;
 		}
 		gfx.ptr_pal_index = (gfx.ptr_pal_index + 1) & 3;
+		break;
+
+	case GFXCARD_REG_RENDER_X:     gfx.render_x = val; break;
+	case GFXCARD_REG_RENDER_Y:     gfx.render_y = val; break;
+	case GFXCARD_REG_RENDER_W:     gfx.render_w = val; break;
+	case GFXCARD_REG_RENDER_H:     gfx.render_h = val; break;
+	case GFXCARD_REG_RENDER_SRC_X: gfx.render_src_x = val; break;
+	case GFXCARD_REG_RENDER_SRC_Y: gfx.render_src_y = val; break;
+
+	case GFXCARD_REG_RENDER_PAT_IDX:
+		gfx.render_pat_index = val & (GFXCARD_PATTERN_WORDS - 1u);
+		break;
+
+	case GFXCARD_REG_RENDER_PAT:
+		/* The index steps on after each word, so the driver writes it once
+		   and then the pattern, exactly as it does for the palette. */
+		gfx.render_pattern[gfx.render_pat_index] = val;
+		gfx.render_pat_index = (gfx.render_pat_index + 1u) &
+		                       (GFXCARD_PATTERN_WORDS - 1u);
+		break;
+
+	case GFXCARD_REG_RENDER_OP:
+		gfxcard_render(val);
 		break;
 
 	case GFXCARD_REG_PAL_ENTRY:
@@ -532,6 +685,15 @@ gfxcard_podule_reset(podule *p)
 	gfx.ptr_height = 0;
 	gfx.ptr_phys = 0;
 	gfx.ptr_pal_index = 1;
+
+	gfx.render_x = 0;
+	gfx.render_y = 0;
+	gfx.render_w = 0;
+	gfx.render_h = 0;
+	gfx.render_src_x = 0;
+	gfx.render_src_y = 0;
+	gfx.render_pat_index = 0;
+	memset(gfx.render_pattern, 0, sizeof(gfx.render_pattern));
 
 	/* A visible default, so a pointer appears even before its colours are set:
 	   white with a black edge, as RISC OS's own pointer is. */
@@ -762,6 +924,21 @@ gfxcard_savestate(FILE *f)
 		savestate_write_u32(f, gfx.palette[i]);
 	}
 
+	/* The operands of a rectangle operation. Scratch between one being set up
+	   and it being performed, but the guest sets them a register at a time, so a
+	   snapshot can be taken part way through - and coming back with half of a
+	   rectangle would draw the wrong one. */
+	savestate_write_u32(f, gfx.render_x);
+	savestate_write_u32(f, gfx.render_y);
+	savestate_write_u32(f, gfx.render_w);
+	savestate_write_u32(f, gfx.render_h);
+	savestate_write_u32(f, gfx.render_src_x);
+	savestate_write_u32(f, gfx.render_src_y);
+	savestate_write_u32(f, gfx.render_pat_index);
+	for (i = 0; i < GFXCARD_PATTERN_WORDS; i++) {
+		savestate_write_u32(f, gfx.render_pattern[i]);
+	}
+
 	savestate_write_rle(f, gfxcard_fb, GFXCARD_FB_SIZE);
 }
 
@@ -844,6 +1021,19 @@ gfxcard_loadstate(FILE *f)
 	for (i = 0; i < 256; i++) {
 		gfx.palette[i] = savestate_read_u32(f);
 	}
+
+	gfx.render_x	= savestate_read_u32(f);
+	gfx.render_y	= savestate_read_u32(f);
+	gfx.render_w	= savestate_read_u32(f);
+	gfx.render_h	= savestate_read_u32(f);
+	gfx.render_src_x = savestate_read_u32(f);
+	gfx.render_src_y = savestate_read_u32(f);
+	gfx.render_pat_index = savestate_read_u32(f) & (GFXCARD_PATTERN_WORDS - 1u);
+	for (i = 0; i < GFXCARD_PATTERN_WORDS; i++) {
+		gfx.render_pattern[i] = savestate_read_u32(f);
+	}
+	/* The geometry is not clamped: gfxcard_render() checks every rectangle
+	   against the mode before it touches the framestore. */
 
 	savestate_read_rle(f, gfxcard_fb, GFXCARD_FB_SIZE);
 

@@ -104,7 +104,26 @@
 #define GFXCARD_REG_PTR_PAL_IDX	26	/* RW pointer colour to write (1-3) */
 #define GFXCARD_REG_PTR_PAL	27	/* RW &BBGGRRSS; writing steps the index on */
 #define GFXCARD_REG_OPTIONS	28	/* R  GFXCARD_OPT_*: how the user configured us */
-#define GFXCARD_REG_COUNT	29
+
+/* Rectangle copy and fill, which RISC OS asks for through GraphicsV_Render and
+   otherwise does a word at a time on the ARM. Set the operands, then write
+   GFXCARD_RENDER_* to OP to perform it; it is finished by the time that write
+   returns, so there is nothing to wait for and no completion to report.
+
+   Coordinates are pixels from the top left of the displayed area, which is not
+   how RISC OS states them - it counts up from the bottom - so the driver turns
+   them over on the way in. Keeping the card in its own terms means the checks
+   below are the obvious ones. */
+#define GFXCARD_REG_RENDER_OP	29	/* W  GFXCARD_RENDER_*, performs it */
+#define GFXCARD_REG_RENDER_X	30	/* RW destination left */
+#define GFXCARD_REG_RENDER_Y	31	/* RW destination top */
+#define GFXCARD_REG_RENDER_W	32	/* RW width in pixels */
+#define GFXCARD_REG_RENDER_H	33	/* RW height in pixels */
+#define GFXCARD_REG_RENDER_SRC_X 34	/* RW source left, for a copy */
+#define GFXCARD_REG_RENDER_SRC_Y 35	/* RW source top, for a copy */
+#define GFXCARD_REG_RENDER_PAT_IDX 36	/* RW pattern word the next write lands on */
+#define GFXCARD_REG_RENDER_PAT	37	/* RW pattern word; writing steps the index on */
+#define GFXCARD_REG_COUNT	38
 
 /* Where each register sits in the card's EASI space. */
 #define GFXCARD_REG_ADDR(n)	(GFXCARD_REG_BASE + (n) * 4)
@@ -125,6 +144,21 @@
 #define GFXCARD_CAP_VSYNC	0x0200u		/* raises a vsync interrupt */
 #define GFXCARD_CAP_EDID	0x0400u		/* can serve the monitor's EDID */
 #define GFXCARD_CAP_HW_POINTER	0x0800u		/* draws the pointer itself */
+#define GFXCARD_CAP_RENDER	0x1000u		/* copies and fills rectangles */
+
+/* Operations GFXCARD_REG_RENDER_OP performs, matching what GraphicsV_Render
+   asks for. */
+#define GFXCARD_RENDER_COPY	1u	/* move a rectangle within the framestore */
+#define GFXCARD_RENDER_FILL	2u	/* paint one through the pattern */
+
+/* The fill pattern, as RISC OS keeps it: eight rows of an (ora, eor) pair,
+   interleaved, applied as (destination OR ora) EOR eor. A plain colour is that
+   rule with ora all ones and eor the colour's complement, which is how the
+   kernel clears the screen; the eight rows are what makes a two-colour hatch
+   possible. See FgEcfOraEor in the RISC OS kernel's workspace, "interleaved
+   zgora & zgeor". */
+#define GFXCARD_PATTERN_WORDS	16u	/* 8 rows, 2 words each */
+#define GFXCARD_PATTERN_ROWS	8u
 
 #define GFXCARD_CTRL_ENABLE	0x0001u		/* scan out from the framestore */
 #define GFXCARD_CTRL_BLANK	0x0002u		/* output blanked */

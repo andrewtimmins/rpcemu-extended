@@ -112,6 +112,7 @@
 	GVFeature_HardwarePointer	= 1 << 1
 	GVFeature_NoVsyncIRQ		= 1 << 4
 	GVFeature_VariableFramestore	= 1 << 5
+	GVFeature_CopyRectangleIsFast	= 1 << 6
 
 	@ Depths we can scan out, as GraphicsV states them: bit n set means 2^n
 	@ bits per pixel is available, so 8bpp and 32bpp.
@@ -172,6 +173,20 @@
 	REG_PTR_PAL_IDX	= 0x68
 	REG_PTR_PAL	= 0x6c
 	REG_OPTIONS	= 0x70
+	REG_RENDER_OP	= 0x74
+	REG_RENDER_X	= 0x78
+	REG_RENDER_Y	= 0x7c
+	REG_RENDER_W	= 0x80
+	REG_RENDER_H	= 0x84
+	REG_RENDER_SRC_X = 0x88
+	REG_RENDER_SRC_Y = 0x8c
+	REG_RENDER_PAT_IDX = 0x90
+	REG_RENDER_PAT	= 0x94
+
+	@ Operations REG_RENDER_OP performs, as GraphicsV_Render names them.
+	RENDER_COPY	= 1
+	RENDER_FILL	= 2
+	RENDER_PATTERN_WORDS = 16
 
 	@ Where the register window sits in the card's EASI space, and what the
 	@ card's registers mean.
@@ -185,6 +200,7 @@
 	GFXCARD_CAP_VSYNC	= 0x0200
 	GFXCARD_CAP_EDID	= 0x0400
 	GFXCARD_CAP_HW_POINTER	= 0x0800
+	GFXCARD_CAP_RENDER	= 0x1000
 
 	GFXCARD_CTRL_ENABLE	= 0x0001
 	GFXCARD_CTRL_BLANK	= 0x0002
@@ -334,8 +350,7 @@ driver_name:
 @ Entered on the vector with r4 = reason | head << 16 | driver << 24, and r12 the
 @ workspace pointer we gave OS_Claim. A call we have handled returns with r4 = 0;
 @ anything else is passed on untouched, which is how the calls we do not
-@ implement (the hardware pointer, rendering, IIC) reach whoever else can serve
-@ them.
+@ implement reach whoever else can serve them.
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 graphicsv:
@@ -359,12 +374,108 @@ gv_table:
 	b	gv_writepal	@ 10 WritePaletteEntry
 	b	gv_writepals	@ 11 WritePaletteEntries
 	b	gv_readpal	@ 12 ReadPaletteEntry
-	ldmfd	sp!, {pc}	@ 13 Render (no acceleration)
+	b	gv_render	@ 13 Render
 	b	gv_iicop	@ 14 IICOp
 	ldmfd	sp!, {pc}	@ 15 SelectHead (one head)
 	ldmfd	sp!, {pc}	@ 16 StartupMode
 	b	gv_pixelformats	@ 17 PixelFormats
 gv_table_end:
+
+	@ Render: r0 = flags, r1 = operation, r2 -> its operands. Claimed by
+	@ returning r4 = 0; left alone otherwise, and the kernel does the work on the
+	@ ARM instead, which is what happened before this existed.
+	@
+	@ Two operations are worth taking. Copy moves a rectangle within the screen,
+	@ which is what scrolling a window is, and fill paints one, which is what
+	@ clearing a window is. At 1920x1080 either can be megabytes that no longer
+	@ have to cross the bus a word at a time.
+	@
+	@ RISC OS counts pixels up from the bottom of the screen and the card counts
+	@ rows down from the top, so every y is turned over here. Both ends of a
+	@ RISC OS rectangle are inclusive, hence the +1 on the sizes.
+	@
+	@	copy:	+0 srcL  +4 srcB  +8 dstL  +12 dstB  +16 W-1  +20 H-1
+	@	fill:	+0 left  +4 top   +8 right +12 bottom +16 -> pattern
+gv_render:
+	stmfd	sp!, {r0, r1, r2, r3, r5, r6, r7}
+	ldr	r5, [ws, #WS_REGS]
+
+	teq	r1, #RENDER_COPY
+	beq	gv_render_copy
+	teq	r1, #RENDER_FILL
+	beq	gv_render_fill
+	b	gv_render_pass		@ anything else is not ours
+
+gv_render_copy:
+	ldr	r6, [r5, #REG_HEIGHT]	@ rows on the display, for turning y over
+	ldr	r7, [r2, #16]
+	add	r7, r7, #1		@ width
+	str	r7, [r5, #REG_RENDER_W]
+	ldr	r7, [r2, #20]
+	add	r7, r7, #1		@ height
+	str	r7, [r5, #REG_RENDER_H]
+
+	ldr	r0, [r2, #0]		@ source left
+	str	r0, [r5, #REG_RENDER_SRC_X]
+	ldr	r0, [r2, #4]		@ source bottom
+	add	r0, r0, r7		@ + height
+	sub	r0, r6, r0		@ = rows down to the source's top
+	str	r0, [r5, #REG_RENDER_SRC_Y]
+
+	ldr	r0, [r2, #8]		@ destination left
+	str	r0, [r5, #REG_RENDER_X]
+	ldr	r0, [r2, #12]		@ destination bottom
+	add	r0, r0, r7
+	sub	r0, r6, r0
+	str	r0, [r5, #REG_RENDER_Y]
+
+	mov	r0, #RENDER_COPY
+	str	r0, [r5, #REG_RENDER_OP]
+	b	gv_render_done
+
+gv_render_fill:
+	ldr	r6, [r5, #REG_HEIGHT]
+	ldr	r0, [r2, #0]		@ left
+	ldr	r1, [r2, #8]		@ right, inclusive
+	sub	r1, r1, r0
+	add	r1, r1, #1		@ width
+	str	r0, [r5, #REG_RENDER_X]
+	str	r1, [r5, #REG_RENDER_W]
+
+	ldr	r0, [r2, #4]		@ top, counting up from the bottom
+	ldr	r1, [r2, #12]		@ bottom, likewise
+	sub	r3, r0, r1
+	add	r3, r3, #1		@ height
+	str	r3, [r5, #REG_RENDER_H]
+	add	r0, r0, #1
+	sub	r0, r6, r0		@ rows down to the rectangle's top
+	str	r0, [r5, #REG_RENDER_Y]
+
+	@ The pattern: eight (ora, eor) pairs the card applies as
+	@ (destination OR ora) EOR eor, a pair per row of the pattern.
+	ldr	r0, [r2, #16]
+	teq	r0, #0
+	beq	gv_render_pass		@ no pattern, so nothing we can paint with
+	mov	r1, #0
+	str	r1, [r5, #REG_RENDER_PAT_IDX]
+	mov	r3, #RENDER_PATTERN_WORDS
+1:
+	ldr	r1, [r0], #4
+	str	r1, [r5, #REG_RENDER_PAT]
+	subs	r3, r3, #1
+	bne	1b
+
+	mov	r0, #RENDER_FILL
+	str	r0, [r5, #REG_RENDER_OP]
+
+gv_render_done:
+	ldmfd	sp!, {r0, r1, r2, r3, r5, r6, r7}
+	mov	r4, #0			@ done, do not do it again in software
+	ldmfd	sp!, {pc}
+
+gv_render_pass:
+	ldmfd	sp!, {r0, r1, r2, r3, r5, r6, r7}
+	ldmfd	sp!, {pc}		@ r4 untouched: not ours
 
 	@ DisplayFeatures: out r0 = features, r1 = depths, r2 = alignment
 gv_features:
@@ -868,6 +979,11 @@ init:
 	orrne	r1, r1, #GVFeature_HardwareScroll
 	tst	r0, #GFXCARD_CAP_HW_POINTER
 	orrne	r1, r1, #GVFeature_HardwarePointer
+	@ Say that copying a rectangle is quicker than plotting the same pixels
+	@ again, which is what it is now the card does it: OS_SpriteOp 65 reads this
+	@ to decide between the two.
+	tst	r0, #GFXCARD_CAP_RENDER
+	orrne	r1, r1, #GVFeature_CopyRectangleIsFast
 	str	r1, [r5, #WS_FEATURES]
 
 	@ Start from a known state: not displaying, not blanked, no interrupt.
