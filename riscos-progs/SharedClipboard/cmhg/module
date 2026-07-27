@@ -1,0 +1,24 @@
+title-string: SharedClipboard
+
+help-string: SharedClipboard 0.02
+
+module-is-runnable:
+
+initialisation-code: mod_init
+
+finalisation-code: mod_final
+
+event-handler: EventV_event 10 11
+
+service-call-handler: mod_service &11 &49
+
+command-keyword-table: mod_command_handler
+     SharedClipStart(min-args: 0,
+                   max-args: 0,
+                   help-text: "Syntax: *SharedClipStart\nStart the shared clipboard task (the desktop does this itself)\n"),
+     SharedClipStartTask(min-args: 0,
+                   max-args: 0,
+                   help-text: "This command is for internal use by the this module"),
+     SharedClipDebug(min-args: 1,
+                  max-args: 1,
+                  help-text: "Syntax: *SharedClipDebug 0|1\nTurn debug output to !Reporter on or off\n")

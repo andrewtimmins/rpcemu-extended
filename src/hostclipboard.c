@@ -158,12 +158,13 @@ clipboard_set_host_setter(clipboard_host_setter setter)
 void
 clipboard_reset(void)
 {
+	/* The pollword address belonged to the machine that registered it, so that
+	   must go. What is on the clipboard does not: the front end only passes text
+	   on when it changes, so throwing it away here would leave the new machine
+	   with nothing until the user copied something again. */
 	pollword_addr = 0;
 	have_ucstable = 0;
 	guest_alphabet = 0;
-	free(clip_ucs);
-	clip_ucs = NULL;
-	clip_ucs_len = 0;
 }
 
 void
@@ -181,6 +182,10 @@ clipboard_host_changed(int file_type, const char *data, unsigned int data_len)
 	/* Wake the guest's task, if one has told us where to knock. */
 	if (pollword_addr != 0) {
 		mem_write32(pollword_addr, CLIPBOARD_POLLWORD_HOST_CHANGED);
+		rpclog("Clipboard: %u characters from the host, guest told\n", clip_ucs_len);
+	} else {
+		rpclog("Clipboard: %u characters from the host, no guest listening\n",
+		       clip_ucs_len);
 	}
 }
 
@@ -209,6 +214,11 @@ clipboard_swi(uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3,
 			have_ucstable = 1;
 			rpclog("Clipboard: guest task ready, alphabet %u, pollword at 0x%08x\n",
 			       (unsigned) guest_alphabet, (unsigned) pollword_addr);
+			/* Something may already be on the clipboard from before this guest
+			   started. Knock now, so it starts up in step with the host. */
+			if (clip_ucs != NULL && clip_ucs_len > 0) {
+				mem_write32(pollword_addr, CLIPBOARD_POLLWORD_HOST_CHANGED);
+			}
 		} else {
 			have_ucstable = 0;
 			rpclog("Clipboard: guest task gone\n");
@@ -251,6 +261,7 @@ clipboard_swi(uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3,
 		memcpyfromhost(r1, out, len + 1);
 		free(out);
 		*retr0 = len;
+		rpclog("Clipboard: guest fetched %u bytes\n", len);
 		break;
 	}
 
@@ -290,6 +301,7 @@ clipboard_swi(uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3,
 		clip_ucs = ucs;
 		clip_ucs_len = out;
 		clip_file_type = CLIPBOARD_TYPE_TEXT;
+		rpclog("Clipboard: %u characters from the guest\n", out);
 
 		/* Hand it to the front end as UTF-8, which is what every host
 		   clipboard we deal with wants. */

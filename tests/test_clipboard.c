@@ -253,13 +253,23 @@ main(void)
 
 	printf("\nafter a reset\n");
 	config.clipboard_enabled = 1;
+	clipboard_host_changed(CLIPBOARD_TYPE_TEXT, "Kept", 4);
 	clipboard_reset();
 	host_check(&len, &type);
-	check(len == 0, "the clipboard is forgotten");
+	check(len == 5, "what is on the clipboard is kept, for the next machine");
 	last_pollword_addr = 0;
 	clipboard_host_changed(CLIPBOARD_TYPE_TEXT, "Hello again", 11);
 	check(last_pollword_addr == 0,
-	      "and no pollword is written until a guest sets up again");
+	      "but nothing is written to guest memory until one sets up again");
+
+	printf("\nwhen a guest starts with the host holding text\n");
+	last_pollword_addr = 0;
+	setup_guest(table_addr, pollword_addr);
+	check(last_pollword_addr == pollword_addr &&
+	      last_pollword_value == CLIPBOARD_POLLWORD_HOST_CHANGED,
+	      "it is told at once, so it starts up in step");
+	check(strcmp(host_get(buf_addr, 64), "Hello again") == 0,
+	      "and can fetch what was already there");
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
 	       failures, failures == 1 ? "" : "s");

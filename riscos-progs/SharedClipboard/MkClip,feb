@@ -1,0 +1,15 @@
+| Build the Shared Clipboard module with the DDE, inside RISC OS.
+| Note: HostFS swaps "." and "/", so the host's AcornC.C++ is AcornC/C++ here.
+Set Clip$Dir HostFS::HostFS.$.SharedClip
+Set Clip$Tools HostFS::HostFS.$.AcornC/C++.!SetPaths.Lib32
+Obey HostFS::HostFS.$.AcornC/C++.!SetPaths.SetPaths
+Obey HostFS::HostFS.$.AcornC/C++.Export.APCS-32.Lib.OSLib.SetVars
+Dir <Clip$Dir>
+<Clip$Tools>.cmhg -32bit -o o.header -d h.header cmhg.module { > <Clip$Dir>.log.cmhg }
+<Clip$Tools>.cc -c -zM -zps1 -IOSLib:,C: -o o.module c.module { > <Clip$Dir>.log.module }
+<Clip$Tools>.cc -c -zM -zps1 -IOSLib:,C: -o o.task c.task { > <Clip$Dir>.log.task }
+<Clip$Tools>.cc -c -zM -zps1 -IOSLib:,C: -o o.ucstables c.ucstables { > <Clip$Dir>.log.ucs }
+<Clip$Tools>.cc -c -zM -zps1 -IOSLib:,C: -o o.debug c.debug { > <Clip$Dir>.log.debug }
+Echo done > <Clip$Dir>.log.done
+<Clip$Tools>.link -rmf -o <Clip$Dir>.sharedclipboard o.header o.module o.task o.ucstables o.debug OSLib:o.OSLib32 C:o.stubs { > <Clip$Dir>.log.link }
+Echo linked > <Clip$Dir>.log.done2
