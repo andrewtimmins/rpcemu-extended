@@ -42,6 +42,7 @@
 #include "edid.h"
 #include "gfxcard.h"
 #include "podules.h"
+#include "savestate.h"
 
 /* ---- the backplane, and the little of the emulator the card touches ---- */
 
@@ -78,6 +79,50 @@ Config config;
 void rpclog(const char *format, ...) { (void) format; }
 void fatal(const char *format, ...) { (void) format; printf("fatal() called\n"); exit(2); }
 const char *rpcemu_get_resourcedir(void) { return "/nonexistent/"; }
+
+/* The serialisation helpers, so the card's suspend and resume can be exercised
+   without linking savestate.c - which wants the whole machine, every other
+   device's chunk with it. These are deliberately not the real encoder: they only
+   have to be each other's inverse, which is all a round trip needs. What is
+   under test here is the card's own field order and its clamping, and both
+   halves of the card go through one pair of helpers here exactly as they go
+   through one pair in the emulator. The byte format itself is savestate.c's, and
+   every other chunk exercises it. */
+int savestate_error;
+
+void savestate_write_u32(FILE *f, uint32_t v) { fwrite(&v, sizeof v, 1, f); }
+void savestate_write_i32(FILE *f, int32_t v)  { fwrite(&v, sizeof v, 1, f); }
+void savestate_write_rle(FILE *f, const void *data, size_t len) { fwrite(data, 1, len, f); }
+
+uint32_t
+savestate_read_u32(FILE *f)
+{
+	uint32_t v = 0;
+
+	if (fread(&v, sizeof v, 1, f) != 1) {
+		savestate_error = 1;
+	}
+	return v;
+}
+
+int32_t
+savestate_read_i32(FILE *f)
+{
+	int32_t v = 0;
+
+	if (fread(&v, sizeof v, 1, f) != 1) {
+		savestate_error = 1;
+	}
+	return v;
+}
+
+void
+savestate_read_rle(FILE *f, void *data, size_t len)
+{
+	if (fread(data, 1, len, f) != len) {
+		savestate_error = 1;
+	}
+}
 
 #include "gfxcard.c"
 
@@ -342,6 +387,155 @@ main(void)
 	      "identity byte 0: Acorn conformant, extended identity");
 	check(gfxcard_readb(&test_podule, PODULE_IO_TYPE_EASI, 4) == 3,
 	      "identity byte 1: chunk directories present");
+
+	printf("\nthe card's state survives suspend and resume\n");
+	{
+		/* A card that is only half restored is worse than one that is not
+		   restored at all: the guest carries on driving a display whose
+		   registers no longer describe it. So this sets a distinctive state
+		   through the register interface, saves it, scrubs the card, checks the
+		   scrub really took (or the restore below would prove nothing), and
+		   then restores. */
+		static const uint32_t marker_off[] = { 0, 12345, GFXCARD_FB_SIZE - 1 };
+		FILE *f = tmpfile();
+		uint32_t frames_at_save;
+		unsigned i;
+		int ok;
+
+		set_mode(1280, 1024, 8, 1280, 4096);
+		wr(GFXCARD_REG_PAL_INDEX, 0);
+		for (i = 0; i < 256; i++) {
+			wr(GFXCARD_REG_PAL_ENTRY, 0x01000000u * i + 0x0a0b0c00u);
+		}
+		wr(GFXCARD_REG_PTR_WIDTH, 8);
+		wr(GFXCARD_REG_PTR_HEIGHT, 12);
+		wr(GFXCARD_REG_PTR_PHYS, 0x18004000u);
+		wr(GFXCARD_REG_PTR_X, 321);
+		wr(GFXCARD_REG_PTR_Y, 654);
+		wr(GFXCARD_REG_PTR_CTRL, GFXCARD_PTR_CTRL_SHOW);
+		wr(GFXCARD_REG_PTR_PAL_IDX, 1);
+		wr(GFXCARD_REG_PTR_PAL, 0xcafe0100u);
+		wr(GFXCARD_REG_PTR_PAL, 0xcafe0200u);
+		wr(GFXCARD_REG_PTR_PAL, 0xcafe0300u);
+		wr(GFXCARD_REG_CTRL, GFXCARD_CTRL_ENABLE | GFXCARD_CTRL_VSYNC_IRQ);
+		for (i = 0; i < 3; i++) {
+			gfxcard_fb[marker_off[i]] = (uint8_t) (0x40 + i);
+		}
+		gfxcard_vsync();	/* counts a frame, sets vsync, raises the interrupt */
+		frames_at_save = rd(GFXCARD_REG_FRAMES);
+
+		check(f != NULL, "a scratch file for the snapshot");
+		gfxcard_savestate(f);
+		check(!savestate_error && ftell(f) > 0, "the card writes a chunk");
+
+		/* Scrub it: a reset clears the registers, and the framestore and the
+		   palette are wiped by hand because a reset deliberately leaves both
+		   alone (a real card's memory survives one). */
+		gfxcard_podule_reset(&test_podule);
+		podule_irq_lower(&test_podule);
+		memset(gfxcard_fb, 0, GFXCARD_FB_SIZE);
+		memset(gfx.palette, 0, sizeof gfx.palette);
+		check(!gfxcard_active() && gfxcard_fb[12345] == 0 &&
+		      gfx.palette[7] == 0 && test_podule.irq == 0,
+		      "scrubbed, so the restore below has something to prove");
+
+		rewind(f);
+		gfxcard_loadstate(f);
+		check(!savestate_error, "and reads it back without error");
+
+		check(gfxcard_active(), "the card is displaying again");
+		ok = gfxcard_frame(&frame) &&
+		     frame.width == 1280 && frame.height == 1024 &&
+		     frame.bpp == 8 && frame.stride == 1280 &&
+		     frame.fb == gfxcard_fb + 4096;
+		check(ok, "mode, depth, stride and display start restored");
+
+		ok = 1;
+		for (i = 0; i < 256; i++) {
+			if (gfxcard_palette()[i] != 0x01000000u * i + 0x0a0b0c00u) {
+				ok = 0;
+			}
+		}
+		check(ok, "all 256 palette entries restored");
+
+		ok = gfxcard_frame(&frame) && frame.ptr_visible &&
+		     frame.ptr_x == 321 && frame.ptr_y == 654 &&
+		     frame.ptr_width == 8 && frame.ptr_height == 12 &&
+		     frame.ptr_phys == 0x18004000u &&
+		     frame.ptr_palette[0] == 0 &&
+		     frame.ptr_palette[1] == 0xcafe0100u &&
+		     frame.ptr_palette[2] == 0xcafe0200u &&
+		     frame.ptr_palette[3] == 0xcafe0300u;
+		check(ok, "the pointer, its place and its colours restored");
+
+		ok = 1;
+		for (i = 0; i < 3; i++) {
+			if (gfxcard_fb[marker_off[i]] != (uint8_t) (0x40 + i)) {
+				ok = 0;
+			}
+		}
+		check(ok, "the framestore restored, first byte to last");
+
+		check(rd(GFXCARD_REG_FRAMES) == frames_at_save && frames_at_save != 0,
+		      "the frame count came with it");
+		check(test_podule.irq == 1,
+		      "the interrupt line put back, since nothing else carries it");
+
+		/* The interrupt is the card's, not a register: acknowledging the vsync
+		   has to drop it again, exactly as it would have before the suspend. */
+		wr(GFXCARD_REG_STATUS, GFXCARD_STATUS_VSYNC);
+		check(test_podule.irq == 0, "and behaves normally afterwards");
+
+		printf("\na snapshot is no more trustworthy than the guest that wrote it\n");
+		{
+			/* Doctor the saved chunk in place. The layout is a word each, in
+			   the order gfxcard_savestate() writes them: present, slot,
+			   easi_phys, then the registers from ctrl onwards. */
+			const long word_edid_index = 12;
+			const long word_ptr_width  = 16;
+			const uint32_t absurd = 0xffffffffu;
+
+			rewind(f);
+			fseek(f, word_edid_index * 4, SEEK_SET);
+			fwrite(&absurd, sizeof absurd, 1, f);
+			fseek(f, word_ptr_width * 4, SEEK_SET);
+			fwrite(&absurd, sizeof absurd, 1, f);	/* width */
+			fwrite(&absurd, sizeof absurd, 1, f);	/* height */
+
+			rewind(f);
+			gfxcard_loadstate(f);
+			check(!savestate_error, "a doctored snapshot still loads");
+			check(gfx.ptr_width == GFXCARD_PTR_MAX_WIDTH &&
+			      gfx.ptr_height == GFXCARD_PTR_MAX_HEIGHT,
+			      "an absurd pointer shape is clamped on the way in");
+			check(gfx.edid_index <= EDID_BLOCK_SIZE,
+			      "and so is an EDID index past the end of the block");
+		}
+
+		fclose(f);
+	}
+
+	printf("\na machine with no card writes a chunk that says so\n");
+	{
+		FILE *f = tmpfile();
+		long len;
+
+		config.gfxcard_enabled = 0;
+		gfxcard_init();
+		check(gfxcard_fb == NULL, "no card fitted");
+
+		gfxcard_savestate(f);
+		len = ftell(f);
+		check(!savestate_error && len == 4,
+		      "the chunk is one word: there was no card");
+
+		rewind(f);
+		gfxcard_loadstate(f);
+		check(!savestate_error && gfxcard_fb == NULL,
+		      "and loading it leaves the machine without one");
+
+		fclose(f);
+	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
 	       failures, failures == 1 ? "" : "s");

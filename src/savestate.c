@@ -59,18 +59,24 @@
 #include "romload.h"
 
 #define SNAPSHOT_MAGIC		"RPCESTAT"
-/* Version written by this build. v5: ROM-identity CRC is taken over the raw ROM
-   image (before rom_patch.c applies host-dependent patches such as the
-   display-derived EDID). v4 hashed the patched image, so a resume on different
-   host display geometry falsely reported a ROM mismatch. */
-#define SNAPSHOT_VERSION	5
+/* Version written by this build. v6: the graphics card's state travels with the
+   snapshot (the "GFX " chunk), and the header records whether the machine had
+   one. v5: ROM-identity CRC is taken over the raw ROM image (before rom_patch.c
+   applies host-dependent patches such as the display-derived EDID). v4 hashed
+   the patched image, so a resume on different host display geometry falsely
+   reported a ROM mismatch. */
+#define SNAPSHOT_VERSION	6
 /* Oldest snapshot we can still load. v4's chunk payload is byte-for-byte
    identical to v5 - only the ROM-CRC field's meaning changed - so v4 files load
    fine; we just cannot reproduce their host-dependent ROM CRC, so the ROM-image
-   check is skipped for them (the model/RAM/VRAM checks still apply). */
+   check is skipped for them (the model/RAM/VRAM checks still apply). v4 and v5
+   simply carry no "GFX " chunk, and a card in the running machine is left at its
+   reset state, which is what those versions did in any case. */
 #define SNAPSHOT_VERSION_MIN	4
 /* Snapshots from this version onward store the raw-ROM CRC and get the check. */
 #define SNAPSHOT_VERSION_RAW_ROM_CRC	5
+/* Snapshots from this version onward record the graphics card in the header. */
+#define SNAPSHOT_VERSION_GFXCARD	6
 
 #define SNAPSHOT_FLAG_DYNAREC	(1u << 0)
 
@@ -355,6 +361,7 @@ static const SnapshotChunk snapshot_chunks[] = {
 	{ "MEM ", mem_savestate,      mem_loadstate      },
 	{ "IOMD", iomd_savestate,     iomd_loadstate     },
 	{ "VIDC", vidc20_savestate,   vidc20_loadstate   },
+	{ "GFX ", gfxcard_savestate,  gfxcard_loadstate  },
 	{ "SIO ", superio_savestate,  superio_loadstate  },
 	{ "8042", i8042_savestate,    i8042_loadstate    },
 	{ "KBD ", keyboard_savestate, keyboard_loadstate },
@@ -398,6 +405,10 @@ write_header(FILE *f)
 	savestate_write_u32(f, flags);
 	savestate_write_u32(f, config.cdromenabled ? 1 : 0);
 	savestate_write_u32(f, (uint32_t) config.cdromtype);
+	/* Whether a graphics card was fitted. A snapshot taken with one cannot be
+	   restored onto a machine without one: the guest is driving a display that
+	   would not be there. */
+	savestate_write_u32(f, config.gfxcard_enabled ? 1 : 0);
 
 	/* Machine name, so a mismatched load can report which machine the
 	   snapshot belongs to. Length-prefixed, capped at 255 bytes. */
@@ -426,6 +437,10 @@ check_header(FILE *f, char *errbuf, size_t errbuf_len)
 	char magic[8];
 	uint32_t version, model, mem_size, vram_size, rom_size, rom_crc;
 	uint32_t cdrom_enabled, cdrom_type;
+	/* Defaults to whatever this machine has, so that a snapshot too old to
+	   record it (see SNAPSHOT_VERSION_GFXCARD) is not rejected over a field it
+	   never carried. */
+	uint32_t gfxcard_enabled = (uint32_t) (config.gfxcard_enabled ? 1 : 0);
 	char snapshot_name[256];
 	uint16_t name_len, name_copy;
 
@@ -451,6 +466,12 @@ check_header(FILE *f, char *errbuf, size_t errbuf_len)
 	savestate_read_u32(f); /* flags - informational only */
 	cdrom_enabled = savestate_read_u32(f);
 	cdrom_type    = savestate_read_u32(f);
+	if (version >= SNAPSHOT_VERSION_GFXCARD) {
+		gfxcard_enabled = savestate_read_u32(f);
+	} else if (config.gfxcard_enabled) {
+		rpclog("state: snapshot version %u predates the graphics card, so the "
+		       "card will come back at its reset state\n", version);
+	}
 
 	/* Machine name (length-prefixed). Consume exactly name_len bytes so the
 	   file position is left at the first chunk for state_load(). */
@@ -503,6 +524,14 @@ check_header(FILE *f, char *errbuf, size_t errbuf_len)
 		         "This snapshot belongs to machine '%s', which has a different "
 		         "CD-ROM configuration to the current machine '%s'.",
 		         snapshot_name, config.name);
+		return -1;
+	}
+	if (gfxcard_enabled != (uint32_t) (config.gfxcard_enabled ? 1 : 0)) {
+		snprintf(errbuf, errbuf_len,
+		         "This snapshot belongs to machine '%s', which %s a graphics "
+		         "card, unlike the current machine '%s'.",
+		         snapshot_name, gfxcard_enabled ? "has" : "does not have",
+		         config.name);
 		return -1;
 	}
 

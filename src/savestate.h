@@ -100,6 +100,8 @@ extern void iomd_savestate(FILE *f);
 extern void iomd_loadstate(FILE *f);
 extern void vidc20_savestate(FILE *f);
 extern void vidc20_loadstate(FILE *f);
+extern void gfxcard_savestate(FILE *f);
+extern void gfxcard_loadstate(FILE *f);
 extern void superio_savestate(FILE *f);
 extern void superio_loadstate(FILE *f);
 extern void i8042_savestate(FILE *f);

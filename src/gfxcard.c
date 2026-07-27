@@ -55,6 +55,7 @@
 #include "edid.h"
 #include "gfxcard.h"
 #include "podules.h"
+#include "savestate.h"
 
 /* Expansion card identity. The product type is ours; it only has to differ from
    the other cards this emulator presents. */
@@ -701,5 +702,159 @@ gfxcard_vsync(void)
 
 	if ((gfx.ctrl & GFXCARD_CTRL_VSYNC_IRQ) != 0) {
 		podule_irq_raise(gfx.podule);
+	}
+}
+
+/* ------------------------------------------------------------------------
+ * Suspend and resume
+ * ------------------------------------------------------------------------ */
+
+/* What belongs in a snapshot is the guest-visible card: its registers, both its
+   palettes, and the framestore. What does not is everything the machine builds
+   again for itself on reset - the slot the backplane hands out, the address that
+   follows from the slot, and the ROM, which is read from disc rather than
+   written by the guest.
+
+   The framestore is run-length encoded the way VRAM is. 15MB of largely
+   untouched memory costs very little that way, and a desktop that is mostly one
+   colour costs little more. */
+
+void
+gfxcard_savestate(FILE *f)
+{
+	const int present = (gfx.podule != NULL && gfxcard_fb != NULL);
+	unsigned i;
+
+	savestate_write_u32(f, present ? 1u : 0u);
+	if (!present) {
+		return;
+	}
+
+	/* Recorded so that a restore can say when the card has come back somewhere
+	   else. The guest's driver holds the EASI address it was given at boot, so
+	   a card in a different slot leaves it talking to the wrong window. */
+	savestate_write_i32(f, gfx.slot);
+	savestate_write_u32(f, gfx.easi_phys);
+
+	savestate_write_u32(f, gfx.ctrl);
+	savestate_write_u32(f, gfx.status);
+	savestate_write_u32(f, gfx.width);
+	savestate_write_u32(f, gfx.height);
+	savestate_write_u32(f, gfx.bpp);
+	savestate_write_u32(f, gfx.stride);
+	savestate_write_u32(f, gfx.start);
+	savestate_write_u32(f, gfx.pal_index);
+	savestate_write_u32(f, gfx.frames);
+	savestate_write_u32(f, gfx.edid_index);
+
+	savestate_write_u32(f, gfx.ptr_ctrl);
+	savestate_write_u32(f, gfx.ptr_x);
+	savestate_write_u32(f, gfx.ptr_y);
+	savestate_write_u32(f, gfx.ptr_width);
+	savestate_write_u32(f, gfx.ptr_height);
+	savestate_write_u32(f, gfx.ptr_phys);
+	savestate_write_u32(f, gfx.ptr_pal_index);
+	for (i = 0; i < 4; i++) {
+		savestate_write_u32(f, gfx.ptr_palette[i]);
+	}
+
+	for (i = 0; i < 256; i++) {
+		savestate_write_u32(f, gfx.palette[i]);
+	}
+
+	savestate_write_rle(f, gfxcard_fb, GFXCARD_FB_SIZE);
+}
+
+void
+gfxcard_loadstate(FILE *f)
+{
+	uint32_t present, easi_phys;
+	int32_t slot;
+	unsigned i;
+
+	present = savestate_read_u32(f);
+	if (savestate_error || present == 0) {
+		/* The snapshot has no card. resetrpc() has already put any card this
+		   machine does have back to its reset state, which is where a machine
+		   that has never had one sits as well. */
+		return;
+	}
+
+	/* The snapshot has a card and this machine has not, so there is nowhere to
+	   put its state. check_header() normally reports this first and more
+	   helpfully; this catches the case where the card is configured but could
+	   not be fitted, for want of a slot or of its driver ROM. */
+	if (gfx.podule == NULL || gfxcard_fb == NULL) {
+		rpclog("gfxcard: the snapshot has a graphics card but this machine "
+		       "has none fitted, so its state cannot be restored\n");
+		savestate_error = 1;
+		return;
+	}
+
+	slot = savestate_read_i32(f);
+	easi_phys = savestate_read_u32(f);
+	if (slot != gfx.slot || easi_phys != gfx.easi_phys) {
+		/* Not fatal - the card works, and the driver will find it again after
+		   a reset - but worth saying, because it explains a display that stays
+		   dark on resume. */
+		rpclog("gfxcard: the snapshot has the card in slot %d at 0x%08x, this "
+		       "machine has it in slot %d at 0x%08x; the guest's driver still "
+		       "holds the old address\n",
+		       (int) slot, (unsigned) easi_phys, gfx.slot,
+		       (unsigned) gfx.easi_phys);
+	}
+
+	/* A snapshot is no more trustworthy than the guest that wrote it, and it
+	   may have been edited since, so the values that gfxcard_reg_write() clamps
+	   on the way in are clamped again here. The rest (geometry, stride, start)
+	   is checked by gfxcard_frame() on every frame, so it needs nothing. */
+	gfx.ctrl	= savestate_read_u32(f) & (GFXCARD_CTRL_ENABLE |
+			                           GFXCARD_CTRL_BLANK |
+			                           GFXCARD_CTRL_VSYNC_IRQ);
+	gfx.status	= savestate_read_u32(f) & GFXCARD_STATUS_VSYNC;
+	gfx.width	= savestate_read_u32(f);
+	gfx.height	= savestate_read_u32(f);
+	gfx.bpp		= savestate_read_u32(f);
+	gfx.stride	= savestate_read_u32(f);
+	gfx.start	= savestate_read_u32(f);
+	gfx.pal_index	= savestate_read_u32(f) & 0xff;
+	gfx.frames	= savestate_read_u32(f);
+	gfx.edid_index	= savestate_read_u32(f);
+	if (gfx.edid_index > EDID_BLOCK_SIZE) {
+		gfx.edid_index = EDID_BLOCK_SIZE;
+	}
+
+	gfx.ptr_ctrl	= savestate_read_u32(f) & GFXCARD_PTR_CTRL_SHOW;
+	gfx.ptr_x	= savestate_read_u32(f);
+	gfx.ptr_y	= savestate_read_u32(f);
+	gfx.ptr_width	= savestate_read_u32(f);
+	gfx.ptr_height	= savestate_read_u32(f);
+	gfx.ptr_phys	= savestate_read_u32(f);
+	gfx.ptr_pal_index = savestate_read_u32(f) & 3;
+	if (gfx.ptr_width > GFXCARD_PTR_MAX_WIDTH) {
+		gfx.ptr_width = GFXCARD_PTR_MAX_WIDTH;
+	}
+	if (gfx.ptr_height > GFXCARD_PTR_MAX_HEIGHT) {
+		gfx.ptr_height = GFXCARD_PTR_MAX_HEIGHT;
+	}
+	for (i = 0; i < 4; i++) {
+		gfx.ptr_palette[i] = savestate_read_u32(f);
+	}
+
+	for (i = 0; i < 256; i++) {
+		gfx.palette[i] = savestate_read_u32(f);
+	}
+
+	savestate_read_rle(f, gfxcard_fb, GFXCARD_FB_SIZE);
+
+	/* The interrupt line is not one of the registers: it lives on the expansion
+	   card, and nothing else in the snapshot carries it. Put it back to what the
+	   restored control and status words say it should be. */
+	if ((gfx.ctrl & GFXCARD_CTRL_VSYNC_IRQ) != 0 &&
+	    (gfx.status & GFXCARD_STATUS_VSYNC) != 0)
+	{
+		podule_irq_raise(gfx.podule);
+	} else {
+		podule_irq_lower(gfx.podule);
 	}
 }
