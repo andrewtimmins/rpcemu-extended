@@ -1011,8 +1011,13 @@ msg_ram_fetch:
 	teq	r0, r1
 	bne	1f
 
+	@ How much is left, and how much they will take this time.
+	adrl	r0, paste_offset
+	ldr	r1, [r0]
 	adrl	r0, clip_len
 	ldr	r5, [r0]
+	subs	r5, r5, r1		@ what remains
+	movmi	r5, #0
 	ldr	r0, [r4, #RAM_SIZE]
 	cmp	r5, r0
 	movgt	r5, r0			@ no more than they asked for
@@ -1022,7 +1027,10 @@ msg_ram_fetch:
 	ldr	r2, [r4, #MSG_SENDER]
 	ldr	r3, [r4, #RAM_ADDR]
 	adrl	r0, clip_buffer
-	ldr	r1, [r0]		@ source address (ours)
+	ldr	r1, [r0]
+	adrl	r0, paste_offset
+	ldr	r0, [r0]
+	add	r1, r1, r0		@ carry on from where we left off
 	adrl	r0, task_handle
 	ldr	r0, [r0]		@ source task (us)
 	mov	r4, r5			@ length
@@ -1030,7 +1038,9 @@ msg_ram_fetch:
 	adrl	r4, poll_block
 	bvs	1f
 
-	adrl	r4, poll_block
+	ldr	r0, [r4, #RAM_SIZE]
+	adrl	r1, ram_size_req
+	str	r0, [r1]
 	ldr	r0, [r4, #MSG_MYREF]
 	str	r0, [r4, #MSG_YOURREF]
 	mov	r0, #Message_RAMTransmit
@@ -1039,12 +1049,28 @@ msg_ram_fetch:
 	mov	r0, #28
 	str	r0, [r4, #MSG_SIZE]
 	ldr	r2, [r4, #MSG_SENDER]
-	mov	r0, #SEND_USER
-	mov	r1, r4
-	swi	XWimp_SendMessage
-	adrl	r0, paste_ref
-	mov	r1, #0
+
+	@ Filling their buffer means there may be more to come, so keep the
+	@ conversation open (a recorded message, and remember the reference); giving
+	@ them less than they asked for is how the protocol says "that is all".
+	adrl	r0, paste_offset
+	ldr	r1, [r0]
+	add	r1, r1, r5
 	str	r1, [r0]
+	adrl	r0, ram_size_req
+	ldr	r0, [r0]
+	cmp	r5, r0
+	movlt	r0, #SEND_USER
+	movge	r0, #SEND_RECORDED
+	mov	r1, r4
+	stmfd	sp!, {r0}
+	swi	XWimp_SendMessage
+	ldmfd	sp!, {r0}
+	adrl	r1, paste_ref
+	teq	r0, #SEND_RECORDED
+	ldreq	r0, [r4, #MSG_MYREF]
+	movne	r0, #0
+	str	r0, [r1]
 1:
 	ldmfd	sp!, {r0, r1, r2, r3, r4, r5, pc}
 
@@ -1313,6 +1339,8 @@ check_at:
 paste_ref:
 	.int	0
 paste_offset:
+	.int	0
+ram_size_req:
 	.int	0
 
 trace_pos:
