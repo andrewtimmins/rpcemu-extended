@@ -747,9 +747,11 @@ mem_phys_write32(uint32_t addr, uint32_t val)
 	case 0x0d000000:
 	case 0x0e000000:
 	case 0x0f000000:
-		/* Framestore writes go straight to the buffer, as the reads above do. */
+		/* Framestore writes go straight to the buffer, as the reads above do,
+		   noting the page so that scanning out converts only what changed. */
 		if (gfxcard_fb != NULL && (addr - gfxcard_fb_phys) < GFXCARD_FB_SIZE) {
 			memcpy(&gfxcard_fb[addr - gfxcard_fb_phys], &val, sizeof(val));
+			gfxcard_mark_dirty(addr - gfxcard_fb_phys);
 			return;
 		}
 		podules_write32((addr >> 24) & 7, PODULE_IO_TYPE_EASI, addr & 0xffffff, val);
@@ -906,6 +908,7 @@ mem_phys_write8(uint32_t addr, uint8_t val)
 	case 0x0f000000:
 		if (gfxcard_fb != NULL && (addr - gfxcard_fb_phys) < GFXCARD_FB_SIZE) {
 			gfxcard_fb[addr - gfxcard_fb_phys] = val;
+			gfxcard_mark_dirty(addr - gfxcard_fb_phys);
 			return;
 		}
 		podules_write8((addr >> 24) & 7, PODULE_IO_TYPE_EASI, addr & 0xffffff, val);

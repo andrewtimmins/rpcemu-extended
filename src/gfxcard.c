@@ -74,6 +74,11 @@
    calling through the expansion card handlers for each word. */
 uint8_t *gfxcard_fb = NULL;
 uint32_t gfxcard_fb_phys = 0;
+uint8_t *gfxcard_dirty = NULL;
+
+/* The dirty flags themselves, kept for the life of the process alongside the
+   framestore. gfxcard_dirty points at this only while a card is fitted. */
+static uint8_t gfxcard_dirty_store[GFXCARD_DIRTY_PAGES];
 
 /* The framestore itself, kept for the life of the process (a real card's memory
    survives a reset). gfxcard_fb points at this only while a card is fitted, so
@@ -247,10 +252,11 @@ gfxcard_reg_read(int reg)
 	case GFXCARD_REG_ID:         return GFXCARD_ID;
 	case GFXCARD_REG_VERSION:    return GFXCARD_VERSION;
 	case GFXCARD_REG_CAPS:
-		/* 16bpp is deliberately not claimed: the card would have to scan it
-		   out and only 8 and 32 are implemented. A depth the card does not
-		   claim is simply one the OS will not ask it for. */
-		return GFXCARD_CAP_8BPP | GFXCARD_CAP_32BPP |
+		/* The three depths the card scans out. 16bpp is 565 - five bits of
+		   red, six of green, five of blue - which is what RISC OS means by a
+		   64 thousand colour mode. A depth the card does not claim is simply
+		   one the OS will not ask it for. */
+		return GFXCARD_CAP_8BPP | GFXCARD_CAP_16BPP | GFXCARD_CAP_32BPP |
 		       GFXCARD_CAP_HW_SCROLL | GFXCARD_CAP_VSYNC |
 		       GFXCARD_CAP_HW_POINTER | GFXCARD_CAP_RENDER |
 		       (edid_published() != NULL ? GFXCARD_CAP_EDID : 0);
@@ -319,6 +325,74 @@ gfxcard_reg_read(int reg)
 	}
 }
 
+void
+gfxcard_dirty_all(void)
+{
+	memset(gfxcard_dirty_store, 1, sizeof(gfxcard_dirty_store));
+}
+
+/** Note that a run of framestore bytes has changed. */
+static void
+gfxcard_mark_dirty_range(size_t offset, size_t len)
+{
+	size_t page;
+
+	if (len == 0 || offset >= GFXCARD_FB_SIZE) {
+		return;
+	}
+	if (len > GFXCARD_FB_SIZE - offset) {
+		len = GFXCARD_FB_SIZE - offset;
+	}
+	for (page = offset >> GFXCARD_DIRTY_SHIFT;
+	     page <= (offset + len - 1) >> GFXCARD_DIRTY_SHIFT; page++)
+	{
+		gfxcard_dirty_store[page] = 1;
+	}
+}
+
+int
+gfxcard_take_dirty_rows(unsigned *yl, unsigned *yh)
+{
+	size_t first = GFXCARD_DIRTY_PAGES, last = 0;
+	size_t page;
+	size_t low, high;
+
+	for (page = 0; page < GFXCARD_DIRTY_PAGES; page++) {
+		if (gfxcard_dirty_store[page]) {
+			gfxcard_dirty_store[page] = 0;	/* cleared before the frame is
+							   converted, not after */
+			if (page < first) {
+				first = page;
+			}
+			last = page;
+		}
+	}
+	if (first > last) {
+		return 0;
+	}
+
+	/* Pages back to the rows they cover. A band rather than each row on its own:
+	   the front end takes one range per frame, and a redraw of a few rows more
+	   than changed costs nothing next to converting the whole screen. */
+	if (gfx.stride == 0) {
+		return 0;
+	}
+	low = (first << GFXCARD_DIRTY_SHIFT);
+	high = ((last + 1) << GFXCARD_DIRTY_SHIFT) - 1;
+	low = (low > gfx.start) ? (low - gfx.start) / gfx.stride : 0;
+	high = (high > gfx.start) ? (high - gfx.start) / gfx.stride : 0;
+
+	if (low >= gfx.height) {
+		return 0;		/* outside the part being displayed */
+	}
+	if (high >= gfx.height) {
+		high = gfx.height - 1;
+	}
+	*yl = (unsigned) low;
+	*yh = (unsigned) high + 1;
+	return 1;
+}
+
 /**
  * Is the geometry of a rectangle operation one the framestore can actually hold?
  *
@@ -375,6 +449,11 @@ gfxcard_render(uint32_t op)
 	if (!gfxcard_render_fits(gfx.render_x, gfx.render_y, gfx.render_w, gfx.render_h)) {
 		return;
 	}
+
+	/* Whatever the operation, these rows are about to change. */
+	gfxcard_mark_dirty_range((size_t) gfx.start +
+	                             (size_t) gfx.render_y * gfx.stride,
+	                         (size_t) gfx.render_h * gfx.stride);
 
 	if (op == GFXCARD_RENDER_COPY) {
 		const size_t bytes = (size_t) gfx.render_w * bytes_per_pixel;
@@ -441,6 +520,7 @@ gfxcard_reg_write(int reg, uint32_t val)
 	case GFXCARD_REG_CTRL:
 		gfx.ctrl = val & (GFXCARD_CTRL_ENABLE | GFXCARD_CTRL_BLANK |
 		                  GFXCARD_CTRL_VSYNC_IRQ);
+		gfxcard_dirty_all();	/* taking over, or unblanking */
 		if ((gfx.ctrl & GFXCARD_CTRL_VSYNC_IRQ) == 0) {
 			gfx.status &= ~GFXCARD_STATUS_VSYNC;
 			if (gfx.podule != NULL) {
@@ -458,11 +538,13 @@ gfxcard_reg_write(int reg, uint32_t val)
 		}
 		break;
 
-	case GFXCARD_REG_WIDTH:     gfx.width = val; break;
-	case GFXCARD_REG_HEIGHT:    gfx.height = val; break;
-	case GFXCARD_REG_BPP:       gfx.bpp = val; break;
-	case GFXCARD_REG_STRIDE:    gfx.stride = val; break;
-	case GFXCARD_REG_START:     gfx.start = val; break;
+	/* Anything that changes where or how the framestore is read has to have the
+	   whole screen converted again, not just the part written to since. */
+	case GFXCARD_REG_WIDTH:     gfx.width = val; gfxcard_dirty_all(); break;
+	case GFXCARD_REG_HEIGHT:    gfx.height = val; gfxcard_dirty_all(); break;
+	case GFXCARD_REG_BPP:       gfx.bpp = val; gfxcard_dirty_all(); break;
+	case GFXCARD_REG_STRIDE:    gfx.stride = val; gfxcard_dirty_all(); break;
+	case GFXCARD_REG_START:     gfx.start = val; gfxcard_dirty_all(); break;
 	case GFXCARD_REG_PAL_INDEX: gfx.pal_index = val & 0xff; break;
 
 	case GFXCARD_REG_EDID_INDEX:
@@ -525,6 +607,7 @@ gfxcard_reg_write(int reg, uint32_t val)
 		   colours writes the index once and then one word per colour. */
 		gfx.palette[gfx.pal_index] = val;
 		gfx.pal_index = (gfx.pal_index + 1) & 0xff;
+		gfxcard_dirty_all();	/* every 8bpp pixel may look different now */
 		break;
 
 	default:
@@ -726,6 +809,7 @@ gfxcard_init(void)
 	gfx.slot = -1;
 	gfxcard_fb = NULL;
 	gfxcard_fb_phys = 0;
+	gfxcard_dirty = NULL;
 
 	if (!config.gfxcard_enabled) {
 		return;
@@ -760,6 +844,8 @@ gfxcard_init(void)
 	gfx.easi_phys = 0x08000000u + ((uint32_t) gfx.slot * 0x01000000u);
 	gfxcard_fb = gfxcard_store;
 	gfxcard_fb_phys = gfx.easi_phys + GFXCARD_FB_OFFSET;
+	gfxcard_dirty = gfxcard_dirty_store;
+	gfxcard_dirty_all();
 
 	/* A sane greyscale ramp, so an 8bpp mode shows something recognisable
 	   before the driver writes a palette. */
@@ -801,7 +887,7 @@ gfxcard_frame(GfxCardFrame *frame)
 	if (!gfxcard_active()) {
 		return 0;
 	}
-	if (gfx.bpp != 8 && gfx.bpp != 32) {
+	if (gfx.bpp != 8 && gfx.bpp != 16 && gfx.bpp != 32) {
 		return 0;
 	}
 	if (gfx.width == 0 || gfx.height == 0) {
@@ -1036,6 +1122,7 @@ gfxcard_loadstate(FILE *f)
 	   against the mode before it touches the framestore. */
 
 	savestate_read_rle(f, gfxcard_fb, GFXCARD_FB_SIZE);
+	gfxcard_dirty_all();	/* the framestore is wholly different now */
 
 	/* The interrupt line is not one of the registers: it lives on the expansion
 	   card, and nothing else in the snapshot carries it. Put it back to what the

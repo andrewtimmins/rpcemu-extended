@@ -154,6 +154,8 @@ static struct cached_state {
         unsigned gfx_ptr_height;
         uint32_t gfx_ptr_phys;
         uint32_t gfx_ptr_palette[4];
+        int gfx_dirty_yl;	/* rows the card says changed, -1 for none */
+        int gfx_dirty_yh;
 } thr;
 
 /* One entry per 4KB page of VRAM, sized for the maximum supported VRAM
@@ -370,6 +372,21 @@ drawscr(void)
 			       sizeof(thr.gfx_ptr_palette));
 			thr.vidc_xsize = (int) frame.width;
 			thr.vidc_ysize = (int) frame.height;
+
+			/* Taken here rather than on the video thread: this reads the
+			   card's registers, and this is the thread that owns them. Safe
+			   to clear the card's record now, because the check above has
+			   already established that the video thread has finished with
+			   the last frame and will convert this one. */
+			{
+				unsigned dyl = 0, dyh = 0;
+
+				thr.gfx_dirty_yl = -1;
+				if (gfxcard_take_dirty_rows(&dyl, &dyh)) {
+					thr.gfx_dirty_yl = (int) dyl;
+					thr.gfx_dirty_yh = (int) dyh;
+				}
+			}
 		}
 	}
 
@@ -616,10 +633,17 @@ static void
 vidcthread_gfxcard(void)
 {
 	uint32_t host_pal[256];
+	/* Where the pointer was drawn last frame, so it can be rubbed out. Video
+	   thread only, and -1 when it was not drawn at all. */
+	static int last_ptr_yl = -1, last_ptr_yh = -1;
+	int ptr_yl = -1, ptr_yh = -1;
+	int yl = -1, yh = -1;
 	int x, y;
 
 	if (thr.vidc_xsize != current_sizex || thr.vidc_ysize != current_sizey) {
 		resizedisplay(thr.vidc_xsize, thr.vidc_ysize);
+		gfxcard_dirty_all();	/* a new bitmap holds none of the old frame */
+		last_ptr_yl = -1;
 	}
 
 	if (thr.gfx_blanked) {
@@ -628,7 +652,57 @@ vidcthread_gfxcard(void)
 
 			memset(vidp, 0, (size_t) thr.vidc_xsize * sizeof(uint32_t));
 		}
+		last_ptr_yl = -1;
+		gfxcard_dirty_all();	/* unblanking has the whole frame to restore */
 		video_update(0, thr.vidc_ysize);
+		return;
+	}
+
+	/* Only the rows that changed. Converting a 2560x1440 frame is fourteen
+	   megabytes of work, and a desktop mostly sits still; the card records which
+	   pages of its framestore have been written to since the last frame.
+	   Collapsed to one band because the front end takes a single row range per
+	   frame, and a few extra rows cost nothing beside the whole screen.
+
+	   The pointer is composited over the frame rather than living in the
+	   framestore, so the rows it was on last time have to be converted again to
+	   rub it out, and the rows it is on now to draw it. Without that it leaves a
+	   trail across everything that did not otherwise change. */
+	if (thr.gfx_dirty_yl >= 0) {
+		yl = thr.gfx_dirty_yl;
+		yh = thr.gfx_dirty_yh;
+	}
+
+	if (thr.gfx_ptr_visible && thr.gfx_ptr_height > 0) {
+		ptr_yl = thr.cursory;
+		ptr_yh = thr.cursory + (int) thr.gfx_ptr_height;
+	}
+	if (ptr_yl >= 0) {
+		if (yl < 0 || ptr_yl < yl) {
+			yl = ptr_yl;
+		}
+		if (yh < ptr_yh) {
+			yh = ptr_yh;
+		}
+	}
+	if (last_ptr_yl >= 0) {
+		if (yl < 0 || last_ptr_yl < yl) {
+			yl = last_ptr_yl;
+		}
+		if (yh < last_ptr_yh) {
+			yh = last_ptr_yh;
+		}
+	}
+	last_ptr_yl = ptr_yl;
+	last_ptr_yh = ptr_yh;
+
+	if (yl < 0) {
+		return;			/* nothing has changed: nothing to send */
+	}
+	if (yh > thr.vidc_ysize) {
+		yh = thr.vidc_ysize;
+	}
+	if (yl >= yh) {
 		return;
 	}
 
@@ -648,7 +722,7 @@ vidcthread_gfxcard(void)
 		}
 	}
 
-	for (y = 0; y < thr.vidc_ysize; y++) {
+	for (y = yl; y < yh; y++) {
 		uint32_t *vidp = video_image_scanline(y);
 		const uint8_t *line = thr.gfx_fb + (size_t) y * thr.gfx_stride;
 
@@ -656,6 +730,29 @@ vidcthread_gfxcard(void)
 		case 8:
 			for (x = 0; x < thr.vidc_xsize; x++) {
 				vidp[x] = host_pal[line[x]];
+			}
+			break;
+
+		case 16:
+			/* 565, in the same order as the 32bpp case below: red in the
+			   low bits, then green, then blue. The five and six bit
+			   channels are widened to eight by repeating their top bits,
+			   so that full red reaches 255 rather than 248. */
+			for (x = 0; x < thr.vidc_xsize; x++) {
+				const uint8_t *p = line + ((size_t) x * 2);
+				unsigned v, r, g, b;
+
+#ifdef _RPCEMU_BIG_ENDIAN
+				v = (unsigned) p[1] | ((unsigned) p[0] << 8);
+#else
+				v = (unsigned) p[0] | ((unsigned) p[1] << 8);
+#endif
+				r = v & 0x1f;
+				g = (v >> 5) & 0x3f;
+				b = (v >> 11) & 0x1f;
+				vidp[x] = makecol((r << 3) | (r >> 2),
+				                  (g << 2) | (g >> 4),
+				                  (b << 3) | (b >> 2));
 			}
 			break;
 
@@ -681,7 +778,7 @@ vidcthread_gfxcard(void)
 
 	gfxcard_draw_pointer();
 
-	video_update(0, thr.vidc_ysize);
+	video_update(yl, yh);
 }
 
 void

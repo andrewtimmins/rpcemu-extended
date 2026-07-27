@@ -115,14 +115,15 @@
 	GVFeature_CopyRectangleIsFast	= 1 << 6
 
 	@ Depths we can scan out, as GraphicsV states them: bit n set means 2^n
-	@ bits per pixel is available, so 8bpp and 32bpp.
-	GVPixelDepths	= (1 << 3) | (1 << 5)
+	@ bits per pixel is available, so 8bpp, 16bpp and 32bpp.
+	GVPixelDepths	= (1 << 3) | (1 << 4) | (1 << 5)
 
 	@ Buffer alignment we need for the framestore, in bytes.
 	GVAlignment	= 16
 
 	@ Mode flags (hdr:VduExt)
 	ModeFlag_FullPalette	= 1 << 7
+	ModeFlag_64k		= 1 << 7	@ same bit; means 565 at log2bpp 4
 
 	@ Mode variables, as OS_ReadModeVariable numbers them
 	ModeVar_Log2BPP		= 9
@@ -503,6 +504,10 @@ gv_pixelformats:
 
 pixel_formats:
 	.int	255, ModeFlag_FullPalette, 3	@ 8bpp, 256 colours
+	@ 16bpp. ModeFlag_64k is what says 565 rather than 555 at this depth, and
+	@ it is the same bit as ModeFlag_FullPalette - the kernel reads it one way
+	@ at log2bpp 4 and the other below it.
+	.int	65535, ModeFlag_64k, 4		@ 16bpp, 64K colours, 565
 	.int	-1, 0, 5			@ 32bpp, 16M colours
 pixel_formats_end:
 
@@ -806,6 +811,7 @@ mode_geometry:
 
 	ldr	r5, [r0, #VIDCList3_PixelDepth]
 	teq	r5, #3			@ 8bpp
+	teqne	r5, #4			@ 16bpp, which for this card is 565
 	teqne	r5, #5			@ or 32bpp; nothing else is scanned out
 	movne	r6, #VET_DEPTH
 	bne	mode_geometry_bad

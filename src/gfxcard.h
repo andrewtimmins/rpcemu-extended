@@ -138,7 +138,7 @@
    calls, so a capability the card does not claim is one the OS will do in
    software instead. */
 #define GFXCARD_CAP_8BPP	0x0001u
-#define GFXCARD_CAP_16BPP	0x0002u	/* not claimed: only 8 and 32 are scanned out */
+#define GFXCARD_CAP_16BPP	0x0002u	/* 565: five red, six green, five blue */
 #define GFXCARD_CAP_32BPP	0x0004u
 #define GFXCARD_CAP_HW_SCROLL	0x0100u		/* display start register works */
 #define GFXCARD_CAP_VSYNC	0x0200u		/* raises a vsync interrupt */
@@ -200,6 +200,41 @@
    card, which is what mem.c tests. */
 extern uint8_t *gfxcard_fb;
 extern uint32_t gfxcard_fb_phys;
+
+/* What has been written to since the display was last drawn, a page at a time,
+   so that scanning out converts the part of the screen that changed instead of
+   all of it. At 2560x1440 a frame is 14MB to walk, and a desktop mostly sits
+   still; VIDC has had a dirty buffer of its own for the same reason.
+
+   Written from the emulator thread (every framestore write goes through mem.c)
+   and consumed by the video thread. The flags are cleared before the frame is
+   converted rather than after, so a write that lands during the conversion sets
+   its page again and is drawn on the next frame instead of being lost. */
+#define GFXCARD_DIRTY_SHIFT	12			/* 4KB a page */
+#define GFXCARD_DIRTY_PAGES	(GFXCARD_FB_SIZE >> GFXCARD_DIRTY_SHIFT)
+
+extern uint8_t *gfxcard_dirty;	/**< One flag per page; NULL when no card */
+
+/** Note that a framestore byte has changed. Called on every write to it. */
+static inline void
+gfxcard_mark_dirty(uint32_t offset)
+{
+	if (gfxcard_dirty != NULL) {
+		gfxcard_dirty[offset >> GFXCARD_DIRTY_SHIFT] = 1;
+	}
+}
+
+/** Redraw everything next frame: the mode, the palette or the card changed. */
+extern void gfxcard_dirty_all(void);
+
+/**
+ * Take the range of display rows that have changed, and clear the record.
+ *
+ * @param yl Filled with the first changed row
+ * @param yh Filled with one past the last
+ * @return non-zero if anything changed
+ */
+extern int gfxcard_take_dirty_rows(unsigned *yl, unsigned *yh);
 
 /** A consistent view of the card's display state, taken once per frame. */
 typedef struct {

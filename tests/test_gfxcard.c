@@ -185,8 +185,8 @@ main(void)
 	check(rd(GFXCARD_REG_ID) == GFXCARD_ID, "identity register reads \"RPGx\"");
 	check(rd(GFXCARD_REG_VERSION) == GFXCARD_VERSION, "interface version");
 	check((rd(GFXCARD_REG_CAPS) & GFXCARD_CAP_32BPP) != 0, "32bpp offered");
-	check((rd(GFXCARD_REG_CAPS) & GFXCARD_CAP_16BPP) == 0,
-	      "16bpp not offered, since it is not implemented");
+	check((rd(GFXCARD_REG_CAPS) & GFXCARD_CAP_16BPP) != 0, "16bpp offered");
+	check((rd(GFXCARD_REG_CAPS) & GFXCARD_CAP_8BPP) != 0, "8bpp offered");
 	check(rd(GFXCARD_REG_MAX_WIDTH) == GFXCARD_MAX_WIDTH &&
 	      rd(GFXCARD_REG_MAX_HEIGHT) == GFXCARD_MAX_HEIGHT,
 	      "largest accepted mode is readable");
@@ -222,6 +222,13 @@ main(void)
 
 	set_mode(1920, 1080, 24, 1920 * 3, 0);
 	check(!gfxcard_frame(&frame), "a depth the card does not claim is refused");
+
+	/* 16bpp costs half of 32bpp, which is the point of offering it: a mode
+	   that will not fit at 32 may well fit at 16. */
+	set_mode(2560, 1440, 16, 2560 * 2, 0);
+	check(gfxcard_frame(&frame) && frame.bpp == 16 &&
+	      frame.stride == 2560 * 2,
+	      "2560x1440 at 16bpp fits, and is reported as 16bpp");
 
 	set_mode(1920, 0, 32, 1920 * 4, 0);
 	check(!gfxcard_frame(&frame), "no lines is not a display");

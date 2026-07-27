@@ -226,7 +226,7 @@ drive a display:
 
 | GraphicsV call | What the driver does |
 | --- | --- |
-| DisplayFeatures (8) | Reports a separate framestore, hardware scroll, and 8bpp/32bpp |
+| DisplayFeatures (8) | Reports a separate framestore, hardware scroll, fast rectangle copy, and 8/16/32bpp |
 | FramestoreAddress (9) | Where the card's memory is, for the kernel to map |
 | PixelFormats (17) | 256-colour and 16M-colour |
 | VetMode (7) | Accepts a mode only if it fits the card |
@@ -304,6 +304,45 @@ shape that happens to be the full eight bytes wide, as the Wimp's arrow is. The
 Hourglass declares six, so its rows each came out two bytes early and the shape
 sheared into stripes. Use the padded stride to walk the rows, and the reported
 width only to decide how much of each row to draw.
+
+### Colour depths
+
+The card scans out **8bpp** through its own palette, **16bpp** as 565 - five bits
+of red, six of green, five of blue - and **32bpp**. 16bpp is worth having for more
+than colour fidelity: it halves what a mode costs, so one that will not fit at
+32bpp may well fit at 16.
+
+| Mode | 16bpp | 32bpp |
+| --- | --- | --- |
+| 1920 x 1080 | 4.0MB | 8.3MB |
+| 2560 x 1440 | 7.0MB | 14.1MB |
+
+What distinguishes 565 from 555 at this depth is `ModeFlag_64k`, which is the same
+bit as `ModeFlag_FullPalette` - the kernel reads it one way at log2bpp 4 and the
+other below it.
+
+### Only converting what changed
+
+Scanning out means converting the card's pixels into the host's, and at 2560x1440
+that is fourteen megabytes of work for a screen that is mostly sitting still. The
+card records which 4KB pages of its framestore have been written to since the last
+frame, exactly as VIDC has long done for VRAM, and the conversion covers only the
+band of rows those pages fall in.
+
+Two details keep that honest:
+
+- **The record is cleared before the frame is converted, not after.** A write that
+  lands while the conversion is running marks its page again and is drawn on the
+  next frame, rather than being dropped because it arrived between the conversion
+  and the clear.
+- **The pointer is composited over the frame, not stored in it.** So the rows it
+  was drawn on last time are converted again to rub it out, along with the rows it
+  is on now. Without that it leaves a trail across everything that did not
+  otherwise change.
+
+Anything that alters how the framestore is read - a mode change, a new palette,
+the card being switched on or unblanked, a snapshot being restored - marks the
+whole framestore instead, because none of the previous frame can be relied on.
 
 ### Copying and filling rectangles
 
