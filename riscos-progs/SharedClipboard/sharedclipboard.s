@@ -362,6 +362,17 @@ command_status:
 6:
 	swi	OS_Write0
 
+	adrl	r0, registered
+	ldr	r0, [r0]
+	teq	r0, #0
+	beq	7f
+	adrl	r0, text_registered
+	swi	OS_Write0
+	b	8f
+7:
+	adrl	r0, text_unregistered
+	swi	OS_Write0
+8:
 	adrl	r0, own_clipboard
 	ldr	r0, [r0]
 	teq	r0, #0
@@ -527,11 +538,9 @@ task_start:
 	moveq	r2, #101
 	mov	r4, r2
 
-	mov	r0, #CLIP_SETUP
-	adrl	r1, pollword
-	mov	r2, r4
-	adrl	r3, ucs_table
-	swi	XARCEM_SWI_CLIPBOARD
+	adrl	r0, alphabet
+	str	r4, [r0]
+	bl	tell_the_host
 
 	@ Anything already on the host's clipboard is worth having now.
 	adrl	r0, pollword
@@ -578,6 +587,29 @@ task_give_up:
 
 	.ltorg
 
+@ Tell the host where our pollword is, what alphabet we are using, and how that
+@ alphabet maps to UCS-4. Cloverleaf's idea: the host then converts text through
+@ the guest's own table rather than assuming one.
+@
+@ The emulator does not claim this SWI at all while sharing is switched off, so
+@ this can fail, and the setting can be turned on long after we started. Note
+@ whether it took, and the caller tries again later.
+tell_the_host:
+	stmfd	sp!, {r0, r1, r2, r3, lr}
+	adrl	r0, alphabet
+	ldr	r2, [r0]
+	mov	r0, #CLIP_SETUP
+	adrl	r1, pollword
+	adrl	r3, ucs_table
+	swi	XARCEM_SWI_CLIPBOARD
+	adrl	r0, registered
+	movvs	r1, #0
+	movvc	r1, #1
+	str	r1, [r0]
+	ldmfd	sp!, {r0, r1, r2, r3, pc}
+
+	.ltorg
+
 @ Something set our pollword: either the host's clipboard changed, or there has
 @ been enough activity that the guest's is worth a look.
 handle_pollword:
@@ -587,6 +619,12 @@ handle_pollword:
 	ldr	r4, [r0]
 	mov	r1, #0
 	str	r1, [r0]
+
+	@ Still not registered? Sharing may have been switched on since we started.
+	adrl	r0, registered
+	ldr	r0, [r0]
+	teq	r0, #0
+	bleq	tell_the_host
 
 	tst	r4, #POLL_HOST_CHANGED
 	blne	take_host_clipboard
@@ -1068,6 +1106,12 @@ text_host_has:
 text_host_empty:
 	.string	"  The host's clipboard is empty\r\n"
 	.align
+text_registered:
+	.string	"  Connected to the host\r\n"
+	.align
+text_unregistered:
+	.string	"  Not connected to the host yet\r\n"
+	.align
 text_off:
 	.string	"  Not enabled in the emulator (Settings, Share Clipboard with RISC OS)\r\n"
 	.align
@@ -1107,6 +1151,10 @@ task_handle:
 	.int	0
 task_wanted:
 	.int	0
+registered:
+	.int	0
+alphabet:
+	.int	101
 own_clipboard:
 	.int	0
 clip_buffer:

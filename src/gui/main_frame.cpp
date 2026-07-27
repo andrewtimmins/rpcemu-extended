@@ -164,10 +164,13 @@ MainFrame::MainFrame()
 	mips_timer_.Start(1000);
 	/* Watch the host clipboard. wxWidgets has no "it changed" notification, so
 	   it has to be looked at now and then; twice a second is well below noticing
-	   and costs nothing measurable. Only runs while the feature is on. */
-	if (config_copy_.clipboard_enabled) {
-		clipboard_timer_.Start(500);
-	}
+	   and costs nothing measurable.
+	   It runs whether or not sharing is on, and the handler returns immediately
+	   when it is off. Starting and stopping it alongside the setting instead
+	   means every path that can change the setting has to remember to do it, and
+	   the one that did not (switching to a machine that has sharing on) left the
+	   host end asleep with no sign of why. */
+	clipboard_timer_.Start(500);
 
 	window_active_ = true;
 	UpdateMachineStatus();
@@ -896,10 +899,9 @@ void MainFrame::OnSharedClipboard(wxCommandEvent &event)
 		shared_clipboard_menu_item_->Check(config_copy_.clipboard_enabled != 0);
 	}
 	if (config_copy_.clipboard_enabled) {
+		/* Take whatever is on the host clipboard now, rather than waiting for
+		   it to change. */
 		clipboard_last_seen_.clear();
-		clipboard_timer_.Start(500);
-	} else {
-		clipboard_timer_.Stop();
 	}
 	(void) event;
 }

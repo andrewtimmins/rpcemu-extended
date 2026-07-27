@@ -7,6 +7,16 @@ reach. Turn it on in *Settings → Share Clipboard with RISC OS*. Nothing else i
 needed: the guest half loads itself from the expansion card ROM and starts with
 the desktop.
 
+Switching it on while a machine is running is enough; the guest reconnects the
+next time you touch the keyboard or mouse. A **reset is only needed the first
+time**, so the machine picks up the guest module from the expansion card ROM.
+`*SharedClipStatus` says which of those two things is missing:
+
+```
+Shared clipboard: task running        <- the module is loaded
+  Connected to the host               <- ...and sharing is on
+```
+
 Text only at the moment. Images are not carried, though the interface has room
 for them (see below).
 
