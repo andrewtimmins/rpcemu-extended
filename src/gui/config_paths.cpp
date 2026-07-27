@@ -148,43 +148,67 @@ bool ConfigPathsCreateMachineDirectory(const wxString &machine_name)
 	return true;
 }
 
+/*
+ * Copy a directory tree, one directory at a time.
+ *
+ * Everything here is a leaf name taken from the directory listing, joined to a
+ * known parent. Nothing works out a relative path by trimming a prefix off an
+ * absolute one, which is what went wrong before: on Windows the prefix and the
+ * enumerated path did not match character for character, the trim left the
+ * source's full path in place, and the copy tried to create
+ * "<machine>\hostfs\C:\..." - reported as issue #39, where creating a machine
+ * failed with an illegal-syntax error and no machine appeared.
+ *
+ * Subdirectories are walked explicitly rather than asking for a recursive file
+ * list, so an empty directory in the source is a directory in the copy.
+ */
+static bool CopyTreeInto(const wxString &src, const wxString &dst)
+{
+	const wxChar sep = wxFileName::GetPathSeparator();
+
+	if (!wxDirExists(dst) && !wxDir::Make(dst, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL)) {
+		return false;
+	}
+
+	wxString name;
+
+	{
+		wxDir dir(src);
+		if (!dir.IsOpened()) {
+			return false;
+		}
+		bool more = dir.GetFirst(&name, wxEmptyString, wxDIR_FILES | wxDIR_HIDDEN);
+		while (more) {
+			if (!wxCopyFile(src + sep + name, dst + sep + name, true)) {
+				return false;
+			}
+			more = dir.GetNext(&name);
+		}
+	}
+
+	{
+		wxDir dir(src);
+		if (!dir.IsOpened()) {
+			return false;
+		}
+		bool more = dir.GetFirst(&name, wxEmptyString, wxDIR_DIRS | wxDIR_HIDDEN);
+		while (more) {
+			if (!CopyTreeInto(src + sep + name, dst + sep + name)) {
+				return false;
+			}
+			more = dir.GetNext(&name);
+		}
+	}
+
+	return true;
+}
+
 bool ConfigPathsCopyDirectory(const wxString &src, const wxString &dst)
 {
 	if (!wxDirExists(src)) {
 		return false;
 	}
-
-	wxFileName src_root;
-	src_root.AssignDir(src); /* treat src as a directory, not a file */
-	src_root.Normalize(wxPATH_NORM_ALL);
-	const wxString src_prefix = src_root.GetPathWithSep();
-
-	if (!wxDir::Make(dst, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL)) {
-		return false;
-	}
-
-	wxArrayString files;
-	wxDir::GetAllFiles(src, &files, wxEmptyString, wxDIR_FILES);
-
-	for (const auto &full_src : files) {
-		if (wxDirExists(full_src)) {
-			continue;
-		}
-
-		wxString rel = full_src;
-		if (rel.StartsWith(src_prefix)) {
-			rel = rel.Mid(src_prefix.Length());
-		}
-		const wxString full_dst = dst + wxFileName::GetPathSeparator() + rel;
-		wxFileName dst_parent(full_dst);
-		if (!dst_parent.Mkdir(wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL)) {
-			return false;
-		}
-		if (!wxCopyFile(full_src, full_dst, true)) {
-			return false;
-		}
-	}
-	return true;
+	return CopyTreeInto(src, dst);
 }
 
 wxString ConfigPathsRenameMachine(const wxString &old_name, const wxString &new_name, const wxString &config_path)

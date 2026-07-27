@@ -386,11 +386,20 @@ void ConfigSelectorDialog::OnClone(wxCommandEvent &)
 
 	const wxString src_machine = ConfigPathsMachinesDir() + wxFileName::GetPathSeparator() + source_name;
 	const wxString dst_machine = ConfigPathsMachinesDir() + wxFileName::GetPathSeparator() + sanitized;
+	/* Copy the machine's own files (CMOS, HostFS, hard discs). This used to shell
+	   out to "cp -a", which does not exist on Windows: the clone was listed but
+	   its directory was never created, and nothing said so. */
+	bool copied;
 	if (wxDirExists(src_machine)) {
-		wxString cmd = wxString::Format("cp -a '%s' '%s'", src_machine, dst_machine);
-		system(cmd.utf8_str().data());
+		copied = ConfigPathsCopyDirectory(src_machine, dst_machine);
 	} else {
-		ConfigPathsCreateMachineDirectory(sanitized);
+		copied = ConfigPathsCreateMachineDirectory(sanitized);
+	}
+	if (!copied) {
+		wxRemoveFile(new_config);
+		wxMessageBox("Could not copy the machine's files.", "Clone Machine",
+		             wxOK | wxICON_ERROR, this);
+		return;
 	}
 
 	RefreshConfigList();
