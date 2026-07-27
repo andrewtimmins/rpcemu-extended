@@ -28,8 +28,8 @@
  * conversion table the guest hands over at setup, which is how the guest's own
  * alphabet is honoured rather than assumed.
  *
- * Text only at the moment. The filetype travels with the data, so images can be
- * added later without the guest module or this interface changing.
+ * Text and images (PNG or JPEG). The filetype travels with the data, which is
+ * what let images be added without the guest module or this interface changing.
  */
 
 #include <stdlib.h>
@@ -63,6 +63,79 @@ static unsigned int clip_ucs_len;	/* in characters */
 static unsigned char *clip_image;
 static unsigned int clip_image_len;	/* in bytes */
 static int clip_file_type = CLIPBOARD_TYPE_TEXT;
+
+/**
+ * Convert what is held to UTF-8, which is the form every host clipboard we deal
+ * with wants.
+ *
+ * @param buf    Where to put it, always terminated when there is room
+ * @param buflen Size of buf
+ * @return bytes written excluding the terminator, or -1 if what is held is not
+ *         text, or if it does not fit
+ */
+static int
+clip_to_utf8(char *buf, unsigned int buflen)
+{
+	unsigned int len = 0;
+	unsigned int i;
+
+	if (clip_ucs == NULL || buflen == 0) {
+		return -1;
+	}
+	for (i = 0; i < clip_ucs_len; i++) {
+		const uint32_t ch = clip_ucs[i];
+		char enc[4];
+		unsigned int n;
+
+		if (ch < 0x80) {
+			enc[0] = (char) ch;
+			n = 1;
+		} else if (ch < 0x800) {
+			enc[0] = (char) (0xc0 | (ch >> 6));
+			enc[1] = (char) (0x80 | (ch & 0x3f));
+			n = 2;
+		} else if (ch < 0x10000) {
+			enc[0] = (char) (0xe0 | (ch >> 12));
+			enc[1] = (char) (0x80 | ((ch >> 6) & 0x3f));
+			enc[2] = (char) (0x80 | (ch & 0x3f));
+			n = 3;
+		} else {
+			enc[0] = (char) (0xf0 | (ch >> 18));
+			enc[1] = (char) (0x80 | ((ch >> 12) & 0x3f));
+			enc[2] = (char) (0x80 | ((ch >> 6) & 0x3f));
+			enc[3] = (char) (0x80 | (ch & 0x3f));
+			n = 4;
+		}
+		if (len + n >= buflen) {
+			return -1;	/* would not fit, and half a string is no use */
+		}
+		memcpy(buf + len, enc, n);
+		len += n;
+	}
+	buf[len] = '\0';
+	return (int) len;
+}
+
+int
+clipboard_get_text(char *buf, unsigned int buflen)
+{
+	if (clipboard_type_is_image(clip_file_type)) {
+		return -1;		/* an image is not text */
+	}
+	return clip_to_utf8(buf, buflen);
+}
+
+int
+clipboard_get_type(void)
+{
+	if (clip_image != NULL && clip_image_len > 0) {
+		return clip_file_type;
+	}
+	if (clip_ucs != NULL && clip_ucs_len > 0) {
+		return CLIPBOARD_TYPE_TEXT;
+	}
+	return 0;			/* nothing on it */
+}
 
 int
 clipboard_type_is_image(int file_type)
@@ -400,35 +473,15 @@ clipboard_swi(uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3,
 		clip_file_type = CLIPBOARD_TYPE_TEXT;
 		rpclog("Clipboard: %u characters from the guest\n", out);
 
-		/* Hand it to the front end as UTF-8, which is what every host
-		   clipboard we deal with wants. */
-		{
+		/* Hand it to the front end as UTF-8. */
+		if (host_setter != NULL) {
 			char *utf8 = malloc(out * 4 + 1);
-			unsigned int len = 0;
 
 			if (utf8 != NULL) {
-				for (i = 0; i < out; i++) {
-					const uint32_t ch = clip_ucs[i];
+				const int len = clip_to_utf8(utf8, out * 4 + 1);
 
-					if (ch < 0x80) {
-						utf8[len++] = (char) ch;
-					} else if (ch < 0x800) {
-						utf8[len++] = (char) (0xc0 | (ch >> 6));
-						utf8[len++] = (char) (0x80 | (ch & 0x3f));
-					} else if (ch < 0x10000) {
-						utf8[len++] = (char) (0xe0 | (ch >> 12));
-						utf8[len++] = (char) (0x80 | ((ch >> 6) & 0x3f));
-						utf8[len++] = (char) (0x80 | (ch & 0x3f));
-					} else {
-						utf8[len++] = (char) (0xf0 | (ch >> 18));
-						utf8[len++] = (char) (0x80 | ((ch >> 12) & 0x3f));
-						utf8[len++] = (char) (0x80 | ((ch >> 6) & 0x3f));
-						utf8[len++] = (char) (0x80 | (ch & 0x3f));
-					}
-				}
-				utf8[len] = '\0';
-				if (host_setter != NULL) {
-					host_setter(utf8, len);
+				if (len >= 0) {
+					host_setter(utf8, (unsigned int) len);
 				}
 				free(utf8);
 			}

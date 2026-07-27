@@ -401,14 +401,71 @@ def _vnc_send_keys(syms: list[int]) -> None:
         s.close()
 
 
-def _vnc_click(x: int, y: int) -> None:
+# RISC OS is a three-button system and the buttons are not interchangeable:
+# Select picks, Menu opens the menu for whatever is under the pointer, and
+# Adjust does the "other" thing. Anything beyond dismissing a dialogue box needs
+# Menu, so the button is a parameter rather than always the left one.
+_BUTTONS = {"select": 1, "menu": 2, "adjust": 4}
+
+
+def _vnc_button_mask(button: str) -> int:
+    mask = _BUTTONS.get(button.strip().lower())
+    if mask is None:
+        raise ValueError(
+            f"unknown button {button!r}: use select, menu or adjust"
+        )
+    return mask
+
+
+def _vnc_pointer(s, x: int, y: int, mask: int) -> None:
+    s.sendall(struct.pack(">BBHH", 5, mask, x, y))
+
+
+def _vnc_move(x: int, y: int) -> None:
     s, _, _ = _vnc_connect()
     try:
-        s.sendall(struct.pack(">BBHH", 5, 0, x, y))  # move
+        _vnc_pointer(s, x, y, 0)
         time.sleep(0.05)
-        s.sendall(struct.pack(">BBHH", 5, 1, x, y))  # left down
-        time.sleep(0.08)
-        s.sendall(struct.pack(">BBHH", 5, 0, x, y))  # up
+    finally:
+        s.close()
+
+
+def _vnc_click(x: int, y: int, button: str = "select", count: int = 1) -> None:
+    mask = _vnc_button_mask(button)
+    s, _, _ = _vnc_connect()
+    try:
+        _vnc_pointer(s, x, y, 0)
+        time.sleep(0.05)
+        for n in range(count):
+            if n:
+                # Inside the double-click interval RISC OS allows, but not so
+                # fast that the two presses arrive as one.
+                time.sleep(0.12)
+            _vnc_pointer(s, x, y, mask)
+            time.sleep(0.08)
+            _vnc_pointer(s, x, y, 0)
+        time.sleep(0.05)
+    finally:
+        s.close()
+
+
+def _vnc_drag(x1: int, y1: int, x2: int, y2: int, button: str = "select") -> None:
+    mask = _vnc_button_mask(button)
+    s, _, _ = _vnc_connect()
+    try:
+        _vnc_pointer(s, x1, y1, 0)
+        time.sleep(0.05)
+        _vnc_pointer(s, x1, y1, mask)
+        time.sleep(0.10)
+        # Stepped rather than jumped: the Wimp follows a drag by watching the
+        # pointer move, and one leap can be missed entirely.
+        steps = 8
+        for n in range(1, steps + 1):
+            _vnc_pointer(s, x1 + (x2 - x1) * n // steps,
+                         y1 + (y2 - y1) * n // steps, mask)
+            time.sleep(0.04)
+        time.sleep(0.10)
+        _vnc_pointer(s, x2, y2, 0)
         time.sleep(0.05)
     finally:
         s.close()
@@ -507,17 +564,26 @@ def riscos_screenshot() -> Image:
 
 
 @mcp.tool()
-def riscos_send_text(text: str) -> str:
-    """Type a string at the emulated keyboard (via VNC), followed by Return.
+def riscos_send_text(text: str, press_return: bool = True) -> str:
+    """Type a string at the emulated keyboard (via VNC), by default followed by
+    Return.
 
     Use this to interact with on-screen prompts or the desktop when a command
     can't be driven through riscos_run (e.g. typing into an application, or
     starting the desktop with `Desktop`). Printable ASCII plus Return only.
+
+    Set press_return=False to fill a writable field without committing it — for
+    a save box where the filename is typed and then the OK button is clicked.
+
+    This types character by character at the emulated keyboard, so an
+    application watching for keystrokes sees exactly that. To move a whole
+    string in one go instead, use riscos_clipboard_set and paste it.
     """
     syms = [ord(c) for c in text]
-    syms.append(0xFF0D)  # Return
+    if press_return:
+        syms.append(0xFF0D)  # Return
     _vnc_send_keys(syms)
-    return f"typed {len(text)} chars + Return"
+    return f"typed {len(text)} chars" + (" + Return" if press_return else "")
 
 
 @mcp.tool()
@@ -533,14 +599,45 @@ def riscos_send_key(keysym: int) -> str:
 
 
 @mcp.tool()
-def riscos_click(x: int, y: int) -> str:
-    """Left-click at pixel coordinate (x, y) on the emulated screen (via VNC).
+def riscos_click(x: int, y: int, button: str = "select", count: int = 1) -> str:
+    """Click at pixel coordinate (x, y) on the emulated screen (via VNC).
 
     Coordinates are screen pixels from the top-left, matching riscos_screenshot
-    output. Use this to dismiss dialog boxes, click iconbar icons, etc.
+    output.
+
+    button is "select" (left), "menu" (middle) or "adjust" (right). These are
+    not interchangeable on RISC OS: **"menu" is how you open the menu** for
+    whatever is under the pointer, which is how most of the desktop is reached,
+    and there is no keyboard route to it.
+
+    count=2 double-clicks, which is how a Filer window runs an application.
     """
-    _vnc_click(int(x), int(y))
-    return f"clicked ({x}, {y})"
+    _vnc_click(int(x), int(y), button, int(count))
+    return f"{button} click x{count} at ({x}, {y})"
+
+
+@mcp.tool()
+def riscos_mouse_move(x: int, y: int) -> str:
+    """Move the pointer to (x, y) without pressing anything (via VNC).
+
+    Worth doing before a screenshot when something reacts to the pointer being
+    over it, and before opening a menu, so the menu belongs to the right thing.
+    """
+    _vnc_move(int(x), int(y))
+    return f"pointer at ({x}, {y})"
+
+
+@mcp.tool()
+def riscos_drag(x1: int, y1: int, x2: int, y2: int, button: str = "select") -> str:
+    """Drag from (x1, y1) to (x2, y2) with a button held (via VNC).
+
+    How files are moved and copied on RISC OS, how windows are moved by their
+    title bar, and how they are resized by the bottom-right corner. The pointer
+    is stepped rather than jumped, because the Wimp follows a drag by watching
+    it move and can miss a single leap.
+    """
+    _vnc_drag(int(x1), int(y1), int(x2), int(y2), button)
+    return f"{button} drag ({x1}, {y1}) -> ({x2}, {y2})"
 
 
 def _hexaddr(a: str) -> str:
@@ -549,6 +646,81 @@ def _hexaddr(a: str) -> str:
         a = a[2:]
     int(a, 16)  # validate
     return a
+
+
+@mcp.tool()
+def riscos_save_state(path: str) -> dict:
+    """Snapshot the whole machine to a file: CPU, RAM, VRAM, devices, the
+    graphics card, networking.
+
+    This is an undo. Take one before anything that might wedge the guest or
+    leave it in a state you cannot get out of, then riscos_load_state to put it
+    back exactly as it was. Far quicker than rebooting RISC OS, and it restores
+    things a reboot would not, such as open applications and unsaved work.
+
+    The path is on the *host*, and the emulator writes it, so it must be
+    somewhere the emulator can write.
+    """
+    return _debug.cmd(f"state save {path}")
+
+
+@mcp.tool()
+def riscos_load_state(path: str) -> dict:
+    """Restore a machine snapshot taken by riscos_save_state.
+
+    The snapshot has to belong to this machine - same model, RAM, VRAM, ROM and
+    graphics card - and the mismatch is reported rather than half-applied. A
+    snapshot that cannot be loaded leaves the machine running as it was, so a
+    failed load costs nothing.
+
+    Everything the guest was doing resumes from that instant. Give it a moment
+    afterwards: the first riscos_run following a restore is often swallowed,
+    exactly as the first one after a boot is, so send a throwaway command (or
+    repeat) before trusting an empty result.
+    """
+    return _debug.cmd(f"state load {path}")
+
+
+@mcp.tool()
+def riscos_reset() -> dict:
+    """Reset the emulated machine, as the reset button would.
+
+    The way out when the guest is wedged and no longer answering riscos_run -
+    which can happen if a command is interrupted part way through. Everything
+    unsaved in the guest is lost, so prefer riscos_load_state if a snapshot
+    exists.
+    """
+    return _debug.cmd("reset")
+
+
+@mcp.tool()
+def riscos_clipboard_set(text: str) -> dict:
+    """Put text on the shared clipboard, ready for the guest to paste.
+
+    A data channel, and a different thing from riscos_send_text: this moves a
+    whole string in one go, however long, and nothing has to be watching the
+    keyboard. Use it to get a file's worth of text into an editor - open the
+    editor, then paste - where typing it would be slow and would be seen as
+    keystrokes.
+
+    Needs the shared clipboard turned on for the machine (Settings → Share
+    Clipboard with RISC OS), and the guest's clipboard module running.
+    """
+    return _debug.cmd(f"clipboard set {text}")
+
+
+@mcp.tool()
+def riscos_clipboard_get() -> dict:
+    """Read what is on the shared clipboard, e.g. after copying in the guest.
+
+    Returns {"type": RISC OS filetype, "text": the text or null}. type 0xfff is
+    text; 0xb60 (PNG) and 0xc85 (JPEG) are images, for which "text" is null -
+    use riscos_screenshot to see a picture.
+
+    A way to get a large amount of text *out* of the guest without reading it
+    off the screen: select it in the application, copy, then call this.
+    """
+    return _debug.cmd("clipboard get")
 
 
 @mcp.tool()

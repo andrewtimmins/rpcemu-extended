@@ -53,6 +53,22 @@ response has an `"ok"` boolean; failures carry `"error"`.
 | `resume` (alias `continue`) | `{ok, paused:false}` |
 | `step [n]` | `{ok, stepped}` — steps `n` instructions then re-pauses |
 | `trace [max]` | `{ok, dropped, events:[{seq,type,pc,opcode,arg0,arg1,arg2}]}` — `max` capped 128 |
+| `state save <path>` | `{ok, saved}` — snapshot the whole machine to a host file |
+| `state load <path>` | `{ok, loaded}` — restore one; a snapshot that does not match the machine is refused with `{ok:false, error}` and the machine carries on untouched |
+| `reset` | `{ok, reset}` — reset the machine, as the reset button would |
+| `clipboard get` | `{ok, type, text}` — RISC OS filetype, and `text` is `null` for an image or an empty clipboard |
+| `clipboard set <text>` | `{ok, set}` — put text on the shared clipboard for the guest to paste |
+
+`state` and `reset` are here rather than anywhere else because a snapshot has to
+be taken between instructions on the emulator thread, which is the thread this
+socket is serviced on. They exist so that something driving the machine from
+outside can undo its own mistakes: take a snapshot, try something, and put the
+machine back if it goes wrong, without a reboot and without a person. A failed
+load costs nothing, since the header is checked before anything is restored.
+
+The first command sent to the guest after a restore is often swallowed, the same
+way the first one after a boot is; send a throwaway command before trusting an
+empty result.
 
 `status.reason` / pause reasons: `0`=none `1`=user `2`=breakpoint `3`=watchpoint
 `4`=step `5`=exception `6`=SWI. Trace `type`: `0`=exception `1`=SWI `2`=watchpoint.

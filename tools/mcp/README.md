@@ -24,9 +24,36 @@ It is a thin adapter over interfaces RPCEmu exposes:
 | `riscos_read_file(path)` | Read a file from the HostFS drive. |
 | `riscos_list(path=".")` | List a HostFS directory. |
 | `riscos_screenshot()` | Capture the screen as a PNG (so the model can *see* the display). |
-| `riscos_send_text(text)` | Type a string + Return at the keyboard. |
+| `riscos_send_text(text, press_return=True)` | Type a string at the keyboard, character by character. `press_return=False` fills a writable field without committing it. |
 | `riscos_send_key(keysym)` | Press one key by X11 keysym (Return=0xFF0D, Escape=0xFF1B, …). |
-| `riscos_click(x, y)` | Left-click at a screen pixel coordinate. |
+| `riscos_click(x, y, button="select", count=1)` | Click at a screen pixel. `button` is `select`, `menu` or `adjust`; `count=2` double-clicks. |
+| `riscos_mouse_move(x, y)` | Move the pointer without pressing anything. |
+| `riscos_drag(x1, y1, x2, y2, button="select")` | Drag between two points, stepped so the Wimp follows it. |
+
+RISC OS has three mouse buttons and they are not interchangeable: **Menu (the
+middle button) is how nearly all of the desktop is reached**, and there is no
+keyboard route to it. Dragging is how files are moved and windows are resized.
+
+### Machine control
+
+| Tool | What it does |
+| --- | --- |
+| `riscos_save_state(path)` | Snapshot the whole machine (CPU, RAM, VRAM, devices, graphics card, networking) to a host file. |
+| `riscos_load_state(path)` | Restore one. A snapshot that does not match the machine is refused and the machine carries on untouched. |
+| `riscos_reset()` | Reset the machine, for when the guest is wedged and no longer answering. |
+| `riscos_clipboard_set(text)` | Put text on the shared clipboard for the guest to paste. |
+| `riscos_clipboard_get()` | Read what is on it; returns the RISC OS filetype, and `text` is null for an image. |
+
+**Snapshots are an undo.** Take one before anything that might wedge the guest,
+and restore it instead of rebooting: it is far quicker, and it brings back open
+applications and unsaved work that a reboot would lose. Give the guest a moment
+afterwards - the first `riscos_run` after a restore is often swallowed, as the
+first one after a boot is.
+
+The clipboard is a *data channel*, and a different thing from typing: it moves a
+whole string in one go and needs no host clipboard, so it works headless. Typing
+remains the way to drive anything that is watching for keystrokes. It needs the
+shared clipboard enabled for the machine and the guest module running.
 
 ### Debugger tools (control the *emulated CPU*, not a RISC OS debugger)
 

@@ -45,8 +45,10 @@
 #include "arm.h"
 #include "arm_disasm.h"
 #include "cp15.h"
+#include "hostclipboard.h"
 #include "mem.h"
 #include "rpcemu.h"
+#include "savestate.h"
 
 #ifdef _WIN32
 /* Default control-socket port on Windows, where AF_UNIX is unavailable and the
@@ -416,6 +418,113 @@ dc_cmd_wp(char *r, char *args)
 	}
 }
 
+/**
+ * state save <path> / state load <path>
+ *
+ * Snapshots over the debug socket, which is what lets something driving the
+ * machine from outside - an agent, a test - put it back exactly as it was
+ * rather than starting again. state_save() and state_load() have to run on the
+ * emulator thread between instructions, and this socket is serviced on that
+ * thread, so they can simply be called.
+ */
+static void
+dc_cmd_state(char *r, char *args)
+{
+	char *op = strtok(args, " \t");
+	char *path = strtok(NULL, "");
+
+	if (op == NULL || path == NULL || path[0] == '\0') {
+		dc_error("usage: state save|load <path>");
+		return;
+	}
+
+	if (strcmp(op, "save") == 0) {
+		if (state_save(path) == 0) {
+			snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"saved\":true}");
+		} else {
+			dc_error("save failed");
+		}
+	} else if (strcmp(op, "load") == 0) {
+		char err[256];
+
+		/* Checked first so a mismatch is reported as itself. state_load()
+		   resets the machine on any failure, which would otherwise leave a
+		   caller wondering why its machine had rebooted. */
+		if (state_check(path, err, sizeof(err)) != 0) {
+			char esc[DC_RESP_SZ];
+
+			esc[0] = '\0';
+			dc_json_str(esc, sizeof(esc), err);
+			snprintf(r, DC_RESP_SZ, "{\"ok\":false,\"error\":\"%s\"}", esc);
+			return;
+		}
+		if (state_load(path) == 0) {
+			snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"loaded\":true}");
+		} else {
+			dc_error("load failed");
+		}
+	} else {
+		dc_error("usage: state save|load <path>");
+	}
+}
+
+/**
+ * clipboard get / clipboard set <text>
+ *
+ * The shared clipboard as a data channel, which is a different thing from
+ * typing at the emulated keyboard: this moves a whole string in one go and
+ * needs no host clipboard at all, so it works on a headless machine. Typing
+ * remains the way to drive something that is watching for keys.
+ */
+static void
+dc_cmd_clipboard(char *r, char *args)
+{
+	char *op = strtok(args, " \t");
+	char *text;
+
+	if (op == NULL) {
+		dc_error("usage: clipboard get|set <text>");
+		return;
+	}
+
+	if (strcmp(op, "get") == 0) {
+		char buf[DC_RESP_SZ / 2];
+		const int type = clipboard_get_type();
+		const int len = clipboard_get_text(buf, sizeof(buf));
+
+		if (type == 0) {
+			snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"type\":0,\"text\":null}");
+		} else if (len < 0) {
+			/* An image, or more text than fits: say what is there rather
+			   than pretending the clipboard is empty. */
+			snprintf(r, DC_RESP_SZ,
+			    "{\"ok\":true,\"type\":%d,\"text\":null}", type);
+		} else {
+			char esc[DC_RESP_SZ];
+
+			esc[0] = '\0';
+			dc_json_str(esc, sizeof(esc), buf);
+			snprintf(r, DC_RESP_SZ,
+			    "{\"ok\":true,\"type\":%d,\"text\":\"%s\"}", type, esc);
+		}
+		return;
+	}
+
+	if (strcmp(op, "set") == 0) {
+		text = strtok(NULL, "");
+		if (text == NULL) {
+			text = (char *) "";
+		}
+		clipboard_host_changed(CLIPBOARD_TYPE_TEXT, text,
+		                       (unsigned int) strlen(text));
+		snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"set\":%u}",
+		         (unsigned) strlen(text));
+		return;
+	}
+
+	dc_error("usage: clipboard get|set <text>");
+}
+
 static void
 dc_cmd_trace(char *r, char *args)
 {
@@ -499,6 +608,16 @@ dc_dispatch(char *line)
 		}
 		debugger_single_step(nsteps);
 		snprintf(resp, DC_RESP_SZ, "{\"ok\":true,\"stepped\":%u}", (unsigned) nsteps);
+	} else if (strcmp(verb, "reset") == 0) {
+		/* A wedged guest is otherwise the end of an unattended session: the
+		   command channel into RISC OS can be left mid-command by a client
+		   that goes away, and nothing short of a reset gets it back. */
+		resetrpc();
+		snprintf(resp, DC_RESP_SZ, "{\"ok\":true,\"reset\":true}");
+	} else if (strcmp(verb, "state") == 0) {
+		dc_cmd_state(resp, args ? args : (char *) "");
+	} else if (strcmp(verb, "clipboard") == 0) {
+		dc_cmd_clipboard(resp, args ? args : (char *) "");
 	} else {
 		dc_error("unknown verb");
 	}

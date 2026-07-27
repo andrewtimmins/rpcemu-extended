@@ -108,6 +108,21 @@ extern void clipboard_set_host_image_setter(clipboard_host_image_setter setter);
 extern int clipboard_type_is_image(int file_type);
 
 /**
+ * Read what is on the clipboard as UTF-8, for a caller inside the emulator (the
+ * debug socket, so an agent can see what the guest copied without a host
+ * clipboard being involved at all).
+ *
+ * @param buf    Where to put it, terminated
+ * @param buflen Size of buf
+ * @return bytes written, or -1 if the clipboard holds an image, holds nothing,
+ *         or holds more text than fits
+ */
+extern int clipboard_get_text(char *buf, unsigned int buflen);
+
+/** The filetype on the clipboard, or 0 when there is nothing on it. */
+extern int clipboard_get_type(void);
+
+/**
  * Forget everything, e.g. on reset: the guest's pollword address is no longer
  * valid and its module will set up again.
  */
