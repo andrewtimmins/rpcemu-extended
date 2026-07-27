@@ -610,6 +610,8 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 
 	settings.Read("hostcmd_enabled", &value, 1L);
 	cfg->hostcmd_enabled = static_cast<int>(value);
+	settings.Read("clipboard_enabled", &value, 0L);
+	cfg->clipboard_enabled = static_cast<int>(value);
 	settings.Read("hostcmd_socket", &sText, wxEmptyString);
 	strncpy(cfg->hostcmd_socket, sText.utf8_str().data(), sizeof(cfg->hostcmd_socket) - 1);
 	cfg->hostcmd_socket[sizeof(cfg->hostcmd_socket) - 1] = '\0';
@@ -694,6 +696,7 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	settings.Write("vnc_port", static_cast<long>(cfg->vnc_port));
 	settings.Write("vnc_password", wxString(cfg->vnc_password, wxConvUTF8));
 	settings.Write("hostcmd_enabled", static_cast<long>(cfg->hostcmd_enabled));
+	settings.Write("clipboard_enabled", static_cast<long>(cfg->clipboard_enabled));
 	settings.Write("hostcmd_socket", wxString(cfg->hostcmd_socket, wxConvUTF8));
 	settings.Write("debug_enabled", static_cast<long>(cfg->debug_enabled));
 	settings.Write("debug_socket", wxString(cfg->debug_socket, wxConvUTF8));

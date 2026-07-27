@@ -100,6 +100,7 @@ enum MainFrameMenuId {
 	ID_MENU_CPU_IDLE,
 	ID_MENU_MOUSE_HACK,
 	ID_MENU_MOUSE_TWOBUTTON,
+	ID_MENU_SHARED_CLIPBOARD,
 	ID_MENU_DEBUG_RUN,
 	ID_MENU_DEBUG_PAUSE,
 	ID_MENU_DEBUG_STEP,
@@ -117,6 +118,7 @@ enum TimerId {
 	ID_TIMER_IDE_LED,
 	ID_TIMER_HOSTFS_LED,
 	ID_TIMER_NETWORK_LED,
+	ID_TIMER_CLIPBOARD,
 };
 
 enum StatusBarField {
@@ -156,6 +158,7 @@ public:
 	void PostDebuggerStateChanged() override;
 	void PostMachineSwitched(const std::string &machine_name) override;
 	void PostQuit() override;
+	void PostSetHostClipboard(const std::string &utf8) override;
 
 private:
 	void OnClose(wxCloseEvent &event);
@@ -192,6 +195,7 @@ private:
 	void OnCpuIdle(wxCommandEvent &event);
 	void OnMouseHack(wxCommandEvent &event);
 	void OnMouseTwobutton(wxCommandEvent &event);
+	void OnSharedClipboard(wxCommandEvent &event);
 	void OnDebugRun(wxCommandEvent &event);
 	void OnDebugPause(wxCommandEvent &event);
 	void OnDebugStep(wxCommandEvent &event);
@@ -214,6 +218,7 @@ private:
 	void OnMenuClose(wxMenuEvent &event);
 	void OnLeftDown(wxMouseEvent &event);
 	void OnMipsTimer(wxTimerEvent &event);
+	void OnClipboardTimer(wxTimerEvent &event);
 	void OnVideoTimer(wxTimerEvent &event);
 	void OnFdcLedTimer(wxTimerEvent &event);
 	void OnIdeLedTimer(wxTimerEvent &event);
@@ -273,6 +278,7 @@ private:
 	wxMenuItem *cpu_idle_menu_item_ = nullptr;
 	wxMenuItem *mouse_hack_menu_item_ = nullptr;
 	wxMenuItem *mouse_twobutton_menu_item_ = nullptr;
+	wxMenuItem *shared_clipboard_menu_item_ = nullptr;
 	wxMenuItem *cdrom_disabled_item_ = nullptr;
 	wxMenuItem *cdrom_empty_item_ = nullptr;
 	wxMenuItem *cdrom_iso_item_ = nullptr;
@@ -303,6 +309,8 @@ private:
 	wxTimer ide_led_timer_;
 	wxTimer hostfs_led_timer_;
 	wxTimer network_led_timer_;
+	wxTimer clipboard_timer_;
+	wxString clipboard_last_seen_;	/* host text already sent to the guest */
 
 	uint64_t mips_total_instructions_ = 0;
 	int32_t mips_seconds_ = 0;

@@ -30,6 +30,7 @@
 #include "mem.h"
 #include "keyboard.h"
 #include "hostfs.h"
+#include "hostclipboard.h"
 #include "hostcmd.h"
 #include "savestate.h"
 
@@ -660,6 +661,11 @@ opSWI(uint32_t opcode)
 		}
 	}
 #endif
+	else if (swinum == ARCEM_SWI_CLIPBOARD) {
+		clipboard_swi(arm.reg[0], arm.reg[1], arm.reg[2], arm.reg[3],
+		              arm.reg[4], arm.reg[5], &arm.reg[0], &arm.reg[1]);
+		arm.reg[cpsr] &= ~VFLAG;	/* X-form: report success */
+	}
 	else if (swinum == ARCEM_SWI_HOSTCMD) {
 		if (config.hostcmd_enabled) {
 			ARMul_State state;

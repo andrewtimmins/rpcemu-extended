@@ -65,6 +65,8 @@ enum class EmuCommandType {
 	IntegerScaling,
 	FitToWindow,
 	FollowHostDisplay,
+	ClipboardEnabled,
+	HostClipboardChanged,
 	ReloadIdeImages,
 	SwitchMachine,
 	NatRuleAdd,
@@ -157,6 +159,7 @@ public:
 	void IntegerScaling();
 	void FitToWindow();
 	void FollowHostDisplay();
+	void SetClipboardEnabled();
 	void SwitchMachine(const std::string &config_path);
 	void NatRuleAdd(const PortForwardRule &rule);
 	void NatRuleEdit(const PortForwardRule &old_rule, const PortForwardRule &new_rule);
@@ -184,6 +187,9 @@ public:
 	bool LoadState(const std::string &path, std::string *error_out);
 
 	void StoreNatRuleForGui(PortForwardRule rule);
+	/* Host clipboard text, on its way to the guest (emulator thread). */
+	void HostClipboardChanged(const std::string &utf8);
+	void ClipboardEnabled(bool enabled);
 	std::vector<PortForwardRule> TakePendingNatRules();
 
 	void IdleProcessEvents();

@@ -60,6 +60,15 @@ void HeadlessBridge::PostQuit()
 }
 
 /*
+ * A headless machine has no host clipboard to put anything on, so this is where
+ * guest copies go: nowhere.
+ */
+void HeadlessBridge::PostSetHostClipboard(const std::string &utf8)
+{
+	(void) utf8;
+}
+
+/*
  * error()/fatal() in emulator_host.cpp already print the message to stderr
  * before calling the bridge, so the non-fatal hooks need only avoid crashing.
  */

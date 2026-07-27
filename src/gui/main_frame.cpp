@@ -31,6 +31,8 @@
 #include <cstring>
 #include <mutex>
 
+#include <wx/clipbrd.h>
+#include <wx/dataobj.h>
 #include <wx/display.h>
 #include <wx/filedlg.h>
 #include <wx/filename.h>
@@ -98,6 +100,7 @@ wxBEGIN_EVENT_TABLE(MainFrame, wxFrame)
 	EVT_TIMER(ID_TIMER_IDE_LED, MainFrame::OnIdeLedTimer)
 	EVT_TIMER(ID_TIMER_HOSTFS_LED, MainFrame::OnHostfsLedTimer)
 	EVT_TIMER(ID_TIMER_NETWORK_LED, MainFrame::OnNetworkLedTimer)
+	EVT_TIMER(ID_TIMER_CLIPBOARD, MainFrame::OnClipboardTimer)
 	EVT_DISPLAY_CHANGED(MainFrame::OnDisplayChanged)
 wxEND_EVENT_TABLE()
 
@@ -110,7 +113,8 @@ MainFrame::MainFrame()
 	  fdc_led_timer_(this, ID_TIMER_FDC_LED),
 	  ide_led_timer_(this, ID_TIMER_IDE_LED),
 	  hostfs_led_timer_(this, ID_TIMER_HOSTFS_LED),
-	  network_led_timer_(this, ID_TIMER_NETWORK_LED)
+	  network_led_timer_(this, ID_TIMER_NETWORK_LED),
+	  clipboard_timer_(this, ID_TIMER_CLIPBOARD)
 {
 	config_deep_copy(&config_copy_, &config);
 	pconfig_copy = &config_copy_;
@@ -158,6 +162,12 @@ MainFrame::MainFrame()
 	BuildStatusBar();
 
 	mips_timer_.Start(1000);
+	/* Watch the host clipboard. wxWidgets has no "it changed" notification, so
+	   it has to be looked at now and then; twice a second is well below noticing
+	   and costs nothing measurable. Only runs while the feature is on. */
+	if (config_copy_.clipboard_enabled) {
+		clipboard_timer_.Start(500);
+	}
 
 	window_active_ = true;
 	UpdateMachineStatus();
@@ -871,6 +881,76 @@ void MainFrame::OnMouseTwobutton(wxCommandEvent &event)
 		mouse_twobutton_menu_item_->Check(config_copy_.mousetwobutton != 0);
 	}
 	(void)event;
+}
+
+/*
+ * Settings -> Share Clipboard with RISC OS.
+ */
+void MainFrame::OnSharedClipboard(wxCommandEvent &event)
+{
+	if (emulator_) {
+		emulator_->SetClipboardEnabled();
+	}
+	config_copy_.clipboard_enabled ^= 1;
+	if (shared_clipboard_menu_item_ != nullptr) {
+		shared_clipboard_menu_item_->Check(config_copy_.clipboard_enabled != 0);
+	}
+	if (config_copy_.clipboard_enabled) {
+		clipboard_last_seen_.clear();
+		clipboard_timer_.Start(500);
+	} else {
+		clipboard_timer_.Stop();
+	}
+	(void) event;
+}
+
+/*
+ * Look at the host clipboard, and if the text has changed since we last passed
+ * it on, hand it to the emulator thread for the guest.
+ */
+void MainFrame::OnClipboardTimer(wxTimerEvent &)
+{
+	if (!config_copy_.clipboard_enabled || emulator_ == nullptr) {
+		return;
+	}
+	if (!wxTheClipboard->Open()) {
+		return;		/* another application has it; try again next time */
+	}
+
+	wxString text;
+	if (wxTheClipboard->IsSupported(wxDF_UNICODETEXT)) {
+		wxTextDataObject data;
+		if (wxTheClipboard->GetData(data)) {
+			text = data.GetText();
+		}
+	}
+	wxTheClipboard->Close();
+
+	if (text.empty() || text == clipboard_last_seen_) {
+		return;
+	}
+	clipboard_last_seen_ = text;
+	emulator_->HostClipboardChanged(std::string(text.utf8_str()));
+}
+
+/*
+ * The guest has copied something. Called from the emulator thread, so the
+ * clipboard itself is touched on the GUI thread.
+ */
+void MainFrame::PostSetHostClipboard(const std::string &utf8)
+{
+	const wxString text = wxString::FromUTF8(utf8.c_str(), utf8.size());
+
+	CallAfter([this, text]() {
+		if (!wxTheClipboard->Open()) {
+			return;
+		}
+		wxTheClipboard->SetData(new wxTextDataObject(text));
+		wxTheClipboard->Close();
+		/* Ours now: do not read it straight back and send it to the guest
+		   again. */
+		clipboard_last_seen_ = text;
+	});
 }
 
 void MainFrame::OnDebugRun(wxCommandEvent &)

@@ -34,6 +34,7 @@
 
 extern "C" {
 #include "arm.h"
+#include "hostclipboard.h"
 #include "arm_disasm.h"
 #include "cdrom-iso.h"
 #include "cmos.h"
@@ -290,6 +291,13 @@ extern "C" void rpcemu_move_host_mouse(uint16_t x, uint16_t y)
 	g_gui_bridge->PostMoveHostMouse(update);
 }
 
+extern "C" void rpcemu_set_host_clipboard(const char *utf8, unsigned int len)
+{
+	if (g_gui_bridge != nullptr && utf8 != nullptr) {
+		g_gui_bridge->PostSetHostClipboard(std::string(utf8, len));
+	}
+}
+
 extern "C" void rpcemu_send_nat_rule_to_gui(PortForwardRule rule)
 {
 	if (g_emulator_host != nullptr) {
@@ -398,6 +406,7 @@ EmulatorHost::EmulatorHost(GuiBridge *gui_bridge)
 {
 	g_gui_bridge = gui_bridge;
 	g_emulator_host = this;
+	clipboard_set_host_setter(rpcemu_set_host_clipboard);
 	start_time_ = std::chrono::steady_clock::now();
 }
 
@@ -718,6 +727,19 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 		config.follow_host_display ^= 1;
 		config_save(&config);
 		break;
+	case EmuCommandType::ClipboardEnabled:
+		config.clipboard_enabled ^= 1;
+		config_save(&config);
+		if (!config.clipboard_enabled) {
+			clipboard_reset();
+		}
+		break;
+	case EmuCommandType::HostClipboardChanged:
+		/* Runs on the emulator thread, so setting the guest's pollword and
+		   touching the stored clipboard are safe here. */
+		clipboard_host_changed(CLIPBOARD_TYPE_TEXT, command.string_path.c_str(),
+		                       static_cast<unsigned int>(command.string_path.size()));
+		break;
 	case EmuCommandType::CdromDisabled:
 		if (config.cdromenabled) {
 			config.cdromenabled = 0;
@@ -978,6 +1000,19 @@ void EmulatorHost::FitToWindow()
 void EmulatorHost::FollowHostDisplay()
 {
 	PostCommand(MakeCommand(EmuCommandType::FollowHostDisplay));
+}
+
+void EmulatorHost::SetClipboardEnabled()
+{
+	PostCommand(MakeCommand(EmuCommandType::ClipboardEnabled));
+}
+
+void EmulatorHost::HostClipboardChanged(const std::string &utf8)
+{
+	EmuCommand cmd;
+	cmd.type = EmuCommandType::HostClipboardChanged;
+	cmd.string_path = utf8;
+	PostCommand(cmd);
 }
 
 void EmulatorHost::SwitchMachine(const std::string &config_path)

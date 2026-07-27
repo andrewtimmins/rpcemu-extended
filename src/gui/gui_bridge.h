@@ -48,6 +48,9 @@ public:
 
 	/* The core is asking the application to quit (e.g. guest soft power-off). */
 	virtual void PostQuit() = 0;
+
+	/* The guest has put text on the clipboard; put it on the host's. */
+	virtual void PostSetHostClipboard(const std::string &utf8) = 0;
 };
 
 #endif

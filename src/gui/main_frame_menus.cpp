@@ -188,6 +188,11 @@ void MainFrame::BuildMenus()
 	   code (OnMouseMove, mouse_captured) and can be re-exposed here if needed. */
 	mouse_twobutton_menu_item_ =
 	    settings_menu->AppendCheckItem(ID_MENU_MOUSE_TWOBUTTON, "Two-button Mouse Mode");
+	shared_clipboard_menu_item_ =
+	    settings_menu->AppendCheckItem(ID_MENU_SHARED_CLIPBOARD, "Share Clipboard with RISC OS");
+	shared_clipboard_menu_item_->SetHelp(
+	    "Copy and paste text between the host and RISC OS. Needs the "
+	    "SharedClipboard module, which loads itself in the guest.");
 	cpu_idle_menu_item_ = settings_menu->AppendCheckItem(ID_MENU_CPU_IDLE, "Reduce CPU Usage");
 
 	auto *debug_menu = new wxMenu;
@@ -257,6 +262,7 @@ void MainFrame::BuildMenus()
 	BindMenuItem(file_menu, ID_MENU_SUSPEND_ON_EXIT, this, &MainFrame::OnSuspendOnExit);
 	BindMenuItem(settings_menu, ID_MENU_CPU_IDLE, this, &MainFrame::OnCpuIdle);
 	BindMenuItem(settings_menu, ID_MENU_MOUSE_TWOBUTTON, this, &MainFrame::OnMouseTwobutton);
+	BindMenuItem(settings_menu, ID_MENU_SHARED_CLIPBOARD, this, &MainFrame::OnSharedClipboard);
 #ifdef RPCEMU_VNC
 	BindMenuItem(settings_menu, ID_MENU_VNC, this, &MainFrame::OnVnc);
 #endif
@@ -401,6 +407,9 @@ void MainFrame::SyncSettingsMenuChecks()
 	}
 	if (mouse_twobutton_menu_item_ != nullptr) {
 		mouse_twobutton_menu_item_->Check(config_copy_.mousetwobutton != 0);
+	}
+	if (shared_clipboard_menu_item_ != nullptr) {
+		shared_clipboard_menu_item_->Check(config_copy_.clipboard_enabled != 0);
 	}
 	if (integer_scaling_menu_item_ != nullptr) {
 		integer_scaling_menu_item_->Check(config_copy_.integer_scaling != 0);
