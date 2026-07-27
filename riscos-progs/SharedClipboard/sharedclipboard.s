@@ -810,6 +810,13 @@ claim_clipboard:
 @ reaches the host.
 ask_who_owns_it:
 	stmfd	sp!, {r0, r1, r2, r4, lr}
+
+	@ Nothing to ask if the clipboard is ours.
+	adrl	r0, own_clipboard
+	ldr	r0, [r0]
+	teq	r0, #0
+	bne	2f
+
 	adrl	r4, msg_block
 
 	mov	r0, #48
@@ -842,6 +849,7 @@ ask_who_owns_it:
 	ldr	r0, =0x3004		@ asked who owns the clipboard
 	bl	trace
 1:
+2:
 	ldmfd	sp!, {r0, r1, r2, r4, pc}
 
 	.ltorg
@@ -859,6 +867,18 @@ handle_message:
 	orr	r0, r5, #0x2000		@ 2xx: a message received
 	bl	trace
 
+	@ Our own? A broadcast is delivered to its sender as well, and answering our
+	@ own request starts a conversation with ourselves that uses up the reference
+	@ the real answer has to match - so the application's reply gets thrown away
+	@ as stale. Nothing here ever needs to hear from itself.
+	ldr	r0, [r4, #MSG_SENDER]
+	adrl	r1, task_handle
+	ldr	r1, [r1]
+	teq	r0, r1
+	ldreq	r0, =0x3020		@ ignored our own message
+	bleq	trace
+	beq	2f
+
 	teq	r5, #Message_Quit
 	beq	task_quit
 
@@ -874,7 +894,7 @@ handle_message:
 	bleq	msg_data_save
 	teq	r5, #Message_DataLoad
 	bleq	msg_data_load
-
+2:
 	ldmfd	sp!, {r4, r5, pc}
 
 	.ltorg
@@ -883,6 +903,11 @@ handle_message:
 @ is on it.
 msg_claim_entity:
 	stmfd	sp!, {r0, r1, lr}
+	adrl	r0, poll_block
+	ldr	r0, [r0, #MSG_DATA]
+	and	r0, r0, #0xff
+	orr	r0, r0, #0x4100			@ 41xx: a claim's flags
+	bl	trace
 	adrl	r0, poll_block
 	ldr	r1, [r0, #MSG_SENDER]
 	adrl	r0, task_handle
@@ -909,16 +934,28 @@ msg_data_request:
 	stmfd	sp!, {r0, r1, r2, r4, r5, lr}
 	adrl	r4, poll_block
 
+	@ Note the flags we were sent, and why we turn a request down.
+	ldr	r0, [r4, #MSG_DATA + 16]
+	and	r0, r0, #0xff
+	orr	r0, r0, #0x4000			@ 40xx: a request's flags
+	bl	trace
+
 	ldr	r0, [r4, #MSG_DATA + 16]	@ flags
 	tst	r0, #CLAIM_CLIPBOARD
+	ldreq	r0, =0x3010			@ not a clipboard request
+	bleq	trace
 	beq	1f
 	adrl	r0, own_clipboard
 	ldr	r0, [r0]
 	teq	r0, #0
+	ldreq	r0, =0x3011			@ we do not hold the clipboard
+	bleq	trace
 	beq	1f
 	adrl	r0, clip_len
 	ldr	r0, [r0]
 	teq	r0, #0
+	ldreq	r0, =0x3012			@ we hold it but have nothing
+	bleq	trace
 	beq	1f
 
 	mov	r5, r0			@ how much we have
@@ -1184,6 +1221,12 @@ msg_data_load:
 @ call from anywhere, including where a message is being handled.
 trace:
 	stmfd	sp!, {r0, r1, r2, r3, lr}
+	@ Keep the flags. Callers test a condition, note it with a call to here, and
+	@ then branch on that condition: without this the branch tests the
+	@ arithmetic below instead, which quietly inverts decisions. It did exactly
+	@ that to the paste handshake.
+	mrs	lr, cpsr
+	stmfd	sp!, {lr}
 	adrl	r1, trace_pos
 	ldr	r2, [r1]
 	adrl	r3, trace_ring
@@ -1192,6 +1235,8 @@ trace:
 	cmp	r2, #TRACE_MAX
 	movge	r2, #0
 	str	r2, [r1]
+	ldmfd	sp!, {lr}
+	msr	cpsr_f, lr
 	ldmfd	sp!, {r0, r1, r2, r3, pc}
 
 	.ltorg
