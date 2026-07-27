@@ -128,6 +128,9 @@
 	RAM_ADDR		= 20
 	RAM_SIZE		= 24
 
+	@ How much of the recent past *SharedClipLog remembers.
+	TRACE_MAX		= 48
+
 	@ Our clipboard buffer, claimed from the RMA when the task starts.
 	CLIP_MAX		= 64 * 1024
 
@@ -320,6 +323,13 @@ commands:
 	.int	0
 	.int	help_get
 
+	.string	"SharedClipLog"
+	.align
+	.int	command_log
+	.int	0x00000000
+	.int	0
+	.int	help_log
+
 	.int	0			@ end of the table
 
 help_desktop:
@@ -333,6 +343,9 @@ help_put:
 	.align
 help_get:
 	.string	"*SharedClipGet shows the text on the host's clipboard.\rSyntax: *SharedClipGet"
+	.align
+help_log:
+	.string	"*SharedClipLog shows what the clipboard task has been doing, most recent last: 1xx a Wimp event, 2xx a message received, 3xxx something we did.\rSyntax: *SharedClipLog"
 	.align
 
 @ Enter ourselves as an application, which is what makes us a Wimp task.
@@ -409,6 +422,35 @@ command_status:
 	swi	OS_Write0
 4:
 	ldmfd	sp!, {r0, r1, r2, r3, r4, pc}
+
+	.ltorg
+
+@ *SharedClipLog - what the task has seen and done, oldest first.
+command_log:
+	stmfd	sp!, {r0, r1, r2, r4, r5, lr}
+	adrl	r0, text_log
+	swi	OS_Write0
+	adrl	r4, trace_pos
+	ldr	r4, [r4]		@ oldest entry
+	mov	r5, #0
+1:
+	adrl	r0, trace_ring
+	ldr	r0, [r0, r4, lsl #2]
+	teq	r0, #0
+	beq	2f
+	bl	print_hex
+	mov	r0, #' '
+	swi	OS_WriteC
+2:
+	add	r4, r4, #1
+	cmp	r4, #TRACE_MAX
+	movge	r4, #0
+	add	r5, r5, #1
+	cmp	r5, #TRACE_MAX
+	blt	1b
+	swi	OS_NewLine
+	cmp	pc, #0			@ clear V
+	ldmfd	sp!, {r0, r1, r2, r4, r5, pc}
 
 	.ltorg
 
@@ -556,6 +598,9 @@ poll_loop:
 
 	mov	r4, r0			@ the event, kept clear of the handlers
 
+	orr	r0, r4, #0x1000		@ 1xx: an event from Wimp_Poll
+	bl	trace
+
 	teq	r4, #EVENT_POLLWORD
 	bleq	handle_pollword
 	teq	r4, #EVENT_USERMSG
@@ -670,6 +715,8 @@ take_host_clipboard:
 	mov	r0, #1
 	str	r0, [r1]
 
+	ldr	r0, =0x3001		@ took the host's text
+	bl	trace
 	bl	claim_clipboard
 1:
 	ldmfd	sp!, {r4, r5, pc}
@@ -695,6 +742,9 @@ claim_clipboard:
 	mov	r1, r4
 	mov	r2, #0			@ everyone
 	swi	XWimp_SendMessage
+	ldr	r0, =0x3002		@ told everyone we hold it
+	ldrvs	r0, =0x3003		@ ...or failed to
+	bl	trace
 	ldmfd	sp!, {r0, r1, r2, r4, pc}
 
 	.ltorg
@@ -732,6 +782,8 @@ ask_who_owns_it:
 	ldr	r0, [r4, #MSG_MYREF]
 	adrl	r1, check_ref
 	str	r0, [r1]
+	ldr	r0, =0x3004		@ asked who owns the clipboard
+	bl	trace
 1:
 	ldmfd	sp!, {r0, r1, r2, r4, pc}
 
@@ -746,6 +798,9 @@ handle_message:
 	stmfd	sp!, {r4, r5, lr}
 	adrl	r4, poll_block
 	ldr	r5, [r4, #MSG_ACTION]
+
+	orr	r0, r5, #0x2000		@ 2xx: a message received
+	bl	trace
 
 	teq	r5, #Message_Quit
 	beq	task_quit
@@ -830,6 +885,9 @@ msg_data_request:
 	mov	r0, #SEND_USER
 	mov	r1, r4
 	swi	XWimp_SendMessage
+	ldr	r0, =0x3005		@ offered our text to an application
+	ldrvs	r0, =0x3006		@ ...or failed to
+	bl	trace
 	bvs	1f
 	ldr	r0, [r4, #MSG_MYREF]
 	adrl	r1, paste_ref
@@ -1039,6 +1097,22 @@ msg_data_load:
 @ Small change
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
+@ Note r0 in the ring, so *SharedClipLog can say what happened. Small enough to
+@ call from anywhere, including where a message is being handled.
+trace:
+	stmfd	sp!, {r0, r1, r2, r3, lr}
+	adrl	r1, trace_pos
+	ldr	r2, [r1]
+	adrl	r3, trace_ring
+	str	r0, [r3, r2, lsl #2]
+	add	r2, r2, #1
+	cmp	r2, #TRACE_MAX
+	movge	r2, #0
+	str	r2, [r1]
+	ldmfd	sp!, {r0, r1, r2, r3, pc}
+
+	.ltorg
+
 @ Copy the NUL-terminated string at r1 to r0, terminated with a CR as Wimp
 @ messages carry their names.
 copy_string_cr:
@@ -1052,6 +1126,15 @@ copy_string_cr:
 2:
 	mov	r2, #13
 	strb	r2, [r0]
+	ldmfd	sp!, {r0, r1, r2, pc}
+
+@ Print r0 as hex.
+print_hex:
+	stmfd	sp!, {r0, r1, r2, lr}
+	adrl	r1, scratch
+	mov	r2, #16
+	swi	0x200d2		@ XOS_ConvertHex4
+	swivc	OS_Write0
 	ldmfd	sp!, {r0, r1, r2, pc}
 
 @ Print r0 in decimal.
@@ -1073,7 +1156,7 @@ print_number:
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 task_name:
-	.string	"Shared Clipboard Helper"
+	.string	"Shared Clipboard"
 	.align
 task_cmd:
 	.string	"Desktop_SharedClip"
@@ -1111,6 +1194,9 @@ text_registered:
 	.align
 text_unregistered:
 	.string	"  Not connected to the host yet\r\n"
+	.align
+text_log:
+	.string	"Recent activity (1xx event, 2xx message in, 3xxx action):\r\n"
 	.align
 text_off:
 	.string	"  Not enabled in the emulator (Settings, Share Clipboard with RISC OS)\r\n"
@@ -1167,6 +1253,11 @@ paste_ref:
 	.int	0
 paste_offset:
 	.int	0
+
+trace_pos:
+	.int	0
+trace_ring:
+	.space	TRACE_MAX * 4, 0
 
 scratch:
 	.space	1088, 0
