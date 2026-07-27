@@ -82,6 +82,7 @@ private:
 	                                      int refresh, NetworkType network_type);
 	void PopulateRomList();
 	void UpdateRomModelCompatibility();
+	void SetMemoryNote(const char *text);
 	void UpdateHdStatus();
 	void ApplyHardDiscPanel(HardDiscPanel &panel, const HardDiscInfo &info);
 	HardDiscInfo QueryHardDiscInfo(int drive) const;
@@ -124,6 +125,7 @@ private:
 	wxStaticText *bridge_label_ = nullptr;
 	wxTextCtrl *tunnel_edit_ = nullptr;
 	wxStaticText *tunnel_label_ = nullptr;
+	wxStaticText *mem_note_ = nullptr;
 	wxStaticText *compat_label_ = nullptr;
 	wxStaticText *hd_reset_note_ = nullptr;
 	HardDiscPanel hd4_panel_;

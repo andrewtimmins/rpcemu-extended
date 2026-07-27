@@ -169,6 +169,12 @@ void MachineEditDialog::BuildUi()
 	compat_label_ = new wxStaticText(this, wxID_ANY, wxEmptyString);
 	compat_label_->SetMinSize(wxSize(460, -1));
 
+	/* Why the RAM/VRAM selectors are fixed on some models. Without this the
+	   greyed controls look like a fault rather than the shape of the machine
+	   (reported as issue #37). */
+	mem_note_ = new wxStaticText(this, wxID_ANY, wxEmptyString);
+	mem_note_->SetMinSize(wxSize(460, -1));
+
 	PopulateRomList();
 
 	for (int i = 0; i < Model_MAX; ++i) {
@@ -217,6 +223,8 @@ void MachineEditDialog::BuildUi()
 	form->Add(mem_combo_, 1, wxEXPAND);
 	form->Add(new wxStaticText(this, wxID_ANY, "VRAM:"), 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(vram_combo_, 1, wxEXPAND);
+	form->Add(new wxStaticText(this, wxID_ANY, ""), 0);
+	form->Add(mem_note_, 1, wxEXPAND);
 	form->Add(new wxStaticText(this, wxID_ANY, ""), 0);
 	form->Add(gfxcard_check_, 1, wxEXPAND);
 	form->Add(new wxStaticText(this, wxID_ANY, ""), 0);
@@ -363,6 +371,24 @@ Model MachineEditDialog::CurrentModelSelection() const
 	return Model_RPCARM710;
 }
 
+/* Show (or clear) the note under the VRAM selector, and let the dialog resize
+   around it. Wrapping is done here because wxStaticText will not do it itself. */
+void MachineEditDialog::SetMemoryNote(const char *text)
+{
+	if (mem_note_ == nullptr) {
+		return;
+	}
+	if (text == nullptr || text[0] == '\0') {
+		mem_note_->SetLabel(wxEmptyString);
+		mem_note_->Show(false);
+	} else {
+		mem_note_->SetLabel(wxString::FromUTF8(text));
+		mem_note_->Wrap(460);
+		mem_note_->Show(true);
+	}
+	Layout();
+}
+
 void MachineEditDialog::UpdateRomModelCompatibility()
 {
 	char detail[64] = "";
@@ -376,14 +402,18 @@ void MachineEditDialog::UpdateRomModelCompatibility()
 	     vram combo index:   0 = None, 1 = 2MB, 2 = 4MB, 3 = 8MB, 4 = 16MB. */
 	switch (model) {
 	case Model_Kinetic:
-		/* Defined by its 512MB (two on-card SDRAM banks). VRAM is clamped to
-		   2MB: >2MB faults on the HAL physical-map path (pending the HAL
-		   VRAMWidth ROM patch). Both fixed and non-writable. 512MB is
-		   Kinetic-only. */
+		/* Defined by its 512MB (two on-card SDRAM banks), so there is nothing to
+		   choose. VRAM is clamped to 2MB because more than that faults on the
+		   HAL physical-map path; the graphics card supersedes that work, since it
+		   carries its own display memory and reaches modes no amount of VRAM
+		   would offer here. */
 		mem_combo_->SetSelection(7);   /* 512 MB */
 		mem_combo_->Enable(false);
 		vram_combo_->SetSelection(1);  /* 2 MB */
 		vram_combo_->Enable(false);
+		SetMemoryNote("A Kinetic has 512MB on the card itself, and 2MB of VRAM "
+		              "here. For anything the VRAM cannot show, fit the graphics "
+		              "card below.");
 		break;
 
 	case Model_Phoebe:
@@ -392,6 +422,7 @@ void MachineEditDialog::UpdateRomModelCompatibility()
 		mem_combo_->Enable(false);
 		vram_combo_->SetSelection(2);  /* 4 MB */
 		vram_combo_->Enable(false);
+		SetMemoryNote("Phoebe is a fixed 256MB with 4MB of VRAM.");
 		break;
 
 	case Model_A7000:
@@ -404,6 +435,7 @@ void MachineEditDialog::UpdateRomModelCompatibility()
 			mem_combo_->SetSelection(6); /* 512MB is Kinetic-only */
 		}
 		mem_combo_->Enable(true);
+		SetMemoryNote("The A7000 has no VRAM: video runs from main memory.");
 		break;
 
 	default:
@@ -413,6 +445,7 @@ void MachineEditDialog::UpdateRomModelCompatibility()
 		}
 		mem_combo_->Enable(true);
 		vram_combo_->Enable(true);
+		SetMemoryNote("");
 		break;
 	}
 
