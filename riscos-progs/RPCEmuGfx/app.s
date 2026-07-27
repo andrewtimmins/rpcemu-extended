@@ -102,6 +102,7 @@
 	MSG_MENUWARNING	= 0x400c0
 
 	@ Menu item flags
+	MENU_TICK	= 1 << 0
 	MENU_DOTTED	= 1 << 1
 	MENU_WARN	= 1 << 3	@ tell us before showing the submenu
 	MENU_LAST	= 1 << 7
@@ -114,6 +115,8 @@
 	@ Menu geometry, in OS units
 	MENU_WIDTH	= 320
 	MENU_HEIGHT	= 44
+	MENU_SEPARATOR	= 24		@ extra height an item's dotted line takes
+	MENU_BAR	= 96		@ icon bar height: menus sit on top of it
 
 	@ Menu items, in order
 	ITEM_INFO	= 0
@@ -346,13 +349,93 @@ mouse_click:
 	tst	r0, #BUTTON_MENU
 	beq	1f			@ Select and Adjust are not ours
 
+	bl	menu_ticks
+	bl	menu_top
 	adrl	r1, menu_block
 	ldr	r0, [r4, #0]		@ pointer x
 	sub	r2, r0, #64
-	mov	r3, #96 + ITEM_COUNT * MENU_HEIGHT
 	swi	XWimp_CreateMenu
 1:
 	ldmfd	sp!, {r4, pc}
+
+	.ltorg
+
+@ Where the top of the icon bar menu goes.
+@
+@ RISC OS opens an icon bar menu with its bottom edge MENU_BAR OS units up, so it
+@ stands on top of the bar rather than over it. Wimp_CreateMenu is told where the
+@ top goes, so the menu's own height has to be added on - and that is not simply
+@ one MENU_HEIGHT per item: an item with a dotted line below it takes
+@ MENU_SEPARATOR more. Counting only the items left this menu two separators too
+@ low, which is what made it open further down the screen than every other
+@ application's.
+@
+@ Walked rather than worked out once, so that adding an item or a dotted line
+@ cannot quietly put it back where it was.
+@
+@ out: r3 = the y to pass to Wimp_CreateMenu
+menu_top:
+	stmfd	sp!, {r0, r1, lr}
+	adrl	r0, menu_block
+	add	r0, r0, #MENU_HEADER
+	mov	r3, #MENU_BAR
+1:
+	ldr	r1, [r0], #MENU_ITEM_SIZE
+	add	r3, r3, #MENU_HEIGHT
+	tst	r1, #MENU_DOTTED
+	addne	r3, r3, #MENU_SEPARATOR
+	tst	r1, #MENU_LAST
+	beq	1b
+	ldmfd	sp!, {r0, r1, pc}
+
+	.ltorg
+
+@ Tick whichever display is in use, so the menu says where the machine is rather
+@ than only offering somewhere to go. Done as the menu is about to open, because
+@ the display can be switched from outside this application - *GfxCardOn at the
+@ command line, or another copy of the menu - and the tick has to be right at the
+@ moment it is shown, not at the moment we started.
+@
+@ Which display is in use is the kernel's to answer and the card's registers are
+@ out of reach here, so the driver publishes it in GfxCard$Display. A value we do
+@ not recognise leaves both items unticked, which is at least not a lie.
+menu_ticks:
+	stmfd	sp!, {r0, r1, r2, r4, lr}
+
+	adrl	r0, cmd_vars
+	swi	XOS_CLI			@ have the driver publish the state
+
+	adrl	r0, var_display
+	adrl	r1, var_buf
+	mov	r2, #0
+	strb	r2, [r1]		@ a failed read must not tick anything
+	bl	read_var
+
+	adrl	r1, var_buf
+	ldrb	r2, [r1]		@ "Card" or "VIDC20"; first letter is enough
+	teq	r2, #'C'
+	moveq	r0, #1
+	movne	r0, #0
+	teq	r2, #'V'
+	moveq	r1, #1
+	movne	r1, #0
+
+	adrl	r4, menu_block
+	add	r4, r4, #MENU_HEADER
+
+	ldr	r2, [r4, #ITEM_ON * MENU_ITEM_SIZE]
+	bic	r2, r2, #MENU_TICK
+	teq	r0, #0
+	orrne	r2, r2, #MENU_TICK
+	str	r2, [r4, #ITEM_ON * MENU_ITEM_SIZE]
+
+	ldr	r2, [r4, #ITEM_OFF * MENU_ITEM_SIZE]
+	bic	r2, r2, #MENU_TICK
+	teq	r1, #0
+	orrne	r2, r2, #MENU_TICK
+	str	r2, [r4, #ITEM_OFF * MENU_ITEM_SIZE]
+
+	ldmfd	sp!, {r0, r1, r2, r4, pc}
 
 	.ltorg
 
@@ -710,6 +793,9 @@ var_store:
 	.balign	4, 0
 var_frames:
 	.string	"GfxCard$Frames"
+	.balign	4, 0
+var_display:
+	.string	"GfxCard$Display"
 	.balign	4, 0
 
 cmd_vars:

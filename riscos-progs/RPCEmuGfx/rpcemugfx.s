@@ -312,7 +312,7 @@ command_status_help:
 	.align
 
 command_vars_help:
-	.string	"*GfxCardVars puts the card's state into GfxCard$Mode, GfxCard$Store and GfxCard$Frames, for anything that cannot reach the card's registers itself.\rSyntax: *GfxCardVars"
+	.string	"*GfxCardVars puts the card's state into GfxCard$Mode, GfxCard$Store, GfxCard$Frames and GfxCard$Display, for anything that cannot reach the card's registers itself.\rSyntax: *GfxCardVars"
 	.align
 
 command_on_help:
@@ -1543,6 +1543,31 @@ command_vars:
 	adrl	r0, var_frames
 	bl	set_var
 
+	@ GfxCard$Display - which display the machine is going through, so that a
+	@ menu can show where it is rather than leaving the user to guess.
+	@
+	@ Asked of the OS, not read off the card's own enable bit: what decides
+	@ what you are looking at is which driver the kernel is using, and only the
+	@ kernel can say. Anything that is not this driver is the machine's built-in
+	@ display, which on a Risc PC is VIDC20 - as is an OS too old or too broken
+	@ to answer, which cannot be using this card either way.
+	add	r4, r5, #WS_CMD
+	mov	r0, #ScreenMode_SelectDevice
+	mvn	r1, #0			@ read the current device, do not change it
+	swi	XOS_ScreenMode
+	bvs	4f
+	ldr	r0, [r5, #WS_DRIVER]
+	teq	r0, r1
+	bne	4f
+	adrl	r6, vtext_card
+	b	5f
+4:
+	adrl	r6, vtext_vidc
+5:
+	bl	copy_string
+	adrl	r0, var_display
+	bl	set_var
+
 	cmp	pc, #0			@ clear V
 	ldmfd	sp!, {r4, r5, r6, pc}
 
@@ -1589,6 +1614,15 @@ var_store:
 	.align
 var_frames:
 	.string	"GfxCard$Frames"
+	.align
+var_display:
+	.string	"GfxCard$Display"
+	.align
+vtext_card:
+	.string	"Card"
+	.align
+vtext_vidc:
+	.string	"VIDC20"
 	.align
 vtext_idle:
 	.string	"Not displaying"
