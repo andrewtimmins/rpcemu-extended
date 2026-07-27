@@ -302,6 +302,17 @@ build_podules() {
 		cp -f hostfs,ffa hostfsfiler,ffa "$SCRIPT_DIR/poduleroms/"
 	)
 
+	local clip_dir="riscos-progs/SharedClipboard"
+	if [ -d "$clip_dir" ]; then
+		echo "Building SharedClipboard podule ROM..."
+		(
+			cd "$clip_dir"
+			make clean
+			make AS=arm-linux-gnueabi-as LD=arm-linux-gnueabi-ld OBJCOPY=arm-linux-gnueabi-objcopy
+			cp -f "sharedclipboard,ffa" "$SCRIPT_DIR/poduleroms/"
+		)
+	fi
+
 	local support_dir="riscos-progs/RPCEmuSupport"
 	if [ -d "$support_dir" ]; then
 		echo "Building RPCEmuSupport podule ROM..."

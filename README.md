@@ -25,6 +25,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **Multi-machine configuration** — create, edit, clone, and delete machine profiles from a startup selector; each machine has isolated CMOS, HostFS, and hard disc storage.
 - **Quick machine switching** — switch between machines via *File → Recent Machines* without restarting.
 - **Save/load state, suspend & resume** — snapshot a machine's complete running state (CPU, RAM, VRAM, devices, and networking) to disk and restore it exactly. Use *File → Save State* / *Load State* for named snapshots, or *File → Suspend* to save and exit and pick up right where you left off via the machine's **Resume** button in the selector. Contributed by Nick Brown.
+- **Shared clipboard** — copy text on the host and paste it in RISC OS, or the other way about. Off by default (*Settings → Share Clipboard with RISC OS*), since it puts your host clipboard within the guest's reach; the guest half loads itself and needs nothing installed. Text only for now. RiscOS Cloverleaf's design and interface, credited below. See [docs/clipboard.md](docs/clipboard.md).
 - **Dual HostFS drives** — per-machine **HostFS** plus a common **Shared** drive (`shared/`) visible to all machines.
 - **Access/ShareFS networking** — NAT-mode relay for Acorn Access and ShareFS file sharing between emulated and real machines.
 - **Expansion cards (podules)** — assign emulated podules per machine (*Settings → Machine → Podules*): ROM, MIDI (AKA16/AKA12/MIDI Max, host MIDI via ALSA), and the Computer Concepts Lark sampler. Plugin ABI for adding more. See [docs/podules.md](docs/podules.md).
@@ -84,6 +85,7 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `docs/peripherals.md` | Serial and parallel ports (file logging, TCP modem, printer) |
 | `docs/podules.md` | Expansion cards (podules): bundled devices, configuration, plugin ABI |
 | `docs/gfxcard.md` | Graphics card: display modes beyond what VRAM allows, and its GraphicsV driver |
+| `docs/clipboard.md` | Shared clipboard: copying text between the host and RISC OS |
 | `docs/hostcmd.md` | HostCmd: drive the RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`) |
 | `tools/mcp/README.md` | MCP server: drive a RISC OS machine from Claude / an agent (commands, files, screen, debugger). Setup + tool reference. |
 | `docs/debugcmd.md` | DebugCmd: control the emulated CPU over a socket (registers, memory, disassembly, breakpoints, single-step) |
@@ -463,5 +465,18 @@ networking features.
   interface is used: the register interface here is our own and the driver is
   written from the GraphicsV documentation in the RISC OS sources. The
   acknowledgement is to the idea, gratefully.
+- The **shared clipboard** is **RiscOS Cloverleaf's** design, from the
+  RpcemuHelper module in their RPCEmu fork at
+  <https://github.com/riscoscloverleaf/rpcemu>. Their SWI interface and reason
+  codes are kept exactly, so their guest module and ours are interchangeable, and
+  `src/hostclipboard.c` is derived from theirs and carries their copyright (GNU
+  GPL v2). Their guest module is 2-clause BSD; ours is a fresh implementation in
+  assembler that speaks their protocol, and credits them in its header. Two of
+  their ideas do the heavy lifting: the guest hands the host RISC OS's own UCS
+  conversion table, so text is converted through the alphabet the machine is
+  configured for, and the host announces a change with a pollword the guest's task
+  waits on, so neither side polls. The Latin-1 UCS table the module carries is
+  **NetSurf's** (Copyright 2005 **John M Bell**, GNU GPL v2), by way of
+  Cloverleaf's `ucstables.c`. See `docs/clipboard.md`.
 - Spork Edition enhancements by Andy Timmins and contributors.
 - Machine save/load state (suspend & resume) contributed by **Nick Brown**.

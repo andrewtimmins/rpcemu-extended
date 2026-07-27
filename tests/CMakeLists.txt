@@ -104,6 +104,12 @@ add_executable(test_gfxcard test_gfxcard.c
 target_include_directories(test_gfxcard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 add_test(NAME test_gfxcard COMMAND test_gfxcard)
 
+# The shared clipboard's text conversion. hostclipboard.c is included by the test
+# and the emulated memory stubbed, so this links nothing.
+add_executable(test_clipboard test_clipboard.c)
+target_include_directories(test_clipboard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+add_test(NAME test_clipboard COMMAND test_clipboard)
+
 # The graphics card's driver module, as RISC OS will read it. The image is
 # assembled by hand and committed (build.sh --podules), so nothing in an ordinary
 # build would notice it going stale or truncated; this reads it the way the module

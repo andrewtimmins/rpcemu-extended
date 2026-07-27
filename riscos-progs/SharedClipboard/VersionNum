@@ -1,0 +1,12 @@
+# SharedClipboard module version, in the RISC OS VersionNum style.
+#
+# The Makefile turns this into version.inc, which supplies the module's help
+# string. Bump both fields together when the module changes.
+#
+# The date is deliberate rather than a build stamp: the assembled module is
+# committed as poduleroms/sharedclipboard,ffa and only rebuilt when the guest
+# ROMs are, so a real build date would record when that last happened rather
+# than anything a user could act on.
+
+Module_MajorVersion	0.01
+Module_Date		27 Jul 2026
