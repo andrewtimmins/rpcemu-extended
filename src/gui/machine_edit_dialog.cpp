@@ -173,13 +173,10 @@ void MachineEditDialog::BuildUi()
 	   greyed controls look like a fault rather than the shape of the machine
 	   (reported as issue #37). */
 	mem_note_ = new wxStaticText(this, wxID_ANY, wxEmptyString);
-	mem_note_->SetMinSize(wxSize(460, -1));
 
 	PopulateRomList();
 
-	for (int i = 0; i < Model_MAX; ++i) {
-		model_combo_->Append(wxString::FromUTF8(models[i].name_gui));
-	}
+	PopulateModelList(Model_MAX);
 
 	const int mem_values[] = {4, 8, 16, 32, 64, 128, 256, 512};
 	for (int mem : mem_values) {
@@ -193,8 +190,12 @@ void MachineEditDialog::BuildUi()
 
 	/* The graphics card carries its own display memory, so it is the answer to
 	   the VRAM limit rather than another size of it - hence its place here. */
-	gfxcard_check_ = new wxCheckBox(this, wxID_ANY, "Graphics card (display modes beyond VRAM)");
-	gfxcard_boot_check_ = new wxCheckBox(this, wxID_ANY, "...and make it the display at boot");
+	gfxcard_check_ = new wxCheckBox(this, wxID_ANY, "High-Resolution Graphics Card");
+	gfxcard_boot_check_ = new wxCheckBox(this, wxID_ANY, "Make High-Resolution Graphics Card the default display");
+	fullscreen_check_ = new wxCheckBox(this, wxID_ANY, "Start this machine full screen");
+	fullscreen_check_->SetToolTip(
+	    "Go full screen as soon as this machine starts, rather than opening a "
+	    "window first. Press Ctrl+End or use Settings > Full Screen to leave it.");
 	gfxcard_boot_check_->SetToolTip(
 	    "Hand the display to the card as the machine boots, so RISC OS comes up on "
 	    "it rather than on VIDC20 - no *GfxCardOn needed.\n\n"
@@ -223,12 +224,23 @@ void MachineEditDialog::BuildUi()
 	form->Add(mem_combo_, 1, wxEXPAND);
 	form->Add(new wxStaticText(this, wxID_ANY, "VRAM:"), 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(vram_combo_, 1, wxEXPAND);
+
+	/* The note sits in the same column as the checkboxes and the ROM message
+	   below it, so the three read as one block rather than the note starting
+	   somewhere of its own. */
 	form->Add(new wxStaticText(this, wxID_ANY, ""), 0);
 	form->Add(mem_note_, 1, wxEXPAND);
+
+	/* "Make it the default display" belongs beside the card it applies to, not
+	   on a line of its own where it reads as a separate setting. */
+	auto *gfxcard_row = new wxBoxSizer(wxHORIZONTAL);
+	gfxcard_row->Add(gfxcard_check_, 0, wxALIGN_CENTER_VERTICAL);
+	gfxcard_row->Add(gfxcard_boot_check_, 0,
+	                 wxALIGN_CENTER_VERTICAL | wxLEFT, 16);
 	form->Add(new wxStaticText(this, wxID_ANY, ""), 0);
-	form->Add(gfxcard_check_, 1, wxEXPAND);
+	form->Add(gfxcard_row, 1, wxEXPAND);
 	form->Add(new wxStaticText(this, wxID_ANY, ""), 0);
-	form->Add(gfxcard_boot_check_, 1, wxEXPAND);
+	form->Add(fullscreen_check_, 1, wxEXPAND);
 	form->Add(new wxStaticText(this, wxID_ANY, ""), 0);
 	form->Add(compat_label_, 1, wxEXPAND);
 	auto *refresh_row = new wxBoxSizer(wxHORIZONTAL);
@@ -362,17 +374,84 @@ void MachineEditDialog::SetRomSelection(const wxString &rom_dir)
 	rom_combo_->SetSelection(0);
 }
 
+/**
+ * Fill the model list.
+ *
+ * Two models are left out: Phoebe, the machine Acorn never shipped, and the
+ * ARM810, a processor card that never reached the shops either. Both are still
+ * implemented and still work if a configuration file names one - this only
+ * decides what is offered in the list, so nobody picks a machine that never
+ * existed while looking for a Risc PC.
+ *
+ * A machine already configured for one of them keeps it: pass its model as
+ * keep_selectable and it is listed for as long as that dialogue is open, so
+ * opening the settings of such a machine and pressing OK does not quietly turn
+ * it into something else.
+ *
+ * @param keep_selectable A model to list even if it is normally hidden,
+ *                        or Model_MAX for none
+ */
+void MachineEditDialog::PopulateModelList(Model keep_selectable)
+{
+	static const Model hidden[] = { Model_Phoebe, Model_RPCARM810 };
+
+	model_combo_->Clear();
+	model_choices_.clear();
+
+	for (int i = 0; i < Model_MAX; ++i) {
+		const Model model = static_cast<Model>(i);
+		bool skip = false;
+
+		for (Model h : hidden) {
+			if (model == h && model != keep_selectable) {
+				skip = true;
+			}
+		}
+		if (skip) {
+			continue;
+		}
+		model_combo_->Append(wxString::FromUTF8(models[i].name_gui));
+		model_choices_.push_back(model);
+	}
+}
+
+/** Select a model by value, listing it first if it is one of the hidden ones. */
+void MachineEditDialog::SelectModel(Model model)
+{
+	for (size_t i = 0; i < model_choices_.size(); ++i) {
+		if (model_choices_[i] == model) {
+			model_combo_->SetSelection(static_cast<int>(i));
+			return;
+		}
+	}
+
+	/* Not listed, so this machine is configured for one of the hidden models.
+	   Put it in rather than leaving the list on something else. */
+	PopulateModelList(model);
+	for (size_t i = 0; i < model_choices_.size(); ++i) {
+		if (model_choices_[i] == model) {
+			model_combo_->SetSelection(static_cast<int>(i));
+			return;
+		}
+	}
+}
+
 Model MachineEditDialog::CurrentModelSelection() const
 {
 	const int sel = model_combo_->GetSelection();
-	if (sel >= 0 && sel < Model_MAX) {
-		return static_cast<Model>(sel);
+
+	if (sel >= 0 && static_cast<size_t>(sel) < model_choices_.size()) {
+		return model_choices_[static_cast<size_t>(sel)];
 	}
 	return Model_RPCARM710;
 }
 
 /* Show (or clear) the note under the VRAM selector, and let the dialog resize
    around it. Wrapping is done here because wxStaticText will not do it itself. */
+/* Roughly the label column plus the dialogue's margins: what the note's own
+   column is narrower than the window by. */
+static const int kNoteColumnInset = 130;
+
 void MachineEditDialog::SetMemoryNote(const char *text)
 {
 	if (mem_note_ == nullptr) {
@@ -383,7 +462,15 @@ void MachineEditDialog::SetMemoryNote(const char *text)
 		mem_note_->Show(false);
 	} else {
 		mem_note_->SetLabel(wxString::FromUTF8(text));
-		mem_note_->Wrap(460);
+		/* Wrapped to the column it sits in, worked out from the dialogue rather
+		   than written down here, so a line break the text asks for is the one
+		   that decides where it breaks. A fixed figure had it wrapping at about
+		   half the window whatever the window was doing. */
+		{
+			const int width = GetClientSize().GetWidth() - kNoteColumnInset;
+
+			mem_note_->Wrap(width > 200 ? width : 200);
+		}
 		mem_note_->Show(true);
 	}
 	Layout();
@@ -411,9 +498,12 @@ void MachineEditDialog::UpdateRomModelCompatibility()
 		mem_combo_->Enable(false);
 		vram_combo_->SetSelection(1);  /* 2 MB */
 		vram_combo_->Enable(false);
-		SetMemoryNote("A Kinetic has 512MB on the card itself, and 2MB of VRAM "
-		              "here. For anything the VRAM cannot show, fit the graphics "
-		              "card below.");
+		/* Broken deliberately after the first sentence: what the machine is,
+		   then what to do about it. */
+		SetMemoryNote("The Kinetic has 512MB of RAM and 2MB of VRAM.\n"
+		              "If you wish to have high-resolution modes available, "
+		              "please enable the High-Resolution Graphics Card option "
+		              "below.");
 		break;
 
 	case Model_Phoebe:
@@ -744,7 +834,7 @@ void MachineEditDialog::LoadSettings()
 	if (model_name == "RPCARM810") model_name = "RPC810";
 	for (int i = 0; i < Model_MAX; ++i) {
 		if (model_name == wxString::FromUTF8(models[i].name_config)) {
-			model_combo_->SetSelection(i);
+			SelectModel(static_cast<Model>(i));
 			break;
 		}
 	}
@@ -780,6 +870,10 @@ void MachineEditDialog::LoadSettings()
 	settings.Read("gfxcard_boot_display", &gfxcard_boot, 0L);
 	gfxcard_boot_check_->SetValue(gfxcard_boot != 0);
 	gfxcard_boot_check_->Enable(gfxcard != 0);
+
+	long fullscreen = 0;
+	settings.Read("start_fullscreen", &fullscreen, 0L);
+	fullscreen_check_->SetValue(fullscreen != 0);
 
 	long refresh = 60;
 	settings.Read("refresh_rate", &refresh, 60L);
@@ -841,12 +935,12 @@ void MachineEditDialog::SaveSettings()
 	const int mem_values[] = {4, 8, 16, 32, 64, 128, 256, 512};
 	int mem_sel = std::max(0, mem_combo_->GetSelection());
 	const int vram_sel = std::max(0, vram_combo_->GetSelection());
-	const int model_sel = std::max(0, model_combo_->GetSelection());
+	const Model model_sel = CurrentModelSelection();
 
 	/* Record the configured model in the global config so it persists on save.
 	   (config_save writes cfg->model, not the running machine.model, so a model
 	   change to a running machine is no longer reverted when the config saves.) */
-	config.model = static_cast<Model>(model_sel);
+	config.model = model_sel;
 
 	/* VRAM combo: 0 = None, 1 = 2 MB, 2 = 4 MB, 3 = 8 MB, 4 = 16 MB */
 	static const int vram_sizes[] = { 0, 2, 4, 8, 16 };
@@ -889,6 +983,8 @@ void MachineEditDialog::SaveSettings()
 	               static_cast<long>(gfxcard_check_->GetValue() ? 1 : 0));
 	settings.Write("gfxcard_boot_display",
 	               static_cast<long>(gfxcard_boot_check_->GetValue() ? 1 : 0));
+	settings.Write("start_fullscreen",
+	               static_cast<long>(fullscreen_check_->GetValue() ? 1 : 0));
 	settings.Write("refresh_rate", refresh_slider_->GetValue());
 	settings.Write("network_type", network_type);
 	settings.Write("bridgename", bridge_edit_->GetValue());
@@ -925,6 +1021,8 @@ void MachineEditDialog::ApplySavedSettingsToGlobalConfig(const wxString &rom_dir
 	   applying it here means a reset is enough - no need to restart. */
 	config.gfxcard_enabled = gfxcard_check_->GetValue() ? 1 : 0;
 	config.gfxcard_boot_display = gfxcard_boot_check_->GetValue() ? 1 : 0;
+	/* Only read when a machine starts, so this one takes effect next time. */
+	config.start_fullscreen = fullscreen_check_->GetValue() ? 1 : 0;
 }
 
 wxString MachineEditDialog::CurrentMachineNameForHd() const

@@ -240,6 +240,17 @@ void MainFrame::StartEmulator()
 		emulator_->Start();
 	}
 
+	/* Deferred, because going full screen resizes and re-lays-out the frame,
+	   and this runs before the event loop has shown it: doing it here leaves
+	   the panel sized for a window that was never displayed. */
+	if (config_copy_.start_fullscreen) {
+		CallAfter([this] {
+			if (!full_screen_) {
+				EnterFullScreen();
+			}
+		});
+	}
+
 	UpdateDebuggerActionStates();
 }
 
@@ -891,6 +902,34 @@ void MainFrame::OnMouseTwobutton(wxCommandEvent &event)
 /*
  * Settings -> Share Clipboard with RISC OS.
  */
+wxString MainFrame::CurrentMachineBaseName() const
+{
+	return wxFileName(wxString::FromUTF8(config_get_path())).GetName();
+}
+
+/**
+ * Make this the machine RPCEmu opens on startup, or stop it being so.
+ *
+ * The same setting as the machine selector's Set as Default, reachable from
+ * inside a running machine - which matters, because once a machine opens
+ * automatically the selector is not shown, and this is the way to turn it off
+ * without knowing that holding Shift brings the selector back.
+ */
+void MainFrame::OnDefaultMachine(wxCommandEvent &)
+{
+	const wxString name = CurrentMachineBaseName();
+	const bool was_default = wxString::FromUTF8(GetDefaultMachine()) == name;
+
+	if (was_default || name.empty()) {
+		ClearDefaultMachine();
+	} else {
+		SetDefaultMachine(name.utf8_string());
+	}
+	if (default_machine_menu_item_ != nullptr) {
+		default_machine_menu_item_->Check(!was_default && !name.empty());
+	}
+}
+
 void MainFrame::OnSharedClipboard(wxCommandEvent &event)
 {
 	if (emulator_) {

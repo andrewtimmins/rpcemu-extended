@@ -28,6 +28,14 @@ static const int MaxRecentMachines = 5;
 static const int MaxRecentFloppies = 10;
 static const int MaxRecentCDROMs = 10;
 
+/* The machine RPCEmu opens without asking. Empty when there is none, in which
+   case the machine selector is shown as usual. Kept in the host's own
+   preferences rather than in a machine's configuration file, because it is a
+   statement about which machine to pick, not a setting of any one of them. */
+std::string GetDefaultMachine();
+void SetDefaultMachine(const std::string &machine_name);
+void ClearDefaultMachine();
+
 std::vector<std::string> GetRecentMachines();
 void AddRecentMachine(const std::string &machine_name);
 void ClearRecentMachines();

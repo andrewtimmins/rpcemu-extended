@@ -598,6 +598,8 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	cfg->gfxcard_enabled = static_cast<int>(value);
 	settings.Read("gfxcard_boot_display", &value, 0L);
 	cfg->gfxcard_boot_display = static_cast<int>(value);
+	settings.Read("start_fullscreen", &value, 0L);
+	cfg->start_fullscreen = static_cast<int>(value);
 	settings.Read("suspend_on_exit", &value, 0L);
 	cfg->suspend_on_exit = static_cast<int>(value);
 	settings.Read("vnc_enabled", &value, 0L);
@@ -691,6 +693,7 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	settings.Write("follow_host_display", static_cast<long>(cfg->follow_host_display));
 	settings.Write("gfxcard_enabled", static_cast<long>(cfg->gfxcard_enabled));
 	settings.Write("gfxcard_boot_display", static_cast<long>(cfg->gfxcard_boot_display));
+	settings.Write("start_fullscreen", static_cast<long>(cfg->start_fullscreen));
 	settings.Write("suspend_on_exit", static_cast<long>(cfg->suspend_on_exit));
 	settings.Write("vnc_enabled", static_cast<long>(cfg->vnc_enabled));
 	settings.Write("vnc_port", static_cast<long>(cfg->vnc_port));

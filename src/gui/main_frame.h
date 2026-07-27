@@ -101,6 +101,7 @@ enum MainFrameMenuId {
 	ID_MENU_MOUSE_HACK,
 	ID_MENU_MOUSE_TWOBUTTON,
 	ID_MENU_SHARED_CLIPBOARD,
+	ID_MENU_DEFAULT_MACHINE,
 	ID_MENU_DEBUG_RUN,
 	ID_MENU_DEBUG_PAUSE,
 	ID_MENU_DEBUG_STEP,
@@ -197,6 +198,7 @@ private:
 	void OnMouseHack(wxCommandEvent &event);
 	void OnMouseTwobutton(wxCommandEvent &event);
 	void OnSharedClipboard(wxCommandEvent &event);
+	void OnDefaultMachine(wxCommandEvent &event);
 	void OnDebugRun(wxCommandEvent &event);
 	void OnDebugPause(wxCommandEvent &event);
 	void OnDebugStep(wxCommandEvent &event);
@@ -230,6 +232,10 @@ private:
 	void ExitFullScreen();
 	void EnterFullScreen();
 	void ApplyFitToWindowSize();
+
+	/* The running machine's configuration file name, without .cfg: what the
+	   default-machine preference is keyed on. */
+	wxString CurrentMachineBaseName() const;
 
 	void BuildMenus();
 	void BuildToolBar();
@@ -280,6 +286,7 @@ private:
 	wxMenuItem *mouse_hack_menu_item_ = nullptr;
 	wxMenuItem *mouse_twobutton_menu_item_ = nullptr;
 	wxMenuItem *shared_clipboard_menu_item_ = nullptr;
+	wxMenuItem *default_machine_menu_item_ = nullptr;
 	wxMenuItem *cdrom_disabled_item_ = nullptr;
 	wxMenuItem *cdrom_empty_item_ = nullptr;
 	wxMenuItem *cdrom_iso_item_ = nullptr;

@@ -94,6 +94,12 @@ private:
 	void ShowHardDiscCreateMenu(int drive);
 	Model CurrentModelSelection() const;
 
+	/* Which Model each row of model_combo_ stands for. The combo does not list
+	   every model, so its selection index is not the enum value. */
+	std::vector<Model> model_choices_;
+	void PopulateModelList(Model keep_selectable);
+	void SelectModel(Model model);
+
 	void OnOk(wxCommandEvent &event);
 	void OnNetworkChanged(wxCommandEvent &event);
 	void OnRomOrModelChanged(wxCommandEvent &event);
@@ -118,6 +124,7 @@ private:
 	wxComboBox *vram_combo_ = nullptr;
 	wxCheckBox *gfxcard_check_ = nullptr;
 	wxCheckBox *gfxcard_boot_check_ = nullptr;
+	wxCheckBox *fullscreen_check_ = nullptr;
 	wxSlider *refresh_slider_ = nullptr;
 	wxStaticText *refresh_label_ = nullptr;
 	wxComboBox *network_combo_ = nullptr;

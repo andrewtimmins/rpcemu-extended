@@ -21,6 +21,7 @@
 #include "config_selector_dialog.h"
 
 #include "config_paths.h"
+#include "gui_preferences.h"
 #include "machine_edit_dialog.h"
 
 #include <cstdio>
@@ -52,25 +53,61 @@ ConfigSelectorDialog::ConfigSelectorDialog(wxWindow *parent)
 	resume_button_ = new wxButton(this, wxID_ANY, "Resume");
 	start_button_ = new wxButton(this, wxID_OK, "Start");
 	auto *cancel_button = new wxButton(this, wxID_CANCEL, "Cancel");
+	default_button_ = new wxButton(this, wxID_ANY, "Set as Default");
+	default_button_->SetToolTip(
+	    "Open this machine on startup without showing this list.\n"
+	    "Hold Shift while starting RPCEmu to get the list back, or turn it off "
+	    "from Settings > Open This Machine Automatically.");
 	start_button_->SetDefault();
 
+	/* One size for every button, taken from whichever needs the most room, so
+	   the column reads as a column rather than a ragged edge. Cancel is included
+	   even though it sits on its own row: at the same width it lines up under
+	   the others instead of ending a few pixels short of them.
+
+	   The buttons also change label as the selection changes - Start becomes
+	   Restart, Resume appears - so a size that followed the text would shift
+	   about while the dialogue was open. */
+	{
+		wxButton *const buttons[] = {
+			new_button_, edit_button_, clone_button_, delete_button_,
+			load_state_button_, resume_button_, start_button_, cancel_button,
+			default_button_
+		};
+		wxSize uniform(0, 0);
+
+		for (wxButton *b : buttons) {
+			const wxSize best = b->GetBestSize();
+
+			uniform.x = wxMax(uniform.x, best.x);
+			uniform.y = wxMax(uniform.y, best.y);
+		}
+		/* Room for the longest label any of them takes later on. */
+		uniform.x = wxMax(uniform.x, GetTextExtent("Restart").GetWidth() + 40);
+		uniform.x = wxMax(uniform.x, GetTextExtent("Clear Default").GetWidth() + 40);
+		for (wxButton *b : buttons) {
+			b->SetMinSize(uniform);
+		}
+	}
+
 	auto *button_col = new wxBoxSizer(wxVERTICAL);
-	button_col->Add(new_button_, 0, wxBOTTOM, 4);
-	button_col->Add(edit_button_, 0, wxBOTTOM, 4);
-	button_col->Add(clone_button_, 0, wxBOTTOM, 4);
-	button_col->Add(delete_button_, 0, wxBOTTOM, 4);
+	button_col->Add(new_button_, 0, wxEXPAND | wxBOTTOM, 4);
+	button_col->Add(edit_button_, 0, wxEXPAND | wxBOTTOM, 4);
+	button_col->Add(clone_button_, 0, wxEXPAND | wxBOTTOM, 4);
+	button_col->Add(delete_button_, 0, wxEXPAND | wxBOTTOM, 4);
 	button_col->AddStretchSpacer();
-	button_col->Add(load_state_button_, 0, wxBOTTOM, 4);
-	button_col->Add(resume_button_, 0, wxBOTTOM, 4);
-	button_col->Add(start_button_, 0, wxBOTTOM, 4);
+	button_col->Add(load_state_button_, 0, wxEXPAND | wxBOTTOM, 4);
+	button_col->Add(resume_button_, 0, wxEXPAND | wxBOTTOM, 4);
+	button_col->Add(start_button_, 0, wxEXPAND | wxBOTTOM, 4);
 
 	auto *body = new wxBoxSizer(wxHORIZONTAL);
 	body->Add(config_list_, 1, wxEXPAND | wxRIGHT, 8);
 	body->Add(button_col, 0, wxEXPAND);
 
 	auto *bottom = new wxBoxSizer(wxHORIZONTAL);
+	bottom->Add(default_button_, 0);
 	bottom->AddStretchSpacer();
-	bottom->Add(cancel_button, 0, wxLEFT, 4);
+	bottom->Add(cancel_button, 0);	/* no inset: its edges match the column above */
 
 	auto *main = new wxBoxSizer(wxVERTICAL);
 	main->Add(list_label, 0, wxALL, 8);
@@ -91,6 +128,7 @@ ConfigSelectorDialog::ConfigSelectorDialog(wxWindow *parent)
 	resume_button_->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnResume, this);
 	load_state_button_->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnLoadStateFile, this);
 	cancel_button->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnCancel, this);
+	default_button_->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnToggleDefault, this);
 	config_list_->Bind(wxEVT_LISTBOX_DCLICK, &ConfigSelectorDialog::OnListDoubleClick, this);
 	config_list_->Bind(wxEVT_LISTBOX, [this](wxCommandEvent &) { UpdateButtons(); });
 }
@@ -116,6 +154,10 @@ void ConfigSelectorDialog::EnsureDefaultConfig()
 
 void ConfigSelectorDialog::RefreshConfigList()
 {
+	const wxString was_selected = SelectedMachineName();
+	const wxString default_machine = wxString::FromUTF8(GetDefaultMachine());
+	int select_row = 0;
+
 	config_list_->Clear();
 	config_entries_.clear();
 
@@ -134,12 +176,23 @@ void ConfigSelectorDialog::RefreshConfigList()
 		ConfigEntry entry;
 		entry.display_name = name;
 		entry.config_path = ConfigPathsAbsoluteConfigPath(path);
+
+		/* Marked in the list as well as on the button, so which machine opens
+		   on startup can be seen without clicking through them. */
+		const wxString base = wxFileName(path).GetName();
+		if (!default_machine.empty() && base == default_machine) {
+			name += "   (opens on startup)";
+		}
+		if (base == was_selected) {
+			select_row = static_cast<int>(config_entries_.size());
+		}
+
 		config_entries_.push_back(entry);
 		config_list_->Append(name);
 	}
 
 	if (config_list_->GetCount() > 0) {
-		config_list_->SetSelection(0);
+		config_list_->SetSelection(select_row);
 	}
 	UpdateButtons();
 }
@@ -151,6 +204,18 @@ void ConfigSelectorDialog::UpdateButtons()
 	clone_button_->Enable(has_selection);
 	delete_button_->Enable(has_selection && config_list_->GetCount() > 1);
 	start_button_->Enable(has_selection);
+
+	/* Whether this machine is the one opened without asking. The label says
+	   what pressing it would do, rather than what the machine currently is. */
+	{
+		const wxString name = SelectedMachineName();
+		const bool is_default =
+		    has_selection && !name.empty() &&
+		    name == wxString::FromUTF8(GetDefaultMachine());
+
+		default_button_->Enable(has_selection);
+		default_button_->SetLabel(is_default ? "Clear Default" : "Set as Default");
+	}
 
 	// If the selected machine has a suspend snapshot, offer Resume (default)
 	// and relabel Start as Restart (cold boot). Otherwise just Start.
@@ -177,6 +242,38 @@ wxString ConfigSelectorDialog::SelectedConfigPath() const
 		return wxEmptyString;
 	}
 	return config_entries_[static_cast<size_t>(sel)].config_path;
+}
+
+wxString ConfigSelectorDialog::SelectedMachineName() const
+{
+	const wxString path = SelectedConfigPath();
+
+	if (path.empty()) {
+		return wxEmptyString;
+	}
+	return wxFileName(path).GetName();
+}
+
+/**
+ * Mark the selected machine as the one to open on startup, or stop it being so.
+ *
+ * The list is rebuilt afterwards because the machine that is the default is
+ * marked in it, so the change has to be visible somewhere other than this
+ * button's own label.
+ */
+void ConfigSelectorDialog::OnToggleDefault(wxCommandEvent &)
+{
+	const wxString name = SelectedMachineName();
+
+	if (name.empty()) {
+		return;
+	}
+	if (name == wxString::FromUTF8(GetDefaultMachine())) {
+		ClearDefaultMachine();
+	} else {
+		SetDefaultMachine(name.utf8_string());
+	}
+	RefreshConfigList();
 }
 
 void ConfigSelectorDialog::OnStart(wxCommandEvent &)

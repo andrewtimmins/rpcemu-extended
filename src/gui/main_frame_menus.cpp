@@ -194,6 +194,12 @@ void MainFrame::BuildMenus()
 	    "Copy and paste text between the host and RISC OS. Needs the "
 	    "SharedClipboard module, which loads itself in the guest.");
 	cpu_idle_menu_item_ = settings_menu->AppendCheckItem(ID_MENU_CPU_IDLE, "Reduce CPU Usage");
+	default_machine_menu_item_ =
+	    settings_menu->AppendCheckItem(ID_MENU_DEFAULT_MACHINE,
+	                                   "Open This Machine Automatically");
+	default_machine_menu_item_->SetHelp(
+	    "Start RPCEmu straight into this machine, without showing the machine "
+	    "list. Hold Shift while starting to get the list back.");
 
 	auto *debug_menu = new wxMenu;
 	debug_run_item_ = debug_menu->Append(ID_MENU_DEBUG_RUN, "Run");
@@ -263,6 +269,7 @@ void MainFrame::BuildMenus()
 	BindMenuItem(settings_menu, ID_MENU_CPU_IDLE, this, &MainFrame::OnCpuIdle);
 	BindMenuItem(settings_menu, ID_MENU_MOUSE_TWOBUTTON, this, &MainFrame::OnMouseTwobutton);
 	BindMenuItem(settings_menu, ID_MENU_SHARED_CLIPBOARD, this, &MainFrame::OnSharedClipboard);
+	BindMenuItem(settings_menu, ID_MENU_DEFAULT_MACHINE, this, &MainFrame::OnDefaultMachine);
 #ifdef RPCEMU_VNC
 	BindMenuItem(settings_menu, ID_MENU_VNC, this, &MainFrame::OnVnc);
 #endif
@@ -410,6 +417,10 @@ void MainFrame::SyncSettingsMenuChecks()
 	}
 	if (shared_clipboard_menu_item_ != nullptr) {
 		shared_clipboard_menu_item_->Check(config_copy_.clipboard_enabled != 0);
+	}
+	if (default_machine_menu_item_ != nullptr) {
+		default_machine_menu_item_->Check(
+		    wxString::FromUTF8(GetDefaultMachine()) == CurrentMachineBaseName());
 	}
 	if (integer_scaling_menu_item_ != nullptr) {
 		integer_scaling_menu_item_->Check(config_copy_.integer_scaling != 0);

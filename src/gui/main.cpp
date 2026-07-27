@@ -34,6 +34,7 @@
 
 #include "data_paths.h"
 #include "config_paths.h"
+#include "gui_preferences.h"
 #include "config_selector_dialog.h"
 #include "main_frame.h"
 #include "headless_main.h"
@@ -213,14 +214,40 @@ bool RpcemuApp::OnInit()
 			return false;
 		}
 	} else {
-		ConfigSelectorDialog selector(nullptr);
-		if (selector.ShowModal() != wxID_OK) {
-			return false;
+		/* A machine can be marked as the one to open without asking. Three
+		   things override that, so it can never be a trap:
+		     - the configuration file having gone, in which case there is
+		       nothing to open and the selector is the only sensible answer;
+		     - holding Shift while starting, which is the way back to the
+		       selector when the default machine itself is the problem;
+		     - --machine, handled above.
+		   It can also be turned off from inside the machine, through
+		   Settings > Open This Machine Automatically. */
+		const wxString default_machine =
+		    wxString::FromUTF8(GetDefaultMachine());
+		bool used_default = false;
+
+		if (!default_machine.empty() && !wxGetKeyState(WXK_SHIFT)) {
+			const wxString candidate = default_machine + ".cfg";
+
+			if (wxFileExists(ConfigPathsAbsoluteConfigPath(candidate))) {
+				config_path = candidate;
+				used_default = true;
+			} else {
+				ClearDefaultMachine();
+			}
 		}
 
-		config_path = selector.GetSelectedConfigPath();
-		resume_requested = selector.ShouldResume();
-		state_file = selector.GetStateFileToLoad();
+		if (!used_default) {
+			ConfigSelectorDialog selector(nullptr);
+			if (selector.ShowModal() != wxID_OK) {
+				return false;
+			}
+
+			config_path = selector.GetSelectedConfigPath();
+			resume_requested = selector.ShouldResume();
+			state_file = selector.GetStateFileToLoad();
+		}
 	}
 	// The machine's own snapshot is "consumed" (renamed to .bak) on resume;
 	// a state file the user opened explicitly via Load State is left in place.

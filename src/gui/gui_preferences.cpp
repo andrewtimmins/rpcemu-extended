@@ -94,6 +94,37 @@ AddRecentEntry(const char *key, const std::string &value, int max_entries)
 
 } // namespace
 
+std::string
+GetDefaultMachine()
+{
+	wxConfig *config = OpenPreferences();
+	wxString value;
+
+	config->Read("DefaultMachine", &value, wxEmptyString);
+	delete config;
+	return value.utf8_string();
+}
+
+void
+SetDefaultMachine(const std::string &machine_name)
+{
+	wxConfig *config = OpenPreferences();
+
+	config->Write("DefaultMachine", wxString::FromUTF8(machine_name));
+	config->Flush();
+	delete config;
+}
+
+void
+ClearDefaultMachine()
+{
+	wxConfig *config = OpenPreferences();
+
+	config->DeleteEntry("DefaultMachine");
+	config->Flush();
+	delete config;
+}
+
 std::vector<std::string>
 GetRecentMachines()
 {

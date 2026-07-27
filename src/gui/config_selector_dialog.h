@@ -55,6 +55,8 @@ private:
 	void OnResume(wxCommandEvent &event);
 	void OnLoadStateFile(wxCommandEvent &event);
 	void OnCancel(wxCommandEvent &event);
+	void OnToggleDefault(wxCommandEvent &event);
+	wxString SelectedMachineName() const;
 	void OnListDoubleClick(wxCommandEvent &event);
 	void OnNew(wxCommandEvent &event);
 	void OnEdit(wxCommandEvent &event);
@@ -69,6 +71,7 @@ private:
 	wxButton *start_button_ = nullptr;
 	wxButton *resume_button_ = nullptr;
 	wxButton *load_state_button_ = nullptr;
+	wxButton *default_button_ = nullptr;
 	wxString selected_config_path_;
 	wxString state_file_to_load_;
 	bool resume_selected_ = false;

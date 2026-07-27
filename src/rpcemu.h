@@ -232,6 +232,7 @@ typedef struct {
 	char debug_socket[512];	/**< Socket spec: empty = <datadir>rpcemu-debug.sock (AF_UNIX); a path = AF_UNIX; a bare port = TCP 127.0.0.1:port */
 	Model model;		/**< Configured machine model. Applied to machine.model on load; kept here so the configured model persists independently of the running machine.model (fixes model edits to a running machine being lost on save). */
 	int clipboard_enabled;	/**< Share the host clipboard with the guest (needs the SharedClipboard module in the guest) */
+	int start_fullscreen;	/**< Go full screen as soon as this machine starts */
 	int suspend_on_exit;	/**< Auto-save a machine snapshot on every exit (so the next launch can Resume). Off by default: normal Quit shuts down cleanly, and only File->Suspend / Save State write a snapshot. */
 } Config;
 

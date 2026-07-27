@@ -188,10 +188,10 @@ const Model_Details models[] = {
 	{ "Risc PC - ARM710",                "RPC710", CPUModel_ARM710,    IOMDType_IOMD,      SuperIOType_FDC37C665GT, I2C_PCF8583 },
 	{ "Risc PC - StrongARM",             "RPCSA",  CPUModel_SA110,     IOMDType_IOMD,      SuperIOType_FDC37C665GT, I2C_PCF8583 },
 	{ "A7000",                           "A7000",  CPUModel_ARM7500,   IOMDType_ARM7500,   SuperIOType_FDC37C665GT, I2C_PCF8583 },
-	{ "A7000+ (experimental)",           "A7000+", CPUModel_ARM7500FE, IOMDType_ARM7500FE, SuperIOType_FDC37C665GT, I2C_PCF8583 },
+	{ "A7000+",                          "A7000+", CPUModel_ARM7500FE, IOMDType_ARM7500FE, SuperIOType_FDC37C665GT, I2C_PCF8583 },
 	{ "Risc PC - ARM810 (experimental)", "RPC810", CPUModel_ARM810,    IOMDType_IOMD,      SuperIOType_FDC37C665GT, I2C_PCF8583 },
 	{ "Phoebe (RPC2)",                   "Phoebe", CPUModel_SA110,     IOMDType_IOMD2,     SuperIOType_FDC37C672,   I2C_PCF8583 | I2C_SPD_DIMM0 },
-	{ "Risc PC - Kinetic (512MB)",       "Kinetic",CPUModel_SA110,     IOMDType_IOMD,      SuperIOType_FDC37C665GT, I2C_PCF8583 }
+	{ "Risc PC - Kinetic",               "Kinetic",CPUModel_SA110,     IOMDType_IOMD,      SuperIOType_FDC37C665GT, I2C_PCF8583 }
 };
 
 Config config = {
@@ -229,6 +229,7 @@ Config config = {
 	"",			/* debug_socket (empty => <datadir>rpcemu-debug.sock) */
 	Model_RPCARM710,	/* model (configured machine model) */
 	0,			/* clipboard_enabled (OFF: it shares your host clipboard with the guest) */
+	0,			/* start_fullscreen (OFF by default) */
 	0,			/* suspend_on_exit (OFF by default) */
 };
 
