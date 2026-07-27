@@ -199,6 +199,9 @@ public:
 
 private:
 	void MainEmuLoop();
+
+	/* Fire every IOMD and video tick that has fallen due by 'elapsed'. */
+	void ServiceTimers(int64_t elapsed);
 	void DrainCommands();
 	void HandleCommand(const EmuCommand &command);
 	void VideoFlyback();

@@ -31,6 +31,9 @@
 #include <thread>
 
 #include <pthread.h>
+#ifdef __APPLE__
+#include <pthread/qos.h>	/* pthread_set_qos_class_self_np - see MainEmuLoop() */
+#endif
 
 extern "C" {
 #include "arm.h"
@@ -73,6 +76,11 @@ Config *pconfig_copy = nullptr;
 
 static GuiBridge *g_gui_bridge = nullptr;
 static EmulatorHost *g_emulator_host = nullptr;
+
+/* How often the IOMD timers, the sound pacing and the podule timers are due,
+   in nanoseconds. Shared by the running loop and the idle path so the two
+   cannot drift apart. */
+static const int64_t kIomdTimerIntervalNs = 2000000;
 
 /* Set as soon as any fatal() is raised, on whatever thread. The raising thread
    then spins forever inside fatal(), so it can never again service commands or
@@ -1284,32 +1292,82 @@ void EmulatorHost::VideoFlyback()
 	iomd_flyback(1);
 }
 
-void EmulatorHost::IdleProcessEvents()
+/**
+ * Fire every IOMD and video tick that has fallen due, rather than one per call.
+ *
+ * A tick is owed every 2ms, and a frame every 16ms or so, but this is only
+ * called as often as the host is willing to wake the emulator thread. That is
+ * fine while the guest is busy, since the loop comes round in microseconds; it
+ * is not fine while the guest is idling under "Reduce CPU Usage", where each
+ * pass waits on a 1ms sleep that some hosts round up considerably.
+ *
+ * gentimerirq() corrects the two IOMD hardware timers from the absolute clock
+ * itself, so those never drifted. The sound pacing and the podule timers inside
+ * it advance a fixed step per call though, and each vblupdate() is one frame -
+ * so serving a single tick per wake-up ran all three slow in exactly the case
+ * where wake-ups are late (issues #26 and #36).
+ *
+ * The catch-up is bounded: after a long stall, such as a debugger pause or a
+ * suspended laptop, there is nothing to be gained by delivering thousands of
+ * backdated ticks, so what is left beyond the cap is dropped and the schedule
+ * resynchronised to now.
+ *
+ * @param elapsed Nanoseconds on the emulator's monotonic timer
+ */
+void EmulatorHost::ServiceTimers(int64_t elapsed)
 {
-	const int32_t iomd_timer_interval = 2000000;
-	const int64_t elapsed = GetElapsedTimerNs();
+	/* Roughly 60ms of arrears each, which is enough to ride out a coarse host
+	   timer without letting a real stall turn into a flood. */
+	const int max_iomd_catch_up = 32;
+	const int max_video_catch_up = 4;
+	int n;
 
-	if (elapsed >= iomd_timer_next_) {
+	for (n = 0; elapsed >= iomd_timer_next_ && n < max_iomd_catch_up; n++) {
 		iomd_timer_count.fetch_add(1, std::memory_order_release);
 		gentimerirq(elapsed);
-		iomd_timer_next_ += iomd_timer_interval;
+		iomd_timer_next_ += kIomdTimerIntervalNs;
+	}
+	if (elapsed >= iomd_timer_next_) {
+		iomd_timer_next_ = elapsed + kIomdTimerIntervalNs;
 	}
 
-	if (elapsed >= video_timer_next_) {
+	for (n = 0; elapsed >= video_timer_next_ && n < max_video_catch_up; n++) {
 		video_timer_count.fetch_add(1, std::memory_order_release);
 		vblupdate();
 		video_timer_next_ += video_timer_interval_;
 	}
+	if (elapsed >= video_timer_next_) {
+		video_timer_next_ = elapsed + video_timer_interval_;
+	}
+}
+
+void EmulatorHost::IdleProcessEvents()
+{
+	ServiceTimers(GetElapsedTimerNs());
 }
 
 void EmulatorHost::MainEmuLoop()
 {
-	const int32_t iomd_timer_interval = 2000000;
 	const int refresh_hz = config.refresh > 0 ? config.refresh : 60;
 	video_timer_interval_ = 1000000000LL / refresh_hz;
 
-	iomd_timer_next_ = iomd_timer_interval;
+	iomd_timer_next_ = kIomdTimerIntervalNs;
 	video_timer_next_ = video_timer_interval_;
+
+#ifdef __APPLE__
+	/* macOS schedules by quality-of-service class and coalesces timer wake-ups
+	   for threads that have not said they need to be prompt. A plain
+	   std::thread carries no class of its own, and on Apple Silicon can be put
+	   on the efficiency cores. This thread runs the guest, its timers and the
+	   display, so user-interactive is what it is.
+
+	   It matters most under "Reduce CPU Usage": rpcemu_idle() then paces the
+	   whole machine off a 1ms sleep, and a sleep that returns late holds up the
+	   vertical sync and with it the pointer (issue #36). The Windows build has
+	   the same trouble for the same reason and answers it with
+	   timeBeginPeriod(1) (issue #26). */
+	pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
 
 	unsigned network_nat_rate = 0;
 	bool last_paused = debugger_is_paused() != 0;
@@ -1359,19 +1417,7 @@ void EmulatorHost::MainEmuLoop()
 			continue;
 		}
 
-		const int64_t elapsed = GetElapsedTimerNs();
-
-		if (elapsed >= iomd_timer_next_) {
-			iomd_timer_count.fetch_add(1, std::memory_order_release);
-			gentimerirq(elapsed);
-			iomd_timer_next_ += iomd_timer_interval;
-		}
-
-		if (elapsed >= video_timer_next_) {
-			video_timer_count.fetch_add(1, std::memory_order_release);
-			vblupdate();
-			video_timer_next_ += video_timer_interval_;
-		}
+		ServiceTimers(GetElapsedTimerNs());
 
 		if (config.network_type == NetworkType_NAT) {
 			network_nat_rate++;
