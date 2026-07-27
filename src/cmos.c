@@ -44,6 +44,15 @@
 #endif
 
 static void cmos_update_checksum(void);
+static void cmos_seed_monitor_type(void);
+
+/* The monitor type, in the VDU byte of the configuration NVRAM. Bits 2 to 6
+   hold it, and 16 means EDID: ask the display driver for the monitor's EDID and
+   believe what it says. From hdr/CMOS in the RISC OS sources - VduCMOS,
+   MonitorTypeBits, MonitorTypeEDID. */
+#define VDU_CMOS_LOCATION	0x85
+#define MONITOR_TYPE_BITS	0x7c
+#define MONITOR_TYPE_EDID	0x40	/* 16, in bits 2 to 6 */
 
 int i2cclock = 1; /**< The current value of the I2C clock pin */
 int i2cdata  = 1; /**< The current value of the I2C data pin */
@@ -249,11 +258,44 @@ cmos_init(void)
 	fprintf(stderr, "No CMOS file '%s', seeding from default template\n", fn);
 	snprintf(fn, sizeof(fn), "%sdefault/cmos.ram", rpcemu_get_resourcedir());
 	if (cmos_load_file(fn)) {
+		cmos_seed_monitor_type();
 		return;
 	}
 
 	fatal("Unable to open CMOS file or default template '%s': %s", fn,
 	      strerror(errno));
+}
+
+/**
+ * Set a freshly seeded CMOS to read the monitor's EDID, when the machine has a
+ * graphics card.
+ *
+ * The card serves the emulator's synthesised EDID, which describes the host's
+ * own display and every mode the chooser can offer from it. RISC OS only goes
+ * looking for that when the configured monitor type is EDID. A machine straight
+ * out of the box is type 3, VGA, which offers 640x480 and nothing else - so the
+ * card comes up with no large mode to select and looks broken, when all that is
+ * wrong is that nobody has told RISC OS to ask it what the monitor can do.
+ *
+ * Only for a CMOS being created from the template. An existing machine's monitor
+ * type is the user's, whatever they have set it to since.
+ */
+static void
+cmos_seed_monitor_type(void)
+{
+	const int offset = cmos_logical_offset(VDU_CMOS_LOCATION);
+	const uint8_t old = cmosram[offset];
+
+	if (!config.gfxcard_enabled) {
+		return;
+	}
+
+	cmosram[offset] = (uint8_t) ((old & ~MONITOR_TYPE_BITS) | MONITOR_TYPE_EDID);
+	cmos_update_checksum();
+
+	rpclog("CMOS: new machine has a graphics card, so its monitor type is set "
+	       "to EDID (location 0x%02x: 0x%02x -> 0x%02x)\n",
+	       VDU_CMOS_LOCATION, old, cmosram[offset]);
 }
 
 /**
