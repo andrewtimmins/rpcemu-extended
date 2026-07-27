@@ -159,6 +159,7 @@ public:
 	void PostMachineSwitched(const std::string &machine_name) override;
 	void PostQuit() override;
 	void PostSetHostClipboard(const std::string &utf8) override;
+	void PostSetHostClipboardImage(int file_type, const std::string &bytes) override;
 
 private:
 	void OnClose(wxCloseEvent &event);
@@ -311,6 +312,7 @@ private:
 	wxTimer network_led_timer_;
 	wxTimer clipboard_timer_;
 	wxString clipboard_last_seen_;	/* host text already sent to the guest */
+	std::string clipboard_image_last_seen_;	/* and the same for an image, as PNG */
 
 	uint64_t mips_total_instructions_ = 0;
 	int32_t mips_seconds_ = 0;

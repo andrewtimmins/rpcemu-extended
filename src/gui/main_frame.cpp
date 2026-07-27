@@ -38,6 +38,7 @@
 #include <wx/filename.h>
 #include <wx/icon.h>
 #include <wx/image.h>
+#include <wx/mstream.h>
 
 #include "about_dialog.h"
 #include "config_paths.h"
@@ -60,6 +61,7 @@
 
 extern "C" {
 #include "rpcemu.h"
+#include "hostclipboard.h"
 }
 
 namespace {
@@ -907,8 +909,31 @@ void MainFrame::OnSharedClipboard(wxCommandEvent &event)
 }
 
 /*
- * Look at the host clipboard, and if the text has changed since we last passed
- * it on, hand it to the emulator thread for the guest.
+ * Encode a bitmap as a PNG in memory, which is the form the guest is given: its
+ * clipboard module asks for PNG, and RISC OS applications read it.
+ */
+static std::string EncodeBitmapAsPng(const wxBitmap &bitmap)
+{
+	wxImage image = bitmap.ConvertToImage();
+	wxMemoryOutputStream out;
+
+	if (!image.IsOk() || !image.SaveFile(out, wxBITMAP_TYPE_PNG)) {
+		return std::string();
+	}
+
+	const wxStreamBuffer *buffer = out.GetOutputStreamBuffer();
+	return std::string(static_cast<const char *>(buffer->GetBufferStart()),
+	                   buffer->GetIntPosition());
+}
+
+/*
+ * Look at the host clipboard, and if what is on it has changed since we last
+ * passed it on, hand it to the emulator thread for the guest.
+ *
+ * Text is preferred over an image when both are offered, because an application
+ * that copies text often puts a rendered picture of it alongside, and text is
+ * what was meant. The image is compared as the encoded PNG rather than by asking
+ * the clipboard whether it has changed, which it cannot tell us.
  */
 void MainFrame::OnClipboardTimer(wxTimerEvent &)
 {
@@ -920,19 +945,41 @@ void MainFrame::OnClipboardTimer(wxTimerEvent &)
 	}
 
 	wxString text;
+	wxBitmap bitmap;
 	if (wxTheClipboard->IsSupported(wxDF_UNICODETEXT)) {
 		wxTextDataObject data;
 		if (wxTheClipboard->GetData(data)) {
 			text = data.GetText();
 		}
+	} else if (wxTheClipboard->IsSupported(wxDF_BITMAP)) {
+		wxBitmapDataObject data;
+		if (wxTheClipboard->GetData(data)) {
+			bitmap = data.GetBitmap();
+		}
 	}
 	wxTheClipboard->Close();
 
-	if (text.empty() || text == clipboard_last_seen_) {
+	if (!text.empty()) {
+		if (text == clipboard_last_seen_) {
+			return;
+		}
+		clipboard_last_seen_ = text;
+		clipboard_image_last_seen_.clear();
+		emulator_->HostClipboardChanged(CLIPBOARD_TYPE_TEXT,
+		                                std::string(text.utf8_str()));
 		return;
 	}
-	clipboard_last_seen_ = text;
-	emulator_->HostClipboardChanged(std::string(text.utf8_str()));
+
+	if (bitmap.IsOk()) {
+		const std::string png = EncodeBitmapAsPng(bitmap);
+
+		if (png.empty() || png == clipboard_image_last_seen_) {
+			return;
+		}
+		clipboard_image_last_seen_ = png;
+		clipboard_last_seen_.clear();
+		emulator_->HostClipboardChanged(CLIPBOARD_TYPE_PNG, png);
+	}
 }
 
 /*
@@ -952,6 +999,42 @@ void MainFrame::PostSetHostClipboard(const std::string &utf8)
 		/* Ours now: do not read it straight back and send it to the guest
 		   again. */
 		clipboard_last_seen_ = text;
+		clipboard_image_last_seen_.clear();
+	});
+}
+
+/*
+ * The guest has copied an image. It arrives as the encoded file - a PNG or a
+ * JPEG - which is decoded here into a bitmap, because that is the form host
+ * applications take from the clipboard.
+ *
+ * Called from the emulator thread, so the clipboard itself is touched on the GUI
+ * thread.
+ */
+void MainFrame::PostSetHostClipboardImage(int file_type, const std::string &bytes)
+{
+	const wxBitmapType type = (file_type == CLIPBOARD_TYPE_JPEG)
+	                          ? wxBITMAP_TYPE_JPEG : wxBITMAP_TYPE_PNG;
+	const std::string data = bytes;
+
+	CallAfter([this, data, type]() {
+		wxMemoryInputStream in(data.data(), data.size());
+		wxImage image;
+
+		if (!image.LoadFile(in, type)) {
+			rpclog("Clipboard: the guest's image could not be decoded\n");
+			return;
+		}
+		if (!wxTheClipboard->Open()) {
+			return;
+		}
+		wxTheClipboard->SetData(new wxBitmapDataObject(wxBitmap(image)));
+		wxTheClipboard->Close();
+
+		/* Ours now: do not read it straight back and send it to the guest
+		   again. Compared as a PNG, so re-encode it the way the timer will. */
+		clipboard_last_seen_.clear();
+		clipboard_image_last_seen_ = EncodeBitmapAsPng(wxBitmap(image));
 	});
 }
 

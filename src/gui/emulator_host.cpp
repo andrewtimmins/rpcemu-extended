@@ -306,6 +306,15 @@ extern "C" void rpcemu_set_host_clipboard(const char *utf8, unsigned int len)
 	}
 }
 
+extern "C" void rpcemu_set_host_clipboard_image(int file_type, const void *data,
+                                                unsigned int len)
+{
+	if (g_gui_bridge != nullptr && data != nullptr) {
+		g_gui_bridge->PostSetHostClipboardImage(file_type,
+		    std::string(static_cast<const char *>(data), len));
+	}
+}
+
 extern "C" void rpcemu_send_nat_rule_to_gui(PortForwardRule rule)
 {
 	if (g_emulator_host != nullptr) {
@@ -415,6 +424,7 @@ EmulatorHost::EmulatorHost(GuiBridge *gui_bridge)
 	g_gui_bridge = gui_bridge;
 	g_emulator_host = this;
 	clipboard_set_host_setter(rpcemu_set_host_clipboard);
+	clipboard_set_host_image_setter(rpcemu_set_host_clipboard_image);
 	start_time_ = std::chrono::steady_clock::now();
 }
 
@@ -745,7 +755,7 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 	case EmuCommandType::HostClipboardChanged:
 		/* Runs on the emulator thread, so setting the guest's pollword and
 		   touching the stored clipboard are safe here. */
-		clipboard_host_changed(CLIPBOARD_TYPE_TEXT, command.string_path.c_str(),
+		clipboard_host_changed(command.arg1, command.string_path.data(),
 		                       static_cast<unsigned int>(command.string_path.size()));
 		break;
 	case EmuCommandType::CdromDisabled:
@@ -1015,11 +1025,12 @@ void EmulatorHost::SetClipboardEnabled()
 	PostCommand(MakeCommand(EmuCommandType::ClipboardEnabled));
 }
 
-void EmulatorHost::HostClipboardChanged(const std::string &utf8)
+void EmulatorHost::HostClipboardChanged(int file_type, const std::string &data)
 {
 	EmuCommand cmd;
 	cmd.type = EmuCommandType::HostClipboardChanged;
-	cmd.string_path = utf8;
+	cmd.arg1 = file_type;
+	cmd.string_path = data;	/* bytes, not necessarily text */
 	PostCommand(cmd);
 }
 

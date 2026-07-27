@@ -50,6 +50,7 @@ public:
 	void PostMachineSwitched(const std::string &machine_name) override;
 	void PostQuit() override;
 	void PostSetHostClipboard(const std::string &utf8) override;
+	void PostSetHostClipboardImage(int file_type, const std::string &bytes) override;
 };
 
 #endif

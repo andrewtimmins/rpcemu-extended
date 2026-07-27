@@ -188,7 +188,7 @@ public:
 
 	void StoreNatRuleForGui(PortForwardRule rule);
 	/* Host clipboard text, on its way to the guest (emulator thread). */
-	void HostClipboardChanged(const std::string &utf8);
+	void HostClipboardChanged(int file_type, const std::string &data);
 	void ClipboardEnabled(bool enabled);
 	std::vector<PortForwardRule> TakePendingNatRules();
 

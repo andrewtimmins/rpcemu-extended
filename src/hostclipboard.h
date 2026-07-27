@@ -33,8 +33,16 @@
  * change by setting a pollword in guest memory, which the guest's Wimp task
  * waits on, so nothing has to poll.
  *
- * This version carries text only. The filetype travels with the data, so image
- * support can be added later without changing the interface.
+ * Text and images. The filetype travels with the data, which is what let images
+ * be added without changing the interface: Cloverleaf's guest module already
+ * asks for PNG and JPEG alongside text when it goes looking for something to
+ * paste, and passes the type straight through, so only this side had to learn
+ * about them.
+ *
+ * Images are carried as the file the host and the guest already agree on - a
+ * PNG or a JPEG - and are never converted here. RISC OS sprites are not offered:
+ * that would mean a sprite encoder and decoder, and every RISC OS application
+ * worth pasting into reads PNG.
  */
 
 #ifndef HOSTCLIPBOARD_H
@@ -56,8 +64,11 @@
 /* Bit the host sets in the guest's pollword. */
 #define CLIPBOARD_POLLWORD_HOST_CHANGED	1
 
-/* RISC OS filetype for text, the only type carried at the moment. */
+/* RISC OS filetypes carried. The two image types are the ones Cloverleaf's guest
+   module asks for, so a RISC OS application offering either is understood. */
 #define CLIPBOARD_TYPE_TEXT	0xfff
+#define CLIPBOARD_TYPE_PNG	0xb60
+#define CLIPBOARD_TYPE_JPEG	0xc85
 
 #ifdef __cplusplus
 extern "C" {
@@ -83,6 +94,18 @@ extern void clipboard_host_changed(int file_type, const char *data, unsigned int
 typedef void (*clipboard_host_setter)(const char *utf8, unsigned int len);
 
 extern void clipboard_set_host_setter(clipboard_host_setter setter);
+
+/**
+ * The same for an image the guest has copied, handed over as the encoded file
+ * (CLIPBOARD_TYPE_PNG or CLIPBOARD_TYPE_JPEG) rather than as pixels.
+ */
+typedef void (*clipboard_host_image_setter)(int file_type, const void *data,
+                                            unsigned int len);
+
+extern void clipboard_set_host_image_setter(clipboard_host_image_setter setter);
+
+/** Is this one of the image types carried? */
+extern int clipboard_type_is_image(int file_type);
 
 /**
  * Forget everything, e.g. on reset: the guest's pollword address is no longer

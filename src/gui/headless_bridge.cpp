@@ -68,6 +68,12 @@ void HeadlessBridge::PostSetHostClipboard(const std::string &utf8)
 	(void) utf8;
 }
 
+void HeadlessBridge::PostSetHostClipboardImage(int file_type, const std::string &bytes)
+{
+	(void) file_type;
+	(void) bytes;
+}
+
 /*
  * error()/fatal() in emulator_host.cpp already print the message to stderr
  * before calling the bridge, so the non-fatal hooks need only avoid crashing.

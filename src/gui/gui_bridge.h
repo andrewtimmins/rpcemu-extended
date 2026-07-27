@@ -51,6 +51,11 @@ public:
 
 	/* The guest has put text on the clipboard; put it on the host's. */
 	virtual void PostSetHostClipboard(const std::string &utf8) = 0;
+
+	/* The same for an image, handed over as the encoded file (PNG or JPEG)
+	   with its RISC OS filetype, not as pixels. */
+	virtual void PostSetHostClipboardImage(int file_type,
+	                                       const std::string &bytes) = 0;
 };
 
 #endif

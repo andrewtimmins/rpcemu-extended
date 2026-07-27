@@ -17,8 +17,13 @@ Shared clipboard: task running        <- the module is loaded
   Connected to the host               <- ...and sharing is on
 ```
 
-Text only at the moment. Images are not carried, though the interface has room
-for them (see below).
+Text and images. An image travels as the file both sides already understand, a
+PNG or a JPEG, and nothing converts it on the way: what the host holds is what
+the guest is handed. RISC OS sprites are not offered, since that would need a
+sprite encoder and decoder here and the applications worth pasting into read PNG.
+
+When the host clipboard holds both text and a picture, which many applications
+put there together, the text is what is passed on: it is what was copied.
 
 ## Where it came from
 
@@ -123,20 +128,30 @@ an afternoon and are worth writing down:
   module wanting a task gets one. Claim it every time and it starts another copy
   each round until it gives up with "Too many tasks".
 
-## Adding images later
+## How images were added
 
-Nothing in the interface needs to change: the filetype travels with the data, and
-both halves already carry it. What is needed is encode and decode on the host
-(`wxImage` can do PNG and JPEG) and letting the two non-text filetypes through in
-`hostclipboard.c` and the module's `take_host_clipboard`. Cloverleaf's module
-offers `&C85` (JPEG) and `&B60` (PNG) in its filetype list, which is the list to
-match.
+Nothing in the interface had to change, which is the point of the filetype
+travelling with the data. The guest module needed no change at all: Cloverleaf
+had already written it to ask for `&B60` (PNG) and `&C85` (JPEG) alongside text
+when it goes looking for something to paste, and to pass the type straight
+through. Only the host half had to learn about them.
+
+Two details worth keeping in mind if this is touched again:
+
+- **An image is offered to the guest as its exact byte count.** Text is offered
+  as its length plus a terminator, which is Cloverleaf's convention and harmless
+  for a string; adding one to a PNG would be wrong. The guest's buffer has room
+  beyond the length for the terminator it writes itself.
+- **Text and an image are never both live.** Whichever arrived last is what the
+  clipboard holds, so the two stores are cleared together.
 
 ## Testing it
 
 `tests/test_clipboard.c` covers the host side: conversion both ways, characters
 one alphabet has and the other does not, truncation, the feature being off, and
-what survives a machine reset.
+what survives a machine reset. For images it checks the bytes come back exactly
+as they went in, NULs and high bytes included, that the length offered carries no
+terminator, and that a type neither side carries is refused.
 
 **The guest half can only be judged with real applications.** Small Wimp tasks
 written to speak the protocol by the book are not a proxy for Edit or StrongED:

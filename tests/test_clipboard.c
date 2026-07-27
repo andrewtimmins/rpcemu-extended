@@ -19,13 +19,18 @@
  */
 
 /*
- * test_clipboard.c - the shared clipboard's text conversion
+ * test_clipboard.c - the shared clipboard's host half
  *
- * The interesting part of the host half is the conversion: the host works in
- * UTF-8 and the guest in whatever alphabet RISC OS is configured for, and the
- * mapping between them comes from a table the guest hands over. Get that wrong
- * and text arrives mangled or truncated, which is the sort of thing that is
- * tedious to chase through a running emulator and quick to pin down here.
+ * The interesting part for text is the conversion: the host works in UTF-8 and
+ * the guest in whatever alphabet RISC OS is configured for, and the mapping
+ * between them comes from a table the guest hands over. Get that wrong and text
+ * arrives mangled or truncated, which is the sort of thing that is tedious to
+ * chase through a running emulator and quick to pin down here.
+ *
+ * For an image the interesting part is that nothing happens to it: it is carried
+ * as the encoded PNG or JPEG, so the bytes must come back exactly as they went
+ * in - which the text path, terminating at a NUL and converting through the
+ * alphabet, would not manage.
  *
  * The unit is included directly and the emulated memory stubbed, so this links
  * nothing.
@@ -105,6 +110,20 @@ fake_host_setter(const char *utf8, unsigned int len)
 	host_text[host_text_len] = '\0';
 }
 
+static unsigned char host_image[1024];
+static unsigned int host_image_len;
+static int host_image_type;
+static int host_image_setter_calls;
+
+static void
+fake_host_image_setter(int file_type, const void *data, unsigned int len)
+{
+	host_image_setter_calls++;
+	host_image_type = file_type;
+	host_image_len = len < sizeof(host_image) ? len : (unsigned int) sizeof(host_image);
+	memcpy(host_image, data, host_image_len);
+}
+
 static int failures;
 
 static void
@@ -166,6 +185,7 @@ main(void)
 
 	config.clipboard_enabled = 1;
 	clipboard_set_host_setter(fake_host_setter);
+	clipboard_set_host_image_setter(fake_host_image_setter);
 
 	printf("setup\n");
 	setup_guest(table_addr, pollword_addr);
@@ -228,20 +248,72 @@ main(void)
 	check(strcmp(host_text, "az") == 0,
 	      "a character the guest's table has no mapping for is dropped");
 
-	printf("\nwhat is not carried yet\n");
-	host_setter_calls = 0;
-	memcpy(fake_mem + buf_addr, "\x89PNG", 4);
+	printf("\nimages\n");
+	/* An image is carried as the encoded file, byte for byte: nothing here
+	   decodes it, so a PNG with a NUL and a high byte in it must survive
+	   unaltered - which the text path, being NUL-terminated and converted
+	   through the alphabet table, would not manage. */
 	{
+		static const unsigned char png[] = {
+			0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0x41
+		};
+		const unsigned int png_len = (unsigned int) sizeof(png);
 		uint32_t r0 = 0, r1 = 0;
 
-		clipboard_swi(ARCEM_SWI_CLIPBOARD_HOST_SET, buf_addr, 4, 0xb60,
-		              0, 0, &r0, &r1);
+		host_setter_calls = 0;
+		host_image_setter_calls = 0;
+		memcpy(fake_mem + buf_addr, png, png_len);
+		clipboard_swi(ARCEM_SWI_CLIPBOARD_HOST_SET, buf_addr, png_len,
+		              CLIPBOARD_TYPE_PNG, 0, 0, &r0, &r1);
+
+		check(host_image_setter_calls == 1 && host_setter_calls == 0,
+		      "an image from the guest goes to the front end as an image");
+		check(host_image_type == CLIPBOARD_TYPE_PNG &&
+		      host_image_len == png_len &&
+		      memcmp(host_image, png, png_len) == 0,
+		      "and arrives byte for byte, NULs and all");
+
+		host_check(&len, &type);
+		check(len == png_len && type == CLIPBOARD_TYPE_PNG,
+		      "the guest is offered its exact length, with no terminator");
+
+		memset(fake_mem + buf_addr, 0, 64);
+		host_get(buf_addr, 64);
+		check(memcmp(fake_mem + buf_addr, png, png_len) == 0,
+		      "and fetches it back unchanged");
+
+		/* An image and text are never both live: whichever arrived last is
+		   what the clipboard holds. */
+		clipboard_host_changed(CLIPBOARD_TYPE_TEXT, "back to text", 12);
+		host_check(&len, &type);
+		check(type == CLIPBOARD_TYPE_TEXT,
+		      "text from the host replaces the image");
+
+		clipboard_host_changed(CLIPBOARD_TYPE_PNG, (const char *) png, png_len);
+		host_check(&len, &type);
+		check(len == png_len && type == CLIPBOARD_TYPE_PNG,
+		      "and an image from the host replaces the text");
+
+		/* A JPEG is carried the same way; anything else is not carried. */
+		clipboard_host_changed(CLIPBOARD_TYPE_JPEG, (const char *) png, png_len);
+		host_check(&len, &type);
+		check(type == CLIPBOARD_TYPE_JPEG, "a JPEG is carried too");
+
+		clipboard_host_changed(0xff9, (const char *) png, png_len);
+		host_check(&len, &type);
+		check(type == CLIPBOARD_TYPE_JPEG,
+		      "a sprite is not, and leaves what was there alone");
+
+		host_image_setter_calls = 0;
+		memcpy(fake_mem + buf_addr, png, png_len);
+		clipboard_swi(ARCEM_SWI_CLIPBOARD_HOST_SET, buf_addr, png_len,
+		              0xff9, 0, 0, &r0, &r1);
+		check(host_image_setter_calls == 0,
+		      "nor is a sprite from the guest");
+
+		/* Leave text on it, as the checks below expect. */
+		clipboard_host_changed(CLIPBOARD_TYPE_TEXT, "Hello", 5);
 	}
-	check(host_setter_calls == 0, "an image from the guest is not passed on");
-	clipboard_host_changed(0xb60, "\x89PNG", 4);
-	host_check(&len, &type);
-	check(type == CLIPBOARD_TYPE_TEXT,
-	      "an image on the host does not replace the text");
 
 	printf("\nwhen the feature is off\n");
 	config.clipboard_enabled = 0;

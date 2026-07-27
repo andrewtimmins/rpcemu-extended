@@ -51,11 +51,36 @@ static int have_ucstable;
 
 /* Where guest copies go, once a front end has said it wants them. */
 static clipboard_host_setter host_setter;
+static clipboard_host_image_setter host_image_setter;
 
-/* The host's clipboard, as UCS-4 for text. */
+/* What is on the clipboard, held in whichever form suits it: text as UCS-4, so
+   it can be converted to whatever alphabet the guest asks for, and an image as
+   the encoded file itself, since neither side gains anything from this one
+   decoding a PNG only to encode it again. clip_file_type says which of the two
+   is live; they are never both set. */
 static uint32_t *clip_ucs;
 static unsigned int clip_ucs_len;	/* in characters */
+static unsigned char *clip_image;
+static unsigned int clip_image_len;	/* in bytes */
 static int clip_file_type = CLIPBOARD_TYPE_TEXT;
+
+int
+clipboard_type_is_image(int file_type)
+{
+	return file_type == CLIPBOARD_TYPE_PNG || file_type == CLIPBOARD_TYPE_JPEG;
+}
+
+/** Drop whatever is held, so only one of the two forms is ever live. */
+static void
+clip_discard(void)
+{
+	free(clip_ucs);
+	clip_ucs = NULL;
+	clip_ucs_len = 0;
+	free(clip_image);
+	clip_image = NULL;
+	clip_image_len = 0;
+}
 
 /**
  * Convert one UCS-4 character to the guest's alphabet, or 0 if the guest has no
@@ -143,7 +168,7 @@ clip_set_from_utf8(const char *utf8, unsigned int len)
 	}
 	ucs[out] = 0;
 
-	free(clip_ucs);
+	clip_discard();
 	clip_ucs = ucs;
 	clip_ucs_len = out;
 	clip_file_type = CLIPBOARD_TYPE_TEXT;
@@ -153,6 +178,12 @@ void
 clipboard_set_host_setter(clipboard_host_setter setter)
 {
 	host_setter = setter;
+}
+
+void
+clipboard_set_host_image_setter(clipboard_host_image_setter setter)
+{
+	host_image_setter = setter;
 }
 
 void
@@ -173,19 +204,41 @@ clipboard_host_changed(int file_type, const char *data, unsigned int data_len)
 	if (!config.clipboard_enabled) {
 		return;
 	}
-	if (file_type != CLIPBOARD_TYPE_TEXT) {
-		return;		/* text only, for now */
-	}
+	if (clipboard_type_is_image(file_type)) {
+		unsigned char *image;
 
-	clip_set_from_utf8(data, data_len);
+		if (data_len == 0) {
+			return;
+		}
+		image = malloc(data_len);
+		if (image == NULL) {
+			rpclog("Clipboard: out of memory for a %u byte image from the host\n",
+			       data_len);
+			return;
+		}
+		memcpy(image, data, data_len);
+
+		clip_discard();
+		clip_image = image;
+		clip_image_len = data_len;
+		clip_file_type = file_type;
+	} else if (file_type == CLIPBOARD_TYPE_TEXT) {
+		clip_set_from_utf8(data, data_len);
+	} else {
+		return;		/* nothing else is carried */
+	}
 
 	/* Wake the guest's task, if one has told us where to knock. */
 	if (pollword_addr != 0) {
 		mem_write32(pollword_addr, CLIPBOARD_POLLWORD_HOST_CHANGED);
-		rpclog("Clipboard: %u characters from the host, guest told\n", clip_ucs_len);
+	}
+	if (clipboard_type_is_image(clip_file_type)) {
+		rpclog("Clipboard: a %u byte image (type &%03x) from the host, %s\n",
+		       clip_image_len, (unsigned) clip_file_type,
+		       pollword_addr != 0 ? "guest told" : "no guest listening");
 	} else {
-		rpclog("Clipboard: %u characters from the host, no guest listening\n",
-		       clip_ucs_len);
+		rpclog("Clipboard: %u characters from the host, %s\n", clip_ucs_len,
+		       pollword_addr != 0 ? "guest told" : "no guest listening");
 	}
 }
 
@@ -229,7 +282,13 @@ clipboard_swi(uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3,
 		/* How much is there to fetch, and of what type? Text is counted
 		   as the guest will see it: one byte per character, plus a
 		   terminator, as Cloverleaf's module expects. */
-		if (clip_ucs != NULL && clip_ucs_len > 0) {
+		if (clip_image != NULL && clip_image_len > 0) {
+			/* Exactly the file's length: an image is not a string, and
+			   the guest saves the byte count we give it. Its buffer has
+			   room beyond this for the terminator it writes anyway. */
+			*retr0 = clip_image_len;
+			*retr1 = (uint32_t) clip_file_type;
+		} else if (clip_ucs != NULL && clip_ucs_len > 0) {
 			*retr0 = clip_ucs_len + 1;
 			*retr1 = (uint32_t) clip_file_type;
 		}
@@ -242,7 +301,20 @@ clipboard_swi(uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3,
 		unsigned int i;
 		unsigned int len = 0;
 
-		if (clip_ucs == NULL || room == 0) {
+		if (room == 0) {
+			break;
+		}
+		if (clip_image != NULL && clip_image_len > 0) {
+			/* Straight through: the guest asked for the file, not for
+			   pixels, so there is nothing to convert. */
+			const unsigned int n = (clip_image_len < room) ? clip_image_len : room;
+
+			memcpyfromhost(r1, clip_image, n);
+			*retr0 = n;
+			rpclog("Clipboard: guest fetched a %u byte image\n", n);
+			break;
+		}
+		if (clip_ucs == NULL) {
 			break;
 		}
 		out = malloc(room);
@@ -273,8 +345,33 @@ clipboard_swi(uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3,
 		unsigned int i;
 		unsigned int out = 0;
 
-		if (r3 != CLIPBOARD_TYPE_TEXT || r2 == 0) {
-			break;		/* text only, for now */
+		if (r2 == 0) {
+			break;
+		}
+		if (clipboard_type_is_image((int) r3)) {
+			unsigned char *image = malloc(r2);
+
+			if (image == NULL) {
+				rpclog("Clipboard: out of memory for a %u byte image "
+				       "from the guest\n", (unsigned) r2);
+				break;
+			}
+			memcpytohost(image, r1, r2);
+
+			clip_discard();
+			clip_image = image;
+			clip_image_len = r2;
+			clip_file_type = (int) r3;
+			rpclog("Clipboard: a %u byte image (type &%03x) from the guest\n",
+			       clip_image_len, (unsigned) clip_file_type);
+
+			if (host_image_setter != NULL) {
+				host_image_setter(clip_file_type, clip_image, clip_image_len);
+			}
+			break;
+		}
+		if (r3 != CLIPBOARD_TYPE_TEXT) {
+			break;		/* nothing else is carried */
 		}
 		in = malloc(r2);
 		ucs = malloc((r2 + 1) * sizeof(uint32_t));
@@ -297,7 +394,7 @@ clipboard_swi(uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3,
 		ucs[out] = 0;
 		free(in);
 
-		free(clip_ucs);
+		clip_discard();
 		clip_ucs = ucs;
 		clip_ucs_len = out;
 		clip_file_type = CLIPBOARD_TYPE_TEXT;
