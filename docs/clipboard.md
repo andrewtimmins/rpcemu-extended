@@ -35,14 +35,26 @@ makes this work well:
   guest's Wimp task waits on. Neither side polls the other.
 
 `src/hostclipboard.c` is derived from their `src/hostclipboard.c` and carries
-their copyright. The guest module is a fresh implementation in assembler, because
-there is no RISC OS C toolchain in this build environment, but it speaks their
-protocol; their copyright and the terms of their 2-clause BSD licence are in its
-header. The Latin-1 UCS table it carries is **NetSurf's** (Copyright 2005
-John M Bell, GPLv2), by way of Cloverleaf's `ucstables.c`.
+their copyright. **The guest module is theirs**, with the clipboard protocol
+untouched and four changes for this fork:
 
-Their module also did mouse wheel scrolling. That part is not here, since this
-emulator does wheel scrolling itself.
+- mouse wheel scrolling removed. This emulator does that itself, and theirs
+  claimed Alt+PageUp/PageDown outright, so applications in the guest never saw
+  those keys. That is why it could not simply be used as it was.
+- renamed: module `SharedClipboard`, task "Shared Clipboard", commands
+  `*SharedClipStart`, `*SharedClipStartTask`, `*SharedClipDebug`.
+- it starts its own task on `Service_StartWimp`, so nothing has to run a command
+  at boot.
+- small changes for the Norcroft compiler, since it is built with the RISC OS DDE.
+
+Their copyright and 2-clause BSD terms are in every file, our modifications are
+noted at the top of the ones we touched, and `c/ucstables` remains **NetSurf's**
+(Copyright 2005 John M Bell, GPL v2).
+
+An earlier attempt to reimplement the module in assembler is in the history
+(deleted at commit 097ec54). It passed every test written for it and never worked
+with a real editor, which is worth knowing before anyone tries again: see
+"Testing it" below.
 
 ## Using it
 
@@ -91,29 +103,25 @@ SWI" and can tell the difference between "off" and "nothing on the clipboard".
 ## The guest module
 
 `SharedClipboard` is a single token where names are parsed (`*RMKill`,
-`*RMEnsure`, the module header); **Shared Clipboard Helper** is what `*Modules`
-and the Task Manager show.
+`*RMEnsure`, the module header); **Shared Clipboard** is what `*Modules` and the
+Task Manager show.
+
+It is C, built **inside the emulator** with the Acorn DDE (`cc`, `cmhg`, `link`)
+and OSLib, both of which are in the guest's own `AcornC/C++` directory. `build.sh`
+therefore cannot rebuild it and says so; the module is committed as
+`poduleroms/sharedclipboard,ffa`. The recipe, and the traps, are in
+`riscos-progs/SharedClipboard/README.md`.
 
 It becomes a Wimp task the way ROM modules do: on `Service_StartWimp` it claims
-the service and returns a command for the Wimp to run, which enters the module as
-an application. Two things there are worth knowing if this is ever changed, since
-both cost an afternoon:
+the service and hands back a command for the Wimp to run. Two things there cost
+an afternoon and are worth writing down:
 
-- **Calling `Wimp_StartTask` from inside the service call re-enters the Wimp while
-  it is still starting**, and the desktop never comes up: the machine stops with
-  an abort during boot.
-- **The Wimp keeps issuing `Service_StartWimp` until nobody claims it**, so that
-  every module wanting a task gets one. Claim it every time and it starts another
-  copy each time round, until the Wimp gives up with "Too many tasks". Claim
-  exactly once.
-
-Once running it holds the clipboard on the host's behalf (`Message_ClaimEntity`),
-answers `Message_DataRequest` from applications with the text, and asks other
-applications for theirs when they claim the clipboard. Transfers go through
-`<Wimp$Scrap>` or in memory, whichever the other application asks for.
-
-The clipboard buffer is 64K of RMA, claimed when the task starts. Anything larger
-is truncated.
+- **Calling `Wimp_StartTask` from inside the service call** re-enters the Wimp
+  while it is still starting: the machine aborts during boot and the desktop never
+  appears. Claim the service and return a command instead.
+- **The Wimp reissues `Service_StartWimp` until nobody claims it**, so that every
+  module wanting a task gets one. Claim it every time and it starts another copy
+  each round until it gives up with "Too many tasks".
 
 ## Adding images later
 
@@ -126,13 +134,12 @@ match.
 
 ## Testing it
 
-`tests/test_clipboard.c` covers the conversion in both directions, including
-characters RISC OS has and Unicode does not (and the reverse), truncation into a
-small buffer, and the feature being off.
+`tests/test_clipboard.c` covers the host side: conversion both ways, characters
+one alphabet has and the other does not, truncation, the feature being off, and
+what survives a machine reset.
 
-The guest half was verified on a booted RISC OS 5.31 machine, in both directions,
-with small BBC BASIC Wimp tasks standing in for applications: one broadcasting
-`Message_DataRequest` for the clipboard and writing what came back to a file, the
-other claiming the clipboard and handing over text when asked. Text put on the
-host's X clipboard arrived in the guest application unchanged, and text an
-application copied in RISC OS arrived on the host's clipboard unchanged.
+**The guest half can only be judged with real applications.** Small Wimp tasks
+written to speak the protocol by the book are not a proxy for Edit or StrongED:
+they ask the clipboard's owner directly, and on a desktop with a Clipboard Manager
+running nothing answers that, so such tests pass against a module that real
+editors cannot talk to, and fail against one they can. Test with an editor.

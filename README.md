@@ -470,8 +470,9 @@ networking features.
   <https://github.com/riscoscloverleaf/rpcemu>. Their SWI interface and reason
   codes are kept exactly, so their guest module and ours are interchangeable, and
   `src/hostclipboard.c` is derived from theirs and carries their copyright (GNU
-  GPL v2). Their guest module is 2-clause BSD; ours is a fresh implementation in
-  assembler that speaks their protocol, and credits them in its header. Two of
+  GPL v2). The guest module is theirs too (2-clause BSD), with wheel scrolling
+  removed, renamed, and starting its own task; our changes are noted at the top of
+  each file we touched. It is built inside the emulator with the RISC OS DDE. Two of
   their ideas do the heavy lifting: the guest hands the host RISC OS's own UCS
   conversion table, so text is converted through the alphabet the machine is
   configured for, and the host announces a change with a pollword the guest's task
