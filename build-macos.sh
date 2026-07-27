@@ -812,8 +812,39 @@ EOF
 		cp -a "$APP" "$DMGSTAGE/"
 		ln -s /Applications "$DMGSTAGE/Applications"
 		rm -f "$DMG"
-		hdiutil create -volname "RPCEmu $VERSION" -srcfolder "$DMGSTAGE" \
-			-fs HFS+ -format UDZO -ov "$DMG" >/dev/null
+
+		# hdiutil now and then fails with "Resource busy" on a CI runner -
+		# something is still holding the staging folder, or an image from an
+		# earlier run has not finished detaching - and it is transient: the
+		# same command a few seconds later works. Everything up to here has
+		# already succeeded, and the release job needs this artifact, so a
+		# whole build is not worth losing to it. Try a few times, and if it
+		# really will not go, say why rather than swallowing the reason.
+		DMGLOG=$(mktemp)
+		dmg_try=1
+		while true; do
+			if hdiutil create -volname "RPCEmu $VERSION" \
+				-srcfolder "$DMGSTAGE" -fs HFS+ -format UDZO \
+				-ov "$DMG" >"$DMGLOG" 2>&1
+			then
+				break
+			fi
+			if [ "$dmg_try" -ge 5 ]; then
+				echo "   ! hdiutil create failed $dmg_try times, giving up:"
+				cat "$DMGLOG" >&2
+				rm -f "$DMGLOG"
+				rm -rf "$DMGSTAGE"
+				exit 1
+			fi
+			echo "   ! hdiutil create failed (attempt $dmg_try), retrying in 5s"
+			dmg_try=$((dmg_try + 1))
+			sleep 5
+		done
+		if [ "$dmg_try" -gt 1 ]; then
+			echo "   ✓ hdiutil create succeeded on attempt $dmg_try"
+		fi
+
+		rm -f "$DMGLOG"
 		rm -rf "$DMGSTAGE"
 		echo "✓ macOS DMG: $DMG"
 	fi
