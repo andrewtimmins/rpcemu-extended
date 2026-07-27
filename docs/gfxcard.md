@@ -307,12 +307,14 @@ GraphicsV documentation in the RISC OS sources.
 
 ## Rebuilding the driver
 
-The driver is assembled by hand and the result committed, because the ARM
-toolchain is not part of an ordinary build:
+The result is committed, because the ARM toolchain is not part of an ordinary
+build. With the toolchain installed, `build.sh` rebuilds the driver and its
+utility on every build; without it they are skipped and the committed image is
+used:
 
 ```
 ./setup-build-env.sh --podules      # once, for the arm-linux-gnueabi tools
-./build.sh --podules
+./build.sh                          # rebuilds the driver as part of the build
 ```
 
 `tests/test_gfxrom.c` reads the committed image the way the module system does

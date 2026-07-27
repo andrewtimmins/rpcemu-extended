@@ -55,7 +55,8 @@ automatically.
 ./build.sh --cross-arm64           # cross-compile Linux arm64 from x86_64
 ./build.sh --deb                   # Linux + .deb for selected arch
 ./build.sh --zip                   # Linux .tar.gz in releases/linux/
-./build.sh --podules               # rebuild HostFS podule ROMs
+./build.sh --no-podules            # skip the guest ROMs under riscos-progs/
+./build.sh --podules               # insist on the guest ROMs (fail if the ARM tools are absent)
 ./build.sh --clean                 # remove build trees and releases/
 ./build.sh --help                  # full option list
 ```
@@ -161,14 +162,24 @@ export GHOSTPDL_PREFIX=/opt/ghostpdl
 
 ---
 
-## Rebuilding podule ROMs
+## The guest ROMs (podules and the display driver)
+
+`riscos-progs/` holds the RISC OS side of the emulator: the HostFS filer, the
+RPCEmuSupport module, and the graphics card's display driver and its desktop
+utility. **`build.sh` rebuilds these as part of every build**, so a change to any
+of them is picked up without a flag, and the release directory always carries what
+the sources say.
+
+They need the ARM cross-assembler:
 
 ```bash
-./setup-build-env.sh --podules
-./build.sh --podules
+./setup-build-env.sh --podules     # once: arm-linux-gnueabi-as and related binutils
 ```
 
-Requires `arm-linux-gnueabi-as` and related binutils.
+Without it the guest ROMs are **skipped with a note** and the committed ones are
+used, so a machine that only builds the emulator (CI included) is unaffected.
+`--podules` insists on building them, treating a missing toolchain as an error
+rather than skipping it; `--no-podules` leaves them alone.
 
 ---
 

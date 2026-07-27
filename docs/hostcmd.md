@@ -18,10 +18,11 @@ host tool (rpcemu-run / your IDE / Claude Code)
 
 ## Quick start
 
-1. Build with the podule ROMs so the guest gateway module ships:
+1. Build. The guest gateway module is built as part of an ordinary build once the
+   ARM cross-assembler is installed:
    ```bash
    ./setup-build-env.sh --podules   # once: installs the ARM cross-assembler
-   ./build.sh --podules
+   ./build.sh
    ```
 2. Start a machine. HostCmd is **on by default**; the emulator creates a socket
    at `<data-dir>/hostcmd.sock` and the `RPCEmuSupport` module auto-loads at boot.

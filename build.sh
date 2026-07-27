@@ -8,8 +8,15 @@
 #   ./build.sh --zip                   # Linux build + .tar.gz in releases/linux/
 #   ./build.sh --interpreter           # Interpreter build (no dynarec)
 #   ./build.sh --debug                 # Debug build (-debug suffix on binary name)
-#   ./build.sh --podules               # Rebuild HostFS podule ROMs (optional)
+#   ./build.sh --no-podules            # Skip the guest ROMs (podules, display driver)
+#   ./build.sh --podules               # Insist on the guest ROMs (fail if the tools are absent)
 #   ./build.sh --clean                 # Remove build directories and releases
+#
+# The guest ROMs are built by default, so a change to anything under riscos-progs/
+# is picked up without having to remember a flag. They need the ARM cross-assembler
+# (./setup-build-env.sh --podules); without it they are skipped with a note and the
+# committed ROMs are used, which is what a machine that only builds the emulator
+# wants.
 #
 # Environment:
 #   GHOSTPDL_PREFIX=/opt/ghostpdl      # Optional full GhostPDL for PCL print jobs
@@ -44,7 +51,8 @@ BUILD_DEB=false
 BUILD_ZIP=false
 BUILD_INTERPRETER=false
 BUILD_DEBUG=false
-BUILD_PODULES=false
+BUILD_PODULES=true
+PODULES_EXPLICIT=false
 CLEAN_ONLY=false
 FORCE_CROSS_ARM64=false
 LINUX_ARCH=""
@@ -71,7 +79,8 @@ for arg in "$@"; do
 		--deb|-d) BUILD_DEB=true ;;
 		--zip|-z) BUILD_ZIP=true ;;
 		--cross-arm64) FORCE_CROSS_ARM64=true; LINUX_ARCH=arm64 ;;
-		--podules|-p) BUILD_PODULES=true ;;
+		--podules|-p) BUILD_PODULES=true; PODULES_EXPLICIT=true ;;
+		--no-podules) BUILD_PODULES=false ;;
 		--clean|-c) CLEAN_ONLY=true ;;
 		--help|-h)
 			echo "Usage: $0 [options]"
@@ -82,7 +91,8 @@ for arg in "$@"; do
 			echo "  --debug, -g         Debug build"
 			echo "  --deb, -d           Create .deb package"
 			echo "  --zip, -z           Create .tar.gz in releases/linux/"
-			echo "  --podules, -p       Rebuild HostFS podule ROMs"
+			echo "  --no-podules        Skip the guest ROMs under riscos-progs/"
+			echo "  --podules, -p       Insist on the guest ROMs (fail if the ARM tools are absent)"
 			echo "  --clean, -c         Remove build trees and releases/"
 			exit 0
 			;;
@@ -262,14 +272,27 @@ create_linux_tarball() {
 
 build_podules() {
 	local hostfs_dir="riscos-progs/HostFS"
-	if [ ! -d "$hostfs_dir" ]; then
-		echo "Error: $hostfs_dir not found"
-		exit 1
-	fi
-	if ! command -v arm-linux-gnueabi-as &>/dev/null; then
-		echo "Error: arm-linux-gnueabi-as not found."
-		echo "Install with: ./setup-build-env.sh --podules"
-		exit 1
+
+	# Built by default, so a missing toolchain must not stop the emulator being
+	# built: say so and leave the committed ROMs in place. Only --podules, where
+	# the guest ROMs are the point of the run, treats it as an error.
+	if [ ! -d "$hostfs_dir" ] || ! command -v arm-linux-gnueabi-as &>/dev/null; then
+		local why hint=""
+		if [ ! -d "$hostfs_dir" ]; then
+			why="$hostfs_dir not found"
+		else
+			why="arm-linux-gnueabi-as not found"
+			hint="./setup-build-env.sh --podules"
+		fi
+		if [ "$PODULES_EXPLICIT" = true ]; then
+			echo "Error: $why."
+			[ -n "$hint" ] && echo "Install the ARM tools with: $hint"
+			exit 1
+		fi
+		echo "Guest ROMs: skipped ($why) - using the committed ones."
+		[ -n "$hint" ] && echo "  To rebuild them: $hint"
+		echo ""
+		return 0
 	fi
 	echo "Building HostFS podule ROMs..."
 	(
