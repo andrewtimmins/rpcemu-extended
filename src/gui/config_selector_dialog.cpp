@@ -23,6 +23,7 @@
 #include "config_paths.h"
 #include "gui_preferences.h"
 #include "machine_edit_dialog.h"
+#include "new_machine_dialog.h"
 
 #include <cstdio>
 
@@ -44,6 +45,10 @@ ConfigSelectorDialog::ConfigSelectorDialog(wxWindow *parent)
 {
 	auto *list_label = new wxStaticText(this, wxID_ANY, "Available machines:");
 	config_list_ = new wxListBox(this, wxID_ANY);
+	empty_note_ = new wxStaticText(this, wxID_ANY,
+	    "No machines yet.\n\nChoose New... to set one up, with RISC OS "
+	    "downloaded and ready to run.");
+	empty_note_->Wrap(230);
 
 	new_button_ = new wxButton(this, wxID_ANY, "New...");
 	edit_button_ = new wxButton(this, wxID_ANY, "Edit...");
@@ -100,8 +105,13 @@ ConfigSelectorDialog::ConfigSelectorDialog(wxWindow *parent)
 	button_col->Add(resume_button_, 0, wxEXPAND | wxBOTTOM, 4);
 	button_col->Add(start_button_, 0, wxEXPAND | wxBOTTOM, 4);
 
+	/* The prompt sits over the list's own column, shown only when it is empty. */
+	auto *list_col = new wxBoxSizer(wxVERTICAL);
+	list_col->Add(config_list_, 1, wxEXPAND);
+	list_col->Add(empty_note_, 0, wxEXPAND | wxTOP, 8);
+
 	auto *body = new wxBoxSizer(wxHORIZONTAL);
-	body->Add(config_list_, 1, wxEXPAND | wxRIGHT, 8);
+	body->Add(list_col, 1, wxEXPAND | wxRIGHT, 8);
 	body->Add(button_col, 0, wxEXPAND);
 
 	auto *bottom = new wxBoxSizer(wxHORIZONTAL);
@@ -117,7 +127,10 @@ ConfigSelectorDialog::ConfigSelectorDialog(wxWindow *parent)
 
 	wxDir::Make(ConfigPathsConfigsDir(), wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL);
 	wxDir::Make(ConfigPathsMachinesDir(), wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL);
-	EnsureDefaultConfig();
+	/* No machine is invented here. A machine RPCEmu made up has no ROM and an
+	   empty disc, so it cannot start, and offering one as the first thing in
+	   the list only teaches somebody that starting a machine does not work.
+	   New... sets one up properly, RISC OS and all. */
 	RefreshConfigList();
 
 	new_button_->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnNew, this);
@@ -131,25 +144,6 @@ ConfigSelectorDialog::ConfigSelectorDialog(wxWindow *parent)
 	default_button_->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnToggleDefault, this);
 	config_list_->Bind(wxEVT_LISTBOX_DCLICK, &ConfigSelectorDialog::OnListDoubleClick, this);
 	config_list_->Bind(wxEVT_LISTBOX, [this](wxCommandEvent &) { UpdateButtons(); });
-}
-
-void ConfigSelectorDialog::EnsureDefaultConfig()
-{
-	const wxString default_cfg = ConfigPathsConfigsDir() + wxFileName::GetPathSeparator() + "Default.cfg";
-	if (wxFileExists(default_cfg)) {
-		return;
-	}
-	wxFileConfig settings(wxEmptyString, wxEmptyString, default_cfg, wxEmptyString, wxCONFIG_USE_RELATIVE_PATH);
-	ConfigFileUseGeneralGroup(settings);
-	settings.Write("name", "Default");
-	settings.Write("model", "RPCSA");
-	settings.Write("mem_size", "64");
-	settings.Write("vram_size", "2");
-	settings.Write("sound_enabled", 1L);
-	settings.Write("refresh_rate", 60L);
-	settings.Write("network_type", "nat");
-	settings.Flush();
-	ConfigPathsCreateMachineDirectory("Default");
 }
 
 void ConfigSelectorDialog::RefreshConfigList()
@@ -200,9 +194,18 @@ void ConfigSelectorDialog::RefreshConfigList()
 void ConfigSelectorDialog::UpdateButtons()
 {
 	const bool has_selection = config_list_->GetSelection() != wxNOT_FOUND;
+
+	/* With no machines at all, every button but New... is unavailable, which on
+	   its own reads as something being broken rather than as a starting point. */
+	if (empty_note_ != nullptr) {
+		empty_note_->Show(config_list_->IsEmpty());
+		Layout();
+	}
 	edit_button_->Enable(has_selection);
 	clone_button_->Enable(has_selection);
-	delete_button_->Enable(has_selection && config_list_->GetCount() > 1);
+	/* Deleting the last machine is allowed now that having none is a state the
+	   selector handles; New... is how you get back from it. */
+	delete_button_->Enable(has_selection);
 	start_button_->Enable(has_selection);
 
 	/* Whether this machine is the one opened without asking. The label says
@@ -359,38 +362,25 @@ void ConfigSelectorDialog::OnListDoubleClick(wxCommandEvent &event)
 	}
 }
 
+/*
+ * Create a machine, and offer to put RISC OS on it while we are here.
+ *
+ * The naming and the download are one step because this is the only moment when
+ * the machine is guaranteed to have no hard disc of its own, so the rule that a
+ * download never overwrites one cannot get in the way. The dialogue creates the
+ * machine itself, so by the time it returns there is something to select.
+ */
 void ConfigSelectorDialog::OnNew(wxCommandEvent &)
 {
-	wxTextEntryDialog dlg(this, "Machine name:", "New Machine", "New Machine");
+	NewMachineDialog dlg(this);
+
 	if (dlg.ShowModal() != wxID_OK) {
 		return;
 	}
 
-	const wxString sanitized = ConfigPathsSanitizeName(dlg.GetValue());
-	if (!ConfigPathsIsNameUnique(sanitized)) {
-		wxMessageBox(wxString::Format("A machine named '%s' already exists.", sanitized),
-		             "Name Already Exists", wxOK | wxICON_WARNING, this);
-		return;
-	}
+	const wxString config_path = dlg.CreatedConfigPath();
 
-	const wxString config_path = ConfigPathsConfigsDir() + wxFileName::GetPathSeparator() + sanitized + ".cfg";
-	wxFileConfig settings(wxEmptyString, wxEmptyString, config_path, wxEmptyString, wxCONFIG_USE_RELATIVE_PATH);
-	ConfigFileUseGeneralGroup(settings);
-	settings.Write("name", sanitized);
-	settings.Write("model", "RPCSA");
-	settings.Write("mem_size", "64");
-	settings.Write("vram_size", "2");
-	settings.Write("sound_enabled", 1L);
-	settings.Write("refresh_rate", 60L);
-	settings.Write("cdrom_enabled", 1L);
-	settings.Write("network_type", "nat");
-	settings.Write("cpu_idle", 0L);
-	settings.Write("show_fullscreen_message", 1L);
-	settings.Flush();
-
-	if (!ConfigPathsCreateMachineDirectory(sanitized)) {
-		wxRemoveFile(config_path);
-		wxMessageBox("Failed to create machine directory.", "Error", wxOK | wxICON_ERROR, this);
+	if (config_path.empty()) {
 		return;
 	}
 
@@ -401,6 +391,7 @@ void ConfigSelectorDialog::OnNew(wxCommandEvent &)
 			break;
 		}
 	}
+
 	wxCommandEvent dummy;
 	OnEdit(dummy);
 }

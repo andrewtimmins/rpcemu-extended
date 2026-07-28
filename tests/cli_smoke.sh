@@ -24,6 +24,22 @@ hung=0
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
+# The checks below need a machine to name, and RPCEmu no longer ships one: it
+# invents nothing at startup, so a fresh install has an empty list until the
+# user creates a machine. So make one here rather than depending on whatever the
+# release happens to contain. Only configs/ is needed for these paths, and
+# pointing both directories at it keeps the test off the real installation.
+export RPCEMU_DATADIR="$tmp/data"
+export RPCEMU_RESOURCE_DIR="$tmp/data"
+mkdir -p "$RPCEMU_DATADIR/configs"
+cat > "$RPCEMU_DATADIR/configs/Smoke.cfg" <<'CFG'
+[General]
+name=Smoke
+model=RPCSA
+mem_size=256
+vram_size=8
+CFG
+
 # run <expected-status> <description> -- <args...>
 # Captures stdout+stderr into $tmp/out and checks the exit status.
 # Every one of these options is meant to print and exit without ever reaching
@@ -93,9 +109,9 @@ if run 0 "--help" -- --help; then
 	expect_output -- '--resume' "--help lists --resume"
 fi
 
-# --list-machines names the machine that ships with the release.
+# --list-machines names the machines it can find.
 if run 0 "--list-machines" -- --list-machines; then
-	expect_output 'Default' "--list-machines"
+	expect_output 'Smoke' "--list-machines"
 fi
 
 # A usage error exits 2 and says why, rather than silently starting the GUI -
@@ -122,12 +138,12 @@ if run 2 "--state without --machine" -- --state /nonexistent.state; then
 fi
 
 # They name two different snapshots, so asking for both is ambiguous.
-if run 2 "--resume with --state" -- --machine Default --resume --state /nonexistent.state; then
+if run 2 "--resume with --state" -- --machine Smoke --resume --state /nonexistent.state; then
 	expect_output 'mutually exclusive' "--resume with --state"
 fi
 
 # A named state file that does not exist is an error, not a silent plain boot.
-if run 2 "--state naming a missing file" -- --machine Default --state /nonexistent.state; then
+if run 2 "--state naming a missing file" -- --machine Smoke --state /nonexistent.state; then
 	expect_output 'does not exist' "missing state file"
 fi
 

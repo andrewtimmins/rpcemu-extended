@@ -46,7 +46,6 @@ public:
 	wxString GetStateFileToLoad() const { return state_file_to_load_; }
 
 private:
-	void EnsureDefaultConfig();
 	void RefreshConfigList();
 	void UpdateButtons();
 	wxString SelectedConfigPath() const;
@@ -64,6 +63,7 @@ private:
 	void OnClone(wxCommandEvent &event);
 
 	wxListBox *config_list_ = nullptr;
+	wxStaticText *empty_note_ = nullptr;
 	wxButton *new_button_ = nullptr;
 	wxButton *edit_button_ = nullptr;
 	wxButton *clone_button_ = nullptr;

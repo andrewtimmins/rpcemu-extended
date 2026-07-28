@@ -580,15 +580,9 @@ if [ "$DO_FUSE" = true ]; then
 	for d in configs poduleroms netroms gfxroms resources roms podules default; do
 		[ -e "$d" ] && cp -a "$d" "$RESD/"
 	done
-	mkdir -p "$RESD/machines/Default"
-	if [ -d machines/Default ]; then
-		cp -a machines/Default/. "$RESD/machines/Default/"
-	fi
-	# Seed missing machine files from the default/ seed (fresh clone / CI).
-	[ -f default/cmos.ram ] && [ ! -f "$RESD/machines/Default/cmos.ram" ] && \
-		cp -a default/cmos.ram "$RESD/machines/Default/"
-	[ -d default/hostfs ] && [ ! -d "$RESD/machines/Default/hostfs" ] && \
-		cp -a default/hostfs "$RESD/machines/Default/"
+	# No machine is shipped; see the note in build.sh. New... creates one and
+	# seeds it from default/, copied above.
+	mkdir -p "$RESD/machines"
 	cp -f COPYING README.md COMPILE.md "$RESD/" 2>/dev/null || true
 	[ -d docs ] && cp -a docs "$RESD/" 2>/dev/null || true
 

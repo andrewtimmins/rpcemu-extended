@@ -10,7 +10,7 @@ frozen screen. That exercises the CPU, memory, VIDC, ROM loading and the VNC
 server end to end, on whichever platform the job runs.
 
 Note a fresh machine reaches a Supervisor prompt, not the desktop: the shipped
-machines/<name>/hostfs/ holds only the HardDisc4 installer, which has to be run
+a new machine's HostFS starts empty, so nothing would reach the desktop; the
 from inside RISC OS to produce a !Boot. The check accounts for that - see
 describe_screen().
 
@@ -19,7 +19,7 @@ encoding, 32bpp true colour) so there is one protocol implementation to reason
 about, not two.
 
 Usage:
-  vnc_smoke.py --binary <path> [--machine Default] [--port 5900]
+  vnc_smoke.py --binary <path> [--port 5900]
                [--boot-timeout 60] [--settle 20] [--save shot.png]
 
 Exit status is 0 when the machine booted and drew to the screen, and 1
@@ -216,34 +216,34 @@ def describe_screen(w: int, h: int, fb: bytearray) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 
-def make_test_config(src_cfg: str, dst_cfg: str, name: str, port: int) -> None:
+def make_test_config(dst_cfg: str, name: str, port: int) -> None:
     """
-    Copy the machine config with the VNC server switched on, under a new name.
+    Write the test machine's configuration.
 
-    The shipped Default.cfg has vnc_enabled=0, and headless mode refuses to
-    start without it. The tracked config is left alone: CI should not depend on
-    mutating a file that is also a user-facing default.
+    Written from scratch rather than copied from a shipped one: RPCEmu ships no
+    machine and invents none at startup, so there is nothing to copy on a fresh
+    install. Stating the settings here also means the test says what it is
+    testing against instead of inheriting whatever a default happened to be.
 
-    The "name" field matters as much as the filename - config_load() derives the
-    machine data directory from it, so leaving it as "Default" would point the
-    test at machines/Default/ and write into the real machine's HostFS.
+    VNC has to be on - headless mode refuses to start without it - and the
+    "name" field matters as much as the filename, because config_load() derives
+    the machine data directory from it.
     """
-    with open(src_cfg, "r", encoding="utf-8", errors="replace") as f:
-        text = f.read()
-
-    def set_key(t: str, key: str, value: str) -> str:
-        pat = re.compile(rf"^{re.escape(key)}=.*$", re.MULTILINE)
-        if pat.search(t):
-            return pat.sub(f"{key}={value}", t)
-        return t.rstrip("\n") + f"\n{key}={value}\n"
-
-    text = set_key(text, "name", name)
-    text = set_key(text, "vnc_enabled", "1")
-    text = set_key(text, "vnc_port", str(port))
-    text = set_key(text, "vnc_password", "")
-
     with open(dst_cfg, "w", encoding="utf-8") as f:
-        f.write(text)
+        f.write(
+            "[General]\n"
+            f"name={name}\n"
+            "model=RPCSA\n"
+            "mem_size=256\n"
+            "vram_size=8\n"
+            "sound_enabled=0\n"
+            "refresh_rate=60\n"
+            "cdrom_enabled=0\n"
+            "network_type=off\n"
+            "vnc_enabled=1\n"
+            f"vnc_port={port}\n"
+            "vnc_password=\n"
+        )
 
 
 def seed_boot_file(hostfs: str) -> None:
@@ -280,7 +280,6 @@ def wait_for_port(host: str, port: int, proc: subprocess.Popen, timeout: float) 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--binary", required=True, help="emulator to run")
-    ap.add_argument("--machine", default="Default", help="machine config name")
     ap.add_argument("--port", type=int, default=5900, help="VNC port to use")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--boot-timeout", type=float, default=60.0,
@@ -329,31 +328,30 @@ def main() -> int:
 
     datadir = os.path.abspath(datadir)
     configs = os.path.join(datadir, "configs")
-    src_cfg = os.path.join(configs, f"{args.machine}.cfg")
-    if not os.path.isfile(src_cfg):
-        print(f"error: no config at {src_cfg}", file=sys.stderr)
-        return 1
 
     if not os.access(datadir, os.W_OK):
         print(f"error: {datadir} is not writable; the test needs to add a config there",
               file=sys.stderr)
         return 1
 
-    test_name = f"{args.machine}-vncsmoke"
+    test_name = "vncsmoke"
     test_cfg = os.path.join(configs, f"{test_name}.cfg")
-    make_test_config(src_cfg, test_cfg, test_name, args.port)
+    make_test_config(test_cfg, test_name, args.port)
 
     # The machine directory is keyed by the config's "name" field, which
-    # make_test_config() has just set to test_name - so the test gets its own
-    # directory, seeded from the real one for the same CMOS starting point, and
-    # the real machine's HostFS is never touched.
+    # make_test_config() has just set to test_name, so the test gets a directory
+    # of its own and no real machine is touched. Its CMOS comes from the same
+    # seed a new machine would get: default/cmos.ram, which selects HostFS and
+    # enables booting. Without it the machine comes up on ADFS and never runs
+    # the !Boot seeded below.
     machines = os.path.join(datadir, "machines")
-    src_machine = os.path.join(machines, args.machine)
     dst_machine = os.path.join(machines, test_name)
     if os.path.isdir(dst_machine):
         shutil.rmtree(dst_machine)  # start from a known state on a re-run
-    if os.path.isdir(src_machine):
-        shutil.copytree(src_machine, dst_machine)
+    os.makedirs(dst_machine, exist_ok=True)
+    seed_cmos = os.path.join(datadir, "default", "cmos.ram")
+    if os.path.isfile(seed_cmos):
+        shutil.copy2(seed_cmos, os.path.join(dst_machine, "cmos.ram"))
 
     seed_boot_file(os.path.join(dst_machine, "hostfs"))
 

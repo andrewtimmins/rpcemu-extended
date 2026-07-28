@@ -58,6 +58,33 @@ jobs:
       # a healthy run reaches the RISC OS desktop; the check asks whether the
       # screen has a desktop's range of colour, not whether it matches a
       # reference image, so cosmetic changes cannot fail the build.
+      # The boot test needs a ROM, and RPCEmu ships none - so fetch one the way a
+      # user now would, with the emulator's own downloader. That gives the boot
+      # test something to run and checks the download itself on every platform,
+      # which matters because each uses a different HTTP stack (libcurl here,
+      # WinHTTP on Windows, NSURLSession on macOS).
+      #
+      # Cached so RISC OS Open are not asked for the same file on every push.
+      # Packaging has already happened by this point, so neither the ROM nor the
+      # machine the fetch creates ends up in the released archive.
+      - name: Cache the RISC OS ROM
+        uses: actions/cache@v4
+        with:
+          path: ci-rom
+          key: rpcemu-rom-stable-v1
+      - name: Fetch a ROM for the boot test
+        run: |
+          set -eu
+          data="releases/linux/amd64"
+          mkdir -p ci-rom
+          if ! ls ci-rom/ROM* >/dev/null 2>&1; then
+            RPCEMU_DATADIR="$data" RPCEMU_NO_GUI_MESSAGES=1 \
+              "$data/rpcemu-recompiler" --fetch-riscos --no-disc --accept-licence
+            cp "$data"/roms/ROM* ci-rom/
+          fi
+          cp ci-rom/ROM* "$data/roms/"
+          ls -la "$data/roms/"
+
       - name: Headless boot and VNC screenshot
         timeout-minutes: 3
         run: |
@@ -119,6 +146,33 @@ jobs:
       # a healthy run reaches the RISC OS desktop; the check asks whether the
       # screen has a desktop's range of colour, not whether it matches a
       # reference image, so cosmetic changes cannot fail the build.
+      # The boot test needs a ROM, and RPCEmu ships none - so fetch one the way a
+      # user now would, with the emulator's own downloader. That gives the boot
+      # test something to run and checks the download itself on every platform,
+      # which matters because each uses a different HTTP stack (libcurl here,
+      # WinHTTP on Windows, NSURLSession on macOS).
+      #
+      # Cached so RISC OS Open are not asked for the same file on every push.
+      # Packaging has already happened by this point, so neither the ROM nor the
+      # machine the fetch creates ends up in the released archive.
+      - name: Cache the RISC OS ROM
+        uses: actions/cache@v4
+        with:
+          path: ci-rom
+          key: rpcemu-rom-stable-v1
+      - name: Fetch a ROM for the boot test
+        run: |
+          set -eu
+          data="releases/linux/arm64"
+          mkdir -p ci-rom
+          if ! ls ci-rom/ROM* >/dev/null 2>&1; then
+            RPCEMU_DATADIR="$data" RPCEMU_NO_GUI_MESSAGES=1 \
+              "$data/rpcemu-interpreter" --fetch-riscos --no-disc --accept-licence
+            cp "$data"/roms/ROM* ci-rom/
+          fi
+          cp ci-rom/ROM* "$data/roms/"
+          ls -la "$data/roms/"
+
       - name: Headless boot and VNC screenshot
         timeout-minutes: 3
         run: |
@@ -222,6 +276,33 @@ jobs:
       # a healthy run reaches the RISC OS desktop; the check asks whether the
       # screen has a desktop's range of colour, not whether it matches a
       # reference image, so cosmetic changes cannot fail the build.
+      # The boot test needs a ROM, and RPCEmu ships none - so fetch one the way a
+      # user now would, with the emulator's own downloader. That gives the boot
+      # test something to run and checks the download itself on every platform,
+      # which matters because each uses a different HTTP stack (libcurl here,
+      # WinHTTP on Windows, NSURLSession on macOS).
+      #
+      # Cached so RISC OS Open are not asked for the same file on every push.
+      # Packaging has already happened by this point, so neither the ROM nor the
+      # machine the fetch creates ends up in the released archive.
+      - name: Cache the RISC OS ROM
+        uses: actions/cache@v4
+        with:
+          path: ci-rom
+          key: rpcemu-rom-stable-v1
+      - name: Fetch a ROM for the boot test
+        run: |
+          set -eu
+          data="releases/windows/amd64"
+          mkdir -p ci-rom
+          if ! ls ci-rom/ROM* >/dev/null 2>&1; then
+            RPCEMU_DATADIR="$data" RPCEMU_NO_GUI_MESSAGES=1 \
+              "$data/rpcemu-recompiler.exe" --fetch-riscos --no-disc --accept-licence
+            cp "$data"/roms/ROM* ci-rom/
+          fi
+          cp ci-rom/ROM* "$data/roms/"
+          ls -la "$data/roms/"
+
       - name: Headless boot and VNC screenshot
         timeout-minutes: 3
         run: |
@@ -418,6 +499,33 @@ jobs:
       # Boot the machine for real and look at the screen - see the Linux job for
       # why. Run the binary inside the bundle, which is what a user launches,
       # so a boot that only fails when bundled is caught here.
+      # The boot test needs a ROM, and RPCEmu ships none - so fetch one the way a
+      # user now would, with the emulator's own downloader. That gives the boot
+      # test something to run and checks the download itself on every platform,
+      # which matters because each uses a different HTTP stack (libcurl here,
+      # WinHTTP on Windows, NSURLSession on macOS).
+      #
+      # Cached so RISC OS Open are not asked for the same file on every push.
+      # Packaging has already happened by this point, so neither the ROM nor the
+      # machine the fetch creates ends up in the released archive.
+      - name: Cache the RISC OS ROM
+        uses: actions/cache@v4
+        with:
+          path: ci-rom
+          key: rpcemu-rom-stable-v1
+      - name: Fetch a ROM for the boot test
+        run: |
+          set -eu
+          data="releases/macos/RPCEmu.app/Contents/Resources"
+          mkdir -p ci-rom
+          if ! ls ci-rom/ROM* >/dev/null 2>&1; then
+            RPCEMU_DATADIR="$data" RPCEMU_NO_GUI_MESSAGES=1 \
+              "$data/../MacOS/rpcemu" --fetch-riscos --no-disc --accept-licence
+            cp "$data"/roms/ROM* ci-rom/
+          fi
+          cp ci-rom/ROM* "$data/roms/"
+          ls -la "$data/roms/"
+
       - name: Headless boot and VNC screenshot
         timeout-minutes: 3
         run: |

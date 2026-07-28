@@ -109,18 +109,9 @@ done
 # Common HostFS "Shared" disc (shared across machines). Normally created on
 # first launch by the emulator; pre-create it so a fresh release is complete.
 mkdir -p "$WIN_RELEASE/shared"
-mkdir -p "$WIN_RELEASE/machines/Default"
-if [ -d machines/Default ]; then
-	cp -a machines/Default/. "$WIN_RELEASE/machines/Default/"
-fi
-# Seed missing machine files from default/. Only cmos.ram is tracked under
-# machines/Default/; the HostFS contents (HardDisc4.5.30.util - the first-boot
-# hard-disc installer) live in default/hostfs/, so on a fresh clone / CI the
-# copy above yields only cmos.ram and hostfs/ must be seeded here.
-[ -f default/cmos.ram ] && [ ! -f "$WIN_RELEASE/machines/Default/cmos.ram" ] && \
-	cp -a default/cmos.ram "$WIN_RELEASE/machines/Default/"
-[ -d default/hostfs ] && [ ! -d "$WIN_RELEASE/machines/Default/hostfs" ] && \
-	cp -a default/hostfs "$WIN_RELEASE/machines/Default/"
+# No machine is shipped; see the same note in build.sh. New... creates one and
+# seeds it from default/, which is staged above.
+mkdir -p "$WIN_RELEASE/machines"
 cp -f COPYING README.md COMPILE.md "$WIN_RELEASE/" 2>/dev/null || true
 
 # Emulator + host-side tools (.exe copies; Windows has no symlinks).

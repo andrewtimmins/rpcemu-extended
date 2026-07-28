@@ -24,12 +24,10 @@
 /hd4.hdf
 
 # Per-machine runtime state (CMOS, HostFS, disc images) and the shared HostFS
-# drive. Generated/used at run time, not source -- except the Default machine's
-# CMOS, which we track so the stock machine keeps its saved configuration.
+# drive: generated at run time, not source. No machine is shipped, so nothing
+# under here is tracked bar the note that keeps the directory in a checkout.
 /machines/*
-!/machines/Default/
-/machines/Default/*
-!/machines/Default/cmos.ram
+!/machines/README.txt
 /shared/
 
 # Legacy single-machine state (CMOS now lives under machines/<name>/)

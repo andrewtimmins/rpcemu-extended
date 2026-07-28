@@ -204,20 +204,12 @@ stage_linux_release() {
 	# Common HostFS "Shared" disc (shared across machines). Normally created on
 	# first launch by the emulator; pre-create it so a fresh release is complete.
 	mkdir -p "$LINUX_RELEASE/shared"
-	rm -rf "$LINUX_RELEASE/machines/Default"
-	mkdir -p "$LINUX_RELEASE/machines/Default"
-	if [ -d machines/Default ]; then
-		cp -a machines/Default/. "$LINUX_RELEASE/machines/Default/"
-	fi
-	# Seed any machine files that aren't already present from the default/ seed.
-	# Only cmos.ram is tracked under machines/Default/; the HostFS contents
-	# (e.g. HardDisc4.5.30.util, the first-boot hard-disc installer) live in
-	# default/hostfs/. On a fresh clone / CI the copy above yields only cmos.ram,
-	# so hostfs/ must be seeded here or the shipped machine has no HostFS.
-	[ -f default/cmos.ram ] && [ ! -f "$LINUX_RELEASE/machines/Default/cmos.ram" ] && \
-		cp -a default/cmos.ram "$LINUX_RELEASE/machines/Default/"
-	[ -d default/hostfs ] && [ ! -d "$LINUX_RELEASE/machines/Default/hostfs" ] && \
-		cp -a default/hostfs "$LINUX_RELEASE/machines/Default/"
+	# No machine is shipped. A machine RPCEmu made up has no ROM and an empty
+	# disc, so it cannot start, and one appearing in the list only teaches a new
+	# user that starting a machine does not work. The New... button creates one
+	# properly, fetching RISC OS from RISC OS Open, and seeds it from default/
+	# (staged above), which is why that directory ships and this one does not.
+	mkdir -p "$LINUX_RELEASE/machines"
 	cp -f COPYING README.md COMPILE.md "$LINUX_RELEASE/" 2>/dev/null || true
 	cp -f setup-runtime-env.sh "$LINUX_RELEASE/" 2>/dev/null || true
 	if [ -f packaging/rpcemu.desktop ]; then
