@@ -19,14 +19,20 @@
  */
 
 #include "machine_edit_dialog.h"
+#include "riscos_setup_dialog.h"
+#include "riscos_fetch.h"
 
 #include "config_paths.h"
+#include "gui_preferences.h"
 #include "podule_config_dialog.h"
+#include "toolbar_icons.h"
 
 #include <cstring>
 
 #include <wx/dir.h>
 #include <wx/fileconf.h>
+#include <wx/bmpbuttn.h>
+#include <wx/notebook.h>
 #include <wx/filename.h>
 #include <wx/utils.h>
 
@@ -97,7 +103,10 @@ enum {
 
 MachineEditDialog::MachineEditDialog(wxWindow *parent, const wxString &config_path, bool allow_rename,
                                      bool emulator_running)
-	: wxDialog(parent, wxID_ANY, "Edit Machine", wxDefaultPosition, wxSize(560, 620),
+	/* Sized from its contents rather than to a fixed height: as a notebook
+	   the tallest page decides, and that is a good deal shorter than the one
+	   long form this replaced. */
+	: wxDialog(parent, wxID_ANY, "Edit Machine", wxDefaultPosition, wxDefaultSize,
 	           wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
 	, config_path_(config_path)
 	, allow_rename_(allow_rename)
@@ -106,6 +115,7 @@ MachineEditDialog::MachineEditDialog(wxWindow *parent, const wxString &config_pa
 	BuildUi();
 	LoadSettings();
 	UpdateHdStatus();
+	UpdateDiscDownloadAvailability();
 	Fit();
 	CentreOnParent();
 }
@@ -115,25 +125,25 @@ void MachineEditDialog::BuildHardDiscPanel(wxWindow *parent, wxSizer *parent_siz
 {
 	panel.drive_num = drive_num;
 
-	auto *drive_panel = new wxPanel(parent);
-	auto *card = new wxBoxSizer(wxVERTICAL);
-
-	card->Add(new wxStaticText(drive_panel, wxID_ANY,
-	                           wxString::Format("HardDisc %d (IDE drive %d)", drive_num, ide_index)),
-	          0, wxBOTTOM, 4);
+	/* Each drive gets its own framed group. Stacked as plain text the two ran
+	   together, and it was not obvious at a glance which path and which
+	   buttons belonged to which disc. */
+	auto *card = new wxStaticBoxSizer(wxVERTICAL, parent,
+	    wxString::Format("HardDisc %d (IDE drive %d)", drive_num, ide_index));
+	wxWindow *const drive_panel = card->GetStaticBox();
 
 	panel.badge = new wxStaticText(drive_panel, wxID_ANY, "Not created");
 	panel.badge->SetFont(panel.badge->GetFont().Bold());
-	card->Add(panel.badge, 0, wxEXPAND | wxBOTTOM, 4);
+	card->Add(panel.badge, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 6);
 
 	panel.path_label = new wxStaticText(drive_panel, wxID_ANY, wxEmptyString);
 	panel.path_label->SetForegroundColour(kHdColourMuted);
-	card->Add(panel.path_label, 0, wxEXPAND | wxBOTTOM, 2);
+	card->Add(panel.path_label, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 6);
 
 	panel.modified_label = new wxStaticText(drive_panel, wxID_ANY, wxEmptyString);
 	panel.modified_label->SetForegroundColour(kHdColourMuted);
 	panel.modified_label->SetFont(panel.modified_label->GetFont().Smaller());
-	card->Add(panel.modified_label, 0, wxEXPAND | wxBOTTOM, 8);
+	card->Add(panel.modified_label, 0, wxEXPAND | wxLEFT | wxRIGHT, 6);
 
 	auto *actions = new wxBoxSizer(wxHORIZONTAL);
 	panel.create_btn = new wxButton(drive_panel, wxID_ANY, "New disc...");
@@ -142,40 +152,53 @@ void MachineEditDialog::BuildHardDiscPanel(wxWindow *parent, wxSizer *parent_siz
 	actions->Add(panel.create_btn, 0, wxRIGHT, 4);
 	actions->Add(panel.delete_btn, 0, wxRIGHT, 4);
 	actions->Add(panel.open_folder_btn, 0);
-	card->Add(actions, 0, wxEXPAND);
+	card->Add(actions, 0, wxEXPAND | wxALL, 6);
 
-	drive_panel->SetSizer(card);
-	parent_sizer->Add(drive_panel, 0, wxEXPAND | wxBOTTOM, 8);
+	parent_sizer->Add(card, 0, wxEXPAND | wxBOTTOM, 10);
 
 	panel.create_btn->Bind(wxEVT_BUTTON, [this, drive_num](wxCommandEvent &) { ShowHardDiscCreateMenu(drive_num); });
 	panel.delete_btn->Bind(wxEVT_BUTTON, [this, drive_num](wxCommandEvent &) { DeleteHardDisc(drive_num); });
 	panel.open_folder_btn->Bind(wxEVT_BUTTON, [this, drive_num](wxCommandEvent &) { OpenHardDiscFolder(drive_num); });
 }
 
-void MachineEditDialog::BuildUi()
+/*
+ * The System page: what the machine is made of.
+ *
+ * Everything here is fixed at the point the machine starts, which is what
+ * separates it from the other pages.
+ */
+wxWindow *MachineEditDialog::BuildSystemPage(wxWindow *parent)
 {
-	name_edit_ = new wxTextCtrl(this, wxID_ANY);
-	rom_combo_ = new wxComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
-	model_combo_ = new wxComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
-	mem_combo_ = new wxComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
-	vram_combo_ = new wxComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
-	refresh_slider_ = new wxSlider(this, wxID_ANY, 60, 20, 100);
-	refresh_label_ = new wxStaticText(this, wxID_ANY, "60 Hz");
-	network_combo_ = new wxComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
-	bridge_label_ = new wxStaticText(this, wxID_ANY, "Bridge Name:");
-	bridge_edit_ = new wxTextCtrl(this, wxID_ANY, "rpcemu");
-	tunnel_label_ = new wxStaticText(this, wxID_ANY, "IP Address:");
-	tunnel_edit_ = new wxTextCtrl(this, wxID_ANY, "172.31.0.1");
-	compat_label_ = new wxStaticText(this, wxID_ANY, wxEmptyString);
+	auto *page = new wxPanel(parent);
+
+	name_edit_ = new wxTextCtrl(page, wxID_ANY);
+	rom_combo_ = new wxComboBox(page, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
+	get_rom_button_ = new wxButton(page, wxID_ANY, "Get RISC OS...");
+	get_rom_button_->SetToolTip("Download a RISC OS ROM from RISC OS Open");
+	get_disc_check_ = new wxCheckBox(page, wxID_ANY,
+	    "Also download a ready-to-use hard disc (about 13 MB)");
+	get_disc_check_->SetToolTip(
+	    "HardDisc4 from RISC OS Open: applications, utilities, !System and a "
+	    "configured !Boot, set up for the ROM you choose.\n\n"
+	    "Only offered while this machine's hard disc is empty. An existing "
+	    "disc is never overwritten.");
+	get_disc_note_ = new wxStaticText(page, wxID_ANY, wxEmptyString);
+	get_disc_note_->SetForegroundColour(kHdColourMuted);
+	get_disc_note_->SetFont(get_disc_note_->GetFont().Smaller());
+	model_combo_ = new wxComboBox(page, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
+	mem_combo_ = new wxComboBox(page, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
+	vram_combo_ = new wxComboBox(page, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
+	refresh_slider_ = new wxSlider(page, wxID_ANY, 60, 20, 100);
+	refresh_label_ = new wxStaticText(page, wxID_ANY, "60 Hz");
+	compat_label_ = new wxStaticText(page, wxID_ANY, wxEmptyString);
 	compat_label_->SetMinSize(wxSize(460, -1));
 
 	/* Why the RAM/VRAM selectors are fixed on some models. Without this the
 	   greyed controls look like a fault rather than the shape of the machine
 	   (reported as issue #37). */
-	mem_note_ = new wxStaticText(this, wxID_ANY, wxEmptyString);
+	mem_note_ = new wxStaticText(page, wxID_ANY, wxEmptyString);
 
 	PopulateRomList();
-
 	PopulateModelList(Model_MAX);
 
 	const int mem_values[] = {4, 8, 16, 32, 64, 128, 256, 512};
@@ -190,12 +213,17 @@ void MachineEditDialog::BuildUi()
 
 	/* The graphics card carries its own display memory, so it is the answer to
 	   the VRAM limit rather than another size of it - hence its place here. */
-	gfxcard_check_ = new wxCheckBox(this, wxID_ANY, "High-Resolution Graphics Card");
-	gfxcard_boot_check_ = new wxCheckBox(this, wxID_ANY, "Make High-Resolution Graphics Card the default display");
-	fullscreen_check_ = new wxCheckBox(this, wxID_ANY, "Start this machine full screen");
+	gfxcard_check_ = new wxCheckBox(page, wxID_ANY, "High-Resolution Graphics Card");
+	gfxcard_boot_check_ = new wxCheckBox(page, wxID_ANY, "Make High-Resolution Graphics Card the default display");
+	fullscreen_check_ = new wxCheckBox(page, wxID_ANY, "Start this machine full screen");
 	fullscreen_check_->SetToolTip(
 	    "Go full screen as soon as this machine starts, rather than opening a "
 	    "window first. Press Ctrl+End or use Settings > Full Screen to leave it.");
+	default_machine_check_ = new wxCheckBox(page, wxID_ANY,
+	    "Open this machine automatically at startup");
+	default_machine_check_->SetToolTip(
+	    "Skip the machine selector and open this machine. Hold Shift while "
+	    "starting RPCEmu to get the selector back.");
 	gfxcard_boot_check_->SetToolTip(
 	    "Hand the display to the card as the machine boots, so RISC OS comes up on "
 	    "it rather than on VIDC20 - no *GfxCardOn needed.\n\n"
@@ -207,28 +235,42 @@ void MachineEditDialog::BuildUi()
 	    "fitted VRAM cannot reach (up to 2560 x 1440 in full colour).\n\n"
 	    "RISC OS keeps using VIDC20 until you run *GfxCardOn. Needs RISC OS 5.");
 
-	network_combo_->Append("Off");
-	network_combo_->Append("NAT");
-	network_combo_->Append("Ethernet Bridging");
-	network_combo_->Append("IP Tunnelling");
-
-	auto *form = new wxFlexGridSizer(2, 8, 8);
+	auto *form = new wxFlexGridSizer(2, 14, 8);
 	form->AddGrowableCol(1, 1);
-	form->Add(new wxStaticText(this, wxID_ANY, "Name:"), 0, wxALIGN_CENTER_VERTICAL);
+	form->Add(new wxStaticText(page, wxID_ANY, "Name:"), 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(name_edit_, 1, wxEXPAND);
-	form->Add(new wxStaticText(this, wxID_ANY, "ROM:"), 0, wxALIGN_CENTER_VERTICAL);
-	form->Add(rom_combo_, 1, wxEXPAND);
-	form->Add(new wxStaticText(this, wxID_ANY, "Model:"), 0, wxALIGN_CENTER_VERTICAL);
+	form->Add(new wxStaticText(page, wxID_ANY, "ROM:"), 0, wxALIGN_CENTER_VERTICAL);
+	{
+		/* The download sits beside the chooser because that is where
+		   somebody discovers they have no ROM to choose. */
+		auto *rom_row = new wxBoxSizer(wxHORIZONTAL);
+
+		rom_row->Add(rom_combo_, 1, wxEXPAND | wxRIGHT, 8);
+		rom_row->Add(get_rom_button_, 0);
+		form->Add(rom_row, 1, wxEXPAND);
+	}
+
+	/* What the download brings with it, directly under the button it applies
+	   to, so the two read as one thing. */
+	form->Add(new wxStaticText(page, wxID_ANY, ""), 0);
+	{
+		auto *disc_col = new wxBoxSizer(wxVERTICAL);
+
+		disc_col->Add(get_disc_check_, 0);
+		disc_col->Add(get_disc_note_, 0, wxTOP, 2);
+		form->Add(disc_col, 1, wxEXPAND);
+	}
+	form->Add(new wxStaticText(page, wxID_ANY, "Model:"), 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(model_combo_, 1, wxEXPAND);
-	form->Add(new wxStaticText(this, wxID_ANY, "RAM:"), 0, wxALIGN_CENTER_VERTICAL);
+	form->Add(new wxStaticText(page, wxID_ANY, "RAM:"), 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(mem_combo_, 1, wxEXPAND);
-	form->Add(new wxStaticText(this, wxID_ANY, "VRAM:"), 0, wxALIGN_CENTER_VERTICAL);
+	form->Add(new wxStaticText(page, wxID_ANY, "VRAM:"), 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(vram_combo_, 1, wxEXPAND);
 
 	/* The note sits in the same column as the checkboxes and the ROM message
 	   below it, so the three read as one block rather than the note starting
 	   somewhere of its own. */
-	form->Add(new wxStaticText(this, wxID_ANY, ""), 0);
+	form->Add(new wxStaticText(page, wxID_ANY, ""), 0);
 	form->Add(mem_note_, 1, wxEXPAND);
 
 	/* "Make it the default display" belongs beside the card it applies to, not
@@ -237,34 +279,207 @@ void MachineEditDialog::BuildUi()
 	gfxcard_row->Add(gfxcard_check_, 0, wxALIGN_CENTER_VERTICAL);
 	gfxcard_row->Add(gfxcard_boot_check_, 0,
 	                 wxALIGN_CENTER_VERTICAL | wxLEFT, 16);
-	form->Add(new wxStaticText(this, wxID_ANY, ""), 0);
+	form->Add(new wxStaticText(page, wxID_ANY, ""), 0);
 	form->Add(gfxcard_row, 1, wxEXPAND);
-	form->Add(new wxStaticText(this, wxID_ANY, ""), 0);
-	form->Add(fullscreen_check_, 1, wxEXPAND);
-	form->Add(new wxStaticText(this, wxID_ANY, ""), 0);
+	form->Add(new wxStaticText(page, wxID_ANY, ""), 0);
 	form->Add(compat_label_, 1, wxEXPAND);
+
+	/* How this machine starts: both are statements about this machine rather
+	   than preferences about how to display it, so they sit here beside the
+	   hardware rather than on the Options page. */
+	form->Add(new wxStaticText(page, wxID_ANY, ""), 0);
+	form->Add(fullscreen_check_, 1, wxEXPAND);
+	form->Add(new wxStaticText(page, wxID_ANY, ""), 0);
+	form->Add(default_machine_check_, 1, wxEXPAND);
+
 	auto *refresh_row = new wxBoxSizer(wxHORIZONTAL);
 	refresh_row->Add(refresh_slider_, 1, wxEXPAND | wxRIGHT, 8);
 	refresh_row->Add(refresh_label_, 0, wxALIGN_CENTER_VERTICAL);
-	form->Add(new wxStaticText(this, wxID_ANY, "Refresh Rate:"), 0, wxALIGN_CENTER_VERTICAL);
+	form->Add(new wxStaticText(page, wxID_ANY, "Refresh Rate:"), 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(refresh_row, 1, wxEXPAND);
-	form->Add(new wxStaticText(this, wxID_ANY, "Network:"), 0, wxALIGN_CENTER_VERTICAL);
+
+	auto *sizer = new wxBoxSizer(wxVERTICAL);
+	sizer->Add(form, 0, wxEXPAND | wxALL, 10);
+	page->SetSizer(sizer);
+	system_page_ = page;
+	return page;
+}
+
+/**
+ * The Options page: the per-machine switches.
+ *
+ * These are the same settings as the check items on the Settings menu, which
+ * can only be reached once a machine is running and are easy to miss. Here
+ * they can be set before it starts, and seen all at once. Both routes write
+ * the same configuration, so a change made in either shows up in the other.
+ *
+ * "Open this machine automatically" is the exception: it is not a property of
+ * the machine but of which machine to open, so it lives in the host's own
+ * preferences rather than in the configuration file.
+ */
+wxWindow *MachineEditDialog::BuildOptionsPage(wxWindow *parent)
+{
+	auto *page = new wxPanel(parent);
+
+	fullscreen_msg_check_ = new wxCheckBox(page, wxID_ANY,
+	    "Explain how to leave full screen when entering it");
+	integer_scaling_check_ = new wxCheckBox(page, wxID_ANY,
+	    "Pixel perfect (whole-number scaling)");
+	fit_to_window_check_ = new wxCheckBox(page, wxID_ANY,
+	    "Fit the display to the window");
+	follow_host_check_ = new wxCheckBox(page, wxID_ANY,
+	    "Follow the host display size");
+
+	sound_check_ = new wxCheckBox(page, wxID_ANY, "Sound");
+	cdrom_check_ = new wxCheckBox(page, wxID_ANY, "CD-ROM drive");
+	mouse_twobutton_check_ = new wxCheckBox(page, wxID_ANY, "Two-button mouse");
+	cpu_idle_check_ = new wxCheckBox(page, wxID_ANY, "Reduce CPU usage when idle");
+	suspend_on_exit_check_ = new wxCheckBox(page, wxID_ANY,
+	    "Suspend to a snapshot on exit, instead of shutting down");
+
+	vnc_check_ = new wxCheckBox(page, wxID_ANY, "VNC server");
+	vnc_check_->SetToolTip(
+	    "Serve this machine's display over VNC. The port and password are under "
+	    "Settings > VNC Server once the machine is running.");
+	clipboard_check_ = new wxCheckBox(page, wxID_ANY, "Share the clipboard with RISC OS");
+	clipboard_check_->SetToolTip(
+	    "Copy and paste text and images between the host and RISC OS. Off by "
+	    "default, since it puts the host clipboard within the guest's reach.");
+
+	/* Two ways of scaling the display that contradict each other, so selecting
+	   one clears the other, exactly as the Settings menu does. */
+	integer_scaling_check_->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent &event) {
+		if (integer_scaling_check_->GetValue()) {
+			fit_to_window_check_->SetValue(false);
+		}
+		event.Skip();
+	});
+	fit_to_window_check_->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent &event) {
+		if (fit_to_window_check_->GetValue()) {
+			integer_scaling_check_->SetValue(false);
+		}
+		event.Skip();
+	});
+
+	auto add_group = [page](wxSizer *into, const wxString &title,
+	                        std::initializer_list<wxCheckBox *> items) {
+		auto *box = new wxStaticBoxSizer(wxVERTICAL, page, title);
+
+		for (wxCheckBox *item : items) {
+			box->Add(item, 0, wxLEFT | wxRIGHT | wxTOP, 6);
+		}
+		box->AddSpacer(6);
+		into->Add(box, 0, wxEXPAND | wxBOTTOM, 8);
+	};
+
+	auto *sizer = new wxBoxSizer(wxVERTICAL);
+	add_group(sizer, "Display", { fullscreen_msg_check_, integer_scaling_check_,
+	                              fit_to_window_check_, follow_host_check_ });
+	add_group(sizer, "Hardware", { sound_check_, cdrom_check_,
+	                               mouse_twobutton_check_ });
+	add_group(sizer, "Behaviour", { cpu_idle_check_, suspend_on_exit_check_ });
+	add_group(sizer, "Host access", { vnc_check_, clipboard_check_ });
+
+	auto *outer = new wxBoxSizer(wxVERTICAL);
+	outer->Add(sizer, 1, wxEXPAND | wxALL, 10);
+	page->SetSizer(outer);
+	return page;
+}
+
+/** The Network page: how the machine reaches the outside world. */
+wxWindow *MachineEditDialog::BuildNetworkPage(wxWindow *parent)
+{
+	auto *page = new wxPanel(parent);
+
+	network_combo_ = new wxComboBox(page, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
+	bridge_label_ = new wxStaticText(page, wxID_ANY, "Bridge Name:");
+	bridge_edit_ = new wxTextCtrl(page, wxID_ANY, "rpcemu");
+	tunnel_label_ = new wxStaticText(page, wxID_ANY, "IP Address:");
+	tunnel_edit_ = new wxTextCtrl(page, wxID_ANY, "172.31.0.1");
+
+	network_combo_->Append("Off");
+	network_combo_->Append("NAT");
+	network_combo_->Append("Ethernet Bridging");
+	network_combo_->Append("IP Tunnelling");
+
+	auto *form = new wxFlexGridSizer(2, 8, 8);
+	form->AddGrowableCol(1, 1);
+	form->Add(new wxStaticText(page, wxID_ANY, "Network:"), 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(network_combo_, 1, wxEXPAND);
 	form->Add(bridge_label_, 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(bridge_edit_, 1, wxEXPAND);
 	form->Add(tunnel_label_, 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(tunnel_edit_, 1, wxEXPAND);
 
-	auto *hd_box = new wxStaticBoxSizer(wxVERTICAL, this, "Hard Discs");
-	wxWindow *const hd_parent = hd_box->GetStaticBox();
-	BuildHardDiscPanel(hd_parent, hd_box, hd4_panel_, 4, 0);
-	BuildHardDiscPanel(hd_parent, hd_box, hd5_panel_, 5, 1);
+	auto *note = new wxStaticText(page, wxID_ANY,
+	    "NAT needs no host configuration and suits most uses; the guest sits "
+	    "behind it on a private address. Bridging and tunnelling put the guest "
+	    "on the real network and need the host set up to match. Changes take "
+	    "effect after reset.");
+	note->Wrap(460);
+	note->SetForegroundColour(kHdColourMuted);
+	note->SetFont(note->GetFont().Smaller());
 
-	hd_reset_note_ = new wxStaticText(hd_parent, wxID_ANY,
+	auto *sizer = new wxBoxSizer(wxVERTICAL);
+	sizer->Add(form, 0, wxEXPAND | wxALL, 10);
+	sizer->Add(note, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
+	page->SetSizer(sizer);
+	return page;
+}
+
+/** The IDE Drives page: the two emulated hard discs. */
+wxWindow *MachineEditDialog::BuildDrivesPage(wxWindow *parent)
+{
+	auto *page = new wxPanel(parent);
+	auto *sizer = new wxBoxSizer(wxVERTICAL);
+
+	BuildHardDiscPanel(page, sizer, hd4_panel_, 4, 0);
+	BuildHardDiscPanel(page, sizer, hd5_panel_, 5, 1);
+
+	hd_reset_note_ = new wxStaticText(page, wxID_ANY,
 	                                  "Changes to hard discs take effect after emulator reset.");
 	hd_reset_note_->SetForegroundColour(kHdColourMuted);
 	hd_reset_note_->SetFont(hd_reset_note_->GetFont().Smaller());
-	hd_box->Add(hd_reset_note_, 0, wxEXPAND | wxTOP, 6);
+	sizer->Add(hd_reset_note_, 0, wxEXPAND | wxTOP, 6);
+
+	auto *outer = new wxBoxSizer(wxVERTICAL);
+	outer->Add(sizer, 1, wxEXPAND | wxALL, 10);
+	page->SetSizer(outer);
+	return page;
+}
+
+/** The Podules page: the expansion backplane. */
+wxWindow *MachineEditDialog::BuildPodulesPage(wxWindow *parent)
+{
+	auto *page = new wxPanel(parent);
+	auto *outer = new wxBoxSizer(wxVERTICAL);
+
+	outer->Add(BuildPoduleSection(page), 1, wxEXPAND | wxALL, 10);
+	page->SetSizer(outer);
+	return page;
+}
+
+/*
+ * The dialog is a notebook of four pages.
+ *
+ * As one long form it ran to well over 600 pixels and did not fit comfortably
+ * on a small display. The split is by what the settings are rather than by
+ * size: what the machine is made of, how it reaches the network, its discs,
+ * and its expansion cards.
+ *
+ * The pages are built in this order because the podule list is rebuilt from
+ * the networking selection - the network card occupies a slot - so the
+ * Network page has to exist before the Podules page is made.
+ */
+void MachineEditDialog::BuildUi()
+{
+	auto *notebook = new wxNotebook(this, wxID_ANY);
+
+	notebook->AddPage(BuildSystemPage(notebook), "System", true);
+	notebook->AddPage(BuildOptionsPage(notebook), "Options");
+	notebook->AddPage(BuildNetworkPage(notebook), "Network");
+	notebook->AddPage(BuildDrivesPage(notebook), "IDE Drives");
+	notebook->AddPage(BuildPodulesPage(notebook), "Podules");
 
 	auto *button_row = new wxBoxSizer(wxHORIZONTAL);
 	button_row->AddStretchSpacer();
@@ -274,13 +489,9 @@ void MachineEditDialog::BuildUi()
 	button_row->Add(ok_button, 0, wxRIGHT, 4);
 	button_row->Add(cancel_button, 0);
 
-	wxSizer *podule_box = BuildPoduleSection(this);
-
 	auto *main = new wxBoxSizer(wxVERTICAL);
-	main->Add(form, 0, wxEXPAND | wxALL, 10);
-	main->Add(hd_box, 0, wxEXPAND | wxLEFT | wxRIGHT, 10);
-	main->Add(podule_box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 10);
-	main->Add(button_row, 0, wxEXPAND | wxALL, 10);
+	main->Add(notebook, 1, wxEXPAND | wxALL, 8);
+	main->Add(button_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
 	SetSizer(main);
 
 	refresh_slider_->Bind(wxEVT_SLIDER, [this](wxCommandEvent &) {
@@ -292,6 +503,7 @@ void MachineEditDialog::BuildUi()
 	});
 	network_combo_->Bind(wxEVT_COMBOBOX, &MachineEditDialog::OnNetworkChanged, this);
 	rom_combo_->Bind(wxEVT_COMBOBOX, &MachineEditDialog::OnRomOrModelChanged, this);
+	get_rom_button_->Bind(wxEVT_BUTTON, &MachineEditDialog::OnGetRiscos, this);
 	model_combo_->Bind(wxEVT_COMBOBOX, &MachineEditDialog::OnRomOrModelChanged, this);
 	/* 512MB RAM is Kinetic-only: if any other model is selected, snap a 512MB
 	   choice back to 256MB immediately so it can't be left selected. */
@@ -313,11 +525,15 @@ void MachineEditDialog::PopulateRomList()
 	rom_combo_->Clear();
 	const wxString roms_dir = ConfigPathsRomsDir();
 	if (!wxDirExists(roms_dir)) {
-		rom_combo_->Append("(No roms/ directory found)");
+		rom_combo_->Append("No roms/ directory found",
+		                   new wxStringClientData(wxEmptyString));
 		return;
 	}
 
-	rom_combo_->Append("(All files in roms/)", new wxStringClientData(wxEmptyString));
+	/* An empty rom_dir means "load whatever loose files are in roms/", which
+	   is also the state a machine is in before a ROM has been chosen. Worded
+	   as the prompt it is in practice, rather than as the mechanism. */
+	rom_combo_->Append("Select RISC OS version...", new wxStringClientData(wxEmptyString));
 
 	wxDir dir(roms_dir);
 	wxString entry;
@@ -345,17 +561,17 @@ wxString MachineEditDialog::SelectedRomDir() const
 		return wxEmptyString;
 	}
 
-	const wxString label = rom_combo_->GetString(sel);
-	if (label.StartsWith("(")) {
-		return wxEmptyString;
-	}
-
+	/* The client data is what counts, not the label: the first entry and the
+	   no-directory entry both carry an empty string, meaning "no particular
+	   ROM chosen". Matching on the text instead would break the moment the
+	   wording changed, which is exactly what happened once already. */
 	auto *data = dynamic_cast<wxStringClientData *>(rom_combo_->GetClientObject(sel));
 	if (data != nullptr) {
 		return data->GetData();
 	}
 
-	wxString rom_dir = label;
+	/* No client data: a subdirectory entry, shown with a trailing separator. */
+	wxString rom_dir = rom_combo_->GetString(sel);
 	if (rom_dir.EndsWith("/")) {
 		rom_dir.RemoveLast();
 	}
@@ -372,6 +588,77 @@ void MachineEditDialog::SetRomSelection(const wxString &rom_dir)
 		}
 	}
 	rom_combo_->SetSelection(0);
+}
+
+/*
+ * Offer the hard disc only while there is room for it.
+ *
+ * A machine's HostFS is the user's, so a download never writes over one. Rather
+ * than letting the option be chosen and then refused, it is unavailable while
+ * the disc has anything on it, and says why.
+ */
+void MachineEditDialog::UpdateDiscDownloadAvailability()
+{
+	if (get_disc_check_ == nullptr) {
+		return;
+	}
+
+	const bool empty = RiscosFetchMachineDiscIsEmpty(CurrentMachineNameForHd());
+
+	get_disc_check_->Enable(empty);
+	if (!empty) {
+		get_disc_check_->SetValue(false);
+		get_disc_note_->SetLabel("This machine already has files on its hard "
+		                         "disc, which are never overwritten.");
+	} else {
+		get_disc_note_->SetLabel(wxEmptyString);
+	}
+	get_disc_note_->Show(!empty);
+}
+
+/**
+ * Download a ROM and select it here.
+ *
+ * Only the ROM: this machine already exists and has a hard disc of its own,
+ * and replacing that is never something to do as a side effect of choosing a
+ * ROM. Somebody wanting the ready-made disc as well wants a new machine, which
+ * is what the same download offers everywhere else.
+ */
+void MachineEditDialog::OnGetRiscos(wxCommandEvent &)
+{
+	RiscosSetupDialog dialog(this, false);
+	RiscosFetchOutcome outcome;
+	wxString summary;
+
+	/* The licensing terms are asked for by the dialogue itself, once the
+	   version has been chosen. */
+	dialog.SetTargetMachine(CurrentMachineNameForHd(),
+	                        get_disc_check_->IsEnabled() &&
+	                        get_disc_check_->GetValue());
+	if (dialog.ShowModal() != wxID_OK) {
+		return;
+	}
+
+	outcome = dialog.Outcome();
+	PopulateRomList();
+	SetRomSelection(outcome.rom_name);
+
+	wxCommandEvent dummy;
+	OnRomOrModelChanged(dummy);
+
+	/* The disc has just landed, so the option for it no longer applies. */
+	UpdateDiscDownloadAvailability();
+	UpdateHdStatus();
+
+	summary = wxString::Format("RISC OS %s has been downloaded and selected "
+	                           "for this machine.", outcome.version);
+	if (outcome.disc_files > 0) {
+		summary += wxString::Format("\n\nIts hard disc now holds %d files, "
+		                            "ready to boot to the desktop.",
+		                            outcome.disc_files);
+	}
+
+	wxMessageBox(summary, "RISC OS is ready", wxOK | wxICON_INFORMATION, this);
 }
 
 /**
@@ -446,12 +733,44 @@ Model MachineEditDialog::CurrentModelSelection() const
 	return Model_RPCARM710;
 }
 
+/*
+ * Width the notes under the VRAM selector wrap to.
+ *
+ * A fixed figure rather than one measured from the window. Inside a notebook
+ * the page has no useful size until the dialogue has been laid out, and these
+ * notes are set during construction, so measuring gave a width from before the
+ * dialogue was sized: the text wrapped to the wrong number of lines and then
+ * overlapped the checkboxes beneath it. This matches the width the note's own
+ * column actually gets.
+ */
+static const int kNoteWrapWidth = 470;
+
+/*
+ * Grow the dialogue to fit its contents, never shrink it.
+ *
+ * The notes appear and disappear as the model changes, and a taller note needs
+ * a taller page than the one the dialogue was sized for. Shrinking again on
+ * the way back would make the window jump about as somebody looked through the
+ * model list, so this only ever gives more room.
+ */
+void MachineEditDialog::GrowToFitContents()
+{
+	if (system_page_ != nullptr) {
+		system_page_->Layout();
+	}
+	Layout();
+
+	const wxSize best = GetBestSize();
+	const wxSize current = GetSize();
+
+	if (best.x > current.x || best.y > current.y) {
+		SetSize(wxSize(wxMax(best.x, current.x), wxMax(best.y, current.y)));
+		Layout();
+	}
+}
+
 /* Show (or clear) the note under the VRAM selector, and let the dialog resize
    around it. Wrapping is done here because wxStaticText will not do it itself. */
-/* Roughly the label column plus the dialogue's margins: what the note's own
-   column is narrower than the window by. */
-static const int kNoteColumnInset = 130;
-
 void MachineEditDialog::SetMemoryNote(const char *text)
 {
 	if (mem_note_ == nullptr) {
@@ -462,18 +781,10 @@ void MachineEditDialog::SetMemoryNote(const char *text)
 		mem_note_->Show(false);
 	} else {
 		mem_note_->SetLabel(wxString::FromUTF8(text));
-		/* Wrapped to the column it sits in, worked out from the dialogue rather
-		   than written down here, so a line break the text asks for is the one
-		   that decides where it breaks. A fixed figure had it wrapping at about
-		   half the window whatever the window was doing. */
-		{
-			const int width = GetClientSize().GetWidth() - kNoteColumnInset;
-
-			mem_note_->Wrap(width > 200 ? width : 200);
-		}
+		mem_note_->Wrap(kNoteWrapWidth);
 		mem_note_->Show(true);
 	}
-	Layout();
+	GrowToFitContents();
 }
 
 void MachineEditDialog::UpdateRomModelCompatibility()
@@ -545,6 +856,8 @@ void MachineEditDialog::UpdateRomModelCompatibility()
 	if (!rom_model_is_compatible(model, rom_dir_utf8.data(), msg, sizeof(msg))) {
 		compat_label_->SetLabel(wxString::FromUTF8(msg));
 		compat_label_->SetForegroundColour(wxColour(176, 0, 32));
+		compat_label_->Wrap(kNoteWrapWidth);
+		GrowToFitContents();
 		return;
 	}
 
@@ -559,6 +872,8 @@ void MachineEditDialog::UpdateRomModelCompatibility()
 	} else {
 		compat_label_->SetLabel("ROM type unknown - 26-bit CPUs need RISC OS 3.xx ROMs");
 		compat_label_->SetForegroundColour(wxColour(27, 94, 32));
+		compat_label_->Wrap(kNoteWrapWidth);
+		GrowToFitContents();
 		return;
 	}
 
@@ -568,12 +883,18 @@ void MachineEditDialog::UpdateRomModelCompatibility()
 
 	compat_label_->SetLabel(label);
 	compat_label_->SetForegroundColour(wxColour(27, 94, 32));
+	compat_label_->Wrap(kNoteWrapWidth);
+	GrowToFitContents();
 }
 
+/*
+ * The backplane. No enclosing group box: this has a page to itself now, and a
+ * box labelled "Podules" inside a tab labelled "Podules" says it twice.
+ */
 wxSizer *MachineEditDialog::BuildPoduleSection(wxWindow *parent)
 {
-	auto *box = new wxStaticBoxSizer(wxVERTICAL, parent, "Podules");
-	wxWindow *const p = box->GetStaticBox();
+	auto *box = new wxBoxSizer(wxVERTICAL);
+	wxWindow *const p = parent;
 
 	/* Snapshot the available podules once. */
 	const int count = podule_get_available_count();
@@ -584,10 +905,11 @@ wxSizer *MachineEditDialog::BuildPoduleSection(wxWindow *parent)
 		                               wxString::FromUTF8(nm ? nm : (sn ? sn : "?")));
 	}
 
-	/* Two slots per row: label, combo, configure-button (x2). */
-	auto *grid = new wxFlexGridSizer(0, 6, 6, 8);
+	/* One slot per row: label, combo, configure button. Two slots abreast
+	   made the whole dialog about half as wide again as anything else in it
+	   needed, and on a page of its own there is room to go down instead. */
+	auto *grid = new wxFlexGridSizer(0, 3, 6, 8);
 	grid->AddGrowableCol(1, 1);
-	grid->AddGrowableCol(4, 1);
 
 	for (int i = 0; i < PODULE_CONFIG_SLOTS; i++) {
 		grid->Add(new wxStaticText(p, wxID_ANY, wxString::Format("Slot %d:", i)),
@@ -597,8 +919,10 @@ wxSizer *MachineEditDialog::BuildPoduleSection(wxWindow *parent)
 		choice->Bind(wxEVT_CHOICE, &MachineEditDialog::OnPoduleChanged, this);
 		grid->Add(choice, 1, wxEXPAND);
 
-		auto *cfg_btn = new wxButton(p, wxID_ANY, wxString::FromUTF8("\xE2\x80\xA6"),
-		                             wxDefaultPosition, wxSize(32, -1));
+		/* A cog rather than a label. This was an ellipsis, which rendered
+		   as an empty button: the glyph is not in every interface font. */
+		auto *cfg_btn = new wxBitmapButton(p, wxID_ANY,
+		                                   ToolbarIconConfigure(wxSize(16, 16)));
 		cfg_btn->SetToolTip("Configure this podule");
 		cfg_btn->Bind(wxEVT_BUTTON, [this, i](wxCommandEvent &) { OnPoduleConfigure(i); });
 		grid->Add(cfg_btn, 0, wxALIGN_CENTER_VERTICAL);
@@ -608,15 +932,16 @@ wxSizer *MachineEditDialog::BuildPoduleSection(wxWindow *parent)
 		podule_selection_.push_back("");
 		podule_item_names_.emplace_back();
 	}
-	box->Add(grid, 0, wxEXPAND | wxALL, 6);
+	box->Add(grid, 0, wxEXPAND);
 
 	auto *note = new wxStaticText(p, wxID_ANY,
 	    "Eight expansion-card slots. Slot 0 (Support) and the network card are "
 	    "built-in. A podule can only be assigned to one slot; changes take "
 	    "effect after reset.");
+	note->Wrap(500);
 	note->SetForegroundColour(kHdColourMuted);
 	note->SetFont(note->GetFont().Smaller());
-	box->Add(note, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 6);
+	box->Add(note, 0, wxEXPAND | wxTOP, 8);
 
 	RebuildPoduleChoices();
 	return box;
@@ -871,9 +1196,34 @@ void MachineEditDialog::LoadSettings()
 	gfxcard_boot_check_->SetValue(gfxcard_boot != 0);
 	gfxcard_boot_check_->Enable(gfxcard != 0);
 
-	long fullscreen = 0;
-	settings.Read("start_fullscreen", &fullscreen, 0L);
-	fullscreen_check_->SetValue(fullscreen != 0);
+	/* Options page. The defaults here have to match the ones settings.cpp
+	   uses when it reads the same keys, or opening the editor and pressing
+	   OK would silently change a setting that was never touched. */
+	auto read_flag = [&settings](const wxString &key, long fallback) {
+		long value = fallback;
+
+		settings.Read(key, &value, fallback);
+		return value != 0;
+	};
+
+	fullscreen_check_->SetValue(read_flag("start_fullscreen", 0));
+	fullscreen_msg_check_->SetValue(read_flag("show_fullscreen_message", 1));
+	integer_scaling_check_->SetValue(read_flag("integer_scaling", 0));
+	fit_to_window_check_->SetValue(read_flag("fit_to_window", 0));
+	follow_host_check_->SetValue(read_flag("follow_host_display", 0));
+	sound_check_->SetValue(read_flag("sound_enabled", 1));
+	cdrom_check_->SetValue(read_flag("cdrom_enabled", 0));
+	mouse_twobutton_check_->SetValue(read_flag("mouse_twobutton", 0));
+	cpu_idle_check_->SetValue(read_flag("cpu_idle", 0));
+	suspend_on_exit_check_->SetValue(read_flag("suspend_on_exit", 0));
+	vnc_check_->SetValue(read_flag("vnc_enabled", 0));
+	clipboard_check_->SetValue(read_flag("clipboard_enabled", 0));
+
+	/* Not a setting of this machine but of which machine to open, so it is
+	   read from the host's preferences rather than the configuration file. */
+	default_machine_check_->SetValue(
+	    !original_name_.empty() &&
+	    wxString::FromUTF8(GetDefaultMachine()) == original_name_);
 
 	long refresh = 60;
 	settings.Read("refresh_rate", &refresh, 60L);
@@ -983,8 +1333,37 @@ void MachineEditDialog::SaveSettings()
 	               static_cast<long>(gfxcard_check_->GetValue() ? 1 : 0));
 	settings.Write("gfxcard_boot_display",
 	               static_cast<long>(gfxcard_boot_check_->GetValue() ? 1 : 0));
-	settings.Write("start_fullscreen",
-	               static_cast<long>(fullscreen_check_->GetValue() ? 1 : 0));
+	/* Options page. */
+	auto write_flag = [&settings](const wxString &key, bool on) {
+		settings.Write(key, static_cast<long>(on ? 1 : 0));
+	};
+
+	write_flag("start_fullscreen", fullscreen_check_->GetValue());
+	write_flag("show_fullscreen_message", fullscreen_msg_check_->GetValue());
+	write_flag("integer_scaling", integer_scaling_check_->GetValue());
+	write_flag("fit_to_window", fit_to_window_check_->GetValue());
+	write_flag("follow_host_display", follow_host_check_->GetValue());
+	write_flag("sound_enabled", sound_check_->GetValue());
+	write_flag("cdrom_enabled", cdrom_check_->GetValue());
+	write_flag("mouse_twobutton", mouse_twobutton_check_->GetValue());
+	write_flag("cpu_idle", cpu_idle_check_->GetValue());
+	write_flag("suspend_on_exit", suspend_on_exit_check_->GetValue());
+	write_flag("vnc_enabled", vnc_check_->GetValue());
+	write_flag("clipboard_enabled", clipboard_check_->GetValue());
+
+	/* The default machine is a host preference keyed by name, so a rename has
+	   to carry it across rather than leaving it pointing at a machine that no
+	   longer exists. */
+	{
+		const wxString was_default = wxString::FromUTF8(GetDefaultMachine());
+
+		if (default_machine_check_->GetValue()) {
+			SetDefaultMachine(new_name_.utf8_str().data());
+		} else if (was_default == original_name_ || was_default == new_name_) {
+			ClearDefaultMachine();
+		}
+	}
+
 	settings.Write("refresh_rate", refresh_slider_->GetValue());
 	settings.Write("network_type", network_type);
 	settings.Write("bridgename", bridge_edit_->GetValue());
@@ -1023,6 +1402,32 @@ void MachineEditDialog::ApplySavedSettingsToGlobalConfig(const wxString &rom_dir
 	config.gfxcard_boot_display = gfxcard_boot_check_->GetValue() ? 1 : 0;
 	/* Only read when a machine starts, so this one takes effect next time. */
 	config.start_fullscreen = fullscreen_check_->GetValue() ? 1 : 0;
+
+	/*
+	 * Everything on the Options page has to be pushed into the live
+	 * configuration as well as written to the file.
+	 *
+	 * A running machine rewrites its whole configuration from memory when it
+	 * exits. Anything set here that was only written to disc would be
+	 * overwritten by the stale in-memory value at that point, so the change
+	 * would appear to work and then quietly undo itself.
+	 *
+	 * These are the values only. Where a setting also has a live effect - the
+	 * scaling mode, muting, the clipboard - that is applied by the Settings
+	 * menu when it is toggled there; from here they take effect when the
+	 * machine next starts.
+	 */
+	config.show_fullscreen_message = fullscreen_msg_check_->GetValue() ? 1 : 0;
+	config.integer_scaling = integer_scaling_check_->GetValue() ? 1 : 0;
+	config.fit_to_window = fit_to_window_check_->GetValue() ? 1 : 0;
+	config.follow_host_display = follow_host_check_->GetValue() ? 1 : 0;
+	config.soundenabled = sound_check_->GetValue() ? 1 : 0;
+	config.cdromenabled = cdrom_check_->GetValue() ? 1 : 0;
+	config.mousetwobutton = mouse_twobutton_check_->GetValue() ? 1 : 0;
+	config.cpu_idle = cpu_idle_check_->GetValue() ? 1 : 0;
+	config.suspend_on_exit = suspend_on_exit_check_->GetValue() ? 1 : 0;
+	config.vnc_enabled = vnc_check_->GetValue() ? 1 : 0;
+	config.clipboard_enabled = clipboard_check_->GetValue() ? 1 : 0;
 }
 
 wxString MachineEditDialog::CurrentMachineNameForHd() const
@@ -1280,6 +1685,10 @@ void MachineEditDialog::OnNameChanged(wxCommandEvent &)
 		return;
 	}
 	UpdateHdStatus();
+	/* A different name is a different machine's data directory, which is
+	   keyed on the configuration's "name" field (see
+	   rpcemu_set_machine_datadir), so it is a different hard disc too. */
+	UpdateDiscDownloadAvailability();
 }
 
 void MachineEditDialog::OnOk(wxCommandEvent &)

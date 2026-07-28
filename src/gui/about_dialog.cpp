@@ -123,20 +123,45 @@ BuildDescription()
 	return core + wxString::Format(" build, %ld-bit", static_cast<long>(sizeof(void *) * 8));
 }
 
-void
-OpenUrl(const wxString &url)
-{
-	if (!url.empty()) {
-		wxLaunchDefaultBrowser(url);
-	}
-}
+/*
+ * Who made what.
+ *
+ * Named individually rather than as "contributors", because a blanket phrase
+ * credits nobody. Anyone whose work is in the build belongs here: the people
+ * who wrote RPCEmu, the people who have contributed to this fork, and the
+ * projects whose code it carries. The last group is not a courtesy but a
+ * licence condition, and the detail behind each line is in the README.
+ *
+ * Keep this in step with the credits section of the README when either changes.
+ */
+struct CreditGroup {
+	const char *heading;
+	const char *entries;
+};
+
+const CreditGroup kCredits[] = {
+	{ "RPCEmu",
+	  "Sarah Walker\n"
+	  "Peter Howkins\n"
+	  "Matthew Howkins" },
+	{ "Spork Edition fork",
+	  "Andy Timmins" },
+	{ "Contributed to this fork",
+	  "Nick Brown: saving and restoring machine state\n"
+	  "David Ramsden: command-line options, macOS application bundle" },
+	{ "Code this build carries, with thanks",
+	  "Arculator, Sarah Walker: the expansion card subsystem\n"
+	  "SLiRP, Danny Gasparovski and the Regents of the\n"
+	  "  University of California\n"
+	  "libslirp, Samuel Thibault and Marc-Andre Lureau:\n"
+	  "  fragment reassembly fixes\n"
+	  "RiscOS Cloverleaf: the shared clipboard, its design and guest module\n"
+	  "NetSurf, John M Bell: the Latin-1 conversion table" },
+	{ "With acknowledgement to",
+	  "ViewFinder, John Kortink: the idea behind the graphics card" },
+};
 
 } // namespace
-
-enum {
-	ID_ABOUT_MANUAL = wxID_HIGHEST + 510,
-	ID_ABOUT_WEBSITE,
-};
 
 AboutDialog::AboutDialog(wxWindow *parent)
 	: wxDialog(parent, wxID_ANY, "About RPCEmu", wxDefaultPosition, wxDefaultSize,
@@ -186,53 +211,66 @@ void AboutDialog::BuildUi()
 
 	auto *tagline = new wxStaticText(this, wxID_ANY, "Acorn Risc PC and A7000 emulator");
 
-	const wxString copyright =
-	    wxString::Format("Copyright 2005-%d RPCEmu contributors", year) +
-	    "\nSpork Edition enhancements by Andy Timmins";
-
-	auto *copyright_label = new wxStaticText(this, wxID_ANY, copyright);
-	copyright_label->Wrap(400);
+	/* Outside the scrolling panel, so it stays put as the list moves. */
+	auto *credits_intro = new wxStaticText(this, wxID_ANY, "Brought to you by:");
 
 	auto *license = new wxStaticText(this, wxID_ANY,
+	                                 wxString::Format("Copyright 2005-%d the respective "
+	                                                  "authors. ", year) +
 	                                 "This program is free software, licensed under the "
 	                                 "GNU General Public License, version 2. "
 	                                 "See the COPYING file for details.");
-	license->Wrap(400);
+	license->Wrap(420);
 	license->SetForegroundColour(muted);
 
 	auto *build_info = new wxStaticText(this, wxID_ANY, BuildDescription());
 	build_info->SetFont(small_font);
 	build_info->SetForegroundColour(muted);
 
-	auto *manual_link = new wxButton(this, ID_ABOUT_MANUAL, "Documentation",
-	                                 wxDefaultPosition, wxDefaultSize,
-	                                 wxBORDER_NONE | wxBU_LEFT);
-	manual_link->SetForegroundColour(link);
-	manual_link->SetCursor(wxCursor(wxCURSOR_HAND));
+	/*
+	 * The credits scroll. They do not fit in a dialogue anybody would want to
+	 * look at, and shortening them would defeat the point of having them.
+	 */
+	auto *credits = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition,
+	                                     wxSize(440, 270),
+	                                     wxVSCROLL | wxBORDER_THEME);
+	credits->SetBackgroundColour(
+	    wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW));
 
-	auto *website_link = new wxButton(this, ID_ABOUT_WEBSITE, "GitHub repository",
-	                                  wxDefaultPosition, wxDefaultSize,
-	                                  wxBORDER_NONE | wxBU_LEFT);
-	website_link->SetForegroundColour(link);
-	website_link->SetCursor(wxCursor(wxCURSOR_HAND));
+	wxFont heading_font = GetFont();
+	heading_font.SetWeight(wxFONTWEIGHT_BOLD);
 
-	manual_link->Bind(wxEVT_BUTTON, [](wxCommandEvent &) { OpenUrl(URL_MANUAL); });
-	website_link->Bind(wxEVT_BUTTON, [](wxCommandEvent &) { OpenUrl(URL_WEBSITE); });
+	auto *credits_sizer = new wxBoxSizer(wxVERTICAL);
+	bool first = true;
 
-	auto *links = new wxBoxSizer(wxHORIZONTAL);
-	links->Add(manual_link, 0, wxRIGHT, 16);
-	links->Add(website_link, 0);
+	for (const CreditGroup &group : kCredits) {
+		auto *heading = new wxStaticText(credits, wxID_ANY, group.heading);
+		auto *entries = new wxStaticText(credits, wxID_ANY, group.entries);
+
+		heading->SetFont(heading_font);
+		credits_sizer->Add(heading, 0, wxLEFT | wxRIGHT | wxTOP,
+		                   first ? 10 : 14);
+		credits_sizer->Add(entries, 0, wxLEFT | wxRIGHT | wxTOP, 10);
+		first = false;
+	}
+	credits_sizer->AddSpacer(10);
+
+	credits->SetSizer(credits_sizer);
+	credits->SetScrollRate(0, 10);
+	/* Work the virtual size out from the contents, or the scrollbar never
+	   appears and the entries past the bottom simply cannot be reached. */
+	credits->FitInside();
 
 	auto *buttons = CreateStdDialogButtonSizer(wxOK);
 
 	auto *main = new wxBoxSizer(wxVERTICAL);
 	main->Add(header, 0, wxEXPAND | wxALL, 16);
 	main->Add(new wxStaticLine(this), 0, wxEXPAND | wxLEFT | wxRIGHT, 16);
-	main->Add(tagline, 0, wxALL, 16);
-	main->Add(copyright_label, 0, wxLEFT | wxRIGHT | wxBOTTOM, 16);
+	main->Add(tagline, 0, wxLEFT | wxRIGHT | wxTOP, 16);
+	main->Add(credits_intro, 0, wxLEFT | wxRIGHT | wxTOP, 16);
+	main->Add(credits, 1, wxEXPAND | wxALL, 16);
 	main->Add(license, 0, wxLEFT | wxRIGHT | wxBOTTOM, 16);
 	main->Add(build_info, 0, wxLEFT | wxRIGHT | wxBOTTOM, 16);
-	main->Add(links, 0, wxLEFT | wxRIGHT | wxBOTTOM, 16);
 	main->Add(buttons, 0, wxEXPAND | wxALL, 10);
 	SetSizer(main);
 }

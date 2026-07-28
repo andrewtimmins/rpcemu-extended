@@ -68,6 +68,11 @@ private:
 	};
 
 	void BuildUi();
+	wxWindow *BuildSystemPage(wxWindow *parent);
+	wxWindow *BuildOptionsPage(wxWindow *parent);
+	wxWindow *BuildNetworkPage(wxWindow *parent);
+	wxWindow *BuildDrivesPage(wxWindow *parent);
+	wxWindow *BuildPodulesPage(wxWindow *parent);
 	void BuildHardDiscPanel(wxWindow *parent, wxSizer *parent_sizer, HardDiscPanel &panel, int drive_num,
 	                        int ide_index);
 	wxSizer *BuildPoduleSection(wxWindow *parent);
@@ -83,6 +88,7 @@ private:
 	void PopulateRomList();
 	void UpdateRomModelCompatibility();
 	void SetMemoryNote(const char *text);
+	void GrowToFitContents();
 	void UpdateHdStatus();
 	void ApplyHardDiscPanel(HardDiscPanel &panel, const HardDiscInfo &info);
 	HardDiscInfo QueryHardDiscInfo(int drive) const;
@@ -103,6 +109,8 @@ private:
 	void OnOk(wxCommandEvent &event);
 	void OnNetworkChanged(wxCommandEvent &event);
 	void OnRomOrModelChanged(wxCommandEvent &event);
+	void OnGetRiscos(wxCommandEvent &event);
+	void UpdateDiscDownloadAvailability();
 	void OnNameChanged(wxCommandEvent &event);
 	wxString SelectedRomDir() const;
 	void SetRomSelection(const wxString &rom_dir);
@@ -119,6 +127,28 @@ private:
 
 	wxTextCtrl *name_edit_ = nullptr;
 	wxComboBox *rom_combo_ = nullptr;
+	wxButton *get_rom_button_ = nullptr;
+	wxCheckBox *get_disc_check_ = nullptr;
+	wxStaticText *get_disc_note_ = nullptr;
+
+	/* The System page, kept so a note that grows can have its page laid out
+	   again; inside a notebook the dialogue's own Layout() does not reach it. */
+	wxWindow *system_page_ = nullptr;
+
+	/* Options page. Each maps to one per-machine configuration field, except
+	   default_machine_check_ which is a host preference. */
+	wxCheckBox *fullscreen_msg_check_ = nullptr;
+	wxCheckBox *integer_scaling_check_ = nullptr;
+	wxCheckBox *fit_to_window_check_ = nullptr;
+	wxCheckBox *follow_host_check_ = nullptr;
+	wxCheckBox *sound_check_ = nullptr;
+	wxCheckBox *cdrom_check_ = nullptr;
+	wxCheckBox *mouse_twobutton_check_ = nullptr;
+	wxCheckBox *cpu_idle_check_ = nullptr;
+	wxCheckBox *suspend_on_exit_check_ = nullptr;
+	wxCheckBox *default_machine_check_ = nullptr;
+	wxCheckBox *vnc_check_ = nullptr;
+	wxCheckBox *clipboard_check_ = nullptr;
 	wxComboBox *model_combo_ = nullptr;
 	wxComboBox *mem_combo_ = nullptr;
 	wxComboBox *vram_combo_ = nullptr;

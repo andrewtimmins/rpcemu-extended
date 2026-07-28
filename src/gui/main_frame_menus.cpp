@@ -217,6 +217,10 @@ void MainFrame::BuildMenus()
 	help_menu->Append(ID_MENU_ONLINE_MANUAL, "Online Manual...");
 	help_menu->Append(ID_MENU_VISIT_WEBSITE, "Visit Website...");
 	help_menu->AppendSeparator();
+	/* RISC OS itself is somebody else's work and has its own home; the two
+	   About entries sit together so that is plain. */
+	help_menu->Append(ID_MENU_ABOUT_RISCOS, "About RISC OS...")
+	    ->SetHelp("Visit RISC OS Open, who publish RISC OS.");
 	help_menu->Append(ID_MENU_ABOUT, "About RPCEmu...");
 
 	auto *menu_bar = new wxMenuBar;
@@ -227,6 +231,7 @@ void MainFrame::BuildMenus()
 	menu_bar->Append(help_menu, "&Help");
 	SetMenuBar(menu_bar);
 
+	BindMenuItem(help_menu, ID_MENU_ABOUT_RISCOS, this, &MainFrame::OnAboutRiscos);
 	BindMenuItem(file_menu, ID_MENU_SCREENSHOT, this, &MainFrame::OnScreenshot);
 	BindMenuItem(file_menu, ID_MENU_SAVE_STATE, this, &MainFrame::OnSaveState);
 	BindMenuItem(file_menu, ID_MENU_LOAD_STATE, this, &MainFrame::OnLoadState);

@@ -44,6 +44,7 @@ class VncServer;
 
 enum MainFrameMenuId {
 	ID_MENU_SCREENSHOT = wxID_HIGHEST + 1,
+	ID_MENU_ABOUT_RISCOS,
 	ID_MENU_RECENT_MACHINE_0,
 	ID_MENU_RECENT_MACHINE_1,
 	ID_MENU_RECENT_MACHINE_2,
@@ -166,6 +167,7 @@ private:
 	void OnClose(wxCloseEvent &event);
 	void OnExit(wxCommandEvent &event);
 	void OnScreenshot(wxCommandEvent &event);
+	void OnAboutRiscos(wxCommandEvent &event);
 	void OnReset(wxCommandEvent &event);
 	void OnSaveState(wxCommandEvent &event);
 	void OnLoadState(wxCommandEvent &event);
