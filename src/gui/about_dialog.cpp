@@ -147,7 +147,8 @@ const CreditGroup kCredits[] = {
 	{ "Spork Edition fork",
 	  "Andy Timmins" },
 	{ "Contributed to this fork",
-	  "Nick Brown: saving and restoring machine state\n"
+	  "Nick Brown: saving and restoring machine state, and the idea\n"
+	  "  of putting the clock right afterwards\n"
 	  "David Ramsden: command-line options, macOS application bundle" },
 	{ "Code this build carries, with thanks",
 	  "Arculator, Sarah Walker: the expansion card subsystem\n"
@@ -156,6 +157,7 @@ const CreditGroup kCredits[] = {
 	  "libslirp, Samuel Thibault and Marc-Andre Lureau:\n"
 	  "  fragment reassembly fixes\n"
 	  "RiscOS Cloverleaf: the shared clipboard, its design and guest module\n"
+	  "SyncClock, DEEJ Technology PLC: the clock synchronisation module\n"
 	  "NetSurf, John M Bell: the Latin-1 conversion table" },
 	{ "With acknowledgement to",
 	  "ViewFinder, John Kortink: the idea behind the graphics card" },

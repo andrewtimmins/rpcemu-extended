@@ -308,6 +308,21 @@ build_podules() {
 			cp -f rpcemusupport,ffa "$SCRIPT_DIR/poduleroms/"
 		)
 	fi
+
+	# SyncClock is DEEJ Technology's module, translated from their BBC BASIC
+	# assembler source so it builds here. It re-reads the emulated RTC every ten
+	# seconds, which is what puts the guest clock right again after a suspend or
+	# a snapshot resumed later.
+	local syncclock_dir="riscos-progs/SyncClock"
+	if [ -d "$syncclock_dir" ]; then
+		echo "Building SyncClock podule ROM..."
+		(
+			cd "$syncclock_dir"
+			make clean
+			make AS=arm-linux-gnueabi-as LD=arm-linux-gnueabi-ld OBJCOPY=arm-linux-gnueabi-objcopy
+			cp -f syncclock,ffa "$SCRIPT_DIR/poduleroms/"
+		)
+	fi
 	echo "✓ Podule ROMs copied to poduleroms/"
 
 	# The graphics card's display driver goes in gfxroms/, NOT poduleroms/: it

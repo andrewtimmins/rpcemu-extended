@@ -634,8 +634,19 @@ networking features.
   waits on, so neither side polls. The Latin-1 UCS table the module carries is
   **NetSurf's** (Copyright 2005 **John M Bell**, GNU GPL v2), by way of
   Cloverleaf's `ucstables.c`. See `docs/clipboard.md`.
+- **SyncClock** is **DEEJ Technology PLC's** module (Copyright 2002, GNU GPL v2),
+  carried in the expansion ROM as `poduleroms/syncclock,ffa`. It re-reads the
+  emulated real-time clock every ten seconds and sets RISC OS's soft copy from it,
+  which is what puts the clock right after a machine has been suspended or a state
+  is resumed later. Theirs is the design and the code: it is supplied here
+  translated from their BBC BASIC assembler source into the GNU as syntax the other
+  guest modules use, so it builds with them, and the assembled code is
+  byte-identical to the module built from their original. See
+  `riscos-progs/SyncClock/`.
 - Spork Edition enhancements by Andy Timmins and contributors.
-- Machine save/load state (suspend & resume) contributed by **Nick Brown**.
+- Machine save/load state (suspend & resume) contributed by **Nick Brown**, whose
+  outstanding item on that work, putting the clock right on resume, is why
+  SyncClock is here.
 - Command-line options (`--machine` for the GUI as well as headless, `--resume`
   and `--state`), with consistent messages and exit statuses across Linux,
   Windows and macOS; the macOS application bundle fixes that made the shipped
