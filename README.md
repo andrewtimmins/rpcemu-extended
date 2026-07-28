@@ -22,6 +22,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 
 - **Cross-platform** — runs on **Linux** (amd64 + arm64), **Windows** (amd64), and **macOS** (universal — Intel + Apple Silicon). The x86-64 dynamic recompiler gives full-speed emulation on Linux, Windows and Intel Macs. A native **arm64** recompiler is also implemented and validated under emulation ([docs/arm64-dynarec.md](docs/arm64-dynarec.md)); it is not yet enabled in prebuilt releases, pending testing on real arm64 hardware. Builds from a single CMake codebase. See [Supported systems](#supported-systems).
 - **Kinetic StrongARM (512MB)** — emulates the Acorn Risc PC **Kinetic** StrongARM processor card and its full **512MB** of RAM: the 256MB the motherboard IOMD can address, plus two 128MB on-card SDRAM banks. Boots RISC OS 5 straight to the desktop.
+- **Get RISC OS in one step** — RPCEmu ships no ROM, so a new installation has nothing to run. Creating a machine offers to fetch a ROM and the ready-made HardDisc4 hard disc from RISC OS Open and set them up on it. Stable 5.30 or the 5.31 nightly, with the licensing terms shown and agreed to first; also available headlessly as `--fetch-riscos`. An existing machine's hard disc is never overwritten. See [Getting RISC OS](#getting-risc-os).
 - **Multi-machine configuration** — create, edit, clone, and delete machine profiles from a startup selector; each machine has isolated CMOS, HostFS, and hard disc storage.
 - **Quick machine switching** — switch between machines via *File → Recent Machines* without restarting.
 - **Save/load state, suspend & resume** — snapshot a machine's complete running state (CPU, RAM, VRAM, devices, and networking) to disk and restore it exactly. Use *File → Save State* / *Load State* for named snapshots, or *File → Suspend* to save and exit and pick up right where you left off via the machine's **Resume** button in the selector. Contributed by Nick Brown.
@@ -257,6 +258,63 @@ needed for the portable tarball.)
 4. Place licensed RISC OS ROM files in `roms/<subdir>/` and select the ROM folder in
    the machine editor.
 
+RPCEmu ships no ROM, so on a new installation step 4 has to happen before a machine
+can start. Creating a machine offers to do it for you, as below.
+
+### Getting RISC OS
+
+RISC OS Open publish both a ROM and a ready-to-use hard disc, and RPCEmu can fetch
+them and set them up on a machine. **New...** in the machine selector asks, and
+downloads on OK before the machine editor opens. Afterwards the same download is
+available from **Get RISC OS...** beside the ROM chooser in the machine editor.
+
+There are two choices to make:
+
+- **Version.** RISC OS **5.30**, the current stable release, or **5.31**, the nightly
+  development build. Each ROM is named for its version, and a nightly also for the day
+  it was built, so several can sit side by side in `roms/` and you can go back to an
+  earlier one by picking it in the machine editor.
+- **Whether to include the hard disc.** HardDisc4 carries applications, utilities,
+  `!System` and a configured `!Boot`. Without it a machine starts at the supervisor
+  prompt with nothing on its HostFS.
+
+About 15 MB is downloaded. Files come from `riscosopen.org`, and every request
+identifies itself as RPCEmu so that RISC OS Open can see what the traffic is.
+
+Before anything is fetched, RPCEmu acknowledges whose work this is and asks you to
+agree to the licence. RISC OS is copyright RISC OS Developments Ltd and is developed and
+maintained by RISC OS Open Ltd, under the Apache License, Version 2.0, which the
+dialogue reproduces in full. Some applications, logos and other material in the
+downloads come from third parties under their own terms, so the dialogue also links to
+[RISC OS Open's licensing page](https://www.riscosopen.org/content/documents/licences)
+and to [donations](https://www.riscosopen.org/content/donations), which is how the work
+is funded. ROOL's own copy of the licence is written to the root of the machine's hard
+disc alongside the files it covers.
+
+Nothing is written into place until the download and unpacking have both finished, so
+cancelling, or losing the network part way, leaves the installation exactly as it was.
+
+**An existing machine's hard disc is never overwritten.** In the machine editor the
+hard-disc option is only available while that machine's disc is empty, and says so
+when it is not; the ROM can always be fetched. To move an existing machine to a newer
+ROM, fetch it there and select it. To get a fresh copy of the disc, make a new
+machine, which costs nothing and cannot disturb the old one.
+
+The same thing is available without the interface, which is useful for a scripted or
+container install:
+
+```bash
+./rpcemu-recompiler --fetch-riscos --accept-licence           # stable, with the disc
+./rpcemu-recompiler --fetch-riscos=nightly --accept-licence   # the development build
+./rpcemu-recompiler --fetch-riscos --no-disc --accept-licence # just the ROM
+```
+
+`--accept-licence` is the same agreement the dialogue asks for. The acknowledgement is
+printed either way, with the address of the licence rather than its 202 lines; without
+the option nothing is downloaded and the exit status is **1**.
+
+It installs and exits, printing what it created, and needs no display.
+
 ### Skipping the machine selector
 
 To launch the GUI straight into a known machine, name it with `--machine`:
@@ -301,6 +359,9 @@ portable between them.
 | `--state <file>` | Load an explicit state file, leaving it in place. Requires `--machine`. |
 | `--headless` | Run with no GUI window, over VNC. Requires `--machine`. |
 | `--list-machines` | List the available machine configs and exit. |
+| `--fetch-riscos[=which]` | Download RISC OS from RISC OS Open, unpack it, create a machine and exit. `which` is `stable` (default) or `nightly`. |
+| `--no-disc` | With `--fetch-riscos`, fetch the ROM only. |
+| `--accept-licence` | Required by `--fetch-riscos`: agrees to the licensing terms of what is downloaded, which are printed first. |
 | `-h`, `--help` | Show usage and exit. |
 
 Exit status is **0** on success and **2** for a usage error — an unknown option, a
@@ -534,8 +595,8 @@ networking features.
 
 - Licensed under the **GNU General Public License v2**. See `COPYING`.
 - Based on **[RPCEmu](http://www.marutan.net/rpcemu/)** — the open-source Acorn
-  Risc PC and A7000 emulator by Sarah Walker, Peter Howkins and the RPCEmu
-  contributors, hosted at <http://www.marutan.net/rpcemu/>. RPCEmu is distributed
+  Risc PC and A7000 emulator by Sarah Walker, Peter Howkins, Matthew Howkins
+  and the RPCEmu contributors, hosted at <http://www.marutan.net/rpcemu/>. RPCEmu is distributed
   under the GNU GPL v2; this fork inherits and complies with that license.
 - The **podule (expansion card) subsystem** — the podule API/ABI and the bundled
   podule implementations under `src/podules/` — is derived from

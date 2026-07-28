@@ -38,6 +38,7 @@
 #include "config_selector_dialog.h"
 #include "main_frame.h"
 #include "headless_main.h"
+#include "riscos_fetch.h"
 
 extern "C" {
 #include "rpcemu.h"
@@ -75,6 +76,16 @@ void RpcemuApp::OnInitCmdLine(wxCmdLineParser &parser)
 static const char *g_startup_machine = nullptr;
 static bool g_startup_resume = false;
 static const char *g_startup_state_file = nullptr;
+
+/*
+ * --fetch-riscos and its modifiers. Unlike the options above, this one is not
+ * handled before wxEntry(): the transfer needs wxWidgets and an event loop. It
+ * runs under RiscosFetchApp below rather than the GUI application.
+ */
+static bool g_fetch_riscos = false;
+static bool g_fetch_nightly = false;
+static bool g_fetch_disc = true;
+static bool g_fetch_accept_licence = false;
 
 #ifdef __WXMSW__
 /*
@@ -159,9 +170,125 @@ static void ConsoleMessage(bool is_error, const char *fmt, ...)
 	   is flushed by ConsoleMessageFlush() before the process exits. */
 	ConsoleMessageAppend(is_error, buf);
 #else
+	/* stdout is buffered and stderr is not, so a message written to one can
+	   otherwise appear before text already written to the other. Several
+	   callers here mix the two in one report, where the order is the meaning. */
+	if (is_error) {
+		fflush(stdout);
+	}
 	fputs(buf, is_error ? stderr : stdout);
+	if (is_error) {
+		fflush(stderr);
+	}
 #endif
 }
+
+/*
+ * Progress for --fetch-riscos, on the console rather than in a dialog.
+ *
+ * Percentages are only reported as they change, and only every ten points, so
+ * that a redirected log does not fill up with them. There is no way to cancel:
+ * Ctrl-C is the answer, and it leaves nothing behind because the fetch stages
+ * everything before moving it into place.
+ */
+class CommandLineFetchReporter : public RiscosFetchReporter {
+public:
+	bool Stage(const wxString &description) override
+	{
+		ConsoleMessage(false, "%s\n",
+		               static_cast<const char *>(description.utf8_str()));
+		last_decile_ = -1;
+		return true;
+	}
+
+	bool Progress(long long done, long long total) override
+	{
+		if (total > 0) {
+			const int decile = static_cast<int>((done * 10) / total);
+
+			if (decile != last_decile_) {
+				last_decile_ = decile;
+				ConsoleMessage(false, "  %d%%\n", decile * 10);
+			}
+		}
+		return true;
+	}
+
+private:
+	int last_decile_ = -1;
+};
+
+/*
+ * The application object for --fetch-riscos.
+ *
+ * Deliberately a wxAppConsole and not a wxApp: the fetch needs wxWidgets for
+ * the transfer and its event loop, but it has no window, and a wxApp would
+ * connect to the display and fail on a machine that has none. That would rule
+ * out exactly the uses this option exists for - scripted installs, containers
+ * and automated testing.
+ */
+class RiscosFetchApp : public wxAppConsole {
+public:
+	bool OnInit() override { return true; }
+
+	int OnRun() override
+	{
+		RiscosFetchRequest request;
+		CommandLineFetchReporter reporter;
+		RiscosFetchOutcome outcome;
+
+		InitRpcemuPaths();
+
+		/* The graphical routes put this in a dialogue with an Agree button.
+		   A script cannot click one, so the acknowledgement is the option:
+		   printed either way, and required before anything is fetched. */
+		ConsoleMessage(false, "%s\n\n",
+		               static_cast<const char *>(
+		                   RiscosFetchLicenceText().utf8_str()));
+		if (!g_fetch_accept_licence) {
+			ConsoleMessage(true,
+			               "error: pass --accept-licence to confirm you accept "
+			               "the terms above, and the download will proceed.\n");
+			ConsoleMessageFlush();
+			return 1;
+		}
+
+		request.release = g_fetch_nightly ? RiscosRelease::Nightly
+		                                  : RiscosRelease::Stable;
+		request.include_disc = g_fetch_disc;
+		request.create_machine = true;
+
+		/* CreateMainLoop() is the application's own choice of event
+		   loop, and is only reachable from a subclass, which is why
+		   the fetch takes it as a parameter. Here it yields the
+		   console loop, with no display connection. */
+		outcome = RiscosFetchPerform(request, reporter,
+		                             [this]() { return CreateMainLoop(); });
+
+		if (outcome.ok) {
+			ConsoleMessage(false, "RISC OS %s installed as '%s'.\n",
+			               static_cast<const char *>(outcome.version.utf8_str()),
+			               static_cast<const char *>(outcome.rom_name.utf8_str()));
+			if (!outcome.machine_name.empty()) {
+				ConsoleMessage(false, "Machine '%s' created",
+				               static_cast<const char *>(outcome.machine_name.utf8_str()));
+				if (outcome.disc_files > 0) {
+					ConsoleMessage(false, " with %d files on its hard disc",
+					               outcome.disc_files);
+				}
+				ConsoleMessage(false, ".\n");
+			}
+		} else if (outcome.cancelled) {
+			ConsoleMessage(true, "error: cancelled.\n");
+		} else {
+			ConsoleMessage(true, "error: %s\n",
+			               static_cast<const char *>(outcome.message.utf8_str()));
+		}
+
+		ConsoleMessageFlush();
+		return outcome.ok ? 0 : 1;
+	}
+};
 
 /* Plain existence check, usable before wxWidgets is initialised. */
 static bool FileIsReadable(const char *path)
@@ -388,6 +515,25 @@ int main(int argc, char **argv)
 			show_help = true;
 		} else if (strcmp(arg, "--resume") == 0) {
 			resume = true;
+		} else if (strcmp(arg, "--fetch-riscos") == 0) {
+			g_fetch_riscos = true;
+		} else if (strncmp(arg, "--fetch-riscos=", 15) == 0) {
+			const char *which = arg + 15;
+
+			g_fetch_riscos = true;
+			if (strcmp(which, "nightly") == 0) {
+				g_fetch_nightly = true;
+			} else if (strcmp(which, "stable") != 0) {
+				ConsoleMessage(true, "error: --fetch-riscos takes "
+				               "'stable' or 'nightly', not '%s'.\n", which);
+				ConsoleMessageFlush();
+				return 2;
+			}
+		} else if (strcmp(arg, "--no-disc") == 0) {
+			g_fetch_disc = false;
+		} else if (strcmp(arg, "--accept-licence") == 0 ||
+		           strcmp(arg, "--accept-license") == 0) {
+			g_fetch_accept_licence = true;
 		} else if (strcmp(arg, "--machine") == 0) {
 			if (i + 1 < argc) {
 				machine_name = argv[++i];
@@ -482,8 +628,33 @@ int main(int argc, char **argv)
 		return 2;
 	}
 
+	/* --fetch-riscos installs and exits, so combining it with options that
+	   say which machine to run is a contradiction rather than a shortcut. */
+	if (g_fetch_riscos && (headless || machine_name != nullptr || resume ||
+	                       state_file != nullptr)) {
+		ConsoleMessage(true, "error: --fetch-riscos cannot be combined with "
+		               "--headless, --machine, --resume or --state.\n");
+		ConsoleMessageFlush();
+		return 2;
+	}
+	if (!g_fetch_riscos && (!g_fetch_disc || g_fetch_accept_licence)) {
+		ConsoleMessage(true, "error: %s only applies to --fetch-riscos.\n",
+		               !g_fetch_disc ? "--no-disc" : "--accept-licence");
+		ConsoleMessageFlush();
+		return 2;
+	}
+
 	if (headless) {
 		return RunHeadless(machine_name, resume, state_file);
+	}
+
+	/* Run the fetch under a console application rather than the GUI one, so
+	   it works with no display present. Swapping the initializer function
+	   makes wxEntry() construct that instead of RpcemuApp. */
+	if (g_fetch_riscos) {
+		wxAppConsole::SetInitializerFunction(
+		    []() -> wxAppConsole * { return new RiscosFetchApp; });
+		return wxEntry(wx_argc, wx_argv);
 	}
 
 	/* --machine without --headless: start the GUI directly on that machine,

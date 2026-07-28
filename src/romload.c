@@ -469,8 +469,23 @@ void loadroms(void)
 		snprintf(dirname, sizeof(dirname), "roms");
 		number_of_files = romload_scan_directory(romdirectory, romfilenames);
 		if (number_of_files == 0) {
-			fatal("Could not open ROM files directory '%s': %s\n",
-			      romdirectory, strerror(errno));
+			/* Two different problems, and they want different answers.
+			   The old message reported errno for both, which named a
+			   missing directory even when the directory was there and
+			   simply held no ROM - and errno was whatever an unrelated
+			   call had left behind. */
+			struct stat st;
+
+			if (stat(romdirectory, &st) != 0 || !S_ISDIR(st.st_mode)) {
+				fatal("The ROM directory '%s' is missing.\n\n%s\n",
+				      romdirectory, ROM_WEB_SITE_STRING);
+			}
+			fatal("No RISC OS ROM images were found in '%s'.\n\n"
+			      "RPCEmu does not include RISC OS. To download it, "
+			      "choose New... in the machine selector and let it "
+			      "fetch RISC OS from RISC OS Open; or put a ROM image "
+			      "in that directory yourself.\n\n%s\n",
+			      romdirectory, ROM_WEB_SITE_STRING);
 		}
 	}
 

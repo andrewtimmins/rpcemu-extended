@@ -1,5 +1,9 @@
 # wxWidgets helper.
 #
+# The "net" component is wxWebRequest, used to fetch RISC OS from RISC OS Open
+# (src/gui/riscos_fetch.cpp). It wraps whichever HTTP stack the platform already
+# has - WinHTTP, NSURLSession or libcurl - so it costs no new dependency.
+#
 # Native builds (Linux/wxGTK, and Windows/MSYS2 in CI) use CMake's standard
 # find_package(wxWidgets). Cross builds (Linux -> Windows with MinGW-w64) can't:
 # CMake's FindwxWidgets switches to its win32 directory-layout lookup when the
@@ -21,14 +25,14 @@ function(rpcemu_setup_wxwidgets target)
         message(STATUS "wxWidgets (cross) via ${wxWidgets_CONFIG_EXECUTABLE}")
 
         execute_process(
-            COMMAND ${wxWidgets_CONFIG_EXECUTABLE} --cxxflags core base
+            COMMAND ${wxWidgets_CONFIG_EXECUTABLE} --cxxflags core base net
             OUTPUT_VARIABLE _wx_cxxflags OUTPUT_STRIP_TRAILING_WHITESPACE
             RESULT_VARIABLE _wx_rc)
         if(NOT _wx_rc EQUAL 0)
             message(FATAL_ERROR "wx-config --cxxflags failed (rc=${_wx_rc})")
         endif()
         execute_process(
-            COMMAND ${wxWidgets_CONFIG_EXECUTABLE} --libs core base
+            COMMAND ${wxWidgets_CONFIG_EXECUTABLE} --libs core base net
             OUTPUT_VARIABLE _wx_libs OUTPUT_STRIP_TRAILING_WHITESPACE)
 
         separate_arguments(_wx_cxxflags_list NATIVE_COMMAND "${_wx_cxxflags}")
@@ -48,7 +52,7 @@ function(rpcemu_setup_wxwidgets target)
             endif()
         endforeach()
     else()
-        find_package(wxWidgets REQUIRED COMPONENTS core base)
+        find_package(wxWidgets REQUIRED COMPONENTS core base net)
         include(${wxWidgets_USE_FILE})
         target_link_libraries(${target} PRIVATE ${wxWidgets_LIBRARIES})
         set(_wx_inc_dirs ${wxWidgets_INCLUDE_DIRS})

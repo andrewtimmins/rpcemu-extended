@@ -15,6 +15,9 @@ set(GUI_SOURCES
     config_selector_dialog.cpp
     config_paths.cpp
     machine_edit_dialog.cpp
+    new_machine_dialog.cpp
+    riscos_fetch.cpp
+    riscos_setup_dialog.cpp
     podule_config_dialog.cpp
     machine_inspector_window.cpp
     about_dialog.cpp
