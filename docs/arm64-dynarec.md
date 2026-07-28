@@ -6,6 +6,13 @@ lets arm64 hosts — Apple Silicon, Raspberry Pi 4/5, arm64 Linux, Windows on AR
 first for how the recompiler is structured as a whole; this document covers only
 the arm64-specific backend.
 
+**It is in the tree but not in the releases.** The published arm64 builds, Linux
+and the arm64 slice of the macOS bundle alike, are still the interpreter: the
+backend has been validated against the interpreter under qemu (see
+[Testing](#testing)) but not proven on real arm64
+hardware, and a blank screen on arm64 Linux and the Pi 5 is unresolved. Build it
+yourself on an arm64 host and CMake selects it automatically.
+
 ## Where it fits
 
 The recompiler is split into a target-independent front-end (`arm_dynarec.c`,

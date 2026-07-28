@@ -11,10 +11,14 @@ device implementations are self-contained and new ones are easy to add.
 
 ## Choosing podules for a machine
 
-Open **Settings → Machine…** (or **Edit** a machine in the startup selector) and use the
-**Podules** section. It shows the eight Risc PC expansion-card slots:
+Open **Settings → Machine…** (or **Edit** a machine in the startup selector) and choose
+the **Podules** tab. It shows the eight Risc PC expansion-card slots:
 
-- **Slot 0** is the built-in **RPCEmu Support** ROM (HostFS, scroll-wheel) and is locked.
+- **Slot 0** is the built-in **RPCEmu Support** ROM and is locked. Everything in
+  `poduleroms/` is scanned into that one card, which is how the guest-side modules
+  arrive without anything being installed on the hard disc: HostFS and its filer,
+  scroll-wheel support, the shared clipboard, the RPCEmuSupport module (the host
+  command channel) and SyncClock. See [Where the ROMs live](#where-the-roms-live).
 - **Slot 1** is the **network card** when networking is enabled (locked while on).
 - **Slots 2–7** (and slot 1 when networking is off) are yours to assign.
 
@@ -53,6 +57,14 @@ they are not per-user data:
 - Portable (`.tar.gz`): `podules/<name>/` beside the binary
 
 You don't copy these into your `~/RPCEmu` folder; you just select which podules to use.
+
+Three directories are involved, and they are not interchangeable:
+
+| Directory | What it holds |
+| --- | --- |
+| `podules/<name>/` | ROMs for the selectable podules described above, one directory each |
+| `poduleroms/` | RISC OS modules scanned into the built-in slot-0 card. Every regular file is picked up (`.txt` and dotfiles aside), so adding a module is a matter of dropping it in |
+| `gfxroms/` | The graphics card's own display driver, which travels in that card's ROM rather than slot 0. See [gfxcard.md](gfxcard.md) |
 
 ---
 

@@ -84,10 +84,10 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `build.sh` | Unified build and release script |
 | `docs/dynarec.md` | ARM dynamic recompiler (build, behaviour, limitations) |
 | `docs/arm64-dynarec.md` | AArch64 (arm64) dynarec backend |
-| `docs/peripherals.md` | Serial and parallel ports (file logging, TCP modem, printer) |
+| `docs/peripherals.md` | Serial and parallel ports: file logging, TCP modem, a real host serial port, the virtual printer, and printing on a host printer |
 | `docs/podules.md` | Expansion cards (podules): bundled devices, configuration, plugin ABI |
 | `docs/gfxcard.md` | Graphics card: display modes beyond what VRAM allows, and its GraphicsV driver |
-| `docs/clipboard.md` | Shared clipboard: copying text between the host and RISC OS |
+| `docs/clipboard.md` | Shared clipboard: copying text and images between the host and RISC OS |
 | `docs/hostcmd.md` | HostCmd: drive the RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`) |
 | `tools/mcp/README.md` | MCP server: drive a RISC OS machine from Claude / an agent (commands, files, screen, debugger). Setup + tool reference. |
 | `docs/debugcmd.md` | DebugCmd: control the emulated CPU over a socket (registers, memory, disassembly, breakpoints, single-step) |

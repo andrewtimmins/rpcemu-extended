@@ -74,9 +74,13 @@ Supported Linux architectures: **amd64** and **arm64** (`--arch` or native host)
 
 Release archive: `releases/linux/rpcemu_<version>_linux_<arch>.tar.gz`
 
-The Linux release staging step copies `configs/`, `poduleroms/`, `resources/`,
-`roms/roms.txt`, and a default `machines/Default/` tree. The `shared/` directory is
-created automatically at runtime if it does not exist.
+The Linux release staging step copies `configs/`, `poduleroms/`, `gfxroms/`,
+`netroms/`, `resources/`, `roms/`, `podules/` and `default/`, and pre-creates empty
+`machines/` and `shared/` directories.
+
+No machine is shipped. One the emulator invented would have no ROM and an empty disc,
+so it could not start; **New…** creates one properly, fetching RISC OS from RISC OS
+Open and seeding it from `default/`, which is why that directory ships.
 
 ---
 

@@ -13,7 +13,8 @@ Risc PC can show are limited by how much VRAM is fitted, and this card is not.
 Verified on a Kinetic with 2MB of VRAM: 1920 x 1080 in 16M colours (8.3MB of
 screen) is refused by VIDC20 and displayed by the card.
 
-The card is off by default. Turn it on in *Settings → Machine → Graphics card*,
+The card is off by default. Turn it on with **High-Resolution Graphics Card** on the
+*System* tab of *Settings → Machine…*,
 and the machine gains an expansion card in the next free EASI slot. Nothing about
 an existing machine changes until you do.
 
