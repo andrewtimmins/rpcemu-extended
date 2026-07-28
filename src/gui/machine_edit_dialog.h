@@ -110,6 +110,7 @@ private:
 	void OnNetworkChanged(wxCommandEvent &event);
 	void OnRomOrModelChanged(wxCommandEvent &event);
 	void OnGetRiscos(wxCommandEvent &event);
+	void OnGetHardDisc(wxCommandEvent &event);
 	void UpdateDiscDownloadAvailability();
 	void OnNameChanged(wxCommandEvent &event);
 	wxString SelectedRomDir() const;
@@ -128,7 +129,7 @@ private:
 	wxTextCtrl *name_edit_ = nullptr;
 	wxComboBox *rom_combo_ = nullptr;
 	wxButton *get_rom_button_ = nullptr;
-	wxCheckBox *get_disc_check_ = nullptr;
+	wxButton *get_disc_button_ = nullptr;
 	wxStaticText *get_disc_note_ = nullptr;
 
 	/* The System page, kept so a note that grows can have its page laid out

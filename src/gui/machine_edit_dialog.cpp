@@ -175,11 +175,11 @@ wxWindow *MachineEditDialog::BuildSystemPage(wxWindow *parent)
 	rom_combo_ = new wxComboBox(page, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
 	get_rom_button_ = new wxButton(page, wxID_ANY, "Get RISC OS...");
 	get_rom_button_->SetToolTip("Download a RISC OS ROM from RISC OS Open");
-	get_disc_check_ = new wxCheckBox(page, wxID_ANY,
-	    "Also download a ready-to-use hard disc (about 13 MB)");
-	get_disc_check_->SetToolTip(
-	    "HardDisc4 from RISC OS Open: applications, utilities, !System and a "
-	    "configured !Boot, set up for the ROM you choose.\n\n"
+	get_disc_button_ = new wxButton(page, wxID_ANY, "Get hard disc...");
+	get_disc_button_->SetToolTip(
+	    "Download HardDisc4 from RISC OS Open: applications, utilities, "
+	    "!System and a configured !Boot, set up for the ROM this machine "
+	    "uses (about 13 MB).\n\n"
 	    "Only offered while this machine's hard disc is empty. An existing "
 	    "disc is never overwritten.");
 	get_disc_note_ = new wxStaticText(page, wxID_ANY, wxEmptyString);
@@ -250,13 +250,14 @@ wxWindow *MachineEditDialog::BuildSystemPage(wxWindow *parent)
 		form->Add(rom_row, 1, wxEXPAND);
 	}
 
-	/* What the download brings with it, directly under the button it applies
-	   to, so the two read as one thing. */
-	form->Add(new wxStaticText(page, wxID_ANY, ""), 0);
+	/* The disc is its own download, under the ROM it will boot. A button
+	   rather than something to tick: it happens when it is pressed, which is
+	   what the rest of this row does, and nothing here is applied by OK. */
+	form->Add(new wxStaticText(page, wxID_ANY, "Hard disc:"), 0, wxALIGN_CENTER_VERTICAL);
 	{
 		auto *disc_col = new wxBoxSizer(wxVERTICAL);
 
-		disc_col->Add(get_disc_check_, 0);
+		disc_col->Add(get_disc_button_, 0);
 		disc_col->Add(get_disc_note_, 0, wxTOP, 2);
 		form->Add(disc_col, 1, wxEXPAND);
 	}
@@ -504,6 +505,7 @@ void MachineEditDialog::BuildUi()
 	network_combo_->Bind(wxEVT_COMBOBOX, &MachineEditDialog::OnNetworkChanged, this);
 	rom_combo_->Bind(wxEVT_COMBOBOX, &MachineEditDialog::OnRomOrModelChanged, this);
 	get_rom_button_->Bind(wxEVT_BUTTON, &MachineEditDialog::OnGetRiscos, this);
+	get_disc_button_->Bind(wxEVT_BUTTON, &MachineEditDialog::OnGetHardDisc, this);
 	model_combo_->Bind(wxEVT_COMBOBOX, &MachineEditDialog::OnRomOrModelChanged, this);
 	/* 512MB RAM is Kinetic-only: if any other model is selected, snap a 512MB
 	   choice back to 256MB immediately so it can't be left selected. */
@@ -599,15 +601,14 @@ void MachineEditDialog::SetRomSelection(const wxString &rom_dir)
  */
 void MachineEditDialog::UpdateDiscDownloadAvailability()
 {
-	if (get_disc_check_ == nullptr) {
+	if (get_disc_button_ == nullptr) {
 		return;
 	}
 
 	const bool empty = RiscosFetchMachineDiscIsEmpty(CurrentMachineNameForHd());
 
-	get_disc_check_->Enable(empty);
+	get_disc_button_->Enable(empty);
 	if (!empty) {
-		get_disc_check_->SetValue(false);
 		get_disc_note_->SetLabel("This machine already has files on its hard "
 		                         "disc, which are never overwritten.");
 	} else {
@@ -621,20 +622,16 @@ void MachineEditDialog::UpdateDiscDownloadAvailability()
  *
  * Only the ROM: this machine already exists and has a hard disc of its own,
  * and replacing that is never something to do as a side effect of choosing a
- * ROM. Somebody wanting the ready-made disc as well wants a new machine, which
- * is what the same download offers everywhere else.
+ * ROM. The disc has its own button beneath, for when that is what is wanted.
  */
 void MachineEditDialog::OnGetRiscos(wxCommandEvent &)
 {
 	RiscosSetupDialog dialog(this, false);
 	RiscosFetchOutcome outcome;
-	wxString summary;
 
 	/* The licensing terms are asked for by the dialogue itself, once the
 	   version has been chosen. */
-	dialog.SetTargetMachine(CurrentMachineNameForHd(),
-	                        get_disc_check_->IsEnabled() &&
-	                        get_disc_check_->GetValue());
+	dialog.SetTargetMachine(CurrentMachineNameForHd(), false);
 	if (dialog.ShowModal() != wxID_OK) {
 		return;
 	}
@@ -646,19 +643,63 @@ void MachineEditDialog::OnGetRiscos(wxCommandEvent &)
 	wxCommandEvent dummy;
 	OnRomOrModelChanged(dummy);
 
-	/* The disc has just landed, so the option for it no longer applies. */
 	UpdateDiscDownloadAvailability();
 	UpdateHdStatus();
 
-	summary = wxString::Format("RISC OS %s has been downloaded and selected "
-	                           "for this machine.", outcome.version);
-	if (outcome.disc_files > 0) {
-		summary += wxString::Format("\n\nIts hard disc now holds %d files, "
-		                            "ready to boot to the desktop.",
-		                            outcome.disc_files);
+	wxMessageBox(wxString::Format("RISC OS %s has been downloaded and "
+	                              "selected for this machine.",
+	                              outcome.version),
+	             "RISC OS is ready", wxOK | wxICON_INFORMATION, this);
+}
+
+/**
+ * Download the ready-made hard disc for this machine.
+ *
+ * Separate from the ROM because the two are wanted separately: a machine that
+ * has its ROM and nothing to boot should not have to fetch the ROM again to
+ * get a disc. The disc is set up for the ROM the machine is configured with,
+ * which is read from that ROM's name rather than downloaded.
+ */
+void MachineEditDialog::OnGetHardDisc(wxCommandEvent &)
+{
+	const wxString machine_name = CurrentMachineNameForHd();
+	RiscosFetchRequest request;
+	RiscosFetchOutcome outcome;
+
+	if (!RiscosFetchConfirmLicence(this)) {
+		return;
 	}
 
-	wxMessageBox(summary, "RISC OS is ready", wxOK | wxICON_INFORMATION, this);
+	request.include_rom = false;
+	request.include_disc = true;
+	request.create_machine = false;
+	request.machine_name = machine_name;
+
+	{
+		RiscosFetchProgressReporter reporter(this);
+
+		outcome = RiscosFetchPerform(request, reporter);
+	}
+
+	if (outcome.cancelled) {
+		return;
+	}
+
+	if (!outcome.ok) {
+		wxMessageBox(outcome.message + "\n\nNothing has been changed.",
+		             "Could not fetch the hard disc", wxOK | wxICON_ERROR,
+		             this);
+		return;
+	}
+
+	/* It is no longer empty, so the button no longer applies. */
+	UpdateDiscDownloadAvailability();
+	UpdateHdStatus();
+
+	wxMessageBox(wxString::Format("The hard disc now holds %d files, ready "
+	                              "to boot to the desktop.",
+	                              outcome.disc_files),
+	             "Hard disc is ready", wxOK | wxICON_INFORMATION, this);
 }
 
 /**

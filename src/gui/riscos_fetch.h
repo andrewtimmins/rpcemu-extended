@@ -57,9 +57,18 @@ enum class RiscosRelease {
  *
  * A hard disc always belongs to some machine, so include_disc without
  * create_machine needs machine_name to say which.
+ *
+ * Clearing include_rom asks for the disc on its own, for a machine that has a
+ * ROM already and only wants something to boot. Nothing about the machine
+ * needs to be known to do that: the disc carries a boot sequence that works
+ * with any version, reading the one it is running on and configuring itself
+ * to match the first time it starts.
  */
 struct RiscosFetchRequest {
 	RiscosRelease release = RiscosRelease::Stable;
+
+	/** Fetch the ROM. Cleared to fetch only the hard disc. */
+	bool include_rom = true;
 
 	/** Also fetch HardDisc4 and unpack it onto the machine's HostFS. */
 	bool include_disc = true;

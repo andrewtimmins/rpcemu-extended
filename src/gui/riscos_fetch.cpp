@@ -1012,7 +1012,8 @@ bool RiscosFetchMachineDiscIsEmpty(const wxString &machine_name)
 
 long long RiscosFetchApproximateSize(const RiscosFetchRequest &request)
 {
-	return kRomApproxBytes + (request.include_disc ? kDiscApproxBytes : 0);
+	return (request.include_rom ? kRomApproxBytes : 0) +
+	       (request.include_disc ? kDiscApproxBytes : 0);
 }
 
 RiscosFetchOutcome RiscosFetchPerform(const RiscosFetchRequest &request,
@@ -1027,6 +1028,11 @@ RiscosFetchOutcome RiscosFetchPerform(const RiscosFetchRequest &request,
 	wxString rom_url, rom_name, machine_name, config_path, staged_hostfs;
 	wxString version, datestamp;
 
+	if (!request.include_rom && !request.include_disc) {
+		outcome.message = "Nothing was asked for.";
+		return outcome;
+	}
+
 	if (!ConfigPathsEnsureDataLayout()) {
 		outcome.message = "The RPCEmu data directory could not be created.";
 		return outcome;
@@ -1040,21 +1046,27 @@ RiscosFetchOutcome RiscosFetchPerform(const RiscosFetchRequest &request,
 	}
 
 	/* --- Work out what to fetch --- */
-	rom_url = ResolveRomUrl(request.release, reporter, make_loop);
-	if (rom_url.empty()) {
-		outcome.cancelled = true;
-		RemoveTree(temp_dir);
-		return outcome;
-	}
+	if (request.include_rom) {
+		rom_url = ResolveRomUrl(request.release, reporter, make_loop);
+		if (rom_url.empty()) {
+			outcome.cancelled = true;
+			RemoveTree(temp_dir);
+			return outcome;
+		}
 
-	version = VersionFromUrl(rom_url);
-	if (version.empty()) {
-		version = (request.release == RiscosRelease::Nightly) ? "5.31" : "5.30";
+		version = VersionFromUrl(rom_url);
+		if (version.empty()) {
+			version = (request.release == RiscosRelease::Nightly) ? "5.31" : "5.30";
+		}
 	}
+	/* Fetching the disc on its own leaves this empty, which is what should
+	   happen: the version here describes a ROM that is being downloaded, and
+	   none is. The disc does not need it - its own boot sequence reads the
+	   version from the running machine and sets itself up accordingly. */
 	outcome.version = version;
 
 	/* --- The ROM --- */
-	{
+	if (request.include_rom) {
 		Transfer transfer(reporter,
 		                  wxString::Format("Fetching RISC OS %s...", version),
 		                  make_loop);
@@ -1084,7 +1096,7 @@ RiscosFetchOutcome RiscosFetchPerform(const RiscosFetchRequest &request,
 	   Named for its version, and for a nightly also for the day it was
 	   built, so successive nightlies sit alongside each other in the ROM
 	   list rather than replacing one another. */
-	{
+	if (request.include_rom) {
 		wxString base = "ROM" + version;
 
 		base.Replace(".", "");
