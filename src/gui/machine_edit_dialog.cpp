@@ -1388,10 +1388,19 @@ void MachineEditDialog::ApplySavedSettingsToGlobalConfig(const wxString &rom_dir
                                                          int vram_internal, int refresh,
                                                          NetworkType network_type)
 {
+	/* GetValue() returns a temporary, and the buffer utf8_str() gives back
+	   points into that string rather than owning a copy of it. Taking the
+	   buffer straight from the temporary leaves it dangling at the end of the
+	   statement, so the strings are held in named locals that outlive the use
+	   below. The other two are already named, which is why only these two came
+	   out as rubbish. */
+	const wxString bridge_value = bridge_edit_->GetValue();
+	const wxString ip_value = tunnel_edit_->GetValue();
+
 	const wxScopedCharBuffer name_utf8 = new_name_.utf8_str();
 	const wxScopedCharBuffer rom_utf8 = rom_dir.utf8_str();
-	const wxScopedCharBuffer bridge_utf8 = bridge_edit_->GetValue().utf8_str();
-	const wxScopedCharBuffer ip_utf8 = tunnel_edit_->GetValue().utf8_str();
+	const wxScopedCharBuffer bridge_utf8 = bridge_value.utf8_str();
+	const wxScopedCharBuffer ip_utf8 = ip_value.utf8_str();
 	config_apply_machine_edit(&config, name_utf8.data(), rom_utf8.data(),
 	                          static_cast<unsigned>(mem_size),
 	                          static_cast<unsigned>(vram_internal), refresh, network_type,
