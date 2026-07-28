@@ -38,8 +38,8 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **Headless mode** — run a machine with no GUI window, accessed entirely over VNC (`--headless --machine <name>`). Genuinely display-less: no GUI toolkit is initialised at all, so it runs on a headless server (on Linux, with no X11/Wayland session). See [Headless mode](#headless-mode).
 - **HostCmd — drive the RISC OS command line from the host** — run guest commands from the host over a local socket and stream their output back, with the return code. Edit on the host (via HostFS), compile on the guest (`rpcemu-run -- cc -c hello`), or open an interactive RISC OS shell (`rpcemu-shell`). Ideal for IDE/LLM-driven development. See [docs/hostcmd.md](docs/hostcmd.md).
 - **MCP server — drive RISC OS from Claude / an agent** — a [Model Context Protocol](https://modelcontextprotocol.io) server exposing tools to run guest commands, read/write/list files (via HostFS), capture and click the screen, and inspect/control the emulated ARM CPU (registers, memory, disassembly, breakpoints, watchpoints, single-step). Point Claude Code / Desktop at it for agent-driven RISC OS development. Setup and tool reference in [tools/mcp/README.md](tools/mcp/README.md).
-- **Parallel port** — log raw output to a file, or a virtual printer that captures jobs to `.prn` files with optional in-process PDF conversion via Ghostscript.
-- **Serial port** — log to file, or a TCP "modem" that dials real telnet BBSes (`ATDT host:port`) with a telnet client layer and 8-bit-clean X/Y/ZMODEM transfers. See [docs/peripherals.md](docs/peripherals.md).
+- **Parallel port** — log raw output to a file, a virtual printer that captures jobs to `.prn` files with optional in-process PDF conversion via Ghostscript, or print on a real printer the host already has.
+- **Serial port** — log to file, a TCP "modem" that dials real telnet BBSes (`ATDT host:port`) with a telnet client layer and 8-bit-clean X/Y/ZMODEM transfers, or a real serial port on the host (USB adapter, built-in port, or a pseudo terminal), with the speed and framing following whatever the guest programs. See [docs/peripherals.md](docs/peripherals.md).
 - **Machine Inspector** — live CPU, disassembly, memory, peripheral, and debugger views with auto-refresh.
 - **Integrated debugger** — pause/resume, single-step, breakpoints, and watchpoints; dynarec-aware via shared hooks.
 - **Toolbar and status bar** — quick access to common actions; activity indicators for floppy, IDE, HostFS, and network.
@@ -491,8 +491,8 @@ is exposed.
 
 | Port | Modes |
 | --- | --- |
-| **Serial (0x3F8)** | Disabled, log to file, TCP modem (telnet) |
-| **Parallel (LPT)** | Disabled, log to file, virtual printer |
+| **Serial (0x3F8)** | Disabled, log to file, TCP modem (telnet), a real port on the host |
+| **Parallel (LPT)** | Disabled, log to file, virtual printer, print on this computer |
 
 - **Log to file** captures the raw byte stream the guest sends — handy for debugging
   or capturing print/serial output.
@@ -504,8 +504,28 @@ is exposed.
   (default: `machines/<name>/printjobs/`); with Ghostscript support, enable **Also
   create PDF files** for automatic conversion.
 
-Physical host passthrough (`/dev/tty*`) is not yet implemented. Full details,
-including AT commands and how RISC OS drives each port, are in
+- **A real serial port on the host** hands the guest an actual port: a USB adapter, a
+  built-in port, or a pseudo terminal. The dialogue lists the ports the machine has
+  rather than names that might not exist, and the field is editable for anything
+  unusual. The speed and framing follow whatever the guest programs, so
+  `*Configure Baud` and friends behave as they would on real hardware, and DTR and RTS
+  are mirrored onto the port. What is *not* attempted is bit-level timing: the host's
+  own UART does the signalling. A device that cannot report its modem lines, which
+  includes every pseudo terminal, is treated as asserting CTS, DSR and DCD, because
+  RISC OS waits for CTS before transmitting and would otherwise hang.
+- **Print on this computer** sends a finished job to a printer the host already knows
+  about. Give it the name of a print queue and the job is spooled as raw data through
+  the host print system, or give it a device path such as `/dev/usb/lp0` and it is
+  written there directly. The bytes are passed through untouched, since what the guest
+  produces is whatever its RISC OS printer driver emits.
+
+**On the limits of the parallel port:** this carries the print stream, not the pins.
+Devices that need real bidirectional IEEE-1284 signalling, such as dongles, Zip drives
+and scanners, are not supported and are not planned: raw pin access needs hardware
+almost no modern machine has, there is no portable way to reach it, and the handshake
+turnarounds are shorter than an emulator that is not locked to the wall clock can meet.
+
+Full details, including AT commands and how RISC OS drives each port, are in
 [docs/peripherals.md](docs/peripherals.md).
 
 ---
