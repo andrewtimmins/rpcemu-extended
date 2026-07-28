@@ -69,6 +69,7 @@ enum class EmuCommandType {
 	HostClipboardChanged,
 	ReloadIdeImages,
 	SwitchMachine,
+	Restart,
 	NatRuleAdd,
 	NatRuleEdit,
 	NatRuleRemove,
@@ -161,6 +162,7 @@ public:
 	void FollowHostDisplay();
 	void SetClipboardEnabled();
 	void SwitchMachine(const std::string &config_path);
+	void Restart();
 	void NatRuleAdd(const PortForwardRule &rule);
 	void NatRuleEdit(const PortForwardRule &old_rule, const PortForwardRule &new_rule);
 	void NatRuleRemove(const PortForwardRule &rule);
