@@ -238,7 +238,7 @@ wxPoint EmulatorPanel::CaptureCentre() const
 
 void EmulatorPanel::ResizeToHostDisplay()
 {
-	if (full_screen_ || integer_scaling_ || fit_to_window_ || host_xsize_ <= 0 || host_ysize_ <= 0) {
+	if (full_screen_ || fit_to_window_ || host_xsize_ <= 0 || host_ysize_ <= 0) {
 		SetMinSize(wxDefaultSize);
 		SetMaxSize(wxDefaultSize);
 		SetSizeHints(wxDefaultSize, wxDefaultSize);
@@ -246,6 +246,25 @@ void EmulatorPanel::ResizeToHostDisplay()
 	}
 
 	const wxSize host_size(host_xsize_, host_ysize_);
+
+	/*
+	 * Pixel-perfect scaling keeps a minimum of one host pixel per guest pixel
+	 * and is free to grow to a whole multiple of it.
+	 *
+	 * The minimum matters: this used to clear it, like the freely-resizable
+	 * modes above. Toggling from the menu was fine, because by then the window
+	 * had a size of its own, but a machine that started with the setting
+	 * already on had a panel contributing no minimum at all, so the frame's
+	 * Fit() shrink-wrapped it to just the menu and toolbar. That is issue #47:
+	 * "the main window fails to open".
+	 */
+	if (integer_scaling_) {
+		SetMinSize(host_size);
+		SetMaxSize(wxDefaultSize);
+		SetSizeHints(host_size, wxDefaultSize);
+		return;
+	}
+
 	SetMinSize(host_size);
 	SetMaxSize(host_size);
 	SetSize(host_size);
