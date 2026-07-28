@@ -47,6 +47,7 @@
 #include "ide.h"
 #include "arm.h"
 #include "cmos.h"
+#include "serial_host.h"
 #include "superio.h"
 #include "i8042.h"
 #include "romload.h"
@@ -247,6 +248,8 @@ Perf perf = {
 PortForwardRule port_forward_rules[MAX_PORT_FORWARDS]; ///< Port forward rules accross the NAT
 
 int drawscre = 0;
+
+unsigned long idle_ticks = 0;
 int quited = 0;
 
 static FILE *arclog; /* Log file handle */
@@ -1110,6 +1113,7 @@ execrpcemu(void)
 
 	printer_poll();
 	serial_modem_poll();
+	serial_host_poll();
 	hostcmd_poll();
 	debugcmd_poll();
 }
@@ -1125,6 +1129,7 @@ rpcemu_idle(void)
 {
 	/* Loop while no interrupts pending */
 	while (!arm.event) {
+		idle_ticks++;
 		/* Run down any callback timers */
 		if (kcallback) {
 			kcallback--;
@@ -1160,8 +1165,9 @@ rpcemu_idle(void)
 			updateirqs();
 		}
 		serial_modem_poll();
+		serial_host_poll();
 		hostcmd_poll();
-	debugcmd_poll();
+		debugcmd_poll();
 		/* Sleep if no interrupts pending */
 		if (!arm.event) {
 #ifdef _WIN32
@@ -1176,8 +1182,21 @@ rpcemu_idle(void)
 		}
 		/* Run other periodic actions */
 		if (!arm.event) {
+			/* Service the host timers first. It is the video timer that
+			   asks for a frame, so doing this before the draw below means
+			   a frame requested during this pass goes out on this pass;
+			   the other way round it always waited for the next one. */
+			rpcemu_idle_process_events();
+
 			if (drawscre > 0) {
 				drawscr();
+				/* Exactly as execrpcemu() does after a frame: the card
+				   raises its vsync, which is when RISC OS applies pointer
+				   and palette changes. Leaving it out here meant those
+				   changes never took effect while the machine was idling,
+				   which is precisely when the pointer is being moved
+				   about. */
+				gfxcard_vsync();
 				drawscre--;
 				if (drawscre > 5) {
 					drawscre = 0;
@@ -1185,9 +1204,9 @@ rpcemu_idle(void)
 			}
 			printer_poll();
 			serial_modem_poll();
+			serial_host_poll();
 			hostcmd_poll();
-	debugcmd_poll();
-			rpcemu_idle_process_events();
+			debugcmd_poll();
 		}
 	}
 }

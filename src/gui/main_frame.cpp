@@ -1242,7 +1242,20 @@ void MainFrame::OnMipsTimer(wxTimerEvent &)
 	const int hostfs_ops = hostfs_activity.exchange(0);
 	const int network_ops = network_activity.exchange(0);
 
-	SetStatusText(wxString::Format("MIPS: %.1f", mips), STATUS_MIPS);
+	/* Say when the machine is idle rather than leaving a figure near zero to
+	   look like a fault. Under "Reduce CPU usage" RISC OS hands its idle time
+	   back through Portable_Idle, so a machine sitting at the desktop really
+	   is executing almost nothing: the low number is the truth, and without
+	   this it reads as the emulator having ground to a halt. */
+	{
+		const unsigned long idle_now = idle_ticks;
+		const bool idling = (idle_now - last_idle_ticks_) > 100;
+
+		last_idle_ticks_ = idle_now;
+		SetStatusText(idling
+		    ? wxString::Format("MIPS: %.1f (idle)", mips)
+		    : wxString::Format("MIPS: %.1f", mips), STATUS_MIPS);
+	}
 	SetStatusText(wxString::Format("Avg: %.1f", average), STATUS_AVG_MIPS);
 
 	if (fdc_ops > 0) {

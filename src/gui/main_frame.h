@@ -324,6 +324,7 @@ private:
 	std::string clipboard_image_last_seen_;	/* and the same for an image, as PNG */
 
 	uint64_t mips_total_instructions_ = 0;
+	unsigned long last_idle_ticks_ = 0;
 	int32_t mips_seconds_ = 0;
 
 	wxDECLARE_EVENT_TABLE();

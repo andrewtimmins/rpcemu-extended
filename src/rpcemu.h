@@ -404,6 +404,11 @@ extern void rpcemu_send_nat_rule_to_gui(PortForwardRule rule);
 extern uint64_t rpcemu_nsec_timer_ticks(void);
 
 extern int drawscre;
+
+/* Counts passes through the idle loop, so the interface can tell an idle machine
+   from a stalled one: while RISC OS is idling almost no instructions are
+   executed, and a MIPS figure near zero is the truth rather than a fault. */
+extern unsigned long idle_ticks;
 extern int quited;
 extern char discname[2][260];
 
