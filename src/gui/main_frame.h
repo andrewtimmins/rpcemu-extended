@@ -263,6 +263,7 @@ private:
 
 	wxString BlankDiscResourcePath(const wxString &filename) const;
 	wxString ConfigPathForMachine(const wxString &machine_name) const;
+	void RestartMachine();
 
 	Config config_copy_{};
 	Model model_copy_ = Model_RPCARM710;

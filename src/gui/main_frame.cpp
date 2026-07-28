@@ -90,6 +90,101 @@ bool HostResetQuestion(wxWindow *parent)
 	           parent) == wxOK;
 }
 
+bool SameString(const char *a, const char *b)
+{
+	if (a == nullptr || b == nullptr) {
+		return a == b;
+	}
+	return strcmp(a, b) == 0;
+}
+
+/* Release the strings config_deep_copy() duplicated into a scratch Config. */
+void FreeConfigCopy(Config *cfg)
+{
+	free(cfg->username);
+	free(cfg->ipaddress);
+	free(cfg->macaddress);
+	free(cfg->bridgename);
+	free(cfg->network_capture);
+	cfg->username = nullptr;
+	cfg->ipaddress = nullptr;
+	cfg->macaddress = nullptr;
+	cfg->bridgename = nullptr;
+	cfg->network_capture = nullptr;
+}
+
+/*
+ * Did the machine editor change something the running machine cannot pick up?
+ *
+ * The dialog's Options tab holds the settings that are either already live or
+ * read when the machine next starts, so nothing there needs a restart. The
+ * System, Network, IDE Drives and Podules tabs are the other way round: they
+ * describe the hardware, which is built when the machine starts and by the
+ * reset the editor does not perform. The ROM is the furthest out of reach,
+ * being read only by loadroms() at start-up.
+ *
+ * Written as "everything except the Options fields" rather than as a list of
+ * the fields that matter, so a setting added to one of the hardware tabs later
+ * is treated as needing a restart without anyone having to remember to add it
+ * here. Being asked to restart unnecessarily is a smaller problem than a
+ * change that silently does not apply.
+ */
+bool MachineNeedsRestart(const Config *before, const Config *after)
+{
+	Config a;
+	Config b;
+
+	memset(&a, 0, sizeof(a));
+	memset(&b, 0, sizeof(b));
+	config_deep_copy(&a, before);
+	config_deep_copy(&b, after);
+
+	/* Flatten every Options-tab setting so it cannot register as a change. */
+	a.show_fullscreen_message = b.show_fullscreen_message = 0;
+	a.integer_scaling = b.integer_scaling = 0;
+	a.fit_to_window = b.fit_to_window = 0;
+	a.follow_host_display = b.follow_host_display = 0;
+	a.soundenabled = b.soundenabled = 0;
+	a.cdromenabled = b.cdromenabled = 0;
+	a.mousetwobutton = b.mousetwobutton = 0;
+	a.cpu_idle = b.cpu_idle = 0;
+	a.suspend_on_exit = b.suspend_on_exit = 0;
+	a.vnc_enabled = b.vnc_enabled = 0;
+	a.clipboard_enabled = b.clipboard_enabled = 0;
+	/* A rename is not something to restart for, and offering to would be
+	   worse than useless: the data directory is deliberately left under the
+	   old name while the machine is running, so a restart would load the
+	   configuration under the new one and point HostFS at a directory that
+	   does not exist. The rename has already said so in its own message. */
+	memset(a.name, 0, sizeof(a.name));
+	memset(b.name, 0, sizeof(b.name));
+
+	/* Compared by value: the memcmp below only sees the pointers, which always
+	   differ between two copies. */
+	bool changed = !SameString(a.username, b.username) ||
+	               !SameString(a.ipaddress, b.ipaddress) ||
+	               !SameString(a.macaddress, b.macaddress) ||
+	               !SameString(a.bridgename, b.bridgename) ||
+	               !SameString(a.network_capture, b.network_capture);
+
+	if (!changed) {
+		/* Take the pointers out of the picture for the structure comparison,
+		   keeping hold of them so they can still be freed. */
+		Config a_cmp = a;
+		Config b_cmp = b;
+		a_cmp.username = b_cmp.username = nullptr;
+		a_cmp.ipaddress = b_cmp.ipaddress = nullptr;
+		a_cmp.macaddress = b_cmp.macaddress = nullptr;
+		a_cmp.bridgename = b_cmp.bridgename = nullptr;
+		a_cmp.network_capture = b_cmp.network_capture = nullptr;
+		changed = memcmp(&a_cmp, &b_cmp, sizeof(Config)) != 0;
+	}
+
+	FreeConfigCopy(&a);
+	FreeConfigCopy(&b);
+	return changed;
+}
+
 } // namespace
 
 wxBEGIN_EVENT_TABLE(MainFrame, wxFrame)
@@ -275,6 +370,18 @@ void MainFrame::OnReset(wxCommandEvent &)
 	if (emulator_) {
 		emulator_->Reset();
 	}
+}
+
+/* Restart the running machine, picking up its configuration file and ROMs as
+   they are now. Does nothing if no machine is running, where there is nothing
+   to restart and the settings that would be applied are read at startup
+   anyway. */
+void MainFrame::RestartMachine()
+{
+	if (emulator_ == nullptr || !emulator_->IsRunning()) {
+		return;
+	}
+	emulator_->Restart();
 }
 
 void MainFrame::OnSaveState(wxCommandEvent &)
@@ -1180,10 +1287,17 @@ void MainFrame::EditMachineConfiguration()
 	const wxString old_config_path = ConfigPathsAbsoluteConfigPath(wxString::FromUTF8(config_get_path()));
 	const wxString old_name = wxString::FromUTF8(config_copy_.name);
 
+	/* The dialog writes straight into the live configuration, so a copy has to
+	   be taken now to have anything to compare against afterwards. */
+	Config old_config;
+	memset(&old_config, 0, sizeof(old_config));
+	config_deep_copy(&old_config, &config);
+
 	MachineEditDialog dlg(this, old_config_path,
 	                      emulator_ == nullptr || !emulator_->IsRunning(),
 	                      emulator_ != nullptr && emulator_->IsRunning());
 	if (dlg.ShowModal() != wxID_OK) {
+		FreeConfigCopy(&old_config);
 		return;
 	}
 
@@ -1211,11 +1325,31 @@ void MainFrame::EditMachineConfiguration()
 	SyncSettingsMenuChecks();
 	SyncCdromMenuChecks();
 	UpdateMachineStatus();
-	wxMessageBox(
-	    "Machine configuration saved.\n\nRestart the emulator for changes to take full effect.",
+
+	/* Ask only when the machine's hardware description changed and there is a
+	   machine running to apply it to. Changing something on the Options tab -
+	   the two-button mouse, the sound - needs nothing, and a dialog offering to
+	   throw the machine away over it would be noise. */
+	const bool needs_restart = MachineNeedsRestart(&old_config, &config);
+	FreeConfigCopy(&old_config);
+
+	if (!needs_restart || emulator_ == nullptr || !emulator_->IsRunning()) {
+		return;
+	}
+
+	wxMessageDialog restart_dlg(
+	    this,
+	    "The machine's configuration has changed, which only takes effect "
+	    "when it restarts.\n\n"
+	    "Restarting will lose any unsaved data in the running machine.",
 	    "Machine Configuration",
-	    wxOK | wxICON_INFORMATION,
-	    this);
+	    /* Continue is the default: a stray Return should not throw away
+	       whatever is running. */
+	    wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION);
+	restart_dlg.SetYesNoLabels("Restart", "Continue Without Restarting");
+	if (restart_dlg.ShowModal() == wxID_YES) {
+		RestartMachine();
+	}
 }
 
 void MainFrame::OnVideoTimer(wxTimerEvent &)

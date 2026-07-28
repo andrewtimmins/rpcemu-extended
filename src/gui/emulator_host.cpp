@@ -728,6 +728,37 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 		rpclog("RPCEmu: Machine switch complete\n");
 		break;
 	}
+	case EmuCommandType::Restart: {
+		rpclog("RPCEmu: Restarting machine\n");
+
+		/* The guest writes its CMOS out as it changes it (see the checksum
+		   handling in cmos.c), so this is only here to catch a change that had
+		   not reached the checksum byte yet. */
+		savecmos();
+
+		/* Re-read the machine's own configuration file, so a setting changed
+		   in the machine editor since it started is picked up. */
+		config_load(&config);
+
+		hostfs_init();
+		cmos_init();
+
+		/* Unconditionally, unlike SwitchMachine: the machine editor has already
+		   written the new ROM directory into the live config by this point, so
+		   comparing the old value against the new one would never differ and
+		   the ROM would never be reloaded - which is the whole reason a reset
+		   was not enough. */
+		loadroms();
+
+		resetrpc();
+
+		if (gui_bridge_ != nullptr) {
+			gui_bridge_->PostMachineSwitched(config.name);
+		}
+
+		rpclog("RPCEmu: Restart complete\n");
+		break;
+	}
 	case EmuCommandType::CpuIdle:
 		config.cpu_idle ^= 1;
 		config_save(&config);
@@ -1039,6 +1070,13 @@ void EmulatorHost::SwitchMachine(const std::string &config_path)
 	EmuCommand cmd;
 	cmd.type = EmuCommandType::SwitchMachine;
 	cmd.string_path = config_path;
+	PostCommand(cmd);
+}
+
+void EmulatorHost::Restart()
+{
+	EmuCommand cmd;
+	cmd.type = EmuCommandType::Restart;
 	PostCommand(cmd);
 }
 
