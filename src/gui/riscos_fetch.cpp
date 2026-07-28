@@ -678,109 +678,6 @@ int InstallDisc(const wxString &archive_path, const wxString &dest_dir,
 	return r;
 }
 
-/** True if @dir does not exist, or exists with nothing in it. */
-bool DirectoryIsEmpty(const wxString &dir)
-{
-	wxString name;
-
-	if (!wxDirExists(dir)) {
-		return true;
-	}
-
-	wxDir handle(dir);
-
-	return handle.IsOpened() &&
-	       !handle.GetFirst(&name, wxEmptyString, wxDIR_FILES | wxDIR_DIRS);
-}
-
-/** "5.30" to 530, matching the form RISC OS reports as Boot$OSVersion. */
-long BootOsVersionNumber(const wxString &version)
-{
-	long major = 0, minor = 0;
-
-	if (!version.BeforeFirst('.').ToLong(&major) ||
-	    !version.AfterFirst('.').ToLong(&minor)) {
-		return 0;
-	}
-
-	return major * 100 + minor;
-}
-
-/**
- * Set up !Boot.Choices the way the disc's own first boot would.
- *
- * HardDisc4 ships with an empty Choices directory and fills it on first start,
- * from whichever RO<version>Hook matches the machine. Until that has happened
- * there is no desktop boot file, so the first start of a freshly unpacked disc
- * ends at the supervisor prompt with an error, and only the second start
- * reaches the desktop. That is a poor introduction for somebody who has just
- * been promised a working machine, so the same copy is done here.
- *
- * Deliberately cautious. It only acts on a disc laid out as expected with
- * Choices still empty, and picks the highest hook not above the ROM's version,
- * which is how the disc itself resolves one: RISC OS 5.31 reports 530 and uses
- * RO530Hook, there being no RO531Hook. Anything unexpected is left alone, and
- * the disc then sets itself up on first boot as it always did.
- */
-void SeedBootChoices(const wxString &hostfs_dir, const wxString &version)
-{
-	const wxString sep = wxFileName::GetPathSeparator();
-	const wxString boot_dir = hostfs_dir + sep + "!Boot";
-	const wxString choices = boot_dir + sep + "Choices";
-	const long target = BootOsVersionNumber(version);
-	wxString best_hook;
-	long best_number = -1;
-	wxString name;
-
-	if (target == 0 || !wxDirExists(boot_dir) || !wxDirExists(choices)) {
-		return;
-	}
-
-	if (!DirectoryIsEmpty(choices)) {
-		return;		/* Already set up; not ours to touch */
-	}
-
-	wxDir dir(boot_dir);
-	if (!dir.IsOpened() || !dir.GetFirst(&name, "RO*Hook", wxDIR_DIRS)) {
-		return;
-	}
-
-	do {
-		const wxString digits = name.Mid(2, name.length() - 6);
-		long number = 0;
-
-		if (!digits.ToLong(&number) || number > target ||
-		    number <= best_number) {
-			continue;
-		}
-		if (!wxDirExists(boot_dir + sep + name + sep + "Boot")) {
-			continue;
-		}
-
-		best_number = number;
-		best_hook = name;
-	} while (dir.GetNext(&name));
-
-	if (best_hook.empty()) {
-		return;
-	}
-
-	if (ConfigPathsCopyDirectory(boot_dir + sep + best_hook + sep + "Boot",
-	                             choices + sep + "Boot")) {
-		rpclog("riscos_fetch: seeded !Boot.Choices from %s\n",
-		       static_cast<const char *>(best_hook.utf8_str()));
-		return;
-	}
-
-	/* Take a half-finished copy back out again. The disc's own setup skips
-	   a Choices that is not empty, so leaving one behind would turn a
-	   recoverable failure into a machine that never configures itself. */
-	rpclog("riscos_fetch: could not seed !Boot.Choices from %s; leaving the "
-	       "disc to configure itself on first boot\n",
-	       static_cast<const char *>(best_hook.utf8_str()));
-	RemoveTree(choices + sep + "Boot");
-}
-
 /** Write the configuration for a machine built around a fetched ROM. */
 bool WriteMachineConfig(const wxString &config_path, const wxString &name,
                         const wxString &rom_name)
@@ -1183,8 +1080,6 @@ RiscosFetchOutcome RiscosFetchPerform(const RiscosFetchRequest &request,
 			outcome.cancelled = cancelled;
 			return outcome;
 		}
-
-		SeedBootChoices(staged_hostfs, version);
 
 		/* Checked here as well as before the option was offered: the
 		   download takes time, and a machine that was empty when it
