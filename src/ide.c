@@ -119,18 +119,48 @@ void callbackide(void);
 #define IDE_DRIVE_IS_CDROM(ide) \
 	(config.cdromenabled && (ide.drive == 1))
 
+/**
+ * Is there anything at all on the currently selected drive?
+ *
+ * The register file below is shared between the two drives rather than being
+ * duplicated per device as it is on real hardware, so a read taken while an
+ * empty drive is selected returns whatever the other one last left there.
+ * Guest software identifies a device by reading exactly those registers, so
+ * without this an absent drive borrows its neighbour's identity.
+ */
+#define IDE_DRIVE_PRESENT(ide) \
+	(ide_drive_is_hdd((ide).drive) || IDE_DRIVE_IS_CDROM(ide))
+
+/** The register file of the drive currently selected by the guest. */
+#define IDE_R	(ide.regs[ide.drive])
+
 ATAPI *atapi;
 int idecallback = 0;
 
 static void callreadcd(void);
+static inline int ide_drive_is_hdd(int drive);
 static void atapicommand(void);
 static void ide_next_sector(void);
 
-static struct
-{
+/*
+ * The programmed register file, one set per device.
+ *
+ * Real hardware gives each drive its own, and guest software depends on that:
+ * after a reset it reads the signature registers to tell an ATA disc (01 01 00
+ * 00) from an ATAPI device (01 01 14 EB), and an absent drive from either. One
+ * shared set could only ever hold one identity, so whichever drive answered
+ * last spoke for both.
+ */
+typedef struct {
         uint8_t atastat;
         unsigned char error;
-        int secount,sector,cylinder,head,drive,cylprecomp;
+        int secount, sector, cylinder, head, cylprecomp;
+} IDEDriveRegs;
+
+static struct
+{
+        IDEDriveRegs regs[2];
+        int drive;
         unsigned char command;
         unsigned char fdisk;
         int pos;
@@ -159,12 +189,12 @@ static inline void
 ide_read_complete(void)
 {
 	ide.pos = 0;
-	ide.atastat = READY_STAT;
+	IDE_R.atastat = READY_STAT;
 	if (ide.command == WIN_READ) {
-		ide.secount--;
-		if (ide.secount) {
+		IDE_R.secount--;
+		if (IDE_R.secount) {
 			ide_next_sector();
-			ide.atastat = BUSY_STAT;
+			IDE_R.atastat = BUSY_STAT;
 			ide_run_callback();
 		}
 	}
@@ -174,20 +204,44 @@ static inline void
 ide_write_complete(void)
 {
 	ide.pos = 0;
-	ide.atastat = BUSY_STAT;
+	IDE_R.atastat = BUSY_STAT;
 	ide_run_callback();
 }
 
 /** ATA post-reset task-file values expected by RISC OS after SRST. */
 static void
-ide_apply_post_reset_signature(void)
+ide_apply_post_reset_signature(int d)
 {
-	ide.atastat = READY_STAT;
-	ide.error = 0x01; /* Diagnostic code: device passed */
-	ide.secount = 1;
-	ide.sector = 1;
-	ide.cylinder = 0;
-	ide.head = 0;
+	IDEDriveRegs *r = &ide.regs[d];
+
+	memset(r, 0, sizeof(*r));
+
+	if (ide_drive_is_hdd(d)) {
+		/* ATA: sector count 1, sector 1, cylinder 0. */
+		r->atastat = READY_STAT;
+		r->error = 0x01; /* Diagnostic code: device passed */
+		r->secount = 1;
+		r->sector = 1;
+		r->cylinder = 0;
+	} else if (config.cdromenabled && d == 1) {
+		/* ATAPI: the same, but cylinder 0xEB14. This is the whole
+		   difference software has to go on, so a packet device must
+		   report it or it is taken for a hard disc. */
+		r->atastat = READY_STAT;
+		r->error = 0x01;
+		r->secount = 1;
+		r->sector = 1;
+		r->cylinder = 0xeb14;
+	}
+
+	/* An empty drive keeps its zeroed registers, so the bus reads as having
+	   nothing on it rather than echoing the drive beside it. */
+}
+
+/** Controller state that is not per-drive, plus both drives' signatures. */
+static void
+ide_reset_shared_state(void)
+{
 	ide.command = 0;
 	ide.pos = 0;
 	ide.reset = 0;
@@ -195,6 +249,9 @@ ide_apply_post_reset_signature(void)
 	ide.packlen = 0;
 	ide.cdlen = ide.cdpos = 0;
 	memset(ide.buffer, 0, 512);
+
+	ide_apply_post_reset_signature(0);
+	ide_apply_post_reset_signature(1);
 }
 
 static void
@@ -202,11 +259,10 @@ ide_reset_controller_state(void)
 {
 	ide.drive = 0;
 	ide.fdisk = 0;
-	ide.cylprecomp = 0;
 	ide.lba_cmd[0] = ide.lba_cmd[1] = 0;
 	ide.discchanged = 0;
 	ide.asc = 0;
-	ide_apply_post_reset_signature();
+	ide_reset_shared_state();
 }
 
 static inline void
@@ -241,8 +297,8 @@ ide_hd_logical_sectors(int drive)
 static void
 ide_media_error_idnf(void)
 {
-	ide.atastat = READY_STAT | ERR_STAT;
-	ide.error = IDNF_ERR;
+	IDE_R.atastat = READY_STAT | ERR_STAT;
+	IDE_R.error = IDNF_ERR;
 	ide_irq_raise();
 }
 
@@ -254,14 +310,14 @@ ide_get_snapshot(IDEStateSnapshot *snapshot)
         }
 
         memset(snapshot, 0, sizeof(*snapshot));
-        snapshot->atastat = ide.atastat;
-        snapshot->error = ide.error;
-        snapshot->secount = ide.secount;
-        snapshot->sector = ide.sector;
-        snapshot->cylinder = ide.cylinder;
-        snapshot->head = ide.head;
+        snapshot->atastat = IDE_R.atastat;
+        snapshot->error = IDE_R.error;
+        snapshot->secount = IDE_R.secount;
+        snapshot->sector = IDE_R.sector;
+        snapshot->cylinder = IDE_R.cylinder;
+        snapshot->head = IDE_R.head;
         snapshot->drive = (uint8_t) ide.drive;
-        snapshot->cylprecomp = ide.cylprecomp;
+        snapshot->cylprecomp = IDE_R.cylprecomp;
         snapshot->command = ide.command;
         snapshot->fdisk = ide.fdisk;
         snapshot->pos = ide.pos;
@@ -469,14 +525,14 @@ ide_get_lba_address(void)
 {
 	if (ide.lba_cmd[ide.drive]) {
 		/* ATA-3: head bits 27:24, cylinder bits 23:8, sector bits 7:0 */
-		return (uint32_t) ((ide.head << 24) | (ide.cylinder << 8) | ide.sector);
+		return (uint32_t) ((IDE_R.head << 24) | (IDE_R.cylinder << 8) | IDE_R.sector);
 	}
 
 	const int heads = ide.hpc[ide.drive];
 	const int sectors = ide.spt[ide.drive];
 
-	return (uint32_t) ((((off64_t) ide.cylinder * heads) + ide.head) *
-	    sectors) + (ide.sector - 1);
+	return (uint32_t) ((((off64_t) IDE_R.cylinder * heads) + IDE_R.head) *
+	    sectors) + (IDE_R.sector - 1);
 }
 
 /**
@@ -506,17 +562,17 @@ ide_next_sector(void)
 {
 	if (ide.lba_cmd[ide.drive]) {
 		uint32_t lba = ide_get_lba_address() + 1;
-		ide.head = (lba >> 24) & 0xf;
-		ide.cylinder = (lba >> 8) & 0xffff;
-		ide.sector = lba & 0xff;
+		IDE_R.head = (lba >> 24) & 0xf;
+		IDE_R.cylinder = (lba >> 8) & 0xffff;
+		IDE_R.sector = lba & 0xff;
 	} else {
-		ide.sector++;
-		if (ide.sector == (ide.spt[ide.drive] + 1)) {
-			ide.sector = 1;
-			ide.head++;
-			if (ide.head == ide.hpc[ide.drive]) {
-				ide.head = 0;
-				ide.cylinder++;
+		IDE_R.sector++;
+		if (IDE_R.sector == (ide.spt[ide.drive] + 1)) {
+			IDE_R.sector = 1;
+			IDE_R.head++;
+			if (IDE_R.head == ide.hpc[ide.drive]) {
+				IDE_R.head = 0;
+				IDE_R.cylinder++;
 			}
 		}
 	}
@@ -728,6 +784,11 @@ void resetide(void)
 		loadhd(1, hd_path);
 	}
 
+	/* The signatures depend on what each drive turned out to be, and the
+	   reset above ran before the images were opened. */
+	ide_apply_post_reset_signature(0);
+	ide_apply_post_reset_signature(1);
+
 	ide_log_drive_summary();
 }
 
@@ -754,7 +815,7 @@ void writeidew(uint16_t val)
         else if (ide.command == WIN_PACKETCMD && ide.pos>=0xC)
         {
                 ide.pos=0;
-                ide.atastat = BUSY_STAT;
+                IDE_R.atastat = BUSY_STAT;
                 ide.packetstatus=1;
                 idecallback=60;
 //                rpclog("Packet now waiting!\n");
@@ -780,37 +841,37 @@ void writeide(uint16_t addr, uint8_t val)
                 return;
 
         case 0x1F1: /* Features */
-                ide.cylprecomp=val;
+                IDE_R.cylprecomp=val;
                 return;
 
         case 0x1F2: /* Sector count */
-                ide.secount=val;
+                IDE_R.secount=val;
                 return;
 
         case 0x1F3: /* Sector */
-                ide.sector=val;
+                IDE_R.sector=val;
                 return;
 
         case 0x1F4: /* Cylinder low */
-                ide.cylinder=(ide.cylinder&0xFF00)|val;
+                IDE_R.cylinder=(IDE_R.cylinder&0xFF00)|val;
                 return;
 
         case 0x1F5: /* Cylinder high */
-                ide.cylinder=(ide.cylinder&0xFF)|(val<<8);
+                IDE_R.cylinder=(IDE_R.cylinder&0xFF)|(val<<8);
                 return;
 
         case 0x1F6: /* Drive/Head */
-                ide.head=val&0xF;
+                IDE_R.head=val&0xF;
                 if (((val>>4)&1)!=ide.drive)
                 {
                         idecallback=0;
-                        ide.atastat = READY_STAT;
-                        ide.error=0;
-                        ide.secount=1;
-                        ide.sector=1;
-                        ide.head=0;
-                        ide.cylinder=0;
-                        ide.cylprecomp=0;
+                        IDE_R.atastat = READY_STAT;
+                        IDE_R.error=0;
+                        IDE_R.secount=1;
+                        IDE_R.sector=1;
+                        IDE_R.head=0;
+                        IDE_R.cylinder=0;
+                        IDE_R.cylprecomp=0;
                         ide.reset = 0;
                         ide.command=0;
                         ide.packetstatus=0;
@@ -826,25 +887,25 @@ void writeide(uint16_t addr, uint8_t val)
 			rpclog("IDE: Drive %d command using %s\n", ide.drive, ide.lba_cmd[ide.drive] ? "LBA Mode" : "CHS Mode");
 		}
                 ide.pos=0;
-                ide.atastat = READY_STAT;
+                IDE_R.atastat = READY_STAT;
                 return;
 
         case 0x1F7: /* Command register */
                 ide.command=val;
-                ide.error=0;
+                IDE_R.error=0;
                 rpclog("IDE: command %02X drive %d%s\n",
                        val, ide.drive,
                        ide_drive_is_hdd(ide.drive) ? "" : " (no HDD image)");
                 switch (val)
                 {
                 case WIN_SRST: /* ATAPI Device Reset */
-                        ide.atastat = READY_STAT;
+                        IDE_R.atastat = READY_STAT;
                         idecallback=100;
                         return;
 
                 case WIN_RESTORE:
                 case WIN_SEEK:
-                        ide.atastat = READY_STAT;
+                        IDE_R.atastat = READY_STAT;
                         idecallback=100;
                         return;
 
@@ -861,25 +922,25 @@ void writeide(uint16_t addr, uint8_t val)
                 case WIN_CHECKPOWER:
                 case WIN_SETMULT:
                 case WIN_READ_NATIVE_MAX:
-                        ide.atastat = BUSY_STAT;
+                        IDE_R.atastat = BUSY_STAT;
                         ide_run_callback();
                         return;
 
                 case WIN_WRITE:
-                        ide.atastat = DRQ_READY_STAT;
+                        IDE_R.atastat = DRQ_READY_STAT;
                         ide.pos=0;
                         return;
 
                 case WIN_PACKETCMD: /* ATAPI Packet */
                         ide.packetstatus=0;
-                        ide.atastat = BUSY_STAT;
+                        IDE_R.atastat = BUSY_STAT;
                         idecallback=30;
                         ide.pos=0;
                         return;
                 }
                 rpclog("IDE: unimplemented command %02X\n", val);
-                ide.atastat = READY_STAT | ERR_STAT;
-                ide.error = ABRT_ERR;
+                IDE_R.atastat = READY_STAT | ERR_STAT;
+                IDE_R.error = ABRT_ERR;
                 ide_irq_raise();
                 return;
 
@@ -888,7 +949,7 @@ void writeide(uint16_t addr, uint8_t val)
                 {
                         idecallback=500;
                         ide.reset = 1;
-                        ide.atastat = BUSY_STAT;
+                        IDE_R.atastat = BUSY_STAT;
 //                        rpclog("IDE Reset\n");
                 }
                 ide.fdisk=val;
@@ -914,37 +975,42 @@ uint8_t readide(uint16_t addr)
                 }
                 return temp;
 
+        /* The error and signature registers. An absent drive must not answer
+           from the shared register file: ADFS reads the signature here to tell
+           an ATA disc from an ATAPI one, so leaking the CD-ROM's signature to
+           the empty drive beside it made RISC OS show a hard disc that is not
+           there (an ADFS ":4" on the icon bar, failing on first access). */
         case 0x1F1: /* Error */
-                return ide.error;
+                return IDE_DRIVE_PRESENT(ide) ? IDE_R.error : 0x00;
 
         case 0x1F2: /* Sector count */
-                return (uint8_t)ide.secount;
+                return IDE_DRIVE_PRESENT(ide) ? (uint8_t) IDE_R.secount : 0x00;
 
         case 0x1F3: /* Sector */
-                return (uint8_t)ide.sector;
+                return IDE_DRIVE_PRESENT(ide) ? (uint8_t) IDE_R.sector : 0x00;
 
         case 0x1F4: /* Cylinder low */
-                return (uint8_t)(ide.cylinder&0xFF);
+                return IDE_DRIVE_PRESENT(ide) ? (uint8_t) (IDE_R.cylinder & 0xFF) : 0x00;
 
         case 0x1F5: /* Cylinder high */
-                return (uint8_t)(ide.cylinder>>8);
+                return IDE_DRIVE_PRESENT(ide) ? (uint8_t) (IDE_R.cylinder >> 8) : 0x00;
 
         case 0x1F6: /* Drive/Head */
                 return (uint8_t) (0xA0 | (ide.drive << 4) |
-                    (ide.lba_cmd[ide.drive] ? 0x40 : 0) | (ide.head & 0x0F));
+                    (ide.lba_cmd[ide.drive] ? 0x40 : 0) | (IDE_R.head & 0x0F));
 
         case 0x1F7: /* Status */
                 ide_irq_lower();
-                if (!ide_drive_is_hdd(ide.drive) && !IDE_DRIVE_IS_CDROM(ide)) {
+                if (!IDE_DRIVE_PRESENT(ide)) {
                         return 0x00; /* No device selected / not present */
                 }
-                return ide.atastat;
+                return IDE_R.atastat;
 
         case 0x3F6: /* Alternate Status */
-                if (!ide_drive_is_hdd(ide.drive) && !IDE_DRIVE_IS_CDROM(ide)) {
+                if (!IDE_DRIVE_PRESENT(ide)) {
                         return 0x00;
                 }
-                return ide.atastat;
+                return IDE_R.atastat;
         }
 	//fatal("Bad IDE read %04X\n", addr);
 	return 0;
@@ -969,15 +1035,15 @@ uint16_t readidew(void)
                 }
                 else
                 {
-                        ide.atastat = READY_STAT;
+                        IDE_R.atastat = READY_STAT;
                         ide.packetstatus=0;
                         if (ide.command == WIN_READ)
                         {
-                                ide.secount--;
-                                if (ide.secount)
+                                IDE_R.secount--;
+                                if (IDE_R.secount)
                                 {
                                         ide_next_sector();
-                                        ide.atastat = BUSY_STAT;
+                                        IDE_R.atastat = BUSY_STAT;
                                         ide_run_callback();
                                 }
                         }
@@ -992,20 +1058,20 @@ void callbackide(void)
         int c;
         if (ide.reset)
         {
-                ide_apply_post_reset_signature();
+                ide_reset_shared_state();
                 ide_irq_raise();
                 return;
         }
         switch (ide.command)
         {
         case WIN_SRST: /*ATAPI Device Reset */
-                ide.atastat = READY_STAT;
-                ide.error=1; /*Device passed*/
-                ide.secount = ide.sector = 1;
+                IDE_R.atastat = READY_STAT;
+                IDE_R.error=1; /*Device passed*/
+                IDE_R.secount = IDE_R.sector = 1;
                 if (IDE_DRIVE_IS_CDROM(ide)) {
-                        ide.cylinder = 0xeb14;
+                        IDE_R.cylinder = 0xeb14;
                 } else {
-                        ide.cylinder = 0;
+                        IDE_R.cylinder = 0;
                 }
                 ide_irq_raise();
                 return;
@@ -1015,7 +1081,7 @@ void callbackide(void)
                 if (IDE_DRIVE_IS_CDROM(ide)) {
                         goto abort_cmd;
                 }
-                ide.atastat = READY_STAT;
+                IDE_R.atastat = READY_STAT;
                 ide_irq_raise();
                 return;
 
@@ -1030,7 +1096,7 @@ void callbackide(void)
                 if (!ide_drive_is_hdd(ide.drive)) {
                         goto abort_cmd;
                 }
-                ide.atastat = READY_STAT;
+                IDE_R.atastat = READY_STAT;
                 ide_irq_raise();
                 return;
 
@@ -1046,11 +1112,11 @@ void callbackide(void)
                         if (max_lba > 0) {
                                 max_lba--;
                         }
-                        ide.sector = max_lba & 0xff;
-                        ide.cylinder = (max_lba >> 8) & 0xffff;
-                        ide.head = (max_lba >> 24) & 0x0f;
+                        IDE_R.sector = max_lba & 0xff;
+                        IDE_R.cylinder = (max_lba >> 8) & 0xffff;
+                        IDE_R.head = (max_lba >> 24) & 0x0f;
                 }
-                ide.atastat = READY_STAT;
+                IDE_R.atastat = READY_STAT;
                 ide_irq_raise();
                 return;
 
@@ -1070,7 +1136,7 @@ void callbackide(void)
                         return;
                 }
                 ide.pos=0;
-                ide.atastat = DRQ_READY_STAT;
+                IDE_R.atastat = DRQ_READY_STAT;
                 ide_irq_raise();
                 return;
 
@@ -1090,13 +1156,13 @@ void callbackide(void)
                                (unsigned long long) addr, strerror(errno));
                 }
                 ide_irq_raise();
-                ide.secount--;
-                if (ide.secount != 0) {
-                        ide.atastat = DRQ_READY_STAT;
+                IDE_R.secount--;
+                if (IDE_R.secount != 0) {
+                        IDE_R.atastat = DRQ_READY_STAT;
                         ide.pos=0;
                         ide_next_sector();
                 } else {
-                        ide.atastat = READY_STAT;
+                        IDE_R.atastat = READY_STAT;
                 }
                 return;
 
@@ -1114,15 +1180,15 @@ void callbackide(void)
                         ide_media_error_idnf();
                         return;
                 }
-                ide.secount--;
-                if (ide.secount != 0) {
+                IDE_R.secount--;
+                if (IDE_R.secount != 0) {
                         ide_next_sector();
-                        ide.atastat = BUSY_STAT;
+                        IDE_R.atastat = BUSY_STAT;
                         idecallback = 200;
                         return;
                 }
                 ide.pos = 0;
-                ide.atastat = READY_STAT;
+                IDE_R.atastat = READY_STAT;
                 ide_irq_raise();
                 return;
 
@@ -1137,7 +1203,7 @@ void callbackide(void)
                 }
                 fseeko64(ide.hdfile[ide.drive], addr, SEEK_SET);
                 memset(ide.buffer, 0, 512);
-                for (c=0;c<ide.secount;c++)
+                for (c=0;c<IDE_R.secount;c++)
                 {
                         if (fwrite(ide.buffer, 512, 1, ide.hdfile[ide.drive]) != 1) {
                                 rpclog("IDE: format write failed: %s\n",
@@ -1145,7 +1211,7 @@ void callbackide(void)
                                 break;
                         }
                 }
-                ide.atastat = READY_STAT;
+                IDE_R.atastat = READY_STAT;
                 ide_irq_raise();
                 return;
 
@@ -1153,9 +1219,9 @@ void callbackide(void)
                 if (IDE_DRIVE_IS_CDROM(ide)) {
                         goto abort_cmd;
                 }
-                ide.spt[ide.drive] = ide.secount;
-                ide.hpc[ide.drive] = ide.head + 1;
-                ide.atastat = READY_STAT;
+                ide.spt[ide.drive] = IDE_R.secount;
+                ide.hpc[ide.drive] = IDE_R.head + 1;
+                IDE_R.atastat = READY_STAT;
                 ide_irq_raise();
                 return;
 
@@ -1163,8 +1229,8 @@ void callbackide(void)
                 if (IDE_DRIVE_IS_CDROM(ide)) {
                         ide_atapi_identify();
                         ide.pos=0;
-                        ide.error=0;
-                        ide.atastat = DRQ_READY_STAT;
+                        IDE_R.error=0;
+                        IDE_R.atastat = DRQ_READY_STAT;
                         ide_irq_raise();
                         return;
                 }
@@ -1175,10 +1241,10 @@ void callbackide(void)
 
         case WIN_IDENTIFY: /* Identify Device */
                 if (IDE_DRIVE_IS_CDROM(ide)) {
-                        ide.secount=1;
-                        ide.sector=1;
-                        ide.cylinder=0xEB14;
-                        ide.drive=ide.head=0;
+                        IDE_R.secount=1;
+                        IDE_R.sector=1;
+                        IDE_R.cylinder=0xEB14;
+                        ide.drive=IDE_R.head=0;
                         goto abort_cmd;
                 }
                 if (!ide_drive_is_hdd(ide.drive)) {
@@ -1186,7 +1252,7 @@ void callbackide(void)
                 }
                 ide_identify(ide.drive);
                 ide.pos=0;
-                ide.atastat = DRQ_READY_STAT;
+                IDE_R.atastat = DRQ_READY_STAT;
                 ide_irq_raise();
                 return;
 
@@ -1195,32 +1261,32 @@ void callbackide(void)
                 if (!ide.packetstatus)
                 {
                         ide.pos=0;
-                        ide.error=(uint8_t)((ide.secount&0xF8)|1);
-                        ide.atastat = DRQ_READY_STAT;
+                        IDE_R.error=(uint8_t)((IDE_R.secount&0xF8)|1);
+                        IDE_R.atastat = DRQ_READY_STAT;
                         ide_irq_raise();
-//                        rpclog("Preparing to recieve packet max DRQ count %04X\n",ide.cylinder);
+//                        rpclog("Preparing to recieve packet max DRQ count %04X\n",IDE_R.cylinder);
                 }
                 else if (ide.packetstatus==1)
                 {
-                        ide.atastat = BUSY_STAT;
+                        IDE_R.atastat = BUSY_STAT;
                         atapicommand();
 //                        exit(-1);
                 }
                 else if (ide.packetstatus==2)
                 {
-                        ide.atastat = READY_STAT;
+                        IDE_R.atastat = READY_STAT;
                         ide_irq_raise();
                 }
                 else if (ide.packetstatus==3)
                 {
-                        ide.atastat = DRQ_READY_STAT;
+                        IDE_R.atastat = DRQ_READY_STAT;
 //                        rpclog("Recieve data packet!\n");
                         ide_irq_raise();
                         ide.packetstatus=0xFF;
                 }
                 else if (ide.packetstatus==4)
                 {
-                        ide.atastat = DRQ_READY_STAT;
+                        IDE_R.atastat = DRQ_READY_STAT;
 //                        rpclog("Send data packet!\n");
                         ide_irq_raise();
 //                        ide.packetstatus=5;
@@ -1233,22 +1299,22 @@ void callbackide(void)
                 }
                 else if (ide.packetstatus==6) /*READ CD callback*/
                 {
-                        ide.atastat = DRQ_READY_STAT;
+                        IDE_R.atastat = DRQ_READY_STAT;
 //                        rpclog("Recieve data packet 6!\n");
                         ide_irq_raise();
 //                        ide.packetstatus=0xFF;
                 }
                 else if (ide.packetstatus==0x80) /*Error callback*/
                 {
-                        ide.atastat = READY_STAT | ERR_STAT;
+                        IDE_R.atastat = READY_STAT | ERR_STAT;
                         ide_irq_raise();
                 }
                 return;
         }
 
 abort_cmd:
-	ide.atastat = READY_STAT | ERR_STAT;
-	ide.error = ABRT_ERR;
+	IDE_R.atastat = READY_STAT | ERR_STAT;
+	IDE_R.error = ABRT_ERR;
 	ide_irq_raise();
 }
 
@@ -1263,10 +1329,10 @@ static void atapi_notready(void)
         /*Medium not present is 02/3A/--*/
         /*cylprecomp is error number*/
         /*SENSE/ASC/ASCQ*/
-        ide.atastat = READY_STAT | ERR_STAT;    /*CHECK CONDITION*/
-        ide.error = (SENSE_NOT_READY << 4) | ABRT_ERR;
+        IDE_R.atastat = READY_STAT | ERR_STAT;    /*CHECK CONDITION*/
+        IDE_R.error = (SENSE_NOT_READY << 4) | ABRT_ERR;
         if (ide.discchanged) {
-                ide.error |= MCR_ERR;
+                IDE_R.error |= MCR_ERR;
         }
         ide.discchanged=0;
         ide.asc = ASC_MEDIUM_NOT_PRESENT;
@@ -1309,8 +1375,8 @@ static void atapicommand(void)
                 /*Will return 18 bytes of 0*/
                 memset(idebufferb,0,512);
                 ide.packetstatus=3;
-                ide.cylinder=18;
-                ide.secount=2;
+                IDE_R.cylinder=18;
+                IDE_R.secount=2;
                 ide.pos=0;
                 idecallback=60;
                 ide.packlen=18;
@@ -1337,9 +1403,9 @@ static void atapicommand(void)
         for (c=0;c<len;c++) rpclog("%02X ",idebufferb[c]);
         rpclog("\n");*/
         ide.packetstatus=3;
-        ide.cylinder=len;
-        ide.secount=2;
-//        ide.atastat = DRQ_READY_STAT;
+        IDE_R.cylinder=len;
+        IDE_R.secount=2;
+//        IDE_R.atastat = DRQ_READY_STAT;
         ide.pos=0;
                 idecallback=60;
                 ide.packlen=len;
@@ -1379,8 +1445,8 @@ static void atapicommand(void)
                 ide.cdlen--;
                 if (ide.cdlen>=0) ide.packetstatus=6;
                 else              ide.packetstatus=3;
-                ide.cylinder=2048;
-                ide.secount=2;
+                IDE_R.cylinder=2048;
+                IDE_R.secount=2;
                 ide.pos=0;
                 idecallback=60;
                 ide.packlen=2048;
@@ -1398,8 +1464,8 @@ static void atapicommand(void)
                 idebufferb[1]=idebufferb[2]=idebufferb[3]=0;
                 
                 ide.packetstatus=3;
-                ide.cylinder=8;
-                ide.secount=2;
+                IDE_R.cylinder=8;
+                IDE_R.secount=2;
                 ide.pos=0;
                 idecallback=60;
                 ide.packlen=8;
@@ -1430,9 +1496,9 @@ static void atapicommand(void)
         for (c=0;c<len;c++) rpclog("%02X ",idebufferb[c]);
         rpclog("\n");*/
         ide.packetstatus=3;
-        ide.cylinder=len;
-        ide.secount=2;
-//        ide.atastat = DRQ_READY_STAT;
+        IDE_R.cylinder=len;
+        IDE_R.secount=2;
+//        IDE_R.atastat = DRQ_READY_STAT;
         ide.pos=0;
                 idecallback=60;
                 ide.packlen=len;
@@ -1443,7 +1509,7 @@ static void atapicommand(void)
                 if (!atapi->ready()) { atapi_notready(); return; }
                 if (ide.packetstatus==5)
                 {
-                        ide.atastat = 0;
+                        IDE_R.atastat = 0;
 //                        rpclog("Recieve data packet!\n");
                         ide_irq_raise();
                         ide.packetstatus=0xFF;
@@ -1453,8 +1519,8 @@ static void atapicommand(void)
                 {
                         len=(idebufferb[7]<<8)|idebufferb[8];
                         ide.packetstatus=4;
-                        ide.cylinder=len;
-                        ide.secount=2;
+                        IDE_R.cylinder=len;
+                        IDE_R.secount=2;
                         ide.pos=0;
                         idecallback=6;
                         ide.packlen=len;
@@ -1496,8 +1562,8 @@ static void atapicommand(void)
                 idebufferb[1]=atapi->getcurrentsubchannel(&idebufferb[5],msf);
                 len=11+5;
                 ide.packetstatus=3;
-                ide.cylinder=len;
-                ide.secount=2;
+                IDE_R.cylinder=len;
+                IDE_R.secount=2;
                 ide.pos=0;
                 idecallback=60;
                 ide.packlen=len;
@@ -1534,8 +1600,8 @@ static void atapicommand(void)
 
                 len=36;
                 ide.packetstatus=3;
-                ide.cylinder=len;
-                ide.secount=2;
+                IDE_R.cylinder=len;
+                IDE_R.secount=2;
                 ide.pos=0;
                 idecallback=60;
                 ide.packlen=len;
@@ -1559,10 +1625,10 @@ static void atapicommand(void)
 
         case GPCMD_SEND_DVD_STRUCTURE:
         default:
-                ide.atastat = READY_STAT | ERR_STAT;    /*CHECK CONDITION*/
-                ide.error = (SENSE_ILLEGAL_REQUEST << 4) | ABRT_ERR;
+                IDE_R.atastat = READY_STAT | ERR_STAT;    /*CHECK CONDITION*/
+                IDE_R.error = (SENSE_ILLEGAL_REQUEST << 4) | ABRT_ERR;
                 if (ide.discchanged) {
-                        ide.error |= MCR_ERR;
+                        IDE_R.error |= MCR_ERR;
                 }
                 ide.discchanged=0;
                 ide.asc = ASC_ILLEGAL_OPCODE;
@@ -1589,15 +1655,15 @@ static void callreadcd(void)
                 return;
         }
 //        rpclog("Continue readcd! %i blocks left\n",ide.cdlen);
-        ide.atastat = BUSY_STAT;
+        IDE_R.atastat = BUSY_STAT;
         
         atapi->readsector((uint8_t *) ide.buffer, ide.cdpos);
 
                 ide.cdpos++;
                 ide.cdlen--;
                 ide.packetstatus=6;
-                ide.cylinder=2048;
-                ide.secount=2;
+                IDE_R.cylinder=2048;
+                IDE_R.secount=2;
                 ide.pos=0;
                 idecallback=60;
                 ide.packlen=2048;
@@ -1615,14 +1681,18 @@ ide_savestate(FILE *f)
 {
 	int d;
 
-	savestate_write_u8(f, ide.atastat);
-	savestate_write_u8(f, ide.error);
-	savestate_write_i32(f, ide.secount);
-	savestate_write_i32(f, ide.sector);
-	savestate_write_i32(f, ide.cylinder);
-	savestate_write_i32(f, ide.head);
+	/* The selected drive first, then a register file for each: see
+	   SNAPSHOT_VERSION_IDE_PER_DRIVE. */
 	savestate_write_i32(f, ide.drive);
-	savestate_write_i32(f, ide.cylprecomp);
+	for (d = 0; d < 2; d++) {
+		savestate_write_u8(f, ide.regs[d].atastat);
+		savestate_write_u8(f, ide.regs[d].error);
+		savestate_write_i32(f, ide.regs[d].secount);
+		savestate_write_i32(f, ide.regs[d].sector);
+		savestate_write_i32(f, ide.regs[d].cylinder);
+		savestate_write_i32(f, ide.regs[d].head);
+		savestate_write_i32(f, ide.regs[d].cylprecomp);
+	}
 	savestate_write_u8(f, ide.command);
 	savestate_write_u8(f, ide.fdisk);
 	savestate_write_i32(f, ide.pos);
@@ -1652,14 +1722,40 @@ ide_loadstate(FILE *f)
 {
 	int d;
 
-	ide.atastat = savestate_read_u8(f);
-	ide.error = savestate_read_u8(f);
-	ide.secount = savestate_read_i32(f);
-	ide.sector = savestate_read_i32(f);
-	ide.cylinder = savestate_read_i32(f);
-	ide.head = savestate_read_i32(f);
-	ide.drive = savestate_read_i32(f);
-	ide.cylprecomp = savestate_read_i32(f);
+	if (savestate_version_being_loaded() >= SNAPSHOT_VERSION_IDE_PER_DRIVE) {
+		ide.drive = savestate_read_i32(f);
+		for (d = 0; d < 2; d++) {
+			ide.regs[d].atastat = savestate_read_u8(f);
+			ide.regs[d].error = savestate_read_u8(f);
+			ide.regs[d].secount = savestate_read_i32(f);
+			ide.regs[d].sector = savestate_read_i32(f);
+			ide.regs[d].cylinder = savestate_read_i32(f);
+			ide.regs[d].head = savestate_read_i32(f);
+			ide.regs[d].cylprecomp = savestate_read_i32(f);
+		}
+	} else {
+		/* One shared set, in its original order with "drive" in the
+		   middle of it. It described whichever drive was selected, so it
+		   is restored there and the other drive is given the signature
+		   it would have after a reset. */
+		IDEDriveRegs shared;
+
+		memset(&shared, 0, sizeof(shared));
+		shared.atastat = savestate_read_u8(f);
+		shared.error = savestate_read_u8(f);
+		shared.secount = savestate_read_i32(f);
+		shared.sector = savestate_read_i32(f);
+		shared.cylinder = savestate_read_i32(f);
+		shared.head = savestate_read_i32(f);
+		ide.drive = savestate_read_i32(f);
+		shared.cylprecomp = savestate_read_i32(f);
+
+		if (ide.drive < 0 || ide.drive > 1) {
+			ide.drive = 0;
+		}
+		ide_apply_post_reset_signature(1 - ide.drive);
+		ide.regs[ide.drive] = shared;
+	}
 	ide.command = savestate_read_u8(f);
 	ide.fdisk = savestate_read_u8(f);
 	ide.pos = savestate_read_i32(f);

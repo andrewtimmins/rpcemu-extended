@@ -43,6 +43,16 @@ extern "C" {
 
 extern int savestate_error;
 
+/* Snapshots from this version onward carry an IDE register file per drive
+   rather than one shared set. Needed by ide.c's loader. */
+#define SNAPSHOT_VERSION_IDE_PER_DRIVE	8
+
+/**
+ * Version of the snapshot being loaded, for chunk loaders whose payload has
+ * changed shape between versions. Only meaningful during a load.
+ */
+uint32_t savestate_version_being_loaded(void);
+
 extern void savestate_write(FILE *f, const void *data, size_t len);
 extern void savestate_write_u8(FILE *f, uint8_t v);
 extern void savestate_write_u16(FILE *f, uint16_t v);
