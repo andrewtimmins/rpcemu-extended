@@ -548,6 +548,14 @@ jobs:
           set -eu
           export RPCEMU_DATADIR="$RUNNER_TEMP/rpcemu-data"
           export RPCEMU_NO_GUI_MESSAGES=1
+          # The bundle is the one layout where the read-only payload is not
+          # beside the executable: it lives in Contents/Resources, while the
+          # binary sits in Contents/MacOS. The emulator finds its resources by
+          # looking for a directory holding configs/, and the data directory
+          # created below has one, so it would otherwise settle on that and find
+          # no poduleroms/ - leaving HostFS unavailable and !Boot unable to run.
+          # Name the resource directory outright so the split is explicit.
+          export RPCEMU_RESOURCE_DIR="$PWD/releases/macos/RPCEmu.app/Contents/Resources"
           mkdir -p "$RPCEMU_DATADIR" ci-rom
           cp -r default configs "$RPCEMU_DATADIR/"
           if ! ls ci-rom/ROM* >/dev/null 2>&1; then
@@ -562,6 +570,9 @@ jobs:
       - name: Headless boot and VNC screenshot
         timeout-minutes: 3
         run: |
+          # See the fetch step: the bundle keeps its read-only payload in
+          # Contents/Resources, so that has to be named rather than found.
+          export RPCEMU_RESOURCE_DIR="$PWD/releases/macos/RPCEmu.app/Contents/Resources"
           python3 tests/vnc_smoke.py \
             --binary releases/macos/RPCEmu.app/Contents/MacOS/rpcemu \
             --datadir "$RUNNER_TEMP/rpcemu-data" \
