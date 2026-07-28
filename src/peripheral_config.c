@@ -27,6 +27,7 @@
 #include <time.h>
 #include <sys/types.h>
 
+#include "serial_host.h"
 #include "socket-compat.h"
 
 #include "rpcemu.h"
@@ -138,6 +139,30 @@ typedef struct {
 
 static SerialLogState serial_log_state[SERIAL_PORT_COUNT];
 static ModemState modem_state[SERIAL_PORT_COUNT];
+
+/*
+ * Mark every modem's socket as closed.
+ *
+ * This matters more than it looks: the array above is zero-initialised, so
+ * without this m->fd is 0, and modem_close()'s "fd >= 0" test then closes
+ * descriptor 0 - the process's standard input, or whatever else has since been
+ * given that slot. It cost an afternoon: a serial device opened on fd 0 was
+ * closed underneath us by the second port's reconfigure.
+ */
+static void
+modem_state_init(void)
+{
+	static int done = 0;
+	int port;
+
+	if (done) {
+		return;
+	}
+	for (port = 0; port < SERIAL_PORT_COUNT; port++) {
+		modem_state[port].fd = -1;
+	}
+	done = 1;
+}
 static ParallelLogState parallel_log_state;
 
 static void
@@ -853,6 +878,8 @@ static int
 serial_apply_port(SerialPortID port, PeripheralSerialMode mode,
                   const char *log_path, const char *device_path)
 {
+	serial_host_close((SerialPortID) port);	/* release a host device first: it
+						   owns the bus attachment */
 	serial_bus_detach(port);
 	serial_log_close(port);
 	modem_close(&modem_state[port]); /* drop any TCP connection on reconfigure */
@@ -864,15 +891,19 @@ serial_apply_port(SerialPortID port, PeripheralSerialMode mode,
 	case PeripheralSerial_TcpModem:
 		return serial_attach_modem(port);
 
-	case PeripheralSerial_PhysicalDevice:
-		if (device_path != NULL && device_path[0] != '\0') {
-			rpclog("Peripherals: host passthrough for COM%d (%s) is not implemented yet\n",
-			       (int) port + 1, device_path);
-		} else {
-			rpclog("Peripherals: host passthrough for COM%d is not implemented yet\n",
-			       (int) port + 1);
+	case PeripheralSerial_PhysicalDevice: {
+		char why[512] = "";
+
+		if (serial_host_attach((SerialPortID) port, device_path, why,
+		        sizeof(why)) != 0) {
+			rpclog("Peripherals: COM%d could not use %s: %s\n",
+			       (int) port + 1,
+			       (device_path != NULL) ? device_path : "(no device)",
+			       why);
+			return -1;
 		}
-		return -1;
+		return 0;
+	}
 
 	case PeripheralSerial_Disabled:
 	default:
@@ -898,14 +929,15 @@ parallel_apply(void)
 		printer_set_output_mode(PrinterOutput_File);
 		return printer_attach(PARALLEL_PORT_RISCPC);
 
-	case PeripheralParallel_PhysicalDevice:
-		if (peripheral_config.parallel_device[0] != '\0') {
-			rpclog("Peripherals: host passthrough for parallel port (%s) is not implemented yet\n",
-			       peripheral_config.parallel_device);
-		} else {
-			rpclog("Peripherals: host passthrough for parallel port is not implemented yet\n");
+	case PeripheralParallel_HostPrinter:
+		if (peripheral_config.parallel_device[0] == '\0') {
+			rpclog("Peripherals: no host printer set for the parallel port\n");
+			return -1;
 		}
-		return -1;
+		printer_set_host_target(peripheral_config.parallel_device);
+		printer_set_auto_pdf(0);	/* the host printer prints it */
+		printer_set_output_mode(PrinterOutput_Host);
+		return printer_attach(PARALLEL_PORT_RISCPC);
 
 	case PeripheralParallel_Disabled:
 	default:
@@ -931,6 +963,8 @@ peripheral_config_set_defaults(void)
 void
 peripheral_config_apply(void)
 {
+	modem_state_init();
+
 	serial_apply_port(SERIAL_PORT_COM1,
 	                  peripheral_config.com1_mode,
 	                  peripheral_config.com1_log_path,
@@ -1067,7 +1101,10 @@ peripheral_config_shutdown(void)
 {
 	int port;
 
+	modem_state_init();
+
 	for (port = 0; port < SERIAL_PORT_COUNT; port++) {
+		serial_host_close((SerialPortID) port);
 		serial_bus_detach((SerialPortID) port);
 		serial_log_close((SerialPortID) port);
 		modem_close(&modem_state[(SerialPortID) port]);

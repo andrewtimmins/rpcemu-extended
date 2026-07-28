@@ -27,6 +27,7 @@ set(RPCEMU_CORE_SOURCES
     rpcemu.c
     savestate.c
     sound.c
+    serial_host.c
     unzip.c
     vidc20.c
     podules.c

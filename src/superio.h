@@ -54,6 +54,7 @@ extern void superio_serial_update_msr(SerialPortID port, uint8_t status);
 /* Free space (in bytes) in a UART's receive FIFO. Lets a backend feed incoming
  * data at the rate the guest drains it, instead of overrunning the 16-byte FIFO. */
 extern int superio_serial_rx_space(SerialPortID port);
+extern int superio_serial_get_line(SerialPortID port, uint16_t *divisor, uint8_t *lcr);
 
 #ifdef __cplusplus
 }

@@ -20,6 +20,8 @@
 
 #include "serial_dialog.h"
 
+#include <wx/filefn.h>
+
 #include <cstring>
 
 #include <wx/filedlg.h>
@@ -39,6 +41,49 @@ enum {
 	ID_SERIAL_COM1_BROWSE,
 	ID_SERIAL_APPLY,
 };
+
+/*
+ * Serial ports the host actually has.
+ *
+ * Listing names that are not there is how this dialogue used to mislead people,
+ * so only existing devices are offered. USB adapters come first, because that is
+ * what a serial port on a modern machine usually is. The field stays editable
+ * for anything unusual, a pseudo terminal included.
+ */
+static wxArrayString
+HostSerialPorts()
+{
+	wxArrayString ports;
+
+#ifdef __WXMSW__
+	/* No cheap way to enumerate these without the setup API, and COM1 to COM8
+	   covers the common cases; the field is editable for the rest. */
+	for (int i = 1; i <= 8; i++) {
+		ports.Add(wxString::Format("COM%d", i));
+	}
+#else
+	static const char *const patterns[] = {
+		"/dev/ttyUSB*",		/* USB serial adapters */
+		"/dev/ttyACM*",		/* USB CDC devices */
+		"/dev/tty.usbserial*",	/* macOS */
+		"/dev/cu.usbserial*",
+		"/dev/cu.usbmodem*",
+		"/dev/ttyS*",		/* built-in, where there is one */
+	};
+	size_t p;
+
+	for (p = 0; p < sizeof(patterns) / sizeof(patterns[0]); p++) {
+		wxString match = wxFindFirstFile(patterns[p], wxFILE);
+
+		while (!match.empty()) {
+			ports.Add(match);
+			match = wxFindNextFile();
+		}
+	}
+#endif
+
+	return ports;
+}
 
 static SerialPortSettings
 PeripheralSerialToDialog(PeripheralSerialMode mode, const char *log_path, const char *device_path)
@@ -61,11 +106,16 @@ PeripheralSerialFromDialog(const SerialPortSettings &settings,
                            wxString *warning)
 {
 	if (settings.mode == SerialPortMode::PhysicalDevice) {
-		if (warning != nullptr) {
-			*warning = wxString::Format("Host passthrough for %s is not implemented yet.", port_name);
+		wxString chosen = settings.physical_device;
+
+		chosen.Trim(true).Trim(false);
+		if (chosen.empty()) {
+			if (warning != nullptr) {
+				*warning = wxString::Format(
+				    "%s needs a serial device to use.", port_name);
+			}
+			return false;
 		}
-		*mode = PeripheralSerial_Disabled;
-		return true;
 	}
 
 	if (settings.mode == SerialPortMode::LogToFile) {
@@ -170,10 +220,13 @@ wxStaticBoxSizer *SerialDialog::CreatePortGroup(const wxString &title)
 	phys_row->Add(new wxStaticText(this, wxID_ANY, "Device:"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 4);
 	widgets->device_combo = new wxComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr,
 	                                       wxCB_DROPDOWN);
-	widgets->device_combo->Append("/dev/ttyUSB0");
-	widgets->device_combo->Append("/dev/ttyUSB1");
-	widgets->device_combo->Append("/dev/ttyS0");
-	widgets->device_combo->Append("/dev/ttyS1");
+	{
+		const wxArrayString ports = HostSerialPorts();
+
+		for (size_t i = 0; i < ports.GetCount(); i++) {
+			widgets->device_combo->Append(ports[i]);
+		}
+	}
 	phys_row->Add(widgets->device_combo, 1, wxEXPAND);
 	group->Add(phys_row, 0, wxEXPAND);
 

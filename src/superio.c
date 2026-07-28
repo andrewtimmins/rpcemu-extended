@@ -916,6 +916,42 @@ superio_serial_rx_space(SerialPortID port)
 }
 
 /**
+ * Report a UART's line configuration: the divisor the guest programmed and the
+ * line control register.
+ *
+ * The emulated UART does not pace bytes by baud rate, it only stores the
+ * divisor, so this is here for the benefit of a backend talking to real
+ * hardware, which does have to be told what speed and framing to use.
+ *
+ * Returns 0, or -1 for an unknown port.
+ */
+int
+superio_serial_get_line(SerialPortID port, uint16_t *divisor, uint8_t *lcr)
+{
+    const UART *uart;
+
+    switch (port) {
+    case SERIAL_PORT_COM1:
+        uart = &com1;
+        break;
+    case SERIAL_PORT_COM2:
+        uart = &com2;
+        break;
+    default:
+        return -1;
+    }
+
+    if (divisor != NULL) {
+        *divisor = (uint16_t) ((uart->dlm << 8) | uart->dll);
+    }
+    if (lcr != NULL) {
+        *lcr = uart->lcr;
+    }
+
+    return 0;
+}
+
+/**
  * Update a UART's modem status register.
  * Called by serial bus when device status lines change.
  */
