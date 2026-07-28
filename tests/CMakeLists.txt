@@ -122,3 +122,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../gfxroms/RPCEmuGfx,ffa")
 else()
     message(STATUS "Skipping test_gfxrom (gfxroms/RPCEmuGfx,ffa not built)")
 endif()
+
+# The zip reader used to unpack downloaded RISC OS archives. Compiles unzip.c
+# directly rather than linking rpcemu_core, for the same reason as the tests
+# above: the core drags in SDL. unzip.c needs only the logger, which the test
+# supplies. Runs everywhere, including Windows, since that is where the
+# filename and directory handling is most likely to differ.
+add_executable(test_unzip test_unzip.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/unzip.c)
+target_include_directories(test_unzip PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+add_test(NAME test_unzip COMMAND test_unzip)
