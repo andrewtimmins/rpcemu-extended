@@ -38,7 +38,11 @@ typedef enum {
 	PeripheralParallel_Disabled = 0,
 	PeripheralParallel_LogToFile = 1,
 	PeripheralParallel_VirtualPrinter = 2,
-	PeripheralParallel_PhysicalDevice = 3
+	/* 3 was "physical device", which implied pin-level access to a real
+	   parallel port. That is not what this does: the print stream is handed
+	   to a printer on the host. The value is unchanged so existing machine
+	   configurations keep working. */
+	PeripheralParallel_HostPrinter = 3
 } PeripheralParallelMode;
 
 typedef struct {

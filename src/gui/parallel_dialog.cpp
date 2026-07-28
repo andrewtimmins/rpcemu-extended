@@ -24,6 +24,7 @@
 #include <cstring>
 
 #include <wx/dirdlg.h>
+#include <wx/utils.h>
 #include <wx/filedlg.h>
 #include <wx/stdpaths.h>
 
@@ -65,17 +66,83 @@ PeripheralParallelToDialog()
 	return settings;
 }
 
+/*
+ * Printers this computer can already print to: named queues first, then any
+ * printer device node that actually exists.
+ *
+ * Best effort, and an empty result is a normal answer, not an error: the field
+ * stays editable, and the dialogue says so rather than offering names that are
+ * not there.
+ */
+/* Shown in place of a printer list when the host has none. Compared by value
+   when the dialogue is read back, so it can never be mistaken for a queue name. */
+static const char *const kNoPrintersFound = "No printers found";
+
+static wxArrayString
+HostPrinters()
+{
+	wxArrayString printers;
+
+#ifdef __WXMSW__
+	/* Enumerating the spooler needs the print API, which the parallel backend
+	   does not use, so only the port a device path can reach is offered. */
+	if (wxFileExists("\\\\.\\LPT1")) {
+		printers.Add("\\\\.\\LPT1");
+	}
+#else
+	{
+		wxArrayString output;
+		wxArrayString errors;
+
+		/* lpstat lists CUPS destinations, which is what "print on this
+		   computer" means on Linux and macOS. */
+		if (wxExecute("lpstat -a", output, errors,
+		        wxEXEC_SYNC | wxEXEC_NODISABLE) == 0) {
+			for (size_t i = 0; i < output.GetCount(); i++) {
+				const wxString name = output[i].BeforeFirst(' ');
+
+				if (!name.empty()) {
+					printers.Add(name);
+				}
+			}
+		}
+	}
+
+	{
+		static const char *const nodes[] = {
+			"/dev/usb/lp0", "/dev/usb/lp1", "/dev/lp0", "/dev/lp1"
+		};
+		size_t i;
+
+		for (i = 0; i < sizeof(nodes) / sizeof(nodes[0]); i++) {
+			if (wxFileExists(nodes[i])) {
+				printers.Add(nodes[i]);
+			}
+		}
+	}
+#endif
+
+	return printers;
+}
+
 static bool
 PeripheralParallelFromDialog(const ParallelPortSettings &settings, wxString *warning)
 {
 	if (settings.mode == ParallelPortMode::PhysicalDevice) {
-		if (warning != nullptr) {
-			*warning = "Host passthrough for the parallel port is not implemented yet.";
+		wxString target = settings.physical_device;
+
+		target.Trim(true).Trim(false);
+		if (target == kNoPrintersFound) {
+			target.clear();
 		}
-		peripheral_config.parallel_mode = PeripheralParallel_Disabled;
-		peripheral_config.parallel_log_path[0] = '\0';
-		peripheral_config.parallel_device[0] = '\0';
-		return true;
+		if (target.empty()) {
+			if (warning != nullptr) {
+				*warning = "Choose a printer to print to, or type the "
+				           "name of a print queue or a device such as "
+				           "/dev/usb/lp0.";
+			}
+			return false;
+		}
 	}
 
 	if (settings.mode == ParallelPortMode::LogToFile) {
@@ -127,7 +194,8 @@ void ParallelDialog::BuildUi()
 	                                    wxRB_GROUP);
 	logfile_radio_ = new wxRadioButton(this, ID_PARALLEL_LOGFILE, "Log to File");
 	printer_radio_ = new wxRadioButton(this, ID_PARALLEL_PRINTER, "Virtual Printer");
-	physical_radio_ = new wxRadioButton(this, ID_PARALLEL_PHYSICAL, "Physical Device");
+	physical_radio_ = new wxRadioButton(this, ID_PARALLEL_PHYSICAL,
+	    "Print on this computer");
 
 	group->Add(disabled_radio_, 0, wxBOTTOM, 4);
 
@@ -165,13 +233,24 @@ void ParallelDialog::BuildUi()
 
 	auto *phys_row = new wxBoxSizer(wxHORIZONTAL);
 	phys_row->Add(physical_radio_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
-	phys_row->Add(new wxStaticText(this, wxID_ANY, "Device:"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 4);
+	phys_row->Add(new wxStaticText(this, wxID_ANY, "Printer:"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 4);
 	device_combo_ = new wxComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr,
 	                               wxCB_DROPDOWN);
-	device_combo_->Append("/dev/lp0");
-	device_combo_->Append("/dev/lp1");
-	device_combo_->Append("/dev/usb/lp0");
-	device_combo_->Append("/dev/usb/lp1");
+
+	/* The printers this computer has, then any printer device node that is
+	   really there. Offering /dev/usb/lp0 on a machine without one is how the
+	   old "physical device" list misled people, so nothing goes in this list
+	   unless it exists. */
+	{
+		const wxArrayString printers = HostPrinters();
+
+		for (size_t i = 0; i < printers.GetCount(); i++) {
+			device_combo_->Append(printers[i]);
+		}
+		if (printers.IsEmpty()) {
+			device_combo_->Append(kNoPrintersFound);
+		}
+	}
 	phys_row->Add(device_combo_, 1, wxEXPAND);
 	group->Add(phys_row, 0, wxEXPAND);
 

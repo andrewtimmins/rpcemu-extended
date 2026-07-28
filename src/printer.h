@@ -43,6 +43,7 @@ extern "C" {
 typedef enum {
     PrinterOutput_Disabled = 0,  /* Printer not attached */
     PrinterOutput_File = 1,      /* Output to raw file */
+    PrinterOutput_Host = 2,      /* Output to a printer on the host */
 } PrinterOutputMode;
 
 /* ========================================================================
@@ -104,6 +105,16 @@ PrinterOutputMode printer_get_output_mode(void);
  * @param path  Directory path
  */
 void printer_set_output_path(const char *path);
+
+/**
+ * Where PrinterOutput_Host sends a finished job.
+ *
+ * A path (anything beginning with '/', or with a drive or UNC prefix on Windows)
+ * is written to directly, which is how a printer device node such as
+ * /dev/usb/lp0 is used. Anything else is taken as the name of a host print
+ * queue, and the job is spooled to it as raw data.
+ */
+void printer_set_host_target(const char *target);
 
 /**
  * Get the current output path.

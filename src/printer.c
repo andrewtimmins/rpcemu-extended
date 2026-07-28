@@ -30,6 +30,7 @@
  * - Generates ACK after each byte
  */
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,6 +57,9 @@
  * ======================================================================== */
 
 static PrinterOutputMode output_mode = PrinterOutput_Disabled;
+
+/* Device path or print queue name for PrinterOutput_Host. */
+static char host_target[512] = "";
 static char output_path[512] = "";
 
 static uint8_t *print_buffer = NULL;
@@ -307,6 +311,101 @@ generate_filename(char *filename, size_t size)
 }
 
 void
+printer_set_host_target(const char *target)
+{
+    if (target == NULL) {
+        host_target[0] = '\0';
+        return;
+    }
+    strncpy(host_target, target, sizeof(host_target) - 1);
+    host_target[sizeof(host_target) - 1] = '\0';
+}
+
+/** True if the host target names a filesystem object rather than a queue. */
+static int
+host_target_is_path(const char *target)
+{
+#ifdef _WIN32
+    return target[0] == '\\' || (target[1] == ':' && target[2] == '\\') ||
+           (target[1] == ':' && target[2] == '/');
+#else
+    return target[0] == '/';
+#endif
+}
+
+/*
+ * Hand a finished job to the host.
+ *
+ * A device path is opened and written to. A queue name is spooled through the
+ * host's own print system as raw data, because the guest has already produced
+ * whatever its RISC OS printer driver emits (PCL, ESC/P, PostScript) and nothing
+ * here should try to interpret or convert it.
+ *
+ * Returns 0 on success.
+ */
+static int
+printer_send_to_host(const uint8_t *data, size_t len)
+{
+    FILE *f;
+    size_t written;
+
+    if (host_target[0] == '\0') {
+        rpclog("Printer: no host printer set, discarding %zu bytes\n", len);
+        return -1;
+    }
+
+    if (host_target_is_path(host_target)) {
+        f = fopen(host_target, "wb");
+        if (f == NULL) {
+            rpclog("Printer: could not open '%s': %s\n", host_target,
+                   strerror(errno));
+            return -1;
+        }
+        written = fwrite(data, 1, len, f);
+        if (fclose(f) != 0 || written != len) {
+            rpclog("Printer: writing to '%s' failed after %zu of %zu bytes\n",
+                   host_target, written, len);
+            return -1;
+        }
+        rpclog("Printer: sent %zu bytes to '%s'\n", len, host_target);
+        return 0;
+    }
+
+#ifdef _WIN32
+    /* Spooling by queue name needs the Windows print API, which is not wired up
+       here. A device path (\\.\LPT1, or a file) does work, and the virtual
+       printer covers the rest. */
+    rpclog("Printer: '%s' looks like a print queue; on Windows give a device "
+           "path instead, or use the virtual printer\n", host_target);
+    return -1;
+#else
+    {
+        char command[640];
+        int status;
+
+        /* -o raw: pass the bytes through untouched. The queue name is quoted so
+           a name with spaces cannot become extra arguments. */
+        snprintf(command, sizeof(command), "lp -d '%s' -o raw -", host_target);
+
+        f = popen(command, "w");
+        if (f == NULL) {
+            rpclog("Printer: could not run lp: %s\n", strerror(errno));
+            return -1;
+        }
+        written = fwrite(data, 1, len, f);
+        status = pclose(f);
+        if (status != 0 || written != len) {
+            rpclog("Printer: lp -d '%s' failed (status %d, %zu of %zu bytes)\n",
+                   host_target, status, written, len);
+            return -1;
+        }
+        rpclog("Printer: spooled %zu bytes to queue '%s'\n", len, host_target);
+        return 0;
+    }
+#endif
+}
+
+void
 printer_flush(void)
 {
     char filename[1024];
@@ -327,6 +426,13 @@ printer_flush(void)
         return;
     }
     
+    if (output_mode == PrinterOutput_Host) {
+        (void) printer_send_to_host(print_buffer, buffer_pos);
+        job_number++;
+        buffer_pos = 0;
+        return;
+    }
+
     generate_filename(filename, sizeof(filename));
 
     printer_ensure_output_dir();
