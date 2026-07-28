@@ -65,31 +65,38 @@ jobs:
       # WinHTTP on Windows, NSURLSession on macOS).
       #
       # Cached so RISC OS Open are not asked for the same file on every push.
-      # Packaging has already happened by this point, so neither the ROM nor the
-      # machine the fetch creates ends up in the released archive.
+      # The ROM and the machine the test creates go in a data directory under
+      # RUNNER_TEMP, not in the staged release. The emulator resolves its
+      # writable data separately from its read-only resources, so RPCEMU_DATADIR
+      # moves every write out of the tree that is about to be uploaded while it
+      # still finds its resources beside the binary. The staged release is left
+      # exactly as it was built.
       - name: Cache the RISC OS ROM
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ci-rom
           key: rpcemu-rom-stable-v1
       - name: Fetch a ROM for the boot test
         run: |
           set -eu
-          data="releases/linux/amd64"
-          mkdir -p ci-rom
+          export RPCEMU_DATADIR="$RUNNER_TEMP/rpcemu-data"
+          export RPCEMU_NO_GUI_MESSAGES=1
+          mkdir -p "$RPCEMU_DATADIR" ci-rom
+          cp -r default configs "$RPCEMU_DATADIR/"
           if ! ls ci-rom/ROM* >/dev/null 2>&1; then
-            RPCEMU_DATADIR="$data" RPCEMU_NO_GUI_MESSAGES=1 \
-              "$data/rpcemu-recompiler" --fetch-riscos --no-disc --accept-licence
-            cp "$data"/roms/ROM* ci-rom/
+            releases/linux/amd64/rpcemu-recompiler --fetch-riscos --no-disc --accept-licence
+            cp "$RPCEMU_DATADIR"/roms/ROM* ci-rom/
           fi
-          cp ci-rom/ROM* "$data/roms/"
-          ls -la "$data/roms/"
+          mkdir -p "$RPCEMU_DATADIR/roms"
+          cp ci-rom/ROM* "$RPCEMU_DATADIR/roms/"
+          ls -la "$RPCEMU_DATADIR/roms/"
 
       - name: Headless boot and VNC screenshot
         timeout-minutes: 3
         run: |
           python3 tests/vnc_smoke.py \
             --binary releases/linux/amd64/rpcemu-recompiler \
+            --datadir "$RUNNER_TEMP/rpcemu-data" \
             --save vnc-smoke-linux-amd64.png
 
       - name: Upload the boot screenshot
@@ -153,31 +160,38 @@ jobs:
       # WinHTTP on Windows, NSURLSession on macOS).
       #
       # Cached so RISC OS Open are not asked for the same file on every push.
-      # Packaging has already happened by this point, so neither the ROM nor the
-      # machine the fetch creates ends up in the released archive.
+      # The ROM and the machine the test creates go in a data directory under
+      # RUNNER_TEMP, not in the staged release. The emulator resolves its
+      # writable data separately from its read-only resources, so RPCEMU_DATADIR
+      # moves every write out of the tree that is about to be uploaded while it
+      # still finds its resources beside the binary. The staged release is left
+      # exactly as it was built.
       - name: Cache the RISC OS ROM
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ci-rom
           key: rpcemu-rom-stable-v1
       - name: Fetch a ROM for the boot test
         run: |
           set -eu
-          data="releases/linux/arm64"
-          mkdir -p ci-rom
+          export RPCEMU_DATADIR="$RUNNER_TEMP/rpcemu-data"
+          export RPCEMU_NO_GUI_MESSAGES=1
+          mkdir -p "$RPCEMU_DATADIR" ci-rom
+          cp -r default configs "$RPCEMU_DATADIR/"
           if ! ls ci-rom/ROM* >/dev/null 2>&1; then
-            RPCEMU_DATADIR="$data" RPCEMU_NO_GUI_MESSAGES=1 \
-              "$data/rpcemu-interpreter" --fetch-riscos --no-disc --accept-licence
-            cp "$data"/roms/ROM* ci-rom/
+            releases/linux/arm64/rpcemu-interpreter --fetch-riscos --no-disc --accept-licence
+            cp "$RPCEMU_DATADIR"/roms/ROM* ci-rom/
           fi
-          cp ci-rom/ROM* "$data/roms/"
-          ls -la "$data/roms/"
+          mkdir -p "$RPCEMU_DATADIR/roms"
+          cp ci-rom/ROM* "$RPCEMU_DATADIR/roms/"
+          ls -la "$RPCEMU_DATADIR/roms/"
 
       - name: Headless boot and VNC screenshot
         timeout-minutes: 3
         run: |
           python3 tests/vnc_smoke.py \
             --binary releases/linux/arm64/rpcemu-interpreter \
+            --datadir "$RUNNER_TEMP/rpcemu-data" \
             --save vnc-smoke-linux-arm64.png
 
       - name: Upload the boot screenshot
@@ -283,23 +297,34 @@ jobs:
       # WinHTTP on Windows, NSURLSession on macOS).
       #
       # Cached so RISC OS Open are not asked for the same file on every push.
-      # Packaging has already happened by this point, so neither the ROM nor the
-      # machine the fetch creates ends up in the released archive.
+      # The ROM and the machine the test creates go in a data directory under
+      # RUNNER_TEMP, not in the staged release. The emulator resolves its
+      # writable data separately from its read-only resources, so RPCEMU_DATADIR
+      # moves every write out of the tree that is about to be uploaded while it
+      # still finds its resources beside the binary. The staged release is left
+      # exactly as it was built.
       - name: Cache the RISC OS ROM
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ci-rom
           key: rpcemu-rom-stable-v1
       - name: Fetch a ROM for the boot test
         run: |
           set -eu
-          data="releases/windows/amd64"
-          mkdir -p ci-rom
+          # The one platform where the two cannot be the same string. This shell
+          # needs the MSYS2 form of the path, while the executable is a native
+          # Windows program and needs the Windows form, so RUNNER_TEMP (which
+          # arrives as D:\a\_temp) goes through cygpath both ways.
+          data="$(cygpath -u "$RUNNER_TEMP")/rpcemu-data"
+          export RPCEMU_DATADIR="$(cygpath -w "$data")"
+          export RPCEMU_NO_GUI_MESSAGES=1
+          mkdir -p "$data" ci-rom
+          cp -r default configs "$data/"
           if ! ls ci-rom/ROM* >/dev/null 2>&1; then
-            RPCEMU_DATADIR="$data" RPCEMU_NO_GUI_MESSAGES=1 \
-              "$data/rpcemu-recompiler.exe" --fetch-riscos --no-disc --accept-licence
+            releases/windows/amd64/rpcemu-recompiler.exe --fetch-riscos --no-disc --accept-licence
             cp "$data"/roms/ROM* ci-rom/
           fi
+          mkdir -p "$data/roms"
           cp ci-rom/ROM* "$data/roms/"
           ls -la "$data/roms/"
 
@@ -308,6 +333,7 @@ jobs:
         run: |
           python3 tests/vnc_smoke.py \
             --binary releases/windows/amd64/rpcemu-recompiler.exe \
+            --datadir "$(cygpath -u "$RUNNER_TEMP")/rpcemu-data" \
             --save vnc-smoke-windows-amd64.png
 
       - name: Upload the boot screenshot
@@ -506,31 +532,39 @@ jobs:
       # WinHTTP on Windows, NSURLSession on macOS).
       #
       # Cached so RISC OS Open are not asked for the same file on every push.
-      # Packaging has already happened by this point, so neither the ROM nor the
-      # machine the fetch creates ends up in the released archive.
+      # The ROM and the machine the test creates go in a data directory under
+      # RUNNER_TEMP, not in the staged release. The emulator resolves its
+      # writable data separately from its read-only resources, so RPCEMU_DATADIR
+      # moves every write out of the tree that is about to be uploaded while it
+      # still finds its resources beside the binary. The staged release is left
+      # exactly as it was built.
       - name: Cache the RISC OS ROM
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ci-rom
           key: rpcemu-rom-stable-v1
       - name: Fetch a ROM for the boot test
         run: |
           set -eu
-          data="releases/macos/RPCEmu.app/Contents/Resources"
-          mkdir -p ci-rom
+          export RPCEMU_DATADIR="$RUNNER_TEMP/rpcemu-data"
+          export RPCEMU_NO_GUI_MESSAGES=1
+          mkdir -p "$RPCEMU_DATADIR" ci-rom
+          cp -r default configs "$RPCEMU_DATADIR/"
           if ! ls ci-rom/ROM* >/dev/null 2>&1; then
-            RPCEMU_DATADIR="$data" RPCEMU_NO_GUI_MESSAGES=1 \
-              "$data/../MacOS/rpcemu" --fetch-riscos --no-disc --accept-licence
-            cp "$data"/roms/ROM* ci-rom/
+            releases/macos/RPCEmu.app/Contents/MacOS/rpcemu \
+              --fetch-riscos --no-disc --accept-licence
+            cp "$RPCEMU_DATADIR"/roms/ROM* ci-rom/
           fi
-          cp ci-rom/ROM* "$data/roms/"
-          ls -la "$data/roms/"
+          mkdir -p "$RPCEMU_DATADIR/roms"
+          cp ci-rom/ROM* "$RPCEMU_DATADIR/roms/"
+          ls -la "$RPCEMU_DATADIR/roms/"
 
       - name: Headless boot and VNC screenshot
         timeout-minutes: 3
         run: |
           python3 tests/vnc_smoke.py \
             --binary releases/macos/RPCEmu.app/Contents/MacOS/rpcemu \
+            --datadir "$RUNNER_TEMP/rpcemu-data" \
             --save vnc-smoke-macos-universal.png
 
       - name: Upload the boot screenshot
