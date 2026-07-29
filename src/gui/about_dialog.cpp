@@ -160,7 +160,12 @@ const CreditGroup kCredits[] = {
 	  "SyncClock, DEEJ Technology PLC: the clock synchronisation module\n"
 	  "NetSurf, John M Bell: the Latin-1 conversion table" },
 	{ "With acknowledgement to",
-	  "ViewFinder, John Kortink: the idea behind the graphics card" },
+	  "ViewFinder, John Kortink: the idea behind the graphics card\n"
+	  "The RISC OS Packaging Project: the package and database format\n"
+	  "  the package manager implements, designed by Graham Shaw,\n"
+	  "  its policy manual maintained by Alan Buckley\n"
+	  "RISC OS Open and riscoscommunity.org: hosting the package\n"
+	  "  indexes and the packages themselves" },
 };
 
 } // namespace
