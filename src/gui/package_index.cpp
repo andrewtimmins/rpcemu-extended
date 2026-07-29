@@ -113,10 +113,26 @@ int CompareVersions(const wxString &a, const wxString &b)
  * resolved against the index's host, anything else against the directory the
  * index sits in.
  */
+/*
+ * Prefer https where the host is known to serve it.
+ *
+ * The ROOL indexes give http:// addresses for every package, which macOS will not
+ * fetch, so a download there failed even once the catalogue had been read. The
+ * same host serves all 194 of them over https.
+ */
+wxString PreferHttps(const wxString &url)
+{
+	if (url.StartsWith("http://packages.riscosopen.org/")) {
+		return "https://" + url.Mid(7);
+	}
+
+	return url;
+}
+
 wxString ResolveUrl(const wxString &url, const wxString &index_url)
 {
 	if (url.empty() || url.Contains("://")) {
-		return url;
+		return PreferHttps(url);
 	}
 
 	/* Split the index URL into scheme+host and path. */
@@ -132,12 +148,12 @@ wxString ResolveUrl(const wxString &url, const wxString &index_url)
 	    ? index_url : index_url.Left(slash);
 
 	if (url[0] == '/') {
-		return root + url;
+		return PreferHttps(root + url);
 	}
 
 	const wxString dir = index_url.BeforeLast('/');
 
-	return (dir.empty() ? root : dir) + "/" + url;
+	return PreferHttps((dir.empty() ? root : dir) + "/" + url);
 }
 
 }  /* namespace */
@@ -161,15 +177,23 @@ bool PackageRecord::RunsHere() const
 
 std::vector<PackageSource> PackageIndexSources()
 {
+	/*
+	 * https, not http, and it matters rather than being tidiness: macOS refuses
+	 * cleartext HTTP by default (App Transport Security), so over http these two
+	 * fetched nothing there and the catalogue arrived holding only the three
+	 * packages from the community index, which is https. Reported from a Mac as
+	 * "there are only three items listed". The server serves both and returns
+	 * byte-identical indexes.
+	 */
 	/* The two that suit a Risc PC. RISC OS Open also publish programs-armv5
 	   and two Raspberry Pi indexes; those hold code for machines this is not,
 	   so offering them would only hand somebody software that cannot run. */
 	return {
 		{ "rool",
-		  "http://packages.riscosopen.org/packages/pkg/rool",
+		  "https://packages.riscosopen.org/packages/pkg/rool",
 		  "Applications from the RISC OS disc image, built nightly" },
 		{ "thirdparty",
-		  "http://packages.riscosopen.org/packages/pkg/thirdparty",
+		  "https://packages.riscosopen.org/packages/pkg/thirdparty",
 		  "Programs and libraries from other authors, for any ARM machine" },
 		/* The RISC OS Community's own repository. Small, but it is where
 		   some newer work appears first. Only the released index: there is
