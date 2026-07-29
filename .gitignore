@@ -30,6 +30,15 @@
 !/machines/README.txt
 /shared/
 
+# Machine configurations and ROM images, for the same reason: a machine is made
+# by the person running the emulator, and the ROM is downloaded from RISC OS
+# Open rather than shipped. Both directories are packaged from whatever is on
+# disk, so ignoring their contents costs a local build nothing.
+/configs/*
+!/configs/README.txt
+/roms/*
+!/roms/roms.txt
+
 # Legacy single-machine state (CMOS now lives under machines/<name>/)
 /cmos.ram
 /rpc.cfg
