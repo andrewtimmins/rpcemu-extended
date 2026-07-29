@@ -174,6 +174,22 @@ bool MemberPaths(const UnzipEntry *entry, const wxString &dest_dir,
  */
 const char *const kHostManifest = "HostFiles";
 
+/*
+ * A package's triggers, kept in the database so removal can run them too - by
+ * then the zip is long gone.
+ *
+ * Stored under the machine's own !Packages, which means they are on the guest's
+ * disc and can be run there. The path RISC OS sees is
+ * "$.!Packages.Info.<Package>.Triggers".
+ */
+const char *const kTriggersDir = "Triggers";
+
+/* The four points the policy manual defines. */
+const char *const kTriggerPreInstall = "PreInstall";
+const char *const kTriggerPostInstall = "PostInstall";
+const char *const kTriggerPreRemove = "PreRemove";
+const char *const kTriggerPostRemove = "PostRemove";
+
 /* Everything a package installed, from the database. */
 std::vector<wxString> ReadManifestFile(const wxString &hostfs_dir,
                                        const wxString &package_name,
@@ -292,6 +308,153 @@ bool MemberToString(UnzipArchive *archive, const UnzipEntry *entry,
 	return true;
 }
 
+/*
+ * The host path of a file RISC OS calls @leaf, in @dir.
+ *
+ * HostFS adds a ",xxx" filetype suffix, so a trigger RISC OS knows as
+ * "PreRemove" is "PreRemove,feb" on the host. Matched on the part before the
+ * comma rather than as a prefix, so "PreRemoveOld" is not mistaken for it.
+ * Returns an empty string if there is no such file.
+ */
+wxString FindHostFile(const wxString &dir, const wxString &leaf)
+{
+	if (wxFileExists(dir + Sep() + leaf)) {
+		return dir + Sep() + leaf;	/* no suffix, e.g. type &FFF */
+	}
+	if (!wxDirExists(dir)) {
+		return wxEmptyString;
+	}
+
+	wxDir handle(dir);
+	wxString entry;
+	bool more = handle.GetFirst(&entry, wxEmptyString, wxDIR_FILES);
+
+	while (more) {
+		if (entry.BeforeFirst(',') == leaf) {
+			return dir + Sep() + entry;
+		}
+		more = handle.GetNext(&entry);
+	}
+
+	return wxEmptyString;
+}
+
+/*
+ * Run one of a package's triggers, if it has that one.
+ *
+ * Information reaches a trigger through PkgTrigger$ variables and comes back the
+ * same way: it must set PkgTrigger$ReturnCode to 0 or 1, and may set
+ * PkgTrigger$ReturnText to say why it failed. The policy manual asks for a
+ * background TaskWindow with a 256K WimpSlot, which is what TaskWindow's -wimpslot
+ * and -quit give.
+ *
+ * @param action   What is happening: install, remove, upgrade, or one of the
+ *                 abort- forms when unwinding a failure.
+ * @param failure  Set to what went wrong, empty if the trigger passed or was
+ *                 absent.
+ * @return false only if the trigger ran and failed, or could not be run at all.
+ *         A package with no such trigger is a pass.
+ */
+bool RunTrigger(PackageTriggerRunner *triggers, const wxString &hostfs_dir,
+                const wxString &package_name, const char *which,
+                const wxString &action, const wxString &old_version,
+                const wxString &new_version, wxString &failure)
+{
+	failure.clear();
+	if (triggers == nullptr) {
+		return true;	/* nobody to run them; not the package's fault */
+	}
+
+	const wxString host_path = FindHostFile(
+	    InfoDir(hostfs_dir, package_name) + Sep() + kTriggersDir,
+	    wxString::FromUTF8(which));
+
+	if (host_path.empty()) {
+		return true;	/* most packages have none */
+	}
+
+	/* The same place, as RISC OS names it. */
+	const wxString riscos_dir = wxString::Format(
+	    "$.!Packages.Info.%s.%s", package_name, kTriggersDir);
+
+	/*
+	 * Set the variables the trigger reads.
+	 *
+	 * One command each: OS_CLI runs a single command line, so the "|M" that
+	 * separates commands inside an Obey file does not work here - batching them
+	 * that way set the first variable to the text of all the others, which cost
+	 * an hour to see.
+	 */
+	{
+		const wxString settings[] = {
+			wxString::Format("Set PkgTrigger$Action %s", action),
+			wxString::Format("Set PkgTrigger$Abort %s",
+			    action.StartsWith("abort-") ? "1" : "0"),
+			wxString::Format("Set PkgTrigger$OldVersion %s",
+			    old_version.empty() ? wxString("\"\"") : old_version),
+			wxString::Format("Set PkgTrigger$NewVersion %s",
+			    new_version.empty() ? wxString("\"\"") : new_version),
+			wxString::Format("Set PkgTrigger$Dir %s", riscos_dir),
+			/* Starts at 1 so a trigger that dies without setting it counts as
+			   a failure rather than passing by omission. */
+			wxString("Set PkgTrigger$ReturnCode 1"),
+			wxString("Unset PkgTrigger$ReturnText"),
+		};
+		wxString output;
+
+		for (const auto &setting : settings) {
+			if (!triggers->Run(setting, output)) {
+				failure = wxString::Format(
+				    "%s's %s trigger could not be set up on this machine.",
+				    package_name, wxString::FromUTF8(which));
+				return false;
+			}
+		}
+	}
+
+	wxString output;
+
+	/* ReturnCode starts at 1, so a trigger that dies without setting it counts as
+	   a failure rather than passing by omission. */
+	if (!triggers->Run(wxString::Format(
+	        "TaskWindow \"%s.%s\" -wimpslot 256K -quit -name \"Package trigger\"",
+	        riscos_dir, wxString::FromUTF8(which)), output)) {
+		failure = wxString::Format("%s's %s trigger could not be run.",
+		                           package_name, wxString::FromUTF8(which));
+		return false;
+	}
+
+	{
+		wxString code;
+
+		if (!triggers->Run("Show PkgTrigger$ReturnCode", code)) {
+			failure = wxString::Format(
+			    "%s's %s trigger gave no answer.", package_name,
+			    wxString::FromUTF8(which));
+			return false;
+		}
+
+		/* "PkgTrigger$ReturnCode : 0" */
+		const wxString value = code.AfterLast(':').Trim().Trim(false);
+
+		if (value != "0") {
+			wxString text;
+
+			triggers->Run("Show PkgTrigger$ReturnText", text);
+			text = text.AfterFirst(':').Trim().Trim(false);
+			failure = wxString::Format("%s's %s trigger failed%s",
+			    package_name, wxString::FromUTF8(which),
+			    text.empty() ? wxString(".")
+			                 : wxString::Format(": %s", text));
+			return false;
+		}
+	}
+
+	rpclog("packages: %s ran %s\n",
+	       static_cast<const char *>(package_name.utf8_str()), which);
+	return true;
+}
+
 /* Remove a directory if it is empty, and its parents likewise, stopping at the
    machine's disc. Leaves anything that still holds a file. */
 void PruneEmptyDirs(wxString dir, const wxString &stop_at)
@@ -347,7 +510,8 @@ PackageInstalledMap PackageInstalledList(const wxString &hostfs_dir)
 PackageActionResult PackageInstall(const PackageRecord &record,
                                    const wxString &hostfs_dir,
                                    RiscosFetchReporter &reporter,
-                                   const RiscosFetchLoopFactory &make_loop)
+                                   const RiscosFetchLoopFactory &make_loop,
+                                   PackageTriggerRunner *triggers)
 {
 	PackageActionResult result;
 	const wxString temp = wxFileName::CreateTempFileName("rpcemu-pkg");
@@ -355,6 +519,7 @@ PackageActionResult PackageInstall(const PackageRecord &record,
 	std::vector<wxString> manifest;		/* RISC OS paths, the standard form */
 	std::vector<wxString> host_written;	/* exactly what was written */
 	wxString control, copyright;
+	bool have_triggers = false;
 
 	if (record.url.empty()) {
 		result.message = wxString::Format(
@@ -415,6 +580,27 @@ PackageActionResult PackageInstall(const PackageRecord &record,
 		return result;
 	}
 
+	/*
+	 * A reinstall or upgrade of something already here runs that copy's
+	 * PreRemove first, and its triggers are already on the disc from last time.
+	 */
+	{
+		const PackageInstalledMap already = PackageInstalledList(hostfs_dir);
+		const auto it = already.find(record.name);
+
+		if (it != already.end()) {
+			wxString failure;
+
+			if (!RunTrigger(triggers, hostfs_dir, record.name,
+			        kTriggerPreRemove, "upgrade", it->second, record.version,
+			        failure)) {
+				wxRemoveFile(temp);
+				result.message = failure + "\n\nNothing has been changed.";
+				return result;
+			}
+		}
+	}
+
 	/* --- unpack --- */
 	if (unzip_open(&archive, temp.utf8_str()) != UNZIP_OK) {
 		wxRemoveFile(temp);
@@ -426,6 +612,53 @@ PackageActionResult PackageInstall(const PackageRecord &record,
 	reporter.Stage(wxString::Format("Installing %s", record.name));
 
 	const int count = unzip_entry_count(&archive);
+
+	/*
+	 * Triggers first, in a pass of their own.
+	 *
+	 * PreInstall has to run before any of the package's files are written, and it
+	 * lives inside the zip, so it must be on the guest's disc before the main
+	 * pass starts. Cheap: a package has at most a handful of these and most have
+	 * none.
+	 */
+	for (int i = 0; i < count; i++) {
+		const UnzipEntry *entry = unzip_entry(&archive, i);
+		const wxString stored = wxString::FromUTF8(entry->name);
+		const wxString prefix = wxString(kMetadataDir) + "/" + kTriggersDir + "/";
+
+		if (entry->is_directory || !stored.StartsWith(prefix)) {
+			continue;
+		}
+
+		const wxString dir = InfoDir(hostfs_dir, record.name) + Sep() +
+		    kTriggersDir;
+		char suffixed[UNZIP_MAX_NAME + 32];
+
+		if (!wxDirExists(dir) &&
+		    !wxFileName::Mkdir(dir, 0755, wxPATH_MKDIR_FULL)) {
+			continue;
+		}
+		if (unzip_hostfs_leafname(entry, stored.AfterLast('/').utf8_str(),
+		        suffixed, sizeof(suffixed)) &&
+		    unzip_extract_to_file(&archive, entry,
+		        (dir + Sep() + wxString::FromUTF8(suffixed)).utf8_str()) ==
+		        UNZIP_OK) {
+			have_triggers = true;
+		}
+	}
+
+	if (have_triggers) {
+		wxString failure;
+
+		/* A PreInstall that fails means the package is not installed at all. */
+		if (!RunTrigger(triggers, hostfs_dir, record.name, kTriggerPreInstall,
+		        "install", wxEmptyString, record.version, failure)) {
+			unzip_close(&archive);
+			wxRemoveFile(temp);
+			result.message = failure + "\n\nNothing has been installed.";
+			return result;
+		}
+	}
 
 	for (int i = 0; i < count; i++) {
 		const UnzipEntry *entry = unzip_entry(&archive, i);
@@ -443,9 +676,28 @@ PackageActionResult PackageInstall(const PackageRecord &record,
 
 		/* Metadata goes to the database, not onto the disc. */
 		if (stored.StartsWith(wxString(kMetadataDir) + "/")) {
+			const wxString rest = stored.Mid(strlen(kMetadataDir) + 1);
 			const wxString leaf = stored.AfterLast('/');
 
-			if (leaf.IsSameAs("Control", false)) {
+			if (rest.StartsWith(wxString(kTriggersDir) + "/")) {
+				/* Triggers are kept, because removal needs to run them long
+				   after the zip has gone. They go under the machine's own
+				   !Packages, so they are on the guest's disc where they can
+				   actually be run. */
+				const wxString dir = InfoDir(hostfs_dir, record.name) + Sep() +
+				    kTriggersDir;
+				char suffixed[UNZIP_MAX_NAME + 32];
+
+				if (!wxDirExists(dir)) {
+					wxFileName::Mkdir(dir, 0755, wxPATH_MKDIR_FULL);
+				}
+				if (unzip_hostfs_leafname(entry, leaf.utf8_str(), suffixed,
+				        sizeof(suffixed))) {
+					unzip_extract_to_file(&archive, entry,
+					    (dir + Sep() + wxString::FromUTF8(suffixed)).utf8_str());
+					have_triggers = true;
+				}
+			} else if (leaf.IsSameAs("Control", false)) {
 				MemberToString(&archive, entry, control);
 			} else if (leaf.IsSameAs("Copyright", false)) {
 				MemberToString(&archive, entry, copyright);
@@ -544,11 +796,28 @@ PackageActionResult PackageInstall(const PackageRecord &record,
 	       static_cast<const char *>(record.version.utf8_str()), result.files);
 	result.ok = true;
 
+	/*
+	 * PostInstall runs with the package in place and recorded. The manual is
+	 * explicit that a failure here leaves the package installed and warns, which
+	 * is right: the files are there and the database says so, and rolling back at
+	 * this point would be a bigger lie than a warning.
+	 */
+	if (have_triggers) {
+		wxString failure;
+
+		if (!RunTrigger(triggers, hostfs_dir, record.name, kTriggerPostInstall,
+		        "install", wxEmptyString, record.version, failure)) {
+			result.message = failure + "\n\n" + record.name +
+			    " is installed, but that step did not complete.";
+		}
+	}
+
 	return result;
 }
 
 PackageActionResult PackageRemove(const wxString &package_name,
-                                  const wxString &hostfs_dir)
+                                  const wxString &hostfs_dir,
+                                  PackageTriggerRunner *triggers)
 {
 	PackageActionResult result;
 	std::map<wxString, wxString> status = ReadStatusLines(hostfs_dir);
@@ -614,6 +883,20 @@ PackageActionResult PackageRemove(const wxString &package_name,
 		    "The database has no record of what %s installed, so nothing has "
 		    "been deleted. Remove it by hand if you are sure.", package_name);
 		return result;
+	}
+
+	/* PreRemove can refuse: a failure here means the package is not removed. */
+	{
+		const PackageInstalledMap installed = PackageInstalledList(hostfs_dir);
+		const auto it = installed.find(package_name);
+		wxString failure;
+
+		if (!RunTrigger(triggers, hostfs_dir, package_name, kTriggerPreRemove,
+		        "remove", (it != installed.end()) ? it->second : wxString(),
+		        wxEmptyString, failure)) {
+			result.message = failure + "\n\nNothing has been deleted.";
+			return result;
+		}
 	}
 
 	/* wxWidgets logs a message of its own for a file that is not there, which
@@ -695,8 +978,37 @@ PackageActionResult PackageRemove(const wxString &package_name,
 		}
 	}
 
+	/*
+	 * PostRemove runs while its own file is still on the disc, and before the
+	 * database entry goes. As with PostInstall, a failure warns rather than
+	 * undoing the removal: the files have gone either way.
+	 */
+	{
+		wxString failure;
+
+		if (!RunTrigger(triggers, hostfs_dir, package_name, kTriggerPostRemove,
+		        "remove", wxEmptyString, wxEmptyString, failure)) {
+			result.message = failure;
+		}
+	}
+
 	{
 		const wxString info = InfoDir(hostfs_dir, package_name);
+
+		/* The triggers go last, having been needed up to this point. */
+		{
+			const wxString dir = info + Sep() + kTriggersDir;
+
+			if (wxDirExists(dir)) {
+				wxString found = wxFindFirstFile(dir + Sep() + "*", wxFILE);
+
+				while (!found.empty()) {
+					wxRemoveFile(found);
+					found = wxFindNextFile();
+				}
+				wxRmdir(dir);
+			}
+		}
 
 		for (const char *leaf : { "Files", kHostManifest, "Control",
 		                          "Copyright" }) {

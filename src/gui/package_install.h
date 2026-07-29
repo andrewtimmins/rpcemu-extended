@@ -51,6 +51,27 @@
 
 #include "package_index.h"
 
+/**
+ * Where a package's triggers live once installed, and how to run them.
+ *
+ * A package may carry runnable files in its RiscPkg.Triggers directory, to be run
+ * at four points in a commit: PreInstall, PostInstall, PreRemove and PostRemove.
+ * The policy manual is clear that they should be rare, and most packages have
+ * none.
+ *
+ * Running them needs the guest, since they are RISC OS code, so the caller
+ * supplies this. Given a command line it should run it in the machine and report
+ * whether RISC OS said it succeeded; see guest_command.h. Returning false for
+ * "could not ask" is different from a trigger that ran and failed, and the
+ * distinction is kept.
+ */
+struct PackageTriggerRunner {
+	/** Run @command in the guest. @output gets whatever it printed. */
+	virtual bool Run(const wxString &command, wxString &output) = 0;
+
+	virtual ~PackageTriggerRunner() = default;
+};
+
 /** What a machine has installed: package name to version. */
 using PackageInstalledMap = std::map<wxString, wxString>;
 
@@ -84,7 +105,8 @@ struct PackageActionResult {
 PackageActionResult PackageInstall(const PackageRecord &record,
                                    const wxString &hostfs_dir,
                                    RiscosFetchReporter &reporter,
-                                   const RiscosFetchLoopFactory &make_loop);
+                                   const RiscosFetchLoopFactory &make_loop,
+                                   PackageTriggerRunner *triggers = nullptr);
 
 /**
  * Remove a package, using the record of what it installed.
@@ -95,7 +117,8 @@ PackageActionResult PackageInstall(const PackageRecord &record,
  * but nothing outside the manifest is touched.
  */
 PackageActionResult PackageRemove(const wxString &package_name,
-                                  const wxString &hostfs_dir);
+                                  const wxString &hostfs_dir,
+                                  PackageTriggerRunner *triggers = nullptr);
 
 /**
  * The packages a package needs, from its Depends field, in install order.

@@ -95,6 +95,33 @@ wxString CheckOsDepends(const PackageRecord &pkg,
 	return missing;
 }
 
+/*
+ * Runs a package's triggers in the machine.
+ *
+ * Triggers are RISC OS code, so this is simply the guest command channel wearing
+ * the interface package_install expects. It keeps the distinction that matters:
+ * false means the machine could not be asked, which is not the same as a trigger
+ * that ran and said it failed.
+ */
+class GuestTriggerRunner : public PackageTriggerRunner {
+public:
+	bool Run(const wxString &command, wxString &output) override
+	{
+		/* Generous: a trigger may unpack things or poke !Boot, and the policy
+		   manual expects it to run in a TaskWindow, which is not instant. */
+		const GuestCommandResult result = GuestCommandRun(command,
+		    []() -> wxEventLoopBase * { return new wxEventLoop; }, 20000);
+
+		output = result.output;
+		if (!result.ran) {
+			rpclog("packages: trigger step could not run: %s\n",
+			       static_cast<const char *>(result.error.utf8_str()));
+		}
+
+		return result.ran;
+	}
+};
+
 }  /* namespace */
 
 PackageDialog::PackageDialog(wxWindow *parent)
@@ -381,10 +408,13 @@ void PackageDialog::OnInstall(wxCommandEvent &)
 
 	to_install.push_back(*pkg);
 
+	GuestTriggerRunner trigger_runner;
+
 	for (const auto &item : to_install) {
 		RiscosFetchProgressReporter reporter(this);
 		const PackageActionResult result = PackageInstall(item, hostfs,
-		    reporter, []() -> wxEventLoopBase * { return new wxEventLoop; });
+		    reporter, []() -> wxEventLoopBase * { return new wxEventLoop; },
+		    GuestCommandAvailable() ? &trigger_runner : nullptr);
 
 		if (result.cancelled) {
 			break;
@@ -393,6 +423,12 @@ void PackageDialog::OnInstall(wxCommandEvent &)
 			wxMessageBox(result.message, "Could not install",
 			             wxOK | wxICON_ERROR, this);
 			break;
+		}
+		if (!result.message.empty()) {
+			/* Installed, but a step after it complained. Worth saying, and not
+			   worth treating as a failure. */
+			wxMessageBox(result.message, "Installed with a warning",
+			             wxOK | wxICON_WARNING, this);
 		}
 	}
 
@@ -426,7 +462,9 @@ void PackageDialog::OnRemove(wxCommandEvent &)
 		return;
 	}
 
-	const PackageActionResult result = PackageRemove(pkg->name, HostfsDir());
+	GuestTriggerRunner trigger_runner;
+	const PackageActionResult result = PackageRemove(pkg->name, HostfsDir(),
+	    GuestCommandAvailable() ? &trigger_runner : nullptr);
 
 	if (!result.ok) {
 		wxMessageBox(result.message, "Could not remove", wxOK | wxICON_ERROR,
