@@ -454,9 +454,18 @@ built-in VNC server — useful for servers or always-on machines:
   back up from a snapshot — useful when a service manager restarts it.
 - `--list-machines` prints the available machine names and exits.
 - `--help` (or `-h`) prints usage and exits. All three of these run without a display.
-- The chosen machine **must have the VNC server enabled** (`vnc_enabled=1`) in its
-  configuration; headless mode refuses to start otherwise, as there would be no way
-  to reach the machine. The VNC port/password come from that same config.
+- VNC is the only way into a headless machine, so `--headless` **implies it**: the
+  server is started for the session even if the machine has `vnc_enabled=0`. The
+  machine's own setting is your choice and is left alone — the config file is not
+  rewritten, so running headless once does not enable VNC for the GUI afterwards.
+  The port and password come from that same config (port defaulting to 5900). A
+  machine that has never enabled VNC will not have a password set, so set one if
+  the port is reachable from anywhere untrusted; headless says so at startup.
+- **Running more than one machine at once needs a different `vnc_port` for each.**
+  Ports are not allocated automatically and every machine defaults to 5900, so a
+  second machine left at the default cannot bind and exits with an error rather
+  than starting unreachable. The port and password can also be changed while a
+  machine is running from **Settings > VNC Server** in the GUI.
 - Press **Ctrl-C** (or send `SIGTERM`) to shut down cleanly — CMOS, disc images, and
   configuration are saved on exit, just as when closing the GUI window.
 - Send `SIGUSR1` to reset the machine without stopping it (see
@@ -486,6 +495,7 @@ Each machine is defined by a `.cfg` file in `configs/` and a data directory unde
 | **Refresh rate** | 20–100 Hz |
 | **Network** | Off, NAT, Ethernet Bridging, IP Tunnelling |
 | **Hard discs** | HardDisc 4 and 5 — create 256 MB, 512 MB, 1 GB, or 2 GB images |
+| **VNC server** | On/off, port (default 5900) and password — see [Settings > VNC Server](#headless-mode). Give each machine its own port if you run more than one at a time |
 
 Configuration keys are stored under a `[General]` group (wxFileConfig INI format).
 NAT port-forward rules are stored in a separate `[nat_port_forward_rules]` group.
