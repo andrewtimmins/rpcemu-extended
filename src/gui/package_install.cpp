@@ -33,6 +33,7 @@
 #include <wx/dir.h>
 #include <wx/ffile.h>
 #include <wx/filename.h>
+#include <wx/log.h>
 #include <wx/tokenzr.h>
 
 #include "http_transfer.h"
@@ -94,6 +95,34 @@ bool ReadWholeFile(const wxString &path, wxString &text)
 	       file.ReadAll(&text, wxConvISO8859_1);
 }
 
+/**
+ * Exchange '.' and '/'.
+ *
+ * RISC OS uses '.' as its directory separator, so a file whose name contains a
+ * dot on another system carries a '/' there instead, and archives swap the two
+ * when they store it. The swap is its own inverse, which is what makes a path
+ * survive the round trip: "Help/HTML/help.css" as stored is
+ * "Help.HTML.help/css" to RISC OS, and back again.
+ *
+ * Treating every dot as a separator, as this first did, turns "help.css" into a
+ * directory called "help" holding a file called "css", and then removal cannot
+ * find what it installed.
+ */
+wxString SwapDotsAndSlashes(const wxString &path)
+{
+	wxString out = path;
+
+	for (size_t i = 0; i < out.length(); i++) {
+		if (out[i] == '.') {
+			out[i] = '/';
+		} else if (out[i] == '/') {
+			out[i] = '.';
+		}
+	}
+
+	return out;
+}
+
 /*
  * A member's path on the host, and the same path as RISC OS names it.
  *
@@ -122,22 +151,38 @@ bool MemberPaths(const UnzipEntry *entry, const wxString &dest_dir,
 	rel.Replace("/", Sep());
 	host_path = dest_dir + Sep() + rel;
 
-	/* The RISC OS form keeps the plain leafname: the ",xxx" is HostFS's way
-	   of carrying a filetype on a host filesystem, not part of the name. */
-	riscos_path = stored;
-	riscos_path.Replace("/", ".");
+	/* The RISC OS form is the stored name with the two separators exchanged;
+	   the ",xxx" is HostFS's way of carrying a filetype on a host filesystem
+	   and is not part of the RISC OS name. */
+	riscos_path = SwapDotsAndSlashes(stored);
 
 	return true;
 }
 
+/*
+ * Our own record of exactly which host files a package wrote.
+ *
+ * Files, the standard manifest, holds RISC OS paths, which is what the format
+ * requires and what makes the database readable by other package tools. But a
+ * RISC OS path does not say what HostFS called the file: the ",xxx" filetype
+ * suffix is added on the way down. Deriving it back by globbing "leaf*" is how
+ * removal came to delete a neighbour that merely shared a prefix.
+ *
+ * So the exact host-relative paths are kept beside it, in a file of our own that
+ * other tools have no reason to read. Removal uses these and unlinks precisely
+ * what was written.
+ */
+const char *const kHostManifest = "HostFiles";
+
 /* Everything a package installed, from the database. */
-std::vector<wxString> ReadManifest(const wxString &hostfs_dir,
-                                   const wxString &package_name)
+std::vector<wxString> ReadManifestFile(const wxString &hostfs_dir,
+                                       const wxString &package_name,
+                                       const wxString &leaf)
 {
 	std::vector<wxString> files;
 	wxString text;
 
-	if (!ReadWholeFile(InfoDir(hostfs_dir, package_name) + Sep() + "Files",
+	if (!ReadWholeFile(InfoDir(hostfs_dir, package_name) + Sep() + leaf,
 	        text)) {
 		return files;
 	}
@@ -154,6 +199,12 @@ std::vector<wxString> ReadManifest(const wxString &hostfs_dir,
 	}
 
 	return files;
+}
+
+std::vector<wxString> ReadManifest(const wxString &hostfs_dir,
+                                   const wxString &package_name)
+{
+	return ReadManifestFile(hostfs_dir, package_name, "Files");
 }
 
 /*
@@ -301,7 +352,8 @@ PackageActionResult PackageInstall(const PackageRecord &record,
 	PackageActionResult result;
 	const wxString temp = wxFileName::CreateTempFileName("rpcemu-pkg");
 	UnzipArchive archive;
-	std::vector<wxString> manifest;
+	std::vector<wxString> manifest;		/* RISC OS paths, the standard form */
+	std::vector<wxString> host_written;	/* exactly what was written */
 	wxString control, copyright;
 
 	if (record.url.empty()) {
@@ -425,6 +477,8 @@ PackageActionResult PackageInstall(const PackageRecord &record,
 		}
 
 		manifest.push_back(riscos_path);
+		/* Relative, so the machine can be moved or renamed later. */
+		host_written.push_back(host_path.Mid(hostfs_dir.length() + 1));
 		result.files++;
 	}
 
@@ -433,23 +487,10 @@ PackageActionResult PackageInstall(const PackageRecord &record,
 
 	if (result.cancelled || !result.message.empty()) {
 		/* Roll back what went down, so a failure part way through does not
-		   leave a package the database does not know about. */
-		for (const auto &path : manifest) {
-			/* Dots are separators in the manifest's RISC OS paths, but the
-			   machine's own directory name may contain one ("RISC OS 5.30"),
-			   so only the relative part is translated. */
-			wxString rel = path;
-
-			rel.Replace(".", Sep());
-
-			const wxString host = hostfs_dir + Sep() + rel;
-			/* The suffix is not in the manifest, so remove by pattern. */
-			wxString found = wxFindFirstFile(host + "*", wxFILE);
-
-			while (!found.empty()) {
-				wxRemoveFile(found);
-				found = wxFindNextFile();
-			}
+		   leave a package the database does not know about. The exact paths
+		   are to hand, so nothing has to be guessed at. */
+		for (const auto &rel : host_written) {
+			wxRemoveFile(hostfs_dir + Sep() + rel);
 		}
 		if (result.message.empty()) {
 			result.message = "The installation was cancelled.";
@@ -473,6 +514,15 @@ PackageActionResult PackageInstall(const PackageRecord &record,
 			files_text += path + "\n";
 		}
 		WriteWholeFile(info + Sep() + "Files", files_text);
+
+		{
+			wxString host_text;
+
+			for (const auto &rel : host_written) {
+				host_text += rel + "\n";
+			}
+			WriteWholeFile(info + Sep() + kHostManifest, host_text);
+		}
 
 		/* Prefer the package's own control record; fall back to the
 		   catalogue's, which is the same information. */
@@ -501,50 +551,155 @@ PackageActionResult PackageRemove(const wxString &package_name,
                                   const wxString &hostfs_dir)
 {
 	PackageActionResult result;
-	const std::vector<wxString> manifest = ReadManifest(hostfs_dir,
-	                                                    package_name);
 	std::map<wxString, wxString> status = ReadStatusLines(hostfs_dir);
+	std::vector<wxString> host_files = ReadManifestFile(hostfs_dir, package_name,
+	                                                    kHostManifest);
+	const std::vector<wxString> riscos_files = ReadManifest(hostfs_dir,
+	                                                        package_name);
+	std::vector<wxString> left_behind;
 
 	if (status.find(package_name) == status.end()) {
 		result.message = wxString::Format(
 		    "%s is not installed on this machine.", package_name);
 		return result;
 	}
-	if (manifest.empty()) {
+
+	/*
+	 * Packages installed before the host manifest existed have only the RISC OS
+	 * one, so derive the host paths from it: swap the separators back, then
+	 * match the leafname exactly or with a HostFS filetype suffix. Deliberately
+	 * not a "leaf*" pattern, which would also match a neighbour whose name
+	 * merely begins the same way.
+	 */
+	if (host_files.empty()) {
+		for (const auto &riscos_path : riscos_files) {
+			const wxString rel = SwapDotsAndSlashes(riscos_path);
+			const wxString host = hostfs_dir + Sep() + rel;
+
+			if (wxFileExists(host)) {
+				host_files.push_back(rel);
+				continue;
+			}
+
+			/* Look for "leaf,xxx" in the file's own directory. */
+			const wxString dir = host.BeforeLast(wxFileName::GetPathSeparator());
+			const wxString leaf = host.AfterLast(wxFileName::GetPathSeparator());
+			bool found = false;
+
+			if (wxDirExists(dir)) {
+				wxDir handle(dir);
+				wxString entry;
+				bool more = handle.GetFirst(&entry, wxEmptyString, wxDIR_FILES);
+
+				while (more) {
+					if (entry.BeforeFirst(',') == leaf) {
+						host_files.push_back(
+						    rel.BeforeLast(wxFileName::GetPathSeparator()) +
+						    Sep() + entry);
+						found = true;
+						break;
+					}
+					more = handle.GetNext(&entry);
+				}
+			}
+
+			if (!found) {
+				left_behind.push_back(riscos_path);
+			}
+		}
+	}
+
+	if (host_files.empty() && riscos_files.empty()) {
 		result.message = wxString::Format(
 		    "The database has no record of what %s installed, so nothing has "
 		    "been deleted. Remove it by hand if you are sure.", package_name);
 		return result;
 	}
 
-	for (const auto &path : manifest) {
-		/* Only the relative part is translated: the machine's directory name
-		   can hold a dot of its own, as "RISC OS 5.30" does. */
-		wxString rel = path;
+	/* wxWidgets logs a message of its own for a file that is not there, which
+	   is not news: whether each one is present is what is being established. */
+	{
+		wxLogNull silence;
 
-		rel.Replace(".", Sep());
+		for (const auto &rel : host_files) {
+			const wxString host = hostfs_dir + Sep() + rel;
 
-		const wxString host = hostfs_dir + Sep() + rel;
-
-		/* Match with the filetype suffix HostFS added, which the manifest
-		   does not carry. */
-		wxString found = wxFindFirstFile(host + "*", wxFILE);
-
-		while (!found.empty()) {
-			if (wxRemoveFile(found)) {
-				result.files++;
+			if (wxFileExists(host)) {
+				if (wxRemoveFile(host)) {
+					result.files++;
+				} else {
+					left_behind.push_back(rel);
+				}
+			} else {
+				left_behind.push_back(rel);
 			}
-			found = wxFindNextFile();
+
+			PruneEmptyDirs(host.BeforeLast(wxFileName::GetPathSeparator()),
+			               hostfs_dir);
+		}
+	}
+
+	/*
+	 * A file that is not there is already in the state removal wants, so missing
+	 * ones are worth mentioning and no more: somebody may have tidied one by
+	 * hand, or an earlier attempt may have got part way, and refusing would
+	 * leave them unable to remove the package at all.
+	 *
+	 * What must not pass is leaving files on the disc while saying they are
+	 * gone, which is how the separator bug behaved. So the test is the direct
+	 * one: are there still files where the missing ones should have been? If so,
+	 * something is wrong with the paths and the database is left alone.
+	 */
+	if (!left_behind.empty()) {
+		wxLogNull silence;
+		wxString witness;
+
+		for (const auto &rel : left_behind) {
+			const wxString dir = (hostfs_dir + Sep() + rel).BeforeLast(
+			    wxFileName::GetPathSeparator());
+
+			if (!wxDirExists(dir)) {
+				continue;	/* pruned: genuinely gone */
+			}
+
+			wxDir handle(dir);
+			wxString entry;
+
+			if (handle.IsOpened() &&
+			    handle.GetFirst(&entry, wxEmptyString, wxDIR_FILES)) {
+				witness = dir.Mid(hostfs_dir.length());
+				witness.Trim(false);
+				while (!witness.empty() &&
+				       witness[0] == wxFileName::GetPathSeparator()) {
+					witness = witness.Mid(1);
+				}
+				witness = witness.empty() ? entry
+				                          : witness + Sep() + entry;
+				break;
+			}
 		}
 
-		PruneEmptyDirs(host.BeforeLast(wxFileName::GetPathSeparator()),
-		               hostfs_dir);
+		if (!witness.empty()) {
+			result.message = wxString::Format(
+			    "%d of %s's files were deleted, but %d could not be found while "
+			    "files remain on the disc where they should be, such as %s. "
+			    "Nothing more has been changed and it is still recorded as "
+			    "installed.", result.files, package_name,
+			    static_cast<int>(left_behind.size()), witness);
+			rpclog("packages: %s: %d recorded file(s) not found, disc not "
+			       "clear (%s)\n",
+			       static_cast<const char *>(package_name.utf8_str()),
+			       static_cast<int>(left_behind.size()),
+			       static_cast<const char *>(witness.utf8_str()));
+			return result;
+		}
 	}
 
 	{
 		const wxString info = InfoDir(hostfs_dir, package_name);
 
-		for (const char *leaf : { "Files", "Control", "Copyright" }) {
+		for (const char *leaf : { "Files", kHostManifest, "Control",
+		                          "Copyright" }) {
 			const wxString path = info + Sep() + leaf;
 
 			if (wxFileExists(path)) {
@@ -562,6 +717,11 @@ PackageActionResult PackageRemove(const wxString &package_name,
 	rpclog("packages: removed %s (%d file(s))\n",
 	       static_cast<const char *>(package_name.utf8_str()), result.files);
 	result.ok = true;
+	if (!left_behind.empty()) {
+		result.message = wxString::Format(
+		    "%s has been removed. %d of its files were already gone.",
+		    package_name, static_cast<int>(left_behind.size()));
+	}
 
 	return result;
 }
