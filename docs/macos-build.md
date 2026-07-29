@@ -66,11 +66,13 @@ worth the effort for the unverified path); the native/CI build keeps them.
 
 - The release is an **ad-hoc signed `RPCEmu.app`** in a `.dmg`, but it is **not
   notarised** — notarisation needs a paid Apple Developer ID, which the project
-  does not have. Gatekeeper therefore warns on first launch and the user must
-  right-click > Open once (documented in the README). Assembly, signing and the
-  DMG all happen in `build-macos.sh`; wire in `notarytool` + `stapler` there and
-  in the `macos-universal` CI job (behind repository secrets) if a Developer ID
-  becomes available.
+  does not have. Gatekeeper therefore refuses the first launch, and how the user
+  gets past it depends on the release: Control-click > Open up to Sonoma, and
+  System Settings > Privacy & Security > Open Anyway on Sequoia and Tahoe, where
+  the Control-click route was removed. Both are documented in the README.
+  Assembly, signing and the DMG all happen in `build-macos.sh`; wire in
+  `notarytool` + `stapler` there and in the `macos-universal` CI job (behind
+  repository secrets) if a Developer ID becomes available.
 - The `.icns` icon is generated from `resources/rpcemu.png`, which is only
   256×256; the 512/1024 icon variants are upscaled. Supply a 1024×1024 master for
   crisp Retina rendering.

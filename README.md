@@ -155,14 +155,38 @@ else to install. Windows 10/11 (x64). Built with MinGW-w64 via MSYS2 — see
 a universal app (Intel and Apple Silicon); on Apple Silicon the Intel slice runs at full
 speed under Rosetta 2.
 
-The app is ad-hoc signed but not notarised by Apple, so the first launch is blocked with
-"RPCEmu cannot be opened because the developer cannot be verified". To open it the first
-time only: **right-click (or Control-click) the app, choose Open, then Open again** in the
-dialog. macOS remembers the choice and launches it normally thereafter. (On Sequoia and
-later, if Open is not offered, go to **System Settings > Privacy & Security** and click
-**Open Anyway**.) Nothing needs to be installed alongside it. As on Linux, machines,
-configs, ROMs, HostFS and logs are written to a visible **`~/RPCEmu/`** folder, never
-inside the app bundle, so the app stays read-only in Applications.
+Nothing needs to be installed alongside it. As on Linux, machines, configs, ROMs, HostFS
+and logs are written to a visible **`~/RPCEmu/`** folder, never inside the app bundle, so
+the app stays read-only in Applications.
+
+#### First launch is blocked — how to open it
+
+RPCEmu is not notarised by Apple, so the first launch is refused with *"RPCEmu cannot be
+opened because the developer cannot be verified"* or *"Apple could not verify RPCEmu is
+free of malware"*. This only has to be dealt with once — afterwards it opens by
+double-clicking like anything else.
+
+**macOS 15 Sequoia and macOS 26 Tahoe.** Control-clicking no longer offers a way past
+this. Try to open the app and dismiss the message, then go to **System Settings >
+Privacy & Security**, scroll to **Security**, and click **Open Anyway** beside the note
+about RPCEmu. Confirm with **Open**, authenticating if asked. The button only appears for
+about an hour after the blocked launch, so if it is not there, try opening the app again
+first.
+
+**macOS 14 Sonoma and earlier.** **Control-click (or right-click) the app, choose Open,
+then Open again** in the dialog. If Open is not offered, use **System Settings** (or
+**System Preferences**) **> Privacy & Security**, or **Security & Privacy > General** on
+older releases, and click **Open Anyway**.
+
+**If neither works**, macOS has quarantined the download more firmly than the dialogs can
+clear. Remove the flag from Terminal, which works on every version:
+
+```bash
+xattr -d com.apple.quarantine /Applications/RPCEmu.app
+```
+
+Then open the app normally. There is no need to change the "Allow applications from"
+setting to do any of this.
 
 ### Install the `.deb`
 
@@ -228,8 +252,9 @@ slice, then fuse and package:
 The app bundle keeps its read-only payload in `Contents/Resources` and seeds writable data
 into `~/RPCEmu` on first run. The `.icns` icon is built from `resources/rpcemu.png` with
 `iconutil`, and the app is ad-hoc signed (Apple Silicon will not run an unsigned binary);
-without an Apple Developer ID it is not notarised, so first launch needs a right-click >
-Open. On a single machine each slice is built for its own architecture (the other builds
+without an Apple Developer ID it is not notarised, so the first launch has to be allowed
+past Gatekeeper (see [First launch is blocked](#first-launch-is-blocked-how-to-open-it)).
+On a single machine each slice is built for its own architecture (the other builds
 under Rosetta); the `macos-x86_64`, `macos-arm64`, and `macos-universal` CI jobs do exactly
 this and fuse the result.
 
