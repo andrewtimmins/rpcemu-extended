@@ -89,6 +89,7 @@ static bool g_fetch_disc = true;
 static bool g_fetch_accept_licence = false;
 static bool g_pkg_list = false;
 static const char *g_pkg_filter = NULL;
+static const char *g_pkg_info = NULL;
 
 #ifdef __WXMSW__
 /*
@@ -246,6 +247,32 @@ public:
 		if (!result.ok) {
 			ConsoleMessage(true, "error: %s\n",
 			               static_cast<const char *>(result.message.utf8_str()));
+			ConsoleMessageFlush();
+			return 1;
+		}
+
+		/* One package in full, which is also how the resolved download URL
+		   can be seen: the indexes do not all give absolute ones. */
+		if (g_pkg_info != NULL) {
+			const wxString wanted = wxString::FromUTF8(g_pkg_info).Lower();
+
+			for (const auto &pkg : packages) {
+				if (pkg.name.Lower() != wanted) {
+					continue;
+				}
+				for (const auto &field : pkg.fields) {
+					ConsoleMessage(false, "%-16s %s\n",
+					    static_cast<const char *>(field.first.utf8_str()),
+					    static_cast<const char *>(field.second.utf8_str()));
+				}
+				ConsoleMessage(false, "%-16s %s\n", "(download)",
+				    static_cast<const char *>(pkg.url.utf8_str()));
+				ConsoleMessage(false, "%-16s %s\n", "(runs here)",
+				    pkg.RunsHere() ? "yes" : "no, built for another ARM");
+				ConsoleMessageFlush();
+				return 0;
+			}
+			ConsoleMessage(true, "error: no package called '%s'.\n", g_pkg_info);
 			ConsoleMessageFlush();
 			return 1;
 		}
@@ -602,6 +629,9 @@ int main(int argc, char **argv)
 				ConsoleMessageFlush();
 				return 2;
 			}
+		} else if (strncmp(arg, "--pkg-info=", 11) == 0) {
+			g_pkg_list = true;
+			g_pkg_info = arg + 11;
 		} else if (strcmp(arg, "--pkg-list") == 0) {
 			g_pkg_list = true;
 		} else if (strncmp(arg, "--pkg-list=", 11) == 0) {

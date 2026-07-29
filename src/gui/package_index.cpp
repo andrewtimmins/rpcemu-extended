@@ -105,6 +105,41 @@ int CompareVersions(const wxString &a, const wxString &b)
 	return 0;
 }
 
+/**
+ * Make a package's URL absolute.
+ *
+ * ROOL's indexes give absolute URLs, but riscoscommunity.org gives paths
+ * beginning with a slash, and the format allows either. A leading slash is
+ * resolved against the index's host, anything else against the directory the
+ * index sits in.
+ */
+wxString ResolveUrl(const wxString &url, const wxString &index_url)
+{
+	if (url.empty() || url.Contains("://")) {
+		return url;
+	}
+
+	/* Split the index URL into scheme+host and path. */
+	const int scheme_end = index_url.Find("://");
+
+	if (scheme_end == wxNOT_FOUND) {
+		return url;
+	}
+
+	const int host_start = scheme_end + 3;
+	const int slash = index_url.find('/', host_start);
+	const wxString root = (slash == static_cast<int>(wxString::npos))
+	    ? index_url : index_url.Left(slash);
+
+	if (url[0] == '/') {
+		return root + url;
+	}
+
+	const wxString dir = index_url.BeforeLast('/');
+
+	return (dir.empty() ? root : dir) + "/" + url;
+}
+
 }  /* namespace */
 
 wxString PackageRecord::Field(const wxString &field_name) const
@@ -136,10 +171,17 @@ std::vector<PackageSource> PackageIndexSources()
 		{ "thirdparty",
 		  "http://packages.riscosopen.org/packages/pkg/thirdparty",
 		  "Programs and libraries from other authors, for any ARM machine" },
+		/* The RISC OS Community's own repository. Small, but it is where
+		   some newer work appears first. Only the released index: there is
+		   a testing one beside it, which is unstable by design. */
+		{ "community",
+		  "https://riscoscommunity.org/packages/rpkg/arm32/released",
+		  "Released packages from the RISC OS Community repository" },
 	};
 }
 
 int PackageIndexParse(const wxString &text, const wxString &source_name,
+                      const wxString &index_url,
                       std::vector<PackageRecord> &out)
 {
 	PackageRecord record;
@@ -217,7 +259,7 @@ int PackageIndexParse(const wxString &text, const wxString &source_name,
 		} else if (name == "description") {
 			record.description = value;
 		} else if (name == "url") {
-			record.url = value;
+			record.url = ResolveUrl(value, index_url);
 		} else if (name == "md5sum") {
 			record.md5 = value;
 		} else if (name == "environment") {
@@ -293,7 +335,7 @@ bool PackageIndexLoadCached(std::vector<PackageRecord> &out)
 		wxString text;
 
 		if (file.ReadAll(&text, wxConvISO8859_1)) {
-			PackageIndexParse(text, source.name, out);
+			PackageIndexParse(text, source.name, source.url, out);
 			any = true;
 		}
 	}
@@ -367,7 +409,8 @@ PackageIndexResult PackageIndexRefresh(std::vector<PackageRecord> &out,
 			continue;
 		}
 
-		const int read = PackageIndexParse(transfer.Body(), source.name, out);
+		const int read = PackageIndexParse(transfer.Body(), source.name,
+		                                   source.url, out);
 
 		result.sources_read++;
 		rpclog("packages: %s holds %d package(s)\n",

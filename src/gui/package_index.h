@@ -56,7 +56,7 @@ struct PackageRecord {
 	wxString section;		/* Section, e.g. "Graphics" */
 	wxString description;		/* Description, first line */
 	wxString description_long;	/* Description, continuation lines */
-	wxString url;			/* URL of the zip */
+	wxString url;			/* URL of the zip, made absolute */
 	wxString md5;			/* MD5Sum of the zip */
 	wxString environment;		/* Environment: any, arm, arm32 */
 	wxString licence;		/* Licence */
@@ -107,6 +107,7 @@ std::vector<PackageSource> PackageIndexSources();
  * and one bad record should not cost the user the catalogue.
  */
 int PackageIndexParse(const wxString &text, const wxString &source_name,
+                      const wxString &index_url,
                       std::vector<PackageRecord> &out);
 
 /** Outcome of refreshing the catalogue. */

@@ -293,6 +293,8 @@ void HeadlessPrintUsage(const char *argv0)
 	    "  --pkg-list[=text]     List the RISC OS packages available from RISC OS\n"
 	    "                        Open, optionally only those matching <text> in\n"
 	    "                        their name, section or description, and exit.\n"
+	    "  --pkg-info=<name>     Show everything the catalogue says about one\n"
+	    "                        package, and exit.\n"
 	    "  --accept-licence      Required by --fetch-riscos: confirms you accept the\n"
 	    "                        licensing terms of what is downloaded, which are\n"
 	    "                        printed before the transfer starts. The graphical\n"
