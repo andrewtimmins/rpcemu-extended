@@ -18,6 +18,7 @@ set(GUI_SOURCES
     new_machine_dialog.cpp
     guest_command.cpp
     package_dialog.cpp
+    usb_dialog.cpp
     package_index.cpp
     package_install.cpp
     riscos_fetch.cpp

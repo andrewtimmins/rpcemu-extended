@@ -49,6 +49,7 @@
 #include "nat_list_dialog.h"
 #include "guest_command.h"
 #include "package_dialog.h"
+#include "usb_dialog.h"
 #include "parallel_dialog.h"
 #include "serial_dialog.h"
 #include "toolbar_icons.h"
@@ -1275,6 +1276,13 @@ void MainFrame::OnVnc(wxCommandEvent &)
 void MainFrame::OnPackages(wxCommandEvent &)
 {
 	PackageDialog dialog(this);
+
+	dialog.ShowModal();
+}
+
+void MainFrame::OnUsb(wxCommandEvent &)
+{
+	UsbDialog dialog(this);
 
 	dialog.ShowModal();
 }

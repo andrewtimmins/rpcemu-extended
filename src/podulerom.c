@@ -32,6 +32,7 @@
 #include "rpcemu.h"
 #include "podules.h"
 #include "podulerom.h"
+#include "usb_isp1161.h"
 
 #define MAXROMS 16
 static char romfns[MAXROMS + 1][256];
@@ -129,6 +130,80 @@ podulerom_read8(podule *p, PoduleIoType io_type, uint32_t addr)
 }
 
 /**
+ * Follow the USB controller's interrupt line.
+ *
+ * The controller shares this card's single interrupt, which the podule manager
+ * has already told the guest how to read: byte 0 of our IOC space, bit 0. So
+ * there is nothing to arbitrate, only a line to move.
+ */
+static void
+podulerom_usb_irq_change(int level)
+{
+	if (self == NULL) {
+		return;
+	}
+
+	if (level) {
+		podule_irq_raise(self);
+	} else {
+		podule_irq_lower(self);
+	}
+}
+
+/** True if this EASI address is inside the USB controller's window. */
+static int
+podulerom_is_usb_window(PoduleIoType io_type, uint32_t addr)
+{
+	const uint32_t offset = addr & 0x00ffffff;
+
+	return io_type == PODULE_IO_TYPE_EASI &&
+	       usb_isp1161_enabled() &&
+	       offset >= USB_ISP1161_EASI_OFFSET &&
+	       offset < USB_ISP1161_EASI_OFFSET + USB_ISP1161_EASI_SIZE;
+}
+
+/**
+ * Podule word read function for podulerom.
+ *
+ * The USB controller's ports are words, so they arrive here rather than through
+ * the byte handler the module ROM uses.
+ *
+ * @param p       podule pointer (unused)
+ * @param io_type Read from IOC, MEMC or EASI space
+ * @param addr    Address of word to read
+ * @return Contents of word
+ */
+static uint32_t
+podulerom_read32(podule *p, PoduleIoType io_type, uint32_t addr)
+{
+	NOT_USED(p);
+
+	if (podulerom_is_usb_window(io_type, addr)) {
+		return usb_isp1161_read((addr & 0x00ffffff) - USB_ISP1161_EASI_OFFSET);
+	}
+
+	return 0xffffffff;
+}
+
+/**
+ * Podule word write function for podulerom.
+ *
+ * @param p       podule pointer (unused)
+ * @param io_type Write to IOC, MEMC or EASI space
+ * @param addr    Address of word to write
+ * @param val     Value to write
+ */
+static void
+podulerom_write32(podule *p, PoduleIoType io_type, uint32_t addr, uint32_t val)
+{
+	NOT_USED(p);
+
+	if (podulerom_is_usb_window(io_type, addr)) {
+		usb_isp1161_write((addr & 0x00ffffff) - USB_ISP1161_EASI_OFFSET, val);
+	}
+}
+
+/**
  * Add the ROM Podule to the list of active podules.
  *
  * Called on emulated machine reset
@@ -136,12 +211,16 @@ podulerom_read8(podule *p, PoduleIoType io_type, uint32_t addr)
 void
 podulerom_reset(void)
 {
-	self = addpodule(NULL, NULL, podulerom_write8,
-	                 NULL, NULL, podulerom_read8,
+	self = addpodule(podulerom_write32, NULL, podulerom_write8,
+	                 podulerom_read32, NULL, podulerom_read8,
 	                 NULL, NULL);
 
 	enable = 0;
 	memset(message, 0, sizeof(message));
+
+	/* The USB controller lives in this card's EASI space, above the module
+	   ROM. It is part of the card, so it comes and goes with it. */
+	usb_isp1161_init(podulerom_usb_irq_change);
 }
 
 /**

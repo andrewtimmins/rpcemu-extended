@@ -338,6 +338,64 @@ static void config_replace_strdup(char **field, const wxString &value)
 	}
 }
 
+/*
+ * A USB port's setting, as it is written in a machine's configuration.
+ *
+ * It is a word rather than a number because a port can hold a real device from
+ * the host, and that needs saying which one: "host:046d:c077". A device is
+ * remembered by what it says it is rather than by where it is plugged in, so
+ * moving it to another socket does not lose it.
+ *
+ * The numbers earlier builds wrote are still understood, so a machine set up
+ * before this existed comes back with the same thing plugged in.
+ */
+static void ParseUsbPort(const wxString &text, int *kind, char *host_id,
+                         size_t host_id_size)
+{
+	const wxString value = text.Strip(wxString::both).Lower();
+
+	*kind = UsbAttachment_None;
+	host_id[0] = '\0';
+
+	if (value.empty() || value == "0" || value == "none") {
+		return;
+	}
+
+	/* The synthesised gamepad that used to be offered here is gone, along with
+	   the reason for it. A machine that still names it comes up with that port
+	   empty rather than refusing to load. */
+	if (value == "1" || value == "gamepad") {
+		return;
+	}
+
+	if (value.StartsWith("host:")) {
+		const wxString id = value.Mid(5);
+		unsigned vendor, product;
+
+		/* Only accept an identifier that can actually name a device, so a
+		   damaged line leaves the port empty rather than half-configured. */
+		if (sscanf(id.utf8_str().data(), "%4x:%4x", &vendor, &product) == 2) {
+			*kind = UsbAttachment_Host;
+			snprintf(host_id, host_id_size, "%04x:%04x", vendor & 0xffff,
+			    product & 0xffff);
+		}
+	}
+}
+
+static wxString FormatUsbPort(int kind, const char *host_id)
+{
+	switch (kind) {
+	case UsbAttachment_Host:
+		if (host_id != nullptr && host_id[0] != '\0') {
+			return wxString::Format("host:%s", host_id);
+		}
+		return "none";
+
+	default:
+		return "none";
+	}
+}
+
 static void config_free_heap_strings(Config *cfg)
 {
 	free(cfg->username);
@@ -598,6 +656,14 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	cfg->gfxcard_enabled = static_cast<int>(value);
 	settings.Read("gfxcard_boot_display", &value, 0L);
 	cfg->gfxcard_boot_display = static_cast<int>(value);
+	/* USB ports. Nothing is plugged in unless the machine says so, since a
+	   device appearing on its own would be a surprise to the guest. */
+	for (int port = 0; port < 2; port++) {
+		settings.Read(wxString::Format("usb_port%d", port + 1), &sText,
+		    wxEmptyString);
+		ParseUsbPort(sText, &cfg->usb_port[port], cfg->usb_host[port],
+		    sizeof(cfg->usb_host[port]));
+	}
 	settings.Read("start_fullscreen", &value, 0L);
 	cfg->start_fullscreen = static_cast<int>(value);
 	settings.Read("suspend_on_exit", &value, 0L);
@@ -693,6 +759,10 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	settings.Write("follow_host_display", static_cast<long>(cfg->follow_host_display));
 	settings.Write("gfxcard_enabled", static_cast<long>(cfg->gfxcard_enabled));
 	settings.Write("gfxcard_boot_display", static_cast<long>(cfg->gfxcard_boot_display));
+	for (int port = 0; port < 2; port++) {
+		settings.Write(wxString::Format("usb_port%d", port + 1),
+		    FormatUsbPort(cfg->usb_port[port], cfg->usb_host[port]));
+	}
 	settings.Write("start_fullscreen", static_cast<long>(cfg->start_fullscreen));
 	settings.Write("suspend_on_exit", static_cast<long>(cfg->suspend_on_exit));
 	settings.Write("vnc_enabled", static_cast<long>(cfg->vnc_enabled));

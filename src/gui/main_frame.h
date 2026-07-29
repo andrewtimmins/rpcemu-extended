@@ -98,6 +98,7 @@ enum MainFrameMenuId {
 	ID_MENU_VNC,
 	ID_MENU_SERIAL,
 	ID_MENU_PACKAGES,
+	ID_MENU_USB,
 	ID_MENU_PARALLEL,
 	ID_MENU_CPU_IDLE,
 	ID_MENU_MOUSE_HACK,
@@ -225,6 +226,7 @@ private:
 	void OnVnc(wxCommandEvent &event);
 #endif
 	void OnPackages(wxCommandEvent &event);
+	void OnUsb(wxCommandEvent &event);
 	void OnSerial(wxCommandEvent &event);
 	void OnParallel(wxCommandEvent &event);
 

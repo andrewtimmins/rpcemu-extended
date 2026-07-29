@@ -56,6 +56,7 @@
 #include "podulerom.h"
 #include "gfxcard.h"
 #include "hostclipboard.h"
+#include "usb_isp1161.h"
 #include "podules.h"
 #include "fdc.h"
 #include "hostfs.h"
@@ -219,6 +220,9 @@ Config config = {
 	0,			/* fit_to_window */
 	0,			/* follow_host_display (OFF: it reflows the guest desktop) */
 	0,			/* gfxcard_enabled (OFF: needs its guest driver) */
+	{ UsbAttachment_None,	/* usb_port: nothing plugged into either USB port */
+	  UsbAttachment_None },
+	{ "", "" },		/* usb_host: no host device named for either port */
 	0,			/* gfxcard_boot_display (OFF: the card is taken up on request) */
 	NULL,			/* network_capture */
 	0,			/* vnc_enabled */
@@ -1221,6 +1225,9 @@ endrpcemu(void)
 {
         hostcmd_close();
         debugcmd_close();
+        /* Before anything else: a device passed through from the host is only
+           borrowed, and this is what hands it back. */
+        usb_isp1161_shutdown();
         sound_thread_close();
         closevideo();
         iomd_end();

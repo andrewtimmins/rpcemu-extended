@@ -71,6 +71,7 @@ enum class EmuCommandType {
 	SwitchMachine,
 	GuestCommand,
 	GuestCommandAbandon,
+	UsbApplyConfig,
 	Restart,
 	NatRuleAdd,
 	NatRuleEdit,
@@ -157,6 +158,15 @@ public:
 	 * hold the channel against every later command.
 	 */
 	void AbandonGuestCommand();
+
+	/**
+	 * Make the emulated USB ports match config.usb_port[].
+	 *
+	 * Goes through the queue rather than being called directly, because the
+	 * controller belongs to the emulator thread: plugging something in while
+	 * that thread is part way through a transfer would be a race.
+	 */
+	void ApplyUsbConfig();
 
 	void KeyPress(unsigned scan_code);
 	void KeyRelease(unsigned scan_code);

@@ -323,6 +323,19 @@ build_podules() {
 			cp -f syncclock,ffa "$SCRIPT_DIR/poduleroms/"
 		)
 	fi
+	# RPCEmuUSBSupport is the harness for the emulated USB host controller. Nothing
+	# in a stock guest touches that card, there being no USB stack in the IOMD ROM,
+	# so this module is how the emulation is exercised. See docs/usb.md.
+	local usb_dir="riscos-progs/RPCEmuUSBSupport"
+	if [ -d "$usb_dir" ]; then
+		echo "Building RPCEmuUSBSupport podule ROM..."
+		(
+			cd "$usb_dir"
+			make clean
+			make AS=arm-linux-gnueabi-as LD=arm-linux-gnueabi-ld OBJCOPY=arm-linux-gnueabi-objcopy
+			cp -f rpcemuusbsupport,ffa "$SCRIPT_DIR/poduleroms/"
+		)
+	fi
 	echo "✓ Podule ROMs copied to poduleroms/"
 
 	# The graphics card's display driver goes in gfxroms/, NOT poduleroms/: it

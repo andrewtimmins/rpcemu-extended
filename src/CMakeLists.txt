@@ -45,6 +45,8 @@ set(RPCEMU_CORE_SOURCES
     podules/am7202a.c
     podules/common/sound_out_sdl2.c
     podulerom.c
+    usb_isp1161.c
+    usb_host.c
     icside.c
     rpc.c
     rpc-machdep.c
@@ -175,6 +177,23 @@ else()
         podules/common/midi_stub.c
         podules/common/sound_in_null.c)
     message(STATUS "Podule MIDI + sound-in backend: stub (no ALSA)")
+endif()
+
+# USB passthrough (usb_host.c) needs libusb, which is optional. Without it the
+# emulated controller is still there and a driver can still be developed against
+# its registers, but there is nothing to plug into it, and the USB dialogue says
+# so rather than offering an empty list.
+if(PkgConfig_FOUND)
+    pkg_check_modules(LIBUSB libusb-1.0)
+endif()
+if(LIBUSB_FOUND)
+    target_include_directories(rpcemu_core PRIVATE ${LIBUSB_INCLUDE_DIRS})
+    target_link_libraries(rpcemu_core PUBLIC ${LIBUSB_LIBRARIES})
+    target_link_directories(rpcemu_core PUBLIC ${LIBUSB_LIBRARY_DIRS})
+    target_compile_definitions(rpcemu_core PRIVATE RPCEMU_HAVE_LIBUSB)
+    message(STATUS "USB passthrough: libusb ${LIBUSB_VERSION}")
+else()
+    message(STATUS "USB passthrough: not available (no libusb-1.0)")
 endif()
 
 # Expose the JIT test hooks (codegen_test_compile/_interp) for the differential

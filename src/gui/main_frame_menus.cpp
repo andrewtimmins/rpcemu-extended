@@ -172,6 +172,8 @@ void MainFrame::BuildMenus()
 #endif
 	settings_menu->Append(ID_MENU_SERIAL, "Serial...");
 	settings_menu->Append(ID_MENU_PARALLEL, "Parallel...");
+	settings_menu->Append(ID_MENU_USB, "USB...")
+	    ->SetHelp("Choose what is plugged into the emulated USB ports.");
 	settings_menu->AppendSeparator();
 
 	mute_menu_item_ = settings_menu->AppendCheckItem(ID_MENU_MUTE, "Mute Sound");
@@ -286,6 +288,7 @@ void MainFrame::BuildMenus()
 	BindMenuItem(settings_menu, ID_MENU_VNC, this, &MainFrame::OnVnc);
 #endif
 	BindMenuItem(settings_menu, ID_MENU_SERIAL, this, &MainFrame::OnSerial);
+	BindMenuItem(settings_menu, ID_MENU_USB, this, &MainFrame::OnUsb);
 	BindMenuItem(tools_menu, ID_MENU_PACKAGES, this, &MainFrame::OnPackages);
 	BindMenuItem(settings_menu, ID_MENU_PARALLEL, this, &MainFrame::OnParallel);
 #ifdef RPCEMU_NETWORKING

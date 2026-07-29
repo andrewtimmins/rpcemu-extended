@@ -43,6 +43,7 @@ extern "C" {
 #include "cmos.h"
 #include "debugcmd.h"
 #include "hostcmd.h"
+#include "usb_isp1161.h"
 #include "hostfs.h"
 #include "ide.h"
 #include "keyboard.h"
@@ -780,6 +781,10 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 		hostcmd_internal_abandon();
 		break;
 
+	case EmuCommandType::UsbApplyConfig:
+		usb_isp1161_apply_config();
+		break;
+
 	case EmuCommandType::Restart: {
 		rpclog("RPCEmu: Restarting machine\n");
 
@@ -1140,6 +1145,14 @@ void EmulatorHost::AbandonGuestCommand()
 	EmuCommand cmd;
 
 	cmd.type = EmuCommandType::GuestCommandAbandon;
+	PostCommand(cmd);
+}
+
+void EmulatorHost::ApplyUsbConfig()
+{
+	EmuCommand cmd;
+
+	cmd.type = EmuCommandType::UsbApplyConfig;
 	PostCommand(cmd);
 }
 
