@@ -577,6 +577,19 @@ void EmulatorHost::Reset()
 	PostCommand(cmd);
 }
 
+void EmulatorResetForSignal(EmulatorHost *emulator)
+{
+	/* The menu asks before resetting, which a signal cannot do; past that this
+	   is the same reset. */
+	if (emulator == nullptr || !emulator->IsRunning()) {
+		rpclog("RPCEmu: SIGUSR1 received, but no machine is running\n");
+		return;
+	}
+
+	rpclog("RPCEmu: SIGUSR1 received, resetting the machine\n");
+	emulator->Reset();
+}
+
 void EmulatorHost::ReloadIdeImages()
 {
 	EmuCommand cmd;

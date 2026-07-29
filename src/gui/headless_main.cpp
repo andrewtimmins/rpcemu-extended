@@ -56,16 +56,31 @@ extern "C" {
 namespace {
 
 /*
- * Set from a signal handler to request an orderly shutdown. The handler only
- * touches a sig_atomic_t (async-signal-safe); the actual teardown, which is not
- * async-safe, runs back on the main thread once it observes the flag.
+ * Set from a signal handler to request an orderly shutdown, and holding which
+ * signal asked, so the log can name it. The handler only touches a
+ * sig_atomic_t (async-signal-safe); the actual teardown, which is not
+ * async-safe, runs back on the main thread once it observes this.
  */
 volatile sig_atomic_t g_headless_stop = 0;
 
-void HeadlessSignalHandler(int /*signum*/)
+/*
+ * Counts resets asked for rather than flagging one, so two signals arriving
+ * close together are two resets and not one. The loop below subtracts what it
+ * has dealt with.
+ */
+volatile sig_atomic_t g_headless_reset = 0;
+
+void HeadlessSignalHandler(int signum)
 {
-	g_headless_stop = 1;
+	g_headless_stop = signum;
 }
+
+#ifndef _WIN32
+void HeadlessResetSignalHandler(int /*signum*/)
+{
+	g_headless_reset++;
+}
+#endif
 
 bool DirExists(const std::string &path)
 {
@@ -449,6 +464,12 @@ int RunHeadless(const char *machine_name, bool resume, const char *state_file)
 	/* Handle Ctrl-C / SIGTERM so CMOS, disc images and config are saved on exit. */
 	std::signal(SIGINT, HeadlessSignalHandler);
 	std::signal(SIGTERM, HeadlessSignalHandler);
+#ifndef _WIN32
+	/* SIGUSR1 is POSIX rather than ISO C and does not exist on Windows. Little
+	   is lost there: the emulator is linked as a GUI-subsystem binary, so it
+	   has no console attached and nothing arrives to be handled anyway. */
+	std::signal(SIGUSR1, HeadlessResetSignalHandler);
+#endif
 
 	rpcemu_start();
 
@@ -485,10 +506,31 @@ int RunHeadless(const char *machine_name, bool resume, const char *state_file)
 	   (which sets `quited`). The blocking teardown runs here, off the handler. */
 	while (g_headless_stop == 0 && quited == 0) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+		/* SIGUSR1 resets the machine rather than ending it, so it is handled
+		   here and the loop carries on. The count is taken down by what is
+		   about to be done, so a signal arriving in the meantime is not
+		   lost. */
+		const sig_atomic_t resets = g_headless_reset;
+
+		if (resets != 0) {
+			g_headless_reset -= resets;
+			EmulatorResetForSignal(emulator.get());
+		}
 	}
 
 	printf("\nRPCEmu headless: shutting down...\n");
 	fflush(stdout);
+
+	/* The console message goes to whoever is watching; this one is for whoever
+	   reads the log afterwards and needs to tell an exit that was asked for
+	   from one that was not. */
+	if (g_headless_stop != 0) {
+		rpclog("RPCEmu: %s received, shutting down\n",
+		       g_headless_stop == SIGINT ? "SIGINT" : "SIGTERM");
+	} else {
+		rpclog("RPCEmu: machine powered off, shutting down\n");
+	}
 
 	emulator->RequestExit();
 	emulator->Stop();

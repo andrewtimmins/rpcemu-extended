@@ -1779,6 +1779,7 @@ void MainFrame::OnClose(wxCloseEvent &event)
 	// cases, so attempting it would block forever, and its state is not worth
 	// saving.
 	if (emulator_ && emulator_->IsRunning() && !fatal_occurred_ &&
+	    !closing_for_signal_ &&
 	    (config.suspend_on_exit || suspend_on_exit_requested_)) {
 		const wxString snapshot = ConfigPathsSnapshotForConfig(
 		    ConfigPathsAbsoluteConfigPath(wxString::FromUTF8(config_get_path())));
@@ -1790,6 +1791,28 @@ void MainFrame::OnClose(wxCloseEvent &event)
 	ShutdownEmulator();
 	shutting_down_ = true;
 	Destroy();
+}
+
+void MainFrame::CloseForSignal()
+{
+	if (shutting_down_) {
+		return;
+	}
+
+	closing_for_signal_ = true;
+
+	/* Close() rather than Destroy(), so the machine is taken down by the same
+	   OnClose() the window's own close button uses - the snapshot being the
+	   only part it skips. Forced, because a signal is not a request the window
+	   may decline. */
+	Close(true);
+}
+
+void MainFrame::ResetForSignal()
+{
+	/* Nothing to reset once the window is on its way out, whatever the
+	   emulator still looks like. */
+	EmulatorResetForSignal(shutting_down_ ? nullptr : emulator_.get());
 }
 
 void MainFrame::ShutdownEmulator()
