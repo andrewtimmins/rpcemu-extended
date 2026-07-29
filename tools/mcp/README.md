@@ -79,8 +79,12 @@ CPU (directly, or via a breakpoint/watchpoint hit) freezes the whole machine
 - The MCP Python SDK: `pip install -r requirements.txt` (installs `mcp[cli]`).
 - A running RPCEmu machine with **HostCmd enabled** (on by default) and, for the
   screen/input tools, the **VNC server enabled** (`vnc_enabled=1` in the
-  machine's `.cfg`). Headless mode already requires VNC, so a `--headless`
-  machine works out of the box.
+  machine's `.cfg`). A `--headless` machine works out of the box: headless
+  implies VNC and starts the server whatever that setting says.
+- The screen/input tools only speak **passwordless VNC**, so leave `vnc_password`
+  empty on a machine you drive from here. Set `RPCEMU_VNC_PORT` to match the
+  machine's `vnc_port` when it is not the 5900 default — each machine needs its
+  own port, so this matters as soon as you run more than one.
 
 ## Configuration (environment variables)
 

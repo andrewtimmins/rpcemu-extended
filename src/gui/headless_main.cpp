@@ -294,9 +294,11 @@ void HeadlessPrintUsage(const char *argv0)
 	    "                        The file is left in place. Requires --machine, and\n"
 	    "                        cannot be combined with --resume.\n"
 	    "  --headless            Run a machine without the GUI window; access it\n"
-	    "                        over the built-in VNC server. Requires --machine\n"
-	    "                        and a machine config with VNC enabled. Needs no\n"
-	    "                        display or desktop session on any platform.\n"
+	    "                        over the built-in VNC server, which is started for\n"
+	    "                        the session even if the machine has VNC disabled\n"
+	    "                        (its configuration is left unchanged). Requires\n"
+	    "                        --machine. Needs no display or desktop session on\n"
+	    "                        any platform.\n"
 	    "  --list-machines       List available machine configs and exit.\n"
 	    "  --fetch-riscos[=which]\n"
 	    "                        Download RISC OS from RISC OS Open, unpack it and\n"
@@ -434,15 +436,14 @@ int RunHeadless(const char *machine_name, bool resume, const char *state_file)
 		state_to_load = state_file;
 	}
 
-	/* The whole point of headless mode is VNC access, so refuse to start a
-	   machine that has no way to be reached. */
-	if (!config.vnc_enabled) {
-		fprintf(stderr, "error: machine '%s' has the VNC server disabled.\n", config.name);
-		fprintf(stderr,
-		        "       Headless mode is only reachable over VNC. Enable the VNC server\n"
-		        "       in this machine's configuration (vnc_enabled=1) and try again.\n");
-		return 1;
-	}
+	/* VNC is the only way into a headless machine, so --headless implies it
+	   whatever the machine's own setting says. That setting is left exactly as
+	   the user wrote it: config.vnc_enabled is deliberately not touched here,
+	   because endrpcemu() calls config_save() on the way out and would write an
+	   implied enable back into the config file. Nothing below reads the flag -
+	   VncServer::start() is driven by its arguments - so passing the port and
+	   password straight in starts the server without disturbing the config. */
+	const bool vnc_implied = !config.vnc_enabled;
 
 	HeadlessBridge bridge;
 	auto emulator = std::make_unique<EmulatorHost>(&bridge);
@@ -451,6 +452,10 @@ int RunHeadless(const char *machine_name, bool resume, const char *state_file)
 	g_vnc_server = vnc.get();
 	if (!vnc->start(config.vnc_port, std::string(config.vnc_password))) {
 		fprintf(stderr, "error: failed to start the VNC server on port %d.\n", config.vnc_port);
+		fprintf(stderr,
+		        "       The port is most likely already in use - each machine needs its\n"
+		        "       own vnc_port, and machines that have never had VNC enabled all\n"
+		        "       default to 5900. Set a different port for this machine.\n");
 		g_vnc_server = nullptr;
 		return 1;
 	}
@@ -458,6 +463,14 @@ int RunHeadless(const char *machine_name, bool resume, const char *state_file)
 	printf("RPCEmu headless: machine '%s' running.\n", config.name);
 	printf("VNC server listening on port %d%s.\n", config.vnc_port,
 	       config.vnc_password[0] == '\0' ? " (no password set)" : "");
+	if (vnc_implied) {
+		printf("This machine has the VNC server disabled; --headless has started it\n"
+		       "for this session only. The machine's configuration is unchanged.\n");
+		if (config.vnc_password[0] == '\0') {
+			printf("No password is set, so anyone who can reach port %d can use it.\n",
+			       config.vnc_port);
+		}
+	}
 	printf("Press Ctrl-C to shut down.\n");
 	fflush(stdout);
 
