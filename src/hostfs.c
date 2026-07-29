@@ -371,9 +371,33 @@ riscos_path_to_host(const char *path, char *host_path, size_t host_path_size)
     case '>':
       *host_path++ = '^';
       break;
-    default:
-      *host_path++ = *path;
+    default: {
+      const unsigned char ch = (unsigned char) *path;
+
+      /*
+       * RISC OS filenames are Latin-1, a byte per character, and this used to
+       * write those bytes to the host as they stood. That is fine on a
+       * filesystem that treats a name as opaque bytes, which is why it went
+       * unnoticed on Linux, but macOS requires a filename to be valid UTF-8 and
+       * refuses one that is not: a file called "Espa\xf1a" or one containing a
+       * hard space (0xa0) simply could not be created there. Reported from a Mac
+       * as "HostFS cannot handle files with top-bit-set characters in their
+       * filenames ... the file is just not created".
+       *
+       * So a character above 0x7f is written as its UTF-8 encoding, which for
+       * Latin-1 is always two bytes. name_host_to_riscos() folds it back.
+       */
+      if (ch >= 0x80) {
+        if (host_path + 1 >= end) {
+          break;		/* no room for the pair; stop cleanly */
+        }
+        *host_path++ = (char) (0xc0u | (ch >> 6));
+        *host_path++ = (char) (0x80u | (ch & 0x3fu));
+      } else {
+        *host_path++ = *path;
+      }
       break;
+    }
     }
     path++;
   }
@@ -393,6 +417,31 @@ name_host_to_riscos(const char *object_name, size_t len, char *riscos_name)
   assert(riscos_name);
 
   while (len--) {
+    /*
+     * A two-byte UTF-8 sequence standing for U+0080..U+00FF becomes the single
+     * Latin-1 byte RISC OS uses, undoing what riscos_path_to_host() wrote.
+     *
+     * Anything else is passed through a byte at a time, which is what this
+     * always did: it keeps names written before this change readable, since
+     * those hold raw Latin-1 that is not valid UTF-8, and it leaves a host name
+     * using characters outside Latin-1 alone rather than mangling it into
+     * something that looks deliberate.
+     */
+    {
+      const unsigned char ch = (unsigned char) *object_name;
+
+      if ((ch == 0xc2u || ch == 0xc3u) && len >= 1) {
+        const unsigned char next = (unsigned char) object_name[1];
+
+        if ((next & 0xc0u) == 0x80u) {
+          *riscos_name++ = (char) (((ch & 0x1fu) << 6) | (next & 0x3fu));
+          object_name += 2;
+          len--;
+          continue;
+        }
+      }
+    }
+
     switch (*object_name) {
     case '.':
       *riscos_name++ = '/';
@@ -885,6 +934,8 @@ hostfs_path_process(const char *ro_path,
       break;
 
     default:
+      if ((unsigned char) *ro_path >= 0x80) {
+      }
       *component++ = *ro_path;
       break;
     }
