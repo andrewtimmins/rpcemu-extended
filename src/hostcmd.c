@@ -94,6 +94,14 @@ typedef struct {
 	   command that will never be collected. Cleared on reset. */
 	int	guest_registered;
 
+	/*
+	 * Commands handed to the guest that nobody is waiting for any more, because
+	 * the client went away or the caller gave up. The guest still finishes them
+	 * and still reports a status, so that many STATUS ENDs are expected and
+	 * discarded rather than being taken for the current command's.
+	 */
+	int	orphaned;
+
 	/* An internal command: one of ours rather than a client's. It owns the
 	   same cmd_* fields, so the two take turns. */
 	int	internal_active;	/* ours is the command in cmd_* */
@@ -301,9 +309,10 @@ hostcmd(ARMul_State *state)
 			break;
 		}
 
-		if (hc.client_fd < 0) {
-			/* No client: discard but tell the guest it all went, so the
-			   guest never stalls waiting to flush. */
+		if (hc.client_fd < 0 || (!hc.cmd_inflight && hc.orphaned > 0)) {
+			/* Nobody to send it to, or it belongs to an abandoned command:
+			   discard, but tell the guest it all went so it never stalls
+			   waiting to flush. */
 			state->Reg[0] = len;
 			break;
 		}
@@ -340,6 +349,16 @@ hostcmd(ARMul_State *state)
 	case HC_OP_STATUS: {
 		/* R0 = marker (START/END), R1 = return code, R2 = flags (bit0 truncated). */
 		uint32_t marker = state->Reg[0];
+
+		if (marker == HC_STATUS_END && !hc.cmd_inflight && hc.orphaned > 0) {
+			/* An abandoned command reporting in. Not the current one's status,
+			   so it must not close it or reach a client. */
+			hc.orphaned--;
+			rpclog("HostCmd: discarded the status of an abandoned command "
+			       "(%d still outstanding)\n", hc.orphaned);
+			state->Reg[0] = 0;
+			break;
+		}
 
 		if (marker == HC_STATUS_END && hc.internal_active) {
 			hc.cmd_inflight = 0;
@@ -552,16 +571,23 @@ hc_drop_client(void)
 	hc.in_len = 0;
 	hc.in_overflow = 0;
 	hc.out_head = hc.out_tail = 0;	/* discard undelivered output */
-	hc.guest_registered = 0;	/* the module will announce itself again */
-	if (hc.internal_active) {
-		/* The machine is being reset underneath it, so it will never
-		   finish. Tell the caller rather than leaving it waiting. */
-		hc.internal_done = NULL;
-		hc_internal_finish(0);
-	}
 	hc.cmd_pending = 0;		/* nobody to serve an undelivered command */
-	/* cmd_inflight is left alone: a command already handed to the guest must
-	   still complete its STATUS END lifecycle. Its output is discarded. */
+
+	/*
+	 * The guest module is unaffected by a client coming and going, so its
+	 * registration stands. Clearing it here was a mistake: it would have left
+	 * the emulator's own commands refused after anyone used rpcemu-run, since
+	 * the module only announces itself when it starts.
+	 *
+	 * A command already delivered is orphaned rather than waited for. Nobody is
+	 * left to receive its result, and holding cmd_inflight for it would stop the
+	 * next client's command being read - the channel wedged until the guest
+	 * happened to finish.
+	 */
+	if (hc.cmd_inflight && !hc.internal_active) {
+		hc.cmd_inflight = 0;
+		hc.orphaned++;
+	}
 }
 
 void
@@ -580,6 +606,17 @@ hostcmd_reset(void)
 	hc.cmd_pending = 0;
 	hc.cmd_inflight = 0;
 	hc.cmd_len = 0;
+	hc.orphaned = 0;		/* nothing outstanding can now report back */
+
+	/* The module goes with the machine and will announce itself again. */
+	hc.guest_registered = 0;
+
+	if (hc.internal_active) {
+		/* Reset underneath it, so it will never finish. Tell the caller rather
+		   than leaving them waiting for a reply that cannot come. */
+		hc.internal_done = NULL;
+		hc_internal_finish(0);
+	}
 	/* Listener and client persist across a guest reboot. */
 }
 
@@ -761,9 +798,19 @@ hostcmd_internal_abandon(void)
 	if (hc.cmd_pending) {
 		hc.cmd_pending = 0;	/* never delivered: nothing to wait for */
 		hc.cmd_len = 0;
+	} else if (hc.cmd_inflight) {
+		/*
+		 * Already with the guest. It finishes in its own time, but the channel
+		 * is handed back now: leaving cmd_inflight set would stop any later
+		 * command being read, which is a stuck channel for everyone rather than
+		 * one abandoned request.
+		 *
+		 * Safe because the guest asks for work only between commands, so a
+		 * command accepted now cannot be delivered until this one has finished.
+		 */
+		hc.cmd_inflight = 0;
+		hc.orphaned++;
 	}
-	/* Anything already delivered runs to completion in the guest; its output
-	   and status are discarded when they arrive. */
 	hc_internal_finish(0);
 }
 
