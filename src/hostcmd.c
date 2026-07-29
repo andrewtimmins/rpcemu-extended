@@ -88,6 +88,21 @@ typedef struct {
 	uint8_t	out_ring[HC_OUT_RING_SZ];
 	size_t	out_head;
 	size_t	out_tail;
+
+	/* Set once the guest module has announced itself, so an internal caller
+	   can be told there is nothing listening rather than waiting for a
+	   command that will never be collected. Cleared on reset. */
+	int	guest_registered;
+
+	/* An internal command: one of ours rather than a client's. It owns the
+	   same cmd_* fields, so the two take turns. */
+	int	internal_active;	/* ours is the command in cmd_* */
+	hostcmd_internal_done_fn internal_done;
+	void	*internal_opaque;
+	char	*internal_out;		/* captured output, grown as it arrives */
+	size_t	internal_out_len;
+	size_t	internal_out_cap;
+	int	internal_out_failed;	/* an allocation failed; report what we have */
 } HostCmdState;
 
 static HostCmdState hc = {
@@ -119,6 +134,75 @@ hc_ring_write(const uint8_t *data, size_t len)
 		hc.out_ring[hc.out_head] = data[i];
 		hc.out_head = (hc.out_head + 1) & (HC_OUT_RING_SZ - 1);
 	}
+}
+
+/* ---- internal command output -------------------------------------------- */
+
+/*
+ * Collect output from an internal command.
+ *
+ * Grown geometrically and capped: a command that prints without end (*Type on a
+ * device, say) must not be able to exhaust memory. Past the cap the output is
+ * truncated and the command still completes, which is more useful than failing.
+ */
+#define HC_INTERNAL_OUT_MAX	(1024u * 1024u)
+
+static void
+hc_internal_capture(const char *data, size_t len)
+{
+	if (!hc.internal_active || hc.internal_out_failed || len == 0) {
+		return;
+	}
+
+	if (hc.internal_out_len + len > HC_INTERNAL_OUT_MAX) {
+		len = (hc.internal_out_len < HC_INTERNAL_OUT_MAX)
+		    ? HC_INTERNAL_OUT_MAX - hc.internal_out_len : 0;
+		if (len == 0) {
+			return;
+		}
+	}
+
+	if (hc.internal_out_len + len > hc.internal_out_cap) {
+		size_t want = hc.internal_out_cap ? hc.internal_out_cap * 2 : 4096;
+		char *bigger;
+
+		while (want < hc.internal_out_len + len) {
+			want *= 2;
+		}
+		bigger = realloc(hc.internal_out, want);
+		if (bigger == NULL) {
+			hc.internal_out_failed = 1;
+			return;
+		}
+		hc.internal_out = bigger;
+		hc.internal_out_cap = want;
+	}
+
+	memcpy(hc.internal_out + hc.internal_out_len, data, len);
+	hc.internal_out_len += len;
+}
+
+/* Finish an internal command: hand the result over, then let go of it. */
+static void
+hc_internal_finish(uint32_t rc)
+{
+	const hostcmd_internal_done_fn done = hc.internal_done;
+	void *opaque = hc.internal_opaque;
+	char *out = hc.internal_out;
+	const size_t len = hc.internal_out_len;
+
+	hc.internal_active = 0;
+	hc.internal_done = NULL;
+	hc.internal_opaque = NULL;
+	hc.internal_out = NULL;
+	hc.internal_out_len = 0;
+	hc.internal_out_cap = 0;
+	hc.internal_out_failed = 0;
+
+	if (done != NULL) {
+		done(rc, (out != NULL) ? out : "", len, opaque);
+	}
+	free(out);
 }
 
 /* Push a complete frame if it fits; drop it otherwise (control frames are
@@ -159,7 +243,11 @@ hostcmd(ARMul_State *state)
 
 	switch (op) {
 	case HC_OP_REGISTER:
-		/* Handshake: acknowledge presence and report client state. */
+		/* Handshake: acknowledge presence and report client state. Also the
+		   only proof that the guest module exists, which is what lets an
+		   internal caller be refused straight away rather than waiting for a
+		   command nothing will collect. */
+		hc.guest_registered = 1;
 		state->Reg[0] = 0xffffffffu;
 		state->Reg[1] = (hc.client_fd >= 0) ? 1u : 0u;
 		break;
@@ -198,6 +286,20 @@ hostcmd(ARMul_State *state)
 		uint32_t ptr = state->Reg[0];
 		uint32_t len = state->Reg[1];
 		uint32_t accept = 0;
+
+		/* Ours: collect it here. An internal command has no socket to write
+		   to, and the whole point of running one is to read what it said. */
+		if (hc.internal_active) {
+			uint32_t i;
+
+			for (i = 0; i < len; i++) {
+				const char byte = (char) ARMul_LoadByte(state, ptr + i);
+
+				hc_internal_capture(&byte, 1);
+			}
+			state->Reg[0] = len;
+			break;
+		}
 
 		if (hc.client_fd < 0) {
 			/* No client: discard but tell the guest it all went, so the
@@ -238,6 +340,13 @@ hostcmd(ARMul_State *state)
 	case HC_OP_STATUS: {
 		/* R0 = marker (START/END), R1 = return code, R2 = flags (bit0 truncated). */
 		uint32_t marker = state->Reg[0];
+
+		if (marker == HC_STATUS_END && hc.internal_active) {
+			hc.cmd_inflight = 0;
+			hc_internal_finish(state->Reg[1]);
+			state->Reg[0] = 0;
+			break;
+		}
 
 		if (marker == HC_STATUS_END) {
 			uint32_t rc = state->Reg[1];
@@ -443,6 +552,13 @@ hc_drop_client(void)
 	hc.in_len = 0;
 	hc.in_overflow = 0;
 	hc.out_head = hc.out_tail = 0;	/* discard undelivered output */
+	hc.guest_registered = 0;	/* the module will announce itself again */
+	if (hc.internal_active) {
+		/* The machine is being reset underneath it, so it will never
+		   finish. Tell the caller rather than leaving it waiting. */
+		hc.internal_done = NULL;
+		hc_internal_finish(0);
+	}
 	hc.cmd_pending = 0;		/* nobody to serve an undelivered command */
 	/* cmd_inflight is left alone: a command already handed to the guest must
 	   still complete its STATUS END lifecycle. Its output is discarded. */
@@ -572,6 +688,83 @@ hc_write_client(void)
 		}
 		hc.out_tail = (hc.out_tail + (size_t) n) & (HC_OUT_RING_SZ - 1);
 	}
+}
+
+/* ---- running a command from inside the emulator -------------------------- */
+
+int
+hostcmd_internal_ready(void)
+{
+	return hc.initialised && hc.guest_registered;
+}
+
+int
+hostcmd_internal_busy(void)
+{
+	return hc.internal_active;
+}
+
+int
+hostcmd_internal_submit(const char *command, hostcmd_internal_done_fn done,
+    void *opaque)
+{
+	size_t len;
+
+	if (command == NULL) {
+		return -1;
+	}
+	len = strlen(command);
+	if (len == 0 || len + 1 > HC_CMDLINE_MAX) {
+		rpclog("HostCmd: internal command rejected (%zu bytes)\n", len);
+		return -1;
+	}
+	if (!hostcmd_internal_ready()) {
+		rpclog("HostCmd: internal command refused, the guest module has not "
+		       "announced itself\n");
+		return -1;
+	}
+	/* One command at a time, shared with any outside client: taking turns is
+	   simpler to reason about than interleaving two conversations, and an
+	   internal caller can retry. */
+	if (hc.internal_active || hc.cmd_pending || hc.cmd_inflight) {
+		return -1;
+	}
+
+	memcpy(hc.cmd_line, command, len);
+	hc.cmd_line[len] = '\0';
+	hc.cmd_len = len;
+	hc.cmd_pending = 1;
+	hc.cmd_inflight = 0;
+
+	hc.internal_active = 1;
+	hc.internal_done = done;
+	hc.internal_opaque = opaque;
+	hc.internal_out = NULL;
+	hc.internal_out_len = 0;
+	hc.internal_out_cap = 0;
+	hc.internal_out_failed = 0;
+
+	rpclog("HostCmd: internal command queued: %s\n", hc.cmd_line);
+	return 0;
+}
+
+void
+hostcmd_internal_abandon(void)
+{
+	if (!hc.internal_active) {
+		return;
+	}
+
+	/* Drop the callback first, so finishing cannot call back into a caller
+	   that has given up on us. */
+	hc.internal_done = NULL;
+	if (hc.cmd_pending) {
+		hc.cmd_pending = 0;	/* never delivered: nothing to wait for */
+		hc.cmd_len = 0;
+	}
+	/* Anything already delivered runs to completion in the guest; its output
+	   and status are discarded when they arrive. */
+	hc_internal_finish(0);
 }
 
 void
