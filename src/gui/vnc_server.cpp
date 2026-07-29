@@ -158,12 +158,12 @@ bool VncServer::start(int port, const std::string &password)
 	rfbInitServer(rfb_screen_);
 
 	/* rfbInitServer() returns void and leaves socketState at READY even when the
-	   port was taken, so that field cannot be used to detect a clash. What does
-	   distinguish the two is the listening sockets: a server that bound has at
-	   least one valid descriptor, while one that lost the port has both set to
-	   -1. Checking here means a second machine on the same port fails loudly
-	   rather than reporting success and never accepting a connection. */
-	if (rfb_screen_->listenSock < 0 && rfb_screen_->listen6Sock < 0) {
+	   port was taken, so the listening sockets are what distinguish a bind that
+	   worked from one that lost the port. Compared against RFB_INVALID_SOCKET
+	   rather than -1: rfbSocket is an unsigned SOCKET on Windows, where "< 0" is
+	   never true. */
+	if (rfb_screen_->listenSock == RFB_INVALID_SOCKET &&
+	    rfb_screen_->listen6Sock == RFB_INVALID_SOCKET) {
 		rpclog("VNC: could not listen on port %d (is it already in use?)\n", port);
 		free(rfb_screen_->frameBuffer); /* freed here, as stop() does, not by the library */
 		rfb_screen_->frameBuffer = nullptr;
