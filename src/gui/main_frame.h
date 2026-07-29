@@ -147,6 +147,15 @@ public:
 	void StartEmulator();
 	void UpdateMachineStatus();
 
+	/* Shut down because the process was signalled. Saves what a machine would
+	   not want to lose and closes, without writing a snapshot - see
+	   closing_for_signal_. */
+	void CloseForSignal();
+
+	/* Reset the running machine because the process was signalled. Does
+	   nothing when no machine is running, there being nothing to reset. */
+	void ResetForSignal();
+
 	bool IsWindowActive() const { return window_active_; }
 	bool IsFullScreen() const { return full_screen_; }
 
@@ -307,6 +316,12 @@ private:
 
 	bool shutting_down_ = false;
 	bool suspend_on_exit_requested_ = false;
+	/* Set when the window is closing because the process was signalled rather
+	   than because the user asked. A signal is a way out in a hurry, so the
+	   close it triggers saves what would otherwise be lost - CMOS, disc images,
+	   the configuration - and skips the machine snapshot, which can run to
+	   hundreds of megabytes and may not finish before the process is killed. */
+	bool closing_for_signal_ = false;
 	/* Set as soon as a fatal error is raised (possibly from the emulator
 	   thread, which then spins forever and can no longer service commands).
 	   Guards the save-on-exit so it never blocks trying to snapshot a machine

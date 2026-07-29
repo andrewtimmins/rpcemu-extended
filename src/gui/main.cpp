@@ -51,7 +51,101 @@ class RpcemuApp : public wxApp {
 public:
 	bool OnInit() override;
 	void OnInitCmdLine(wxCmdLineParser &parser) override;
+
+private:
+	void InstallSignalHandlers();
 };
+
+#ifndef __WXMSW__
+/*
+ * Ctrl-C, or a "please stop" from the system.
+ *
+ * Started from a terminal, the window is only half the story: the shell can
+ * still interrupt the process, and until now that killed it outright, losing
+ * the CMOS and any disc images written since the machine started. The same
+ * goes for the SIGTERM sent at logout or shutdown.
+ *
+ * Not a signal handler in the usual sense, despite the name. wxWidgets catches
+ * the signal itself, notes it, and calls this from the event loop afterwards,
+ * so it runs on the main thread with nothing to avoid - it can take locks,
+ * allocate and wait for the emulator thread, none of which a real handler
+ * could do.
+ */
+void HandleQuitSignal(int signum)
+{
+	auto *frame = dynamic_cast<MainFrame *>(wxTheApp->GetTopWindow());
+
+	/* Worth a line in the log: an exit nobody asked for looks the same as a
+	   crash afterwards, and which signal arrived says whether somebody pressed
+	   Ctrl-C or the machine was being shut down around it. */
+	rpclog("RPCEmu: %s received, shutting down\n",
+	       signum == SIGINT ? "SIGINT" : "SIGTERM");
+
+	if (frame != nullptr) {
+		frame->CloseForSignal();
+		return;
+	}
+
+	/* No machine window yet, so this is the selector or one of the dialogues
+	   that can precede it. Those run their own nested event loop, which
+	   ExitMainLoop() does not reach - the signal would be swallowed and the
+	   emulator would appear to ignore it. End the dialogue first, which
+	   unwinds that loop and lets the startup path fall through to its "no
+	   machine chosen" exit. */
+	for (auto node = wxTopLevelWindows.GetFirst(); node != nullptr;
+	     node = node->GetNext()) {
+		auto *dialog = dynamic_cast<wxDialog *>(node->GetData());
+
+		if (dialog != nullptr && dialog->IsModal()) {
+			dialog->EndModal(wxID_CANCEL);
+		}
+	}
+
+	wxTheApp->ExitMainLoop();
+}
+
+/*
+ * SIGUSR1: reset the machine, as the Reset item on the File menu does.
+ *
+ * A way to restart a guest from a script or another terminal without going
+ * near the window.
+ *
+ * Unlike the two signals above this does not end the process, so a machine
+ * that has not been started yet - the selector is still open, or the window is
+ * already closing - simply has nothing to reset, and the signal is noted and
+ * ignored rather than being allowed to kill the emulator by its default
+ * action.
+ */
+void HandleResetSignal(int /*signum*/)
+{
+	auto *frame = dynamic_cast<MainFrame *>(wxTheApp->GetTopWindow());
+
+	if (frame != nullptr) {
+		frame->ResetForSignal();
+	} else {
+		/* Selector still open, so there is no machine and nothing to do - said
+		   through the same helper so the log reads the same either way. */
+		EmulatorResetForSignal(nullptr);
+	}
+}
+#endif
+
+/*
+ * Answer the signals a console can send, on the platforms that have them.
+ *
+ * Windows has no equivalent of these two, and wxWidgets does not offer
+ * SetSignalHandler() there, so it keeps the behaviour it always had.
+ */
+void RpcemuApp::InstallSignalHandlers()
+{
+#ifndef __WXMSW__
+	if (!SetSignalHandler(SIGINT, HandleQuitSignal) ||
+	    !SetSignalHandler(SIGTERM, HandleQuitSignal) ||
+	    !SetSignalHandler(SIGUSR1, HandleResetSignal)) {
+		rpclog("main: could not install the interrupt handlers\n");
+	}
+#endif
+}
 
 /*
  * RPCEmu uses long options ("--machine") on every platform, so that a command
@@ -504,6 +598,11 @@ bool RpcemuApp::OnInit()
 	if (!wxApp::OnInit()) {
 		return false;
 	}
+
+	/* Before the selector rather than after the window, so the signals are
+	   answered for the whole life of the process. SIGUSR1 in particular kills
+	   by default, and choosing a machine is no reason to be killed. */
+	InstallSignalHandlers();
 
 	// Register image handlers (PNG etc.). wxGTK pulls these in implicitly, but
 	// wxMSW does not; without this, PNG bitmaps (toolbar icons, app icon) fail

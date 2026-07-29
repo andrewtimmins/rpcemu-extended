@@ -273,6 +273,16 @@ private:
 	std::atomic<bool> flyback_pending_{false};
 };
 
+/*
+ * Reset the machine on behalf of a signal, if there is one to reset.
+ *
+ * The signal means "reset" whether it arrives at the window or at a headless
+ * run, and in both cases it can turn up before a machine has been started or
+ * while one is going away. Shared so the two answer it identically, and so the
+ * log says the same thing either way.
+ */
+void EmulatorResetForSignal(EmulatorHost *emulator);
+
 extern std::atomic<int> instruction_count;
 extern std::atomic<int> iomd_timer_count;
 extern std::atomic<int> video_timer_count;
