@@ -32,7 +32,9 @@
 #include <wx/statline.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
+#include <wx/tokenzr.h>
 
+#include "guest_command.h"
 #include "package_dialog.h"
 #include "riscos_fetch.h"
 
@@ -50,6 +52,49 @@ enum {
 	COL_DESCRIPTION,
 };
 
+/*
+ * Ask the machine whether it has the modules a package needs.
+ *
+ * OSDepends is a comma-separated list, each entry a module name and optionally a
+ * version ("SharedCLibrary 5.17"). RMEnsure says nothing when satisfied and
+ * reports an error otherwise, so an empty reply is the pass.
+ *
+ * Returns a description of what is missing, empty if everything is there. A
+ * machine that cannot be asked returns empty too: an unanswerable question should
+ * not become a warning about the package.
+ */
+wxString CheckOsDepends(const PackageRecord &pkg,
+                        const RiscosFetchLoopFactory &make_loop)
+{
+	wxString missing;
+
+	if (pkg.osdepends.empty() || !GuestCommandAvailable()) {
+		return missing;
+	}
+
+	wxStringTokenizer entries(pkg.osdepends, ",", wxTOKEN_STRTOK);
+
+	while (entries.HasMoreTokens()) {
+		wxString entry = entries.GetNextToken();
+
+		entry.Trim(true).Trim(false);
+		entry.Replace("(", " ");
+		entry.Replace(")", "");
+		if (entry.empty()) {
+			continue;
+		}
+
+		const GuestCommandResult result = GuestCommandRun(
+		    wxString::Format("RMEnsure %s Error missing", entry), make_loop, 4000);
+
+		if (result.ran && result.rc != 0) {
+			missing += wxString::Format("    %s needs %s\n", pkg.name, entry);
+		}
+	}
+
+	return missing;
+}
+
 }  /* namespace */
 
 PackageDialog::PackageDialog(wxWindow *parent)
@@ -60,6 +105,7 @@ PackageDialog::PackageDialog(wxWindow *parent)
 	BuildUi();
 
 	installed_ = PackageInstalledList(HostfsDir());
+
 
 	/* Show whatever was cached at once, so the window is useful immediately,
 	   then only go to the network if there is nothing to show. */
@@ -308,6 +354,31 @@ void PackageDialog::OnInstall(wxCommandEvent &)
 		}
 	}
 
+	/*
+	 * OSDepends names RISC OS modules the package needs. The machine is running,
+	 * so it can be asked rather than guessed at: RMEnsure fails with an error if
+	 * the module is absent or too old, which is exactly the question.
+	 */
+	{
+		const auto make_loop = []() -> wxEventLoopBase * {
+			return new wxEventLoop;
+		};
+		wxString unmet;
+
+		for (const auto &item : to_install) {
+			unmet += CheckOsDepends(item, make_loop);
+		}
+		unmet += CheckOsDepends(*pkg, make_loop);
+
+		if (!unmet.empty() &&
+		    wxMessageBox(wxString::Format(
+		        "This machine does not have everything these packages ask for:\n%s\n"
+		        "They may not work. Install anyway?", unmet),
+		        "Package Manager", wxYES_NO | wxICON_WARNING, this) != wxYES) {
+			return;
+		}
+	}
+
 	to_install.push_back(*pkg);
 
 	for (const auto &item : to_install) {
@@ -328,6 +399,15 @@ void PackageDialog::OnInstall(wxCommandEvent &)
 	installed_ = PackageInstalledList(hostfs);
 	Populate();
 
+	/*
+	 * RISC OS caches directory listings, so files appearing underneath an open
+	 * Filer window are not shown until it re-reads.
+	 *
+	 * There is no * command that refreshes one: *Filer_Boot boots a named
+	 * application, and *Filer_OpenDir would open windows the user did not ask
+	 * for. Doing it properly means a Wimp message, which is work for the guest
+	 * support module rather than a command line. So this still asks.
+	 */
 	wxMessageBox("The files are on the machine's disc now.\n\nIf a Filer window "
 	             "for that directory is already open, choose Refresh from its "
 	             "menu to see them.", "Package Manager",
