@@ -93,11 +93,26 @@ void VncServer::copyFrameLines(const uint32_t *buffer, int width, int start_y, i
 
 bool VncServer::start(int port, const std::string &password)
 {
-	std::lock_guard<std::mutex> lock(mutex_);
+	bool restart_needed;
 
-	if (running_) {
-		return true;
+	{
+		std::lock_guard<std::mutex> lock(mutex_);
+
+		if (running_ && listen_port_ == port && current_password_ == password) {
+			return true;
+		}
+		restart_needed = running_;
 	}
+
+	/* Settings > VNC Server can change the port or password while the server is
+	   running. Returning early in that case would leave it listening on the old
+	   port with the old password while the config claimed otherwise, so rebind
+	   instead. stop() takes the lock itself, hence the scoped block above. */
+	if (restart_needed) {
+		stop();
+	}
+
+	std::lock_guard<std::mutex> lock(mutex_);
 
 	current_password_ = password;
 	password_list_[0] = nullptr;
@@ -141,6 +156,26 @@ bool VncServer::start(int port, const std::string &password)
 	}
 
 	rfbInitServer(rfb_screen_);
+
+	/* rfbInitServer() returns void and leaves socketState at READY even when the
+	   port was taken, so that field cannot be used to detect a clash. What does
+	   distinguish the two is the listening sockets: a server that bound has at
+	   least one valid descriptor, while one that lost the port has both set to
+	   -1. Checking here means a second machine on the same port fails loudly
+	   rather than reporting success and never accepting a connection. */
+	if (rfb_screen_->listenSock < 0 && rfb_screen_->listen6Sock < 0) {
+		rpclog("VNC: could not listen on port %d (is it already in use?)\n", port);
+		free(rfb_screen_->frameBuffer); /* freed here, as stop() does, not by the library */
+		rfb_screen_->frameBuffer = nullptr;
+		rfbScreenCleanup(rfb_screen_);
+		rfb_screen_ = nullptr;
+		if (password_list_[0] != nullptr) {
+			free(password_list_[0]);
+			password_list_[0] = nullptr;
+		}
+		return false;
+	}
+
 	listen_port_ = port;
 	running_ = true;
 	event_thread_ = std::thread([this]() { eventLoop(); });
