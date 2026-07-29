@@ -225,9 +225,10 @@ def make_test_config(dst_cfg: str, name: str, port: int) -> None:
     install. Stating the settings here also means the test says what it is
     testing against instead of inheriting whatever a default happened to be.
 
-    VNC has to be on - headless mode refuses to start without it - and the
-    "name" field matters as much as the filename, because config_load() derives
-    the machine data directory from it.
+    VNC is set explicitly rather than relied on: --headless would start the
+    server anyway, but this test connects to a known port with no password, so
+    it states all three. The "name" field matters as much as the filename,
+    because config_load() derives the machine data directory from it.
     """
     with open(dst_cfg, "w", encoding="utf-8") as f:
         f.write(
@@ -264,6 +265,47 @@ def seed_boot_file(hostfs: str) -> None:
         f.write("Desktop\n")
 
 
+def port_is_free(host: str, port: int) -> bool:
+    """Is `port` bindable on both IP families the emulator listens on?
+
+    VncServer sets rfb_screen_->port and ->ipv6port to the same number and only
+    gives up when *both* fail, so a port where just one family is taken would
+    start a server that is half-reachable. Probing both keeps the port we hand
+    over honest. SO_REUSEADDR matches what the server does, so a socket left in
+    TIME_WAIT is not mistaken for a live listener.
+    """
+    for family, addr in ((socket.AF_INET, host), (socket.AF_INET6, "::1")):
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind((addr, port))
+        except OSError:
+            return False
+    return True
+
+
+def pick_free_port(host: str, preferred: int) -> int:
+    """Find a free VNC port, starting with the one asked for.
+
+    Ports are not allocated automatically by the emulator: every machine
+    defaults to 5900, so a CI runner (or a developer) with anything already on
+    that port would otherwise see the emulator exit and the test blame the boot.
+    Scanning upwards from the default keeps the usual run on the usual port and
+    only moves when it has to.
+
+    The range deliberately sits below the ephemeral range (32768+ on Linux), so
+    the port cannot be snatched by an unrelated outbound connection between this
+    check and the emulator binding it. That is also why binding to port 0 is not
+    used: it returns an ephemeral port with exactly that race.
+    """
+    for port in range(preferred, preferred + 64):
+        if port_is_free(host, port):
+            return port
+    raise SmokeError(
+        f"no free port found in {preferred}-{preferred + 63} for the VNC server"
+    )
+
+
 def wait_for_port(host: str, port: int, proc: subprocess.Popen, timeout: float) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -280,7 +322,9 @@ def wait_for_port(host: str, port: int, proc: subprocess.Popen, timeout: float) 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--binary", required=True, help="emulator to run")
-    ap.add_argument("--port", type=int, default=5900, help="VNC port to use")
+    ap.add_argument("--port", type=int, default=5900,
+                    help="first VNC port to try; the next free port upwards is "
+                         "used if it is taken (default 5900)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--boot-timeout", type=float, default=60.0,
                     help="seconds to wait for the VNC server to come up "
@@ -334,9 +378,15 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
+    # Settle on the port before writing the config: the config and the client
+    # below must agree, and the emulator has no way to report a port it chose.
+    port = pick_free_port(args.host, args.port)
+    if port != args.port:
+        print(f"==> port {args.port} is in use; using {port} instead", flush=True)
+
     test_name = "vncsmoke"
     test_cfg = os.path.join(configs, f"{test_name}.cfg")
-    make_test_config(test_cfg, test_name, args.port)
+    make_test_config(test_cfg, test_name, port)
 
     # The machine directory is keyed by the config's "name" field, which
     # make_test_config() has just set to test_name, so the test gets a directory
@@ -371,14 +421,14 @@ def main() -> int:
 
     rc = 1
     try:
-        wait_for_port(args.host, args.port, proc, args.boot_timeout)
-        print(f"==> VNC accepted on {args.host}:{args.port}; "
+        wait_for_port(args.host, port, proc, args.boot_timeout)
+        print(f"==> VNC accepted on {args.host}:{port}; "
               f"letting RISC OS settle for {args.settle:.0f}s", flush=True)
         # The server accepts as soon as it is listening, which is well before
         # the desktop is drawn. Give the guest time to get there.
         time.sleep(args.settle)
 
-        w, h, fb = vnc_capture(args.host, args.port)
+        w, h, fb = vnc_capture(args.host, port)
         if args.save:
             with open(args.save, "wb") as f:
                 f.write(encode_png(w, h, fb))
