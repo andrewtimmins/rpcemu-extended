@@ -434,6 +434,8 @@ built-in VNC server — useful for servers or always-on machines:
   to reach the machine. The VNC port/password come from that same config.
 - Press **Ctrl-C** (or send `SIGTERM`) to shut down cleanly — CMOS, disc images, and
   configuration are saved on exit, just as when closing the GUI window.
+- Send `SIGUSR1` to reset the machine without stopping it (see
+  [Resetting from outside](#resetting-from-outside-linux-and-macos)).
 
 Headless mode is genuinely display-less: it is handled before any GUI toolkit is
 initialised, so it needs **no display or desktop session** on any platform — on Linux
@@ -559,6 +561,20 @@ controls) are available from the menus and the toolbar instead.
 
 The toolbar provides one-click access to screenshot, floppy load, CD-ROM ISO load,
 reset, mute, full-screen, machine settings, and debugger controls.
+
+### Resetting from outside (Linux and macOS)
+
+Sending **`SIGUSR1`** resets the running machine, exactly as **Reset** on the File
+menu does, so a guest can be restarted from a script or another terminal without
+touching the window:
+
+```bash
+kill -USR1 $(pgrep rpcemu-recompiler)
+```
+
+This works whether the machine is running in the GUI or headless. If no machine is
+running — the machine selector is still open — the signal is noted in `rpclog.txt`
+and otherwise ignored. Windows has no equivalent.
 
 ---
 
