@@ -38,6 +38,7 @@
 #include "config_selector_dialog.h"
 #include "main_frame.h"
 #include "headless_main.h"
+#include "package_index.h"
 #include "riscos_fetch.h"
 
 extern "C" {
@@ -86,6 +87,8 @@ static bool g_fetch_riscos = false;
 static bool g_fetch_nightly = false;
 static bool g_fetch_disc = true;
 static bool g_fetch_accept_licence = false;
+static bool g_pkg_list = false;
+static const char *g_pkg_filter = NULL;
 
 #ifdef __WXMSW__
 /*
@@ -216,6 +219,76 @@ public:
 
 private:
 	int last_decile_ = -1;
+};
+
+/*
+ * The application object for --pkg-list.
+ *
+ * A wxAppConsole for the same reason as the fetch below: this needs wxWidgets
+ * for the transfer and its event loop but has no window, and it exists partly
+ * so the catalogue can be read in a test or a container.
+ */
+class PackageListApp : public wxAppConsole {
+public:
+	bool OnInit() override { return true; }
+
+	int OnRun() override
+	{
+		std::vector<PackageRecord> packages;
+		CommandLineFetchReporter reporter;
+		PackageIndexResult result;
+
+		InitRpcemuPaths();
+
+		result = PackageIndexRefresh(packages, reporter,
+		    [this]() { return CreateMainLoop(); });
+
+		if (!result.ok) {
+			ConsoleMessage(true, "error: %s\n",
+			               static_cast<const char *>(result.message.utf8_str()));
+			ConsoleMessageFlush();
+			return 1;
+		}
+
+		{
+			const wxString filter = (g_pkg_filter != NULL)
+			    ? wxString::FromUTF8(g_pkg_filter).Lower() : wxString();
+			int shown = 0, unsuitable = 0;
+
+			ConsoleMessage(false, "%d package(s) from %d source(s)\n\n",
+			               result.packages, result.sources_read);
+
+			for (const auto &pkg : packages) {
+				if (!pkg.RunsHere()) {
+					unsuitable++;
+					continue;
+				}
+				if (!filter.empty() &&
+				    !pkg.name.Lower().Contains(filter) &&
+				    !pkg.section.Lower().Contains(filter) &&
+				    !pkg.description.Lower().Contains(filter)) {
+					continue;
+				}
+
+				ConsoleMessage(false, "%-24s %-14s %-16s %s\n",
+				    static_cast<const char *>(pkg.name.utf8_str()),
+				    static_cast<const char *>(pkg.version.utf8_str()),
+				    static_cast<const char *>(pkg.section.utf8_str()),
+				    static_cast<const char *>(pkg.description.utf8_str()));
+				shown++;
+			}
+
+			ConsoleMessage(false, "\n%d shown", shown);
+			if (unsuitable > 0) {
+				ConsoleMessage(false, ", %d skipped as built for another "
+				               "kind of ARM", unsuitable);
+			}
+			ConsoleMessage(false, "\n");
+		}
+
+		ConsoleMessageFlush();
+		return 0;
+	}
 };
 
 /*
@@ -529,6 +602,11 @@ int main(int argc, char **argv)
 				ConsoleMessageFlush();
 				return 2;
 			}
+		} else if (strcmp(arg, "--pkg-list") == 0) {
+			g_pkg_list = true;
+		} else if (strncmp(arg, "--pkg-list=", 11) == 0) {
+			g_pkg_list = true;
+			g_pkg_filter = arg + 11;
 		} else if (strcmp(arg, "--no-disc") == 0) {
 			g_fetch_disc = false;
 		} else if (strcmp(arg, "--accept-licence") == 0 ||
@@ -637,6 +715,14 @@ int main(int argc, char **argv)
 		ConsoleMessageFlush();
 		return 2;
 	}
+	if (g_pkg_list && (headless || machine_name != nullptr || resume ||
+	                   state_file != nullptr || g_fetch_riscos)) {
+		ConsoleMessage(true, "error: --pkg-list cannot be combined with "
+		               "--fetch-riscos, --headless, --machine, --resume or "
+		               "--state.\n");
+		ConsoleMessageFlush();
+		return 2;
+	}
 	if (!g_fetch_riscos && (!g_fetch_disc || g_fetch_accept_licence)) {
 		ConsoleMessage(true, "error: %s only applies to --fetch-riscos.\n",
 		               !g_fetch_disc ? "--no-disc" : "--accept-licence");
@@ -654,6 +740,13 @@ int main(int argc, char **argv)
 	if (g_fetch_riscos) {
 		wxAppConsole::SetInitializerFunction(
 		    []() -> wxAppConsole * { return new RiscosFetchApp; });
+		return wxEntry(wx_argc, wx_argv);
+	}
+
+	/* Reading the catalogue needs no display either. */
+	if (g_pkg_list) {
+		wxAppConsole::SetInitializerFunction(
+		    []() -> wxAppConsole * { return new PackageListApp; });
 		return wxEntry(wx_argc, wx_argv);
 	}
 
