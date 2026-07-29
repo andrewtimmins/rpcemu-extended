@@ -39,6 +39,9 @@
 /roms/*
 !/roms/roms.txt
 
+# Package Manager cache
+/pkgcache/
+
 # Legacy single-machine state (CMOS now lives under machines/<name>/)
 /cmos.ram
 /rpc.cfg
