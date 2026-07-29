@@ -38,6 +38,8 @@
 #include <wx/button.h>
 #include <wx/dialog.h>
 #include <wx/dir.h>
+#include <wx/display.h>
+#include <wx/ffile.h>
 #include <wx/evtloop.h>
 #include <wx/filefn.h>
 #include <wx/font.h>
@@ -57,6 +59,7 @@
 #include "riscos_fetch.h"
 
 extern "C" {
+#include "display_mode.h"
 #include "rpcemu.h"
 #include "unzip.h"
 }
@@ -431,6 +434,189 @@ bool InstallRom(const wxString &archive_path, const wxString &dest_dir,
 }
 
 /** Unpack HardDisc4 into a directory of its own, filetypes and all. */
+/*
+ * Point a freshly installed disc at the host's own display.
+ *
+ * HardDisc4 ships its own monitor configuration, and it is specific:
+ *
+ *     LoadModeFile BootResources:Configure.Monitors.Acorn.AKF60
+ *     WimpMode X800 Y600 C256
+ *
+ * That runs on every boot and settles the matter, whatever the monitor type says,
+ * which is why a new machine always came up at 800x600 however capable the display
+ * was. Reported from a Mac as "the descriptions suggest that it should come up with
+ * a resolution suitable for the host computer. In fact, it always defaults to
+ * 800x600".
+ *
+ * So it is rewritten for the display this machine is actually running on. The
+ * AKF60 mode file goes with it: with the monitor type set to EDID (see
+ * cmos_seed_monitor_type) RISC OS builds its mode list from the EDID the emulator
+ * publishes, and loading a 1996 monitor's definition on top only takes modes away.
+ *
+ * Only when installing a disc onto a new machine. Somebody's existing settings are
+ * theirs.
+ */
+/**
+ * How much display memory the machine being fetched onto has, in megabytes.
+ *
+ * From its own configuration file, not the global config: a fetch from the
+ * machine selector happens with no machine loaded, and one from the machine
+ * editor may be for a machine other than the running one.
+ */
+unsigned MachineVramMb(const wxString &machine_name)
+{
+	const wxString config_path = ConfigPathsConfigsDir() +
+	    wxFileName::GetPathSeparator() + machine_name + ".cfg";
+	long vram = 8;
+
+	if (wxFileExists(config_path)) {
+		wxFileConfig settings(wxEmptyString, wxEmptyString, config_path,
+		                      wxEmptyString, wxCONFIG_USE_RELATIVE_PATH);
+
+		ConfigFileUseGeneralGroup(settings);
+		settings.Read("vram_size", &vram, vram);
+	}
+
+	/* Both machine-creation paths write 8, and a machine with none uses a slice
+	   of main memory instead; either way 8 is the sane thing to size against. */
+	if (vram < 1 || vram > 16) {
+		vram = 8;
+	}
+
+	return (unsigned) vram;
+}
+
+/**
+ * Write the desktop screen mode into one of the disc's Configure directories.
+ *
+ * Returns true if it wrote one. The file is an Obey file run from !Boot, and the
+ * shipped version reads:
+ *
+ *   LoadModeFile BootResources:Configure.Monitors.Acorn.AKF60
+ *   WimpMode X800 Y600 C256
+ *
+ * Both lines have to go. The mode file is what restricts the desktop to an AKF60
+ * monitor's modes, and while it is loaded RISC OS answers a larger WimpMode with
+ * "This screen mode is unsuitable for displaying the desktop" and stays where it
+ * was. Without it the monitor type in CMOS applies, which is EDID, and EDID is
+ * what the emulator publishes for the host's display.
+ */
+bool WriteMonitorFile(const wxString &dir, unsigned mode_w, unsigned mode_h)
+{
+	const wxString sep = wxFileName::GetPathSeparator();
+	wxString file = dir + sep + "Monitor,feb";
+	wxFFile out;
+
+	if (!wxFileExists(file)) {
+		/* HostFS carries the filetype in the name and an Obey file is &feb, but
+		   take whatever suffix the unpack produced rather than assuming. */
+		const wxString found = wxFindFirstFile(dir + sep + "Monitor*", wxFILE);
+
+		if (found.empty()) {
+			return false;
+		}
+		file = found;
+	}
+
+	if (!out.Open(file, "wb")) {
+		return false;
+	}
+	out.Write(wxString::Format("WimpMode X%u Y%u C16M\n", mode_w, mode_h),
+	          wxConvISO8859_1);
+
+	return out.Close();
+}
+
+/**
+ * Set the desktop mode of a freshly unpacked disc to suit the host's display.
+ *
+ * Without this a new machine comes up at 800x600 in 256 colours, which is what
+ * HardDisc4 ships and looks like the emulator's fault rather than a setting.
+ *
+ * ★ The file is not in !Boot.Choices on a disc that has never been booted. It
+ * ships once per ROM version, in !Boot.RO5nnHook.Boot.PreDesk.Configure, and the
+ * first boot copies the hook matching the running ROM into Choices. So write
+ * every hook the disc has, and Choices too if a previous boot has made it: which
+ * hook applies depends on the ROM, and this runs before any of it.
+ */
+void SeedMonitorChoice(const wxString &hostfs_dir, unsigned vram_mb)
+{
+	const wxString sep = wxFileName::GetPathSeparator();
+	const wxString boot = hostfs_dir + sep + "!Boot";
+	const wxString tail = sep + "Boot" + sep + "PreDesk" + sep + "Configure";
+	unsigned host_w = 0, host_h = 0;
+	unsigned mode_w = 0, mode_h = 0;
+	int written = 0;
+	wxString entry;
+
+	/*
+	 * The core learns the host display size when a machine's window opens, and a
+	 * download from the machine selector happens before there is one, so that
+	 * alone leaves nothing to size the mode from. Ask wxWidgets in that case -
+	 * but only when there is an interface to ask, since --fetch-riscos runs under
+	 * a wxAppConsole with no display at all.
+	 */
+	if (rpcemu_get_host_display(&host_w, &host_h) == 0 ||
+	    host_w == 0 || host_h == 0)
+	{
+		host_w = host_h = 0;
+
+		if (wxTheApp != NULL && wxTheApp->IsGUI() &&
+		    wxDisplay::GetCount() > 0)
+		{
+			const wxRect geom = wxDisplay(0u).GetGeometry();
+
+			if (geom.width > 0 && geom.height > 0) {
+				host_w = (unsigned) geom.width;
+				host_h = (unsigned) geom.height;
+			}
+		}
+	}
+
+	if (host_w == 0 || host_h == 0) {
+		return;		/* nothing known about the display; leave it alone */
+	}
+
+	/*
+	 * Ask for the mode the emulator's EDID actually advertises, by choosing it
+	 * the same way rom_patch.c does: the largest standard mode that fits the
+	 * machine's display memory at 32bpp, within the host display's size.
+	 */
+	if (!display_mode_fit(host_w, host_h, 4,
+	        (size_t) vram_mb * 1024u * 1024u, &mode_w, &mode_h)) {
+		return;		/* nothing fits: the disc's own setting is as good */
+	}
+
+	if (!wxDirExists(boot)) {
+		return;		/* not the layout we expected; do not invent one */
+	}
+
+	if (wxDirExists(boot + sep + "Choices" + tail) &&
+	    WriteMonitorFile(boot + sep + "Choices" + tail, mode_w, mode_h)) {
+		written++;
+	}
+
+	{
+		wxDir dir(boot);
+
+		if (dir.IsOpened() &&
+		    dir.GetFirst(&entry, "RO*Hook", wxDIR_DIRS))
+		{
+			do {
+				const wxString configure = boot + sep + entry + tail;
+
+				if (wxDirExists(configure) &&
+				    WriteMonitorFile(configure, mode_w, mode_h)) {
+					written++;
+				}
+			} while (dir.GetNext(&entry));
+		}
+	}
+
+	rpclog("riscos fetch: screen mode set to %ux%u in %d place(s), chosen for a "
+	       "%ux%u host display\n", mode_w, mode_h, written, host_w, host_h);
+}
+
 int InstallDisc(const wxString &archive_path, const wxString &dest_dir,
                 RiscosFetchReporter &reporter, wxString &error, bool &cancelled)
 {
@@ -894,6 +1080,13 @@ RiscosFetchOutcome RiscosFetchPerform(const RiscosFetchRequest &request,
 
 		files = InstallDisc(disc_zip, staged_hostfs, reporter,
 		                    outcome.message, cancelled);
+
+		/* While it is still staged, so a machine only ever sees the finished
+		   article. */
+		if (files >= 0) {
+			SeedMonitorChoice(staged_hostfs, MachineVramMb(machine_name));
+		}
+
 		if (files < 0) {
 			RemoveTree(staged_hostfs);
 			RemoveTree(temp_dir);

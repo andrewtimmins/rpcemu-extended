@@ -267,15 +267,17 @@ cmos_init(void)
 }
 
 /**
- * Set a freshly seeded CMOS to read the monitor's EDID, when the machine has a
- * graphics card.
+ * Set a freshly seeded CMOS to read the monitor's EDID.
  *
- * The card serves the emulator's synthesised EDID, which describes the host's
- * own display and every mode the chooser can offer from it. RISC OS only goes
- * looking for that when the configured monitor type is EDID. A machine straight
- * out of the box is type 3, VGA, which offers 640x480 and nothing else - so the
- * card comes up with no large mode to select and looks broken, when all that is
- * wrong is that nobody has told RISC OS to ask it what the monitor can do.
+ * The emulator publishes a synthesised EDID describing the host's own display,
+ * patched into the ROM's monitor table by rom_patch.c whatever the machine has, and
+ * RISC OS only goes looking for it when the configured monitor type is EDID. Any
+ * other type, Auto included, ignores it: a machine with the graphics card then has
+ * no large mode to select and looks broken, and a plain one is stuck with whatever
+ * its boot sequence hard-codes.
+ *
+ * The shipped template is EDID already, so this normally changes nothing; it is
+ * here for a template from an older release, or one the user has replaced.
  *
  * Only for a CMOS being created from the template. An existing machine's monitor
  * type is the user's, whatever they have set it to since.
@@ -286,15 +288,11 @@ cmos_seed_monitor_type(void)
 	const int offset = cmos_logical_offset(VDU_CMOS_LOCATION);
 	const uint8_t old = cmosram[offset];
 
-	if (!config.gfxcard_enabled) {
-		return;
-	}
-
 	cmosram[offset] = (uint8_t) ((old & ~MONITOR_TYPE_BITS) | MONITOR_TYPE_EDID);
 	cmos_update_checksum();
 
-	rpclog("CMOS: new machine has a graphics card, so its monitor type is set "
-	       "to EDID (location 0x%02x: 0x%02x -> 0x%02x)\n",
+	rpclog("CMOS: new machine's monitor type set to EDID, so RISC OS reads the "
+	       "host display's own capabilities (location 0x%02x: 0x%02x -> 0x%02x)\n",
 	       VDU_CMOS_LOCATION, old, cmosram[offset]);
 }
 

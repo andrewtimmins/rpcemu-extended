@@ -57,8 +57,10 @@ configured monitor type:
 | A loaded definition (`*LoadModeFile`) | Whatever that file defines |
 | `VGA`, `SVGA`, `Auto`, ... | Whatever that monitor type defines - `VGA` is 640x480 and nothing else |
 
-So on a machine configured for VGA or Auto the card appears not to work, when in
-fact nothing larger is on offer to select. One command and a reset fixes it:
+New machines are configured for `EDID` already, so this is about machines made
+before that, or ones whose monitor type has since been changed. On a machine
+configured for VGA or Auto the card appears not to work, when in fact nothing larger
+is on offer to select. One command and a reset fixes it:
 
 ```
 *Configure MonitorType EDID

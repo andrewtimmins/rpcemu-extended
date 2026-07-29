@@ -280,6 +280,14 @@ There are two choices to make:
   `!System` and a configured `!Boot`. Without it a machine starts at the supervisor
   prompt with nothing on its HostFS.
 
+The disc HardDisc4 ships set up for an AKF60 monitor at 800 x 600 in 256 colours,
+which is not what a machine on a modern display wants. So when the disc is unpacked
+onto a machine, RPCEmu also sets its desktop screen mode: the largest standard mode
+that fits inside the host's display and the machine's display memory, in 16 million
+colours. Change it afterwards as you would on real hardware, in *Configure → Screen*.
+Nothing is changed on a disc that is already installed, and a headless
+`--fetch-riscos` leaves the setting alone, having no display to size it against.
+
 About 15 MB is downloaded. Files come from `riscosopen.org`, and every request
 identifies itself as RPCEmu so that RISC OS Open can see what the traffic is.
 
