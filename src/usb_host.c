@@ -96,6 +96,14 @@ usb_host_destroy(UsbDevice *dev)
 	(void) dev;
 }
 
+int
+usb_host_device_gone(const UsbDevice *dev)
+{
+	(void) dev;
+
+	return 0;
+}
+
 void
 usb_host_poll(void)
 {
@@ -131,6 +139,8 @@ typedef enum {
 	SLOT_DONE		/* finished, and the answer not yet collected */
 } SlotState;
 
+struct HostDevice;
+
 typedef struct {
 	SlotState state;
 	struct libusb_transfer *xfer;
@@ -138,13 +148,27 @@ typedef struct {
 	UsbSetup setup;		/* the request this slot is answering */
 	UsbResult result;
 	unsigned actual;
+
+	/* Which device this belongs to, so a transfer that comes back saying the
+	   device has gone can say which one. */
+	struct HostDevice *owner;
 } Slot;
 
-typedef struct {
+typedef struct HostDevice {
 	libusb_device_handle *handle;
 	uint16_t vendor;
 	uint16_t product;
 	char name[128];
+
+	/**
+	 * The device has left the host's bus.
+	 *
+	 * Set from the hotplug callback, or by a transfer coming back to say
+	 * nobody answered. Nothing is torn down here: the controller notices on
+	 * its next frame and unplugs the port, so that the guest is told in the
+	 * one way it understands.
+	 */
+	int gone;
 
 	/*
 	 * Its own copy of the operations, because the name in them is its own.
@@ -167,12 +191,80 @@ typedef struct {
 	int last_control_error;
 } HostDevice;
 
+/*
+ * The devices currently handed to the guest. Only ever two, one per root hub
+ * port, but kept as a list because the hotplug callback is told which device
+ * left and has to find out whether it was one of ours.
+ */
+#define HOST_MAX_DEVICES	4
+
 static libusb_context *usb_host_context;
 static int usb_host_started;		/* an attempt has been made */
 static int usb_host_attached;		/* how many devices are in the ports */
 static char usb_host_reason[256];
+static HostDevice *usb_host_devices[HOST_MAX_DEVICES];
+static libusb_hotplug_callback_handle usb_host_hotplug_handle;
+static int usb_host_hotplug_registered;
 
 /* --- Starting up --------------------------------------------------------- */
+
+/**
+ * A device has left the host's bus.
+ *
+ * Runs inside usb_host_poll(), on the emulator thread, like every other libusb
+ * callback here - so it can mark the device without a lock. It does no more
+ * than mark it: libusb forbids most calls on a device that has gone, and the
+ * tidying up wants to happen where the controller can tell the guest about it.
+ */
+static int LIBUSB_CALL
+usb_host_left(libusb_context *ctx, libusb_device *device,
+              libusb_hotplug_event event, void *user_data)
+{
+	int i;
+
+	(void) ctx;
+	(void) event;
+	(void) user_data;
+
+	for (i = 0; i < HOST_MAX_DEVICES; i++) {
+		HostDevice *hd = usb_host_devices[i];
+
+		if (hd != NULL && hd->handle != NULL && !hd->gone &&
+		    libusb_get_device(hd->handle) == device) {
+			hd->gone = 1;
+			rpclog("USB: %s (%04x:%04x) has been unplugged from the host\n",
+			    hd->name, hd->vendor, hd->product);
+		}
+	}
+
+	return 0;		/* keep the registration */
+}
+
+/** Note a device as one of ours, so the hotplug callback can recognise it. */
+static void
+usb_host_remember(HostDevice *hd)
+{
+	int i;
+
+	for (i = 0; i < HOST_MAX_DEVICES; i++) {
+		if (usb_host_devices[i] == NULL) {
+			usb_host_devices[i] = hd;
+			return;
+		}
+	}
+}
+
+static void
+usb_host_forget(HostDevice *hd)
+{
+	int i;
+
+	for (i = 0; i < HOST_MAX_DEVICES; i++) {
+		if (usb_host_devices[i] == hd) {
+			usb_host_devices[i] = NULL;
+		}
+	}
+}
 
 /**
  * Start libusb, once.
@@ -199,6 +291,30 @@ usb_host_start(void)
 		    libusb_strerror(err));
 		rpclog("USB: libusb_init failed: %s\n", libusb_strerror(err));
 		return 0;
+	}
+
+	/*
+	 * Ask to be told when a device leaves. Not every platform can do this, and
+	 * it is not worth refusing passthrough over: a transfer coming back to say
+	 * nobody answered notices the same thing, only later and only if something
+	 * was being transferred at the time.
+	 */
+	if (libusb_has_capability(LIBUSB_CAP_HAS_HOTPLUG)) {
+		err = libusb_hotplug_register_callback(usb_host_context,
+		    LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT, 0,
+		    LIBUSB_HOTPLUG_MATCH_ANY, LIBUSB_HOTPLUG_MATCH_ANY,
+		    LIBUSB_HOTPLUG_MATCH_ANY, usb_host_left, NULL,
+		    &usb_host_hotplug_handle);
+
+		if (err == LIBUSB_SUCCESS) {
+			usb_host_hotplug_registered = 1;
+		} else {
+			rpclog("USB: cannot watch for devices being unplugged: %s\n",
+			    libusb_strerror(err));
+		}
+	} else {
+		rpclog("USB: this libusb cannot report devices being unplugged; a "
+		       "device that goes will be noticed on its next transfer\n");
 	}
 
 	return 1;
@@ -398,6 +514,21 @@ usb_host_transfer_done(struct libusb_transfer *xfer)
 		/* Nothing to say within the time allowed, which is what an idle
 		   input device looks like rather than an error. */
 		slot->result = USB_NAK;
+		break;
+
+	case LIBUSB_TRANSFER_NO_DEVICE:
+		/*
+		 * It has been unplugged. The hotplug callback usually says so first,
+		 * but not every platform has one, and this is the same news arriving
+		 * by the other route.
+		 */
+		if (slot->owner != NULL && !slot->owner->gone) {
+			slot->owner->gone = 1;
+			rpclog("USB: %s (%04x:%04x) did not answer; treating it as "
+			       "unplugged\n", slot->owner->name, slot->owner->vendor,
+			    slot->owner->product);
+		}
+		slot->result = USB_NO_DEVICE;
 		break;
 
 	default:
@@ -712,7 +843,7 @@ usb_host_control(UsbDevice *dev, const UsbSetup *setup, uint8_t *data,
 
 	*len = 0;
 
-	if (hd->handle == NULL) {
+	if (hd->handle == NULL || hd->gone) {
 		return USB_NO_DEVICE;
 	}
 
@@ -756,7 +887,7 @@ usb_host_read(UsbDevice *dev, unsigned endpoint, uint8_t *data, unsigned *len)
 
 	*len = 0;
 
-	if (hd->handle == NULL) {
+	if (hd->handle == NULL || hd->gone) {
 		return USB_NO_DEVICE;
 	}
 	if (hd->ep_type[index] == 0xff) {
@@ -809,7 +940,7 @@ usb_host_write(UsbDevice *dev, unsigned endpoint, const uint8_t *data,
 	const unsigned index = HOST_SLOT_OUT(endpoint);
 	Slot *slot = &hd->slots[index];
 
-	if (hd->handle == NULL) {
+	if (hd->handle == NULL || hd->gone) {
 		return USB_NO_DEVICE;
 	}
 	if (hd->ep_type[index] == 0xff) {
@@ -876,7 +1007,7 @@ usb_host_create(uint16_t vendor, uint16_t product, const char **why)
 	libusb_device_handle *handle = NULL;
 	UsbDevice *dev;
 	HostDevice *hd;
-	int err, speed;
+	int err, speed, i;
 
 	if (why != NULL) {
 		*why = "";
@@ -954,6 +1085,10 @@ usb_host_create(uint16_t vendor, uint16_t product, const char **why)
 	libusb_set_auto_detach_kernel_driver(handle, 1);
 	usb_host_adopt_configuration(hd);
 
+	for (i = 0; i < HOST_SLOTS; i++) {
+		hd->slots[i].owner = hd;
+	}
+
 	hd->ops.name = hd->name;
 	hd->ops.reset = usb_host_reset;
 	hd->ops.control = usb_host_control;
@@ -965,6 +1100,7 @@ usb_host_create(uint16_t vendor, uint16_t product, const char **why)
 	dev->address = 0;
 	dev->low_speed = (speed == LIBUSB_SPEED_LOW);
 
+	usb_host_remember(hd);
 	usb_host_attached++;
 
 	rpclog("USB: %s (%04x:%04x) taken over from the host\n",
@@ -979,7 +1115,7 @@ void
 usb_host_destroy(UsbDevice *dev)
 {
 	HostDevice *hd;
-	int i, waiting = 0;
+	int i, rounds, waiting = 0;
 
 	if (dev == NULL) {
 		return;
@@ -1003,7 +1139,14 @@ usb_host_destroy(UsbDevice *dev)
 		}
 	}
 
-	while (waiting) {
+	/*
+	 * Bounded, because this runs on the emulator thread and the case that most
+	 * needs cancelling is a device that has been pulled out - the one least
+	 * likely to answer. A hundred turns of ten milliseconds is a second, far
+	 * longer than a cancellation takes, and stopping is better than a machine
+	 * that hangs on the way out.
+	 */
+	for (rounds = 0; waiting && rounds < 100; rounds++) {
 		struct timeval tv;
 
 		tv.tv_sec = 0;
@@ -1020,6 +1163,17 @@ usb_host_destroy(UsbDevice *dev)
 
 	for (i = 0; i < HOST_SLOTS; i++) {
 		if (hd->slots[i].xfer != NULL) {
+			/*
+			 * Still in libusb's hands after all that. Letting it go would be
+			 * a use-after-free when it finally came back, so the transfer and
+			 * its buffer are deliberately leaked instead. Two allocations,
+			 * once, against a crash.
+			 */
+			if (hd->slots[i].state == SLOT_PENDING) {
+				rpclog("USB: a transfer to %04x:%04x would not come back; "
+				       "leaving it to libusb\n", hd->vendor, hd->product);
+				continue;
+			}
 			libusb_free_transfer(hd->slots[i].xfer);
 		}
 		free(hd->slots[i].buffer);
@@ -1032,6 +1186,8 @@ usb_host_destroy(UsbDevice *dev)
 		    hd->name, hd->vendor, hd->product);
 	}
 
+	usb_host_forget(hd);
+
 	if (usb_host_attached > 0) {
 		usb_host_attached--;
 	}
@@ -1040,13 +1196,61 @@ usb_host_destroy(UsbDevice *dev)
 	free(dev);
 }
 
+int
+usb_host_device_gone(const UsbDevice *dev)
+{
+	const HostDevice *hd;
+	int i;
+
+	if (dev == NULL || dev->state == NULL) {
+		return 0;
+	}
+
+	/*
+	 * Checked against the list rather than trusted, because this is called
+	 * for whatever is in a port and only a passed-through device has a
+	 * HostDevice behind it.
+	 */
+	hd = dev->state;
+	for (i = 0; i < HOST_MAX_DEVICES; i++) {
+		if (usb_host_devices[i] == hd) {
+			return hd->gone;
+		}
+	}
+
+	return 0;
+}
+
 void
 usb_host_poll(void)
 {
+	static unsigned idle_frames;
 	struct timeval tv;
 
-	if (usb_host_context == NULL || usb_host_attached == 0) {
+	if (usb_host_context == NULL) {
 		return;
+	}
+
+	if (usb_host_attached == 0) {
+		/*
+		 * Nothing of ours is in flight, but libusb still has to be given the
+		 * chance to notice a device arriving. Once a hotplug callback is
+		 * registered it keeps its device list from those events rather than
+		 * re-reading the bus on demand, so a device plugged in while nothing
+		 * was attached would otherwise stay invisible - to the dialogue's
+		 * list, and to a machine trying to take up the device its
+		 * configuration names.
+		 *
+		 * Ten times a second is ample for that, and saves a syscall on every
+		 * one of the thousand frames a second where there is nothing to do.
+		 */
+		if (!usb_host_hotplug_registered) {
+			return;
+		}
+		if (++idle_frames < 100) {
+			return;
+		}
+		idle_frames = 0;
 	}
 
 	/* Zero timeout: this runs on the emulator thread once a frame and must

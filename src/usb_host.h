@@ -109,6 +109,19 @@ struct UsbDevice *usb_host_create(uint16_t vendor, uint16_t product,
 void usb_host_destroy(struct UsbDevice *dev);
 
 /**
+ * Whether the device has been unplugged from the host.
+ *
+ * Asked once a frame by the controller, which turns a yes into a disconnect on
+ * the emulated port. Reporting it that way round matters: the guest is told
+ * that a plug came out, which is a thing every USB driver already understands,
+ * rather than being left with a device that has stopped answering.
+ *
+ * @return Non-zero if it has gone. Always zero for a device that is not one of
+ *         ours, so the caller need not know which kind it has.
+ */
+int usb_host_device_gone(const struct UsbDevice *dev);
+
+/**
  * Let transfers that have finished be noticed.
  *
  * Called once per USB frame from the controller, on the emulator thread. Real

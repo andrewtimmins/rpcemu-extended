@@ -1352,6 +1352,8 @@ usb_isp1161_write(uint32_t offset, uint32_t val)
 void
 usb_isp1161_frame(void)
 {
+	int port;
+
 	if (!usb.present) {
 		return;
 	}
@@ -1367,4 +1369,24 @@ usb_isp1161_frame(void)
 	 * notice that a real transfer has come back.
 	 */
 	usb_host_poll();
+
+	/*
+	 * And to notice one that has been pulled out of the host. A device that
+	 * has gone is unplugged from its port here rather than left in place: the
+	 * guest is then told a plug came out, which every USB driver knows what to
+	 * do with, instead of being left holding a device that has simply stopped
+	 * answering.
+	 *
+	 * It is not put back if the same device is plugged in again. The
+	 * configuration names it, so a reset or an Apply will take it up, but
+	 * quietly seizing a device the moment somebody plugs it into their
+	 * computer is not a thing to do without being asked.
+	 */
+	for (port = 0; port < ROOT_HUB_PORTS; port++) {
+		if (usb_host_device_gone(usb.port_device[port])) {
+			rpclog("USB: port %d unplugged, its device having left the host\n",
+			       port + 1);
+			usb_isp1161_release(port);
+		}
+	}
 }

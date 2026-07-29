@@ -179,6 +179,25 @@ closes. A device the host is using is marked as such in the dialogue and takes a
 confirmation, because doing this to the mouse in your hand would leave you
 without a pointer to undo it with.
 
+### Pulling it out
+
+A device that is unplugged from the computer is unplugged from the guest, on the
+next frame. libusb says which device has left, and the port it was in drops its
+connection and raises the change the driver watches for - so what the guest is
+told is that somebody pulled a lead out, which every USB driver already knows
+what to do with. The alternative, leaving a device in place that has quietly
+stopped answering, is the sort of fault that gets blamed on the emulator for an
+afternoon.
+
+Where libusb cannot report devices leaving, the same conclusion is reached from
+a transfer coming back to say nobody answered. That is later and only happens if
+something was being transferred, but it is the same end.
+
+**It is not taken up again by itself when the device comes back.** The machine's
+configuration still names it, so resetting the machine or pressing Apply in the
+dialogue will take it up; but quietly seizing a device at the moment somebody
+plugs it into their own computer is not a thing to do without being asked.
+
 The choice is remembered as the device's **identifiers rather than its position**
 - `usb_port1=host:046d:c077` - so unplugging it and putting it in a different
 socket does not lose it. If two identical devices are plugged in, the first found
