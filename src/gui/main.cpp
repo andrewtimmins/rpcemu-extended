@@ -39,6 +39,7 @@
 #include "main_frame.h"
 #include "headless_main.h"
 #include "package_index.h"
+#include "package_install.h"
 #include "riscos_fetch.h"
 
 extern "C" {
@@ -90,6 +91,9 @@ static bool g_fetch_accept_licence = false;
 static bool g_pkg_list = false;
 static const char *g_pkg_filter = NULL;
 static const char *g_pkg_info = NULL;
+static const char *g_pkg_install = NULL;
+static const char *g_pkg_remove = NULL;
+static const char *g_pkg_machine = NULL;
 
 #ifdef __WXMSW__
 /*
@@ -249,6 +253,93 @@ public:
 			               static_cast<const char *>(result.message.utf8_str()));
 			ConsoleMessageFlush();
 			return 1;
+		}
+
+		/* Install or remove, against a named machine's disc. */
+		if (g_pkg_install != NULL || g_pkg_remove != NULL) {
+			const wxString machine = wxString::FromUTF8(g_pkg_machine);
+			const wxString hostfs = ConfigPathsMachinesDir() +
+			    wxFileName::GetPathSeparator() + machine +
+			    wxFileName::GetPathSeparator() + "hostfs";
+
+			if (!wxDirExists(hostfs)) {
+				ConsoleMessage(true, "error: machine '%s' has no hard disc at "
+				               "%s\n", g_pkg_machine,
+				               static_cast<const char *>(hostfs.utf8_str()));
+				ConsoleMessageFlush();
+				return 1;
+			}
+
+			if (g_pkg_remove != NULL) {
+				const PackageActionResult r = PackageRemove(
+				    wxString::FromUTF8(g_pkg_remove), hostfs);
+
+				ConsoleMessage(r.ok ? false : true, "%s\n",
+				    static_cast<const char *>(r.ok
+				        ? wxString::Format("Removed %s (%d file(s)).",
+				              g_pkg_remove, r.files).utf8_str()
+				        : r.message.utf8_str()));
+				ConsoleMessageFlush();
+				return r.ok ? 0 : 1;
+			}
+
+			{
+				const wxString wanted =
+				    wxString::FromUTF8(g_pkg_install).Lower();
+				const PackageRecord *found = nullptr;
+
+				for (const auto &pkg : packages) {
+					if (pkg.name.Lower() == wanted) {
+						found = &pkg;
+						break;
+					}
+				}
+				if (found == nullptr) {
+					ConsoleMessage(true, "error: no package called '%s'.\n",
+					               g_pkg_install);
+					ConsoleMessageFlush();
+					return 1;
+				}
+				if (!found->RunsHere()) {
+					ConsoleMessage(true, "error: %s is built for another kind "
+					               "of ARM (Environment: %s).\n",
+					    g_pkg_install,
+					    static_cast<const char *>(found->environment.utf8_str()));
+					ConsoleMessageFlush();
+					return 1;
+				}
+
+				PackageInstalledMap installed = PackageInstalledList(hostfs);
+				std::vector<wxString> missing;
+				std::vector<PackageRecord> deps = PackageResolveDepends(
+				    *found, packages, installed, missing);
+
+				for (const auto &name : missing) {
+					ConsoleMessage(false, "warning: %s needs %s, which is not "
+					               "in the catalogue\n", g_pkg_install,
+					    static_cast<const char *>(name.utf8_str()));
+				}
+
+				deps.push_back(*found);
+				for (const auto &pkg : deps) {
+					const PackageActionResult r = PackageInstall(pkg, hostfs,
+					    reporter, [this]() { return CreateMainLoop(); });
+
+					if (!r.ok) {
+						ConsoleMessage(true, "error: %s\n",
+						    static_cast<const char *>(r.message.utf8_str()));
+						ConsoleMessageFlush();
+						return 1;
+					}
+					ConsoleMessage(false, "Installed %s %s (%d file(s)).\n",
+					    static_cast<const char *>(pkg.name.utf8_str()),
+					    static_cast<const char *>(pkg.version.utf8_str()),
+					    r.files);
+				}
+			}
+
+			ConsoleMessageFlush();
+			return 0;
 		}
 
 		/* One package in full, which is also how the resolved download URL
@@ -629,6 +720,14 @@ int main(int argc, char **argv)
 				ConsoleMessageFlush();
 				return 2;
 			}
+		} else if (strncmp(arg, "--pkg-install=", 14) == 0) {
+			g_pkg_list = true;
+			g_pkg_install = arg + 14;
+		} else if (strncmp(arg, "--pkg-remove=", 13) == 0) {
+			g_pkg_list = true;
+			g_pkg_remove = arg + 13;
+		} else if (strncmp(arg, "--pkg-machine=", 14) == 0) {
+			g_pkg_machine = arg + 14;
 		} else if (strncmp(arg, "--pkg-info=", 11) == 0) {
 			g_pkg_list = true;
 			g_pkg_info = arg + 11;
@@ -742,6 +841,13 @@ int main(int argc, char **argv)
 	                       state_file != nullptr)) {
 		ConsoleMessage(true, "error: --fetch-riscos cannot be combined with "
 		               "--headless, --machine, --resume or --state.\n");
+		ConsoleMessageFlush();
+		return 2;
+	}
+	if ((g_pkg_install != NULL || g_pkg_remove != NULL) &&
+	    g_pkg_machine == NULL) {
+		ConsoleMessage(true, "error: --pkg-install and --pkg-remove need "
+		               "--pkg-machine=<name> to say which machine's disc.\n");
 		ConsoleMessageFlush();
 		return 2;
 	}
