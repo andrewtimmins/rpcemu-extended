@@ -16,6 +16,7 @@ set(GUI_SOURCES
     config_paths.cpp
     machine_edit_dialog.cpp
     new_machine_dialog.cpp
+    guest_command.cpp
     package_dialog.cpp
     package_index.cpp
     package_install.cpp

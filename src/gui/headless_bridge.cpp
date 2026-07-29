@@ -46,6 +46,13 @@ void HeadlessBridge::PostDebuggerStateChanged()
 {
 }
 
+/* Nothing headless asks the guest anything yet; the package manager, which does,
+   is only reachable from a window. */
+void HeadlessBridge::PostGuestCommandResult(unsigned /*token*/, unsigned /*rc*/,
+    const std::string & /*output*/, bool /*ok*/)
+{
+}
+
 void HeadlessBridge::PostMachineSwitched(const std::string & /*machine_name*/)
 {
 }

@@ -69,6 +69,8 @@ enum class EmuCommandType {
 	HostClipboardChanged,
 	ReloadIdeImages,
 	SwitchMachine,
+	GuestCommand,
+	GuestCommandAbandon,
 	Restart,
 	NatRuleAdd,
 	NatRuleEdit,
@@ -103,6 +105,7 @@ struct EmuCommand {
 	std::string string_path;
 	char drive_letter = 0;
 	PortForwardRule nat_rule{};
+	unsigned token = 0;		/* GuestCommand: matches a reply to its request */
 	PortForwardRule nat_rule_old{};
 	uint32_t debug_address = 0;
 	uint32_t debug_count = 0;
@@ -135,6 +138,25 @@ public:
 	bool IsRunning() const { return emu_thread_.joinable(); }
 
 	void PostCommand(EmuCommand command);
+
+	/**
+	 * Ask the guest to run a command line.
+	 *
+	 * Queued for the emulator thread, which is the only one allowed near
+	 * hostcmd. The answer comes back as GuiBridge::PostGuestCommandResult with
+	 * the same token. Call from the GUI thread; see guest_command.h for a
+	 * caller that waits for the reply.
+	 */
+	void RunGuestCommand(const std::string &command, unsigned token);
+
+	/**
+	 * Give up on the command in flight.
+	 *
+	 * Queued rather than done directly, for the same reason as the submit: only
+	 * this thread may touch hostcmd. Without it a guest that never answers would
+	 * hold the channel against every later command.
+	 */
+	void AbandonGuestCommand();
 
 	void KeyPress(unsigned scan_code);
 	void KeyRelease(unsigned scan_code);

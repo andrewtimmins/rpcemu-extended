@@ -46,6 +46,20 @@ public:
 	virtual void PostDebuggerStateChanged() = 0;
 	virtual void PostMachineSwitched(const std::string &machine_name) = 0;
 
+	/**
+	 * An internal guest command has finished.
+	 *
+	 * @param token   The value the caller gave when submitting, so a reply can
+	 *                be matched to its request and a stale one ignored.
+	 * @param rc      The command's return code as RISC OS reported it.
+	 * @param output  Everything it printed.
+	 * @param ok      False if the command never ran (nothing collected it, the
+	 *                machine was reset under it, or the channel was busy).
+	 */
+	virtual void PostGuestCommandResult(unsigned token, unsigned rc,
+	                                    const std::string &output,
+	                                    bool ok) = 0;
+
 	/* The core is asking the application to quit (e.g. guest soft power-off). */
 	virtual void PostQuit() = 0;
 

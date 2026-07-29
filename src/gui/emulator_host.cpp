@@ -42,6 +42,7 @@ extern "C" {
 #include "cdrom-iso.h"
 #include "cmos.h"
 #include "debugcmd.h"
+#include "hostcmd.h"
 #include "hostfs.h"
 #include "ide.h"
 #include "keyboard.h"
@@ -728,6 +729,44 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 		rpclog("RPCEmu: Machine switch complete\n");
 		break;
 	}
+	case EmuCommandType::GuestCommand: {
+		/*
+		 * Hand it to hostcmd, which is on this thread. The completion callback
+		 * is called here too, so it only forwards the result GUI-ward.
+		 *
+		 * The token is passed as the opaque pointer rather than allocating
+		 * anything: it is a small integer and this way there is nothing to
+		 * free if the machine is reset before the command finishes.
+		 */
+		const unsigned token = command.token;
+
+		if (hostcmd_internal_submit(command.string_path.c_str(),
+		        [](uint32_t rc, const char *output, size_t len, void *opaque) {
+			        if (g_emulator_host != nullptr &&
+			            g_emulator_host->gui_bridge_ != nullptr) {
+				        g_emulator_host->gui_bridge_->PostGuestCommandResult(
+				            static_cast<unsigned>(
+				                reinterpret_cast<uintptr_t>(opaque)),
+				            rc, std::string(output, len), true);
+			        }
+		        },
+		        reinterpret_cast<void *>(
+		            static_cast<uintptr_t>(token))) != 0) {
+			/* Refused: say so at once rather than leaving the caller to time
+			   out, which is the difference between "the guest is busy" and
+			   "the guest is not answering". */
+			if (gui_bridge_ != nullptr) {
+				gui_bridge_->PostGuestCommandResult(token, 0, std::string(),
+				                                    false);
+			}
+		}
+		break;
+	}
+
+	case EmuCommandType::GuestCommandAbandon:
+		hostcmd_internal_abandon();
+		break;
+
 	case EmuCommandType::Restart: {
 		rpclog("RPCEmu: Restarting machine\n");
 
@@ -1070,6 +1109,24 @@ void EmulatorHost::SwitchMachine(const std::string &config_path)
 	EmuCommand cmd;
 	cmd.type = EmuCommandType::SwitchMachine;
 	cmd.string_path = config_path;
+	PostCommand(cmd);
+}
+
+void EmulatorHost::RunGuestCommand(const std::string &command, unsigned token)
+{
+	EmuCommand cmd;
+
+	cmd.type = EmuCommandType::GuestCommand;
+	cmd.string_path = command;
+	cmd.token = token;
+	PostCommand(cmd);
+}
+
+void EmulatorHost::AbandonGuestCommand()
+{
+	EmuCommand cmd;
+
+	cmd.type = EmuCommandType::GuestCommandAbandon;
 	PostCommand(cmd);
 }
 

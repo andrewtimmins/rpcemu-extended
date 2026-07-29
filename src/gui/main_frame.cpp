@@ -47,6 +47,7 @@
 #include "machine_edit_dialog.h"
 #include "machine_inspector_window.h"
 #include "nat_list_dialog.h"
+#include "guest_command.h"
 #include "package_dialog.h"
 #include "parallel_dialog.h"
 #include "serial_dialog.h"
@@ -1709,6 +1710,16 @@ void MainFrame::PostNatRule(PortForwardRule rule)
 void MainFrame::PostDebuggerStateChanged()
 {
 	CallAfter([this]() { UpdateDebuggerActionStates(); });
+}
+
+/* Handed straight to whoever is waiting for it (see guest_command.cpp), which is
+   why this does nothing with the window. */
+void MainFrame::PostGuestCommandResult(unsigned token, unsigned rc,
+                                       const std::string &output, bool ok)
+{
+	CallAfter([token, rc, output, ok]() {
+		GuestCommandDeliver(token, rc, output, ok);
+	});
 }
 
 void MainFrame::PostMachineSwitched(const std::string &machine_name)
