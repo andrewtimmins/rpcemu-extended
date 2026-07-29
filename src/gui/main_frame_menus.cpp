@@ -201,6 +201,12 @@ void MainFrame::BuildMenus()
 	    "Start RPCEmu straight into this machine, without showing the machine "
 	    "list. Hold Shift while starting to get the list back.");
 
+	/* Tools: things that act on the running machine rather than configure it,
+	   which is why this is not under Settings. */
+	auto *tools_menu = new wxMenu;
+	tools_menu->Append(ID_MENU_PACKAGES, "Package Manager...")
+	    ->SetHelp("Install software packaged for RISC OS onto this machine.");
+
 	auto *debug_menu = new wxMenu;
 	debug_run_item_ = debug_menu->Append(ID_MENU_DEBUG_RUN, "Run");
 	debug_pause_item_ = debug_menu->Append(ID_MENU_DEBUG_PAUSE, "Pause");
@@ -227,6 +233,7 @@ void MainFrame::BuildMenus()
 	menu_bar->Append(file_menu, "&File");
 	menu_bar->Append(disc_menu, "&Disc");
 	menu_bar->Append(settings_menu, "&Settings");
+	menu_bar->Append(tools_menu, "&Tools");
 	menu_bar->Append(debug_menu, "&Debug");
 	menu_bar->Append(help_menu, "&Help");
 	SetMenuBar(menu_bar);
@@ -279,6 +286,7 @@ void MainFrame::BuildMenus()
 	BindMenuItem(settings_menu, ID_MENU_VNC, this, &MainFrame::OnVnc);
 #endif
 	BindMenuItem(settings_menu, ID_MENU_SERIAL, this, &MainFrame::OnSerial);
+	BindMenuItem(tools_menu, ID_MENU_PACKAGES, this, &MainFrame::OnPackages);
 	BindMenuItem(settings_menu, ID_MENU_PARALLEL, this, &MainFrame::OnParallel);
 #ifdef RPCEMU_NETWORKING
 	BindMenuItem(settings_menu, ID_MENU_NAT_LIST, this, &MainFrame::OnNatList);

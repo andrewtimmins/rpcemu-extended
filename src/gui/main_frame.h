@@ -97,6 +97,7 @@ enum MainFrameMenuId {
 	ID_MENU_SUSPEND_ON_EXIT,
 	ID_MENU_VNC,
 	ID_MENU_SERIAL,
+	ID_MENU_PACKAGES,
 	ID_MENU_PARALLEL,
 	ID_MENU_CPU_IDLE,
 	ID_MENU_MOUSE_HACK,
@@ -212,6 +213,7 @@ private:
 #ifdef RPCEMU_VNC
 	void OnVnc(wxCommandEvent &event);
 #endif
+	void OnPackages(wxCommandEvent &event);
 	void OnSerial(wxCommandEvent &event);
 	void OnParallel(wxCommandEvent &event);
 

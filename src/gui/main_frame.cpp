@@ -47,6 +47,7 @@
 #include "machine_edit_dialog.h"
 #include "machine_inspector_window.h"
 #include "nat_list_dialog.h"
+#include "package_dialog.h"
 #include "parallel_dialog.h"
 #include "serial_dialog.h"
 #include "toolbar_icons.h"
@@ -1269,6 +1270,13 @@ void MainFrame::OnVnc(wxCommandEvent &)
 	}
 }
 #endif
+
+void MainFrame::OnPackages(wxCommandEvent &)
+{
+	PackageDialog dialog(this);
+
+	dialog.ShowModal();
+}
 
 void MainFrame::OnSerial(wxCommandEvent &)
 {
