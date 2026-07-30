@@ -865,5 +865,5 @@ networking features.
   Windows and macOS; the macOS application bundle fixes that made the shipped
   `.app` runnable on a Mac other than the one that built it, along with the
   bundling and verification work behind them; and the cross-platform
-  command-line and VNC smoke tests (`tests/cli_smoke.sh`, `tests/vnc_smoke.py`).
+  command-line and boot smoke tests (`tests/cli_smoke.sh`, `tests/boot_smoke.py`).
   Contributed by **David Ramsden**.
