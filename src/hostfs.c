@@ -274,6 +274,9 @@ get_string(ARMul_State *state, ARMword address, char *buf, size_t bufsize)
   assert(buf);
   assert(bufsize > 0);
 
+  /* ARMul_LoadByte is a macro that drops state (see hostfs.h). */
+  NOT_USED(state);
+
   /* Copy at most bufsize-1 bytes from the guest, always NUL-terminating.
      The guest controls both the string contents and its length, so an
      over-long (or unterminated) string must not overrun the host buffer;
@@ -301,6 +304,9 @@ put_string(ARMul_State *state, ARMword address, const char *str)
 
   assert(state);
   assert(str);
+
+  /* ARMul_StoreByte is a macro that drops state (see hostfs.h). */
+  NOT_USED(state);
 
   while (*str) {
     ARMul_StoreByte(state, address++, *str++);
@@ -1278,6 +1284,7 @@ static void
 hostfs_args_9_read_file_datestamp(ARMul_State *state)
 {
   assert(state);
+  NOT_USED(state);
 
   dbug_hostfs("\tRead file datestamp\n");
 }
@@ -2384,6 +2391,7 @@ static void
 hostfs_gbpb(ARMul_State *state)
 {
   assert(state);
+  NOT_USED(state);
 
   dbug_hostfs("GBPB\n");
 }

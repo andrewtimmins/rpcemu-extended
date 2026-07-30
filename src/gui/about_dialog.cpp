@@ -188,7 +188,6 @@ void AboutDialog::BuildUi()
 {
 	const int year = wxDateTime::Now().GetYear();
 	const wxColour muted = wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT);
-	const wxColour link = wxSystemSettings::GetColour(wxSYS_COLOUR_HOTLIGHT);
 
 	wxFont title_font = GetFont();
 	title_font.SetPointSize(title_font.GetPointSize() + 6);

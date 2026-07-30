@@ -258,7 +258,6 @@ void PackageDialog::RefreshCatalogue(bool force)
 void PackageDialog::Populate()
 {
 	const wxString filter = search_->GetValue().Lower();
-	int unsuitable = 0;
 
 	list_->DeleteAllItems();
 	shown_.clear();
@@ -267,7 +266,6 @@ void PackageDialog::Populate()
 		const PackageRecord &pkg = catalogue_[i];
 
 		if (!pkg.RunsHere()) {
-			unsuitable++;
 			continue;
 		}
 		/* The section buttons and the search box narrow together rather

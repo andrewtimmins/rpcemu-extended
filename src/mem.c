@@ -71,19 +71,6 @@ static uint32_t writemembcache = 0,writemembcache2 = 0;
 static uint32_t phys_space_mask; /**< Mask used to convert to physical memory address space */
 
 /**
- * Place an 8-bit I/O write value into the correct lane for a word-oriented handler.
- */
-static uint32_t
-mem_io_byte_to_lane(uint32_t addr, uint32_t val)
-{
-#ifdef _RPCEMU_BIG_ENDIAN
-	return val << ((3u - (addr & 3u)) * 8);
-#else
-	return val << ((addr & 3u) * 8);
-#endif
-}
-
-/**
  * Expand an 8-bit I/O read into a 32-bit word with all byte lanes aliased.
  */
 static uint32_t
