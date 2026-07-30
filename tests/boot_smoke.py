@@ -3,27 +3,32 @@
 Boot a machine headlessly and check that RISC OS actually got going.
 
 Everything else in CI stops at "the binary starts and parses its arguments".
-This drives a real boot instead: it starts the emulator with --headless, waits
-for the built-in VNC server to accept a connection, captures the framebuffer
-over RFB, and checks the guest drew something rather than leaving a blank or
-frozen screen. That exercises the CPU, memory, VIDC, ROM loading and the VNC
-server end to end, on whichever platform the job runs.
+This drives a real boot instead, and asks the guest two questions:
 
-Note a fresh machine reaches a Supervisor prompt, not the desktop: the shipped
-a new machine's HostFS starts empty, so nothing would reach the desktop; the
-from inside RISC OS to produce a !Boot. The check accounts for that - see
-describe_screen().
+  - over VNC: connect, capture the framebuffer over RFB, and check the guest
+    drew something rather than leaving a blank or frozen screen. That exercises
+    the CPU, memory, VIDC, ROM loading and the VNC server end to end.
+  - over HostCmd: run *FX 0 with rpcemu-run and check RISC OS names itself in
+    the reply. That exercises the command socket and the RPCEmuSupport module
+    the emulator loads from poduleroms/, neither of which the screen check
+    touches, and puts the ROM the machine booted in the log.
+
+Both run against one machine on whichever platform the job runs.
+
+The machine boots to a Supervisor prompt rather than the desktop: its HostFS
+starts empty, so a !Boot is seeded to reach the desktop - see seed_boot_file()
+and describe_screen().
 
 The RFB handling mirrors tools/mcp/rpcemu_mcp.py (RFB 3.3, security None, Raw
 encoding, 32bpp true colour) so there is one protocol implementation to reason
 about, not two.
 
 Usage:
-  vnc_smoke.py --binary <path> [--port 5900]
-               [--boot-timeout 60] [--settle 20] [--save shot.png]
+  boot_smoke.py --binary <path> [--port 5900]
+                [--boot-timeout 60] [--settle 20] [--save shot.png]
 
-Exit status is 0 when the machine booted and drew to the screen, and 1
-otherwise, with the reason on stderr.
+Exit status is 0 when the machine booted, drew to the screen and answered over
+HostCmd, and 1 otherwise, with the reason on stderr.
 """
 
 import argparse
@@ -319,6 +324,56 @@ def wait_for_port(host: str, port: int, proc: subprocess.Popen, timeout: float) 
     raise SmokeError(f"the VNC server did not accept a connection within {timeout:.0f}s")
 
 
+def hostcmd_version(binary: str, datadir: str, env: dict) -> str:
+    """Ask the guest its OS version over HostCmd, and return what it said.
+
+    *FX 0 because the answer is worth reading: the ROM the machine actually
+    booted appears in the CI log, so an unexpected one is visible without
+    digging.
+
+    Nothing waits for HostCmd first. The socket is listening a fraction of a
+    second after launch - well before VNC accepts, which has already happened
+    by the time this runs - and rpcemu-run blocks on a connected socket until
+    the guest module registers rather than failing.
+
+    The return code is deliberately ignored: rpcemu-run passes the guest's
+    Sys$ReturnCode through, and *FX 0 leaves that at 255 on a perfectly good
+    run. The output is what says whether this worked.
+    """
+    run = os.path.join(os.path.dirname(binary), "rpcemu-run")
+    if sys.platform == "win32":
+        run += ".exe"
+    if not os.path.isfile(run):
+        raise SmokeError(f"rpcemu-run is not beside the emulator: {run}")
+
+    # No transport is named here. On Windows there is no AF_UNIX, so rpcemu-run
+    # uses the HostCmd TCP port by itself; elsewhere it derives the socket path
+    # from RPCEMU_DATADIR, which the caller has already pinned.
+    #
+    # A booted guest answers in hundredths of a second, and the slowest case -
+    # a cold call waiting for the guest module to register - takes about six.
+    # The timeout is only here so a guest that never answers fails rather than
+    # hanging until the job's own timeout.
+    try:
+        proc = subprocess.run([run, "--", "fx0"], cwd=datadir, env=env,
+                              timeout=30, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE)
+    except subprocess.TimeoutExpired:
+        raise SmokeError("the guest did not answer *FX 0 within 30s") from None
+
+    # RISC OS ends its lines with a carriage return.
+    out = proc.stdout.decode("latin-1").replace("\r", "")
+    lines = [line for line in out.splitlines() if line.strip()]
+    reply = lines[-1] if lines else ""
+
+    if not reply.startswith("RISC OS"):
+        err = proc.stderr.decode("latin-1").strip()
+        raise SmokeError(
+            f"the guest did not report its version: got {reply!r}"
+            + (f" ({err})" if err else ""))
+    return reply
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--binary", required=True, help="emulator to run")
@@ -435,11 +490,15 @@ def main() -> int:
             print(f"==> wrote {args.save}", flush=True)
 
         ok, summary = describe_screen(w, h, fb)
-        if ok:
-            print(f"PASS: {summary}", flush=True)
-            rc = 0
-        else:
+        if not ok:
             print(f"FAIL: {summary}", file=sys.stderr, flush=True)
+        else:
+            print(f"PASS: {summary}", flush=True)
+
+            print("==> asking the guest its version over HostCmd", flush=True)
+            version = hostcmd_version(binary, datadir, env)
+            print(f"PASS: the guest reports {version}", flush=True)
+            rc = 0
     except SmokeError as e:
         print(f"FAIL: {e}", file=sys.stderr, flush=True)
     except OSError as e:

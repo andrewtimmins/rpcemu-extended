@@ -91,10 +91,10 @@ jobs:
           cp ci-rom/ROM* "$RPCEMU_DATADIR/roms/"
           ls -la "$RPCEMU_DATADIR/roms/"
 
-      - name: Headless boot and VNC screenshot
+      - name: Headless boot smoke test
         timeout-minutes: 3
         run: |
-          python3 tests/vnc_smoke.py \
+          python3 tests/boot_smoke.py \
             --binary releases/linux/amd64/rpcemu-recompiler \
             --datadir "$RUNNER_TEMP/rpcemu-data" \
             --save vnc-smoke-linux-amd64.png
@@ -186,10 +186,10 @@ jobs:
           cp ci-rom/ROM* "$RPCEMU_DATADIR/roms/"
           ls -la "$RPCEMU_DATADIR/roms/"
 
-      - name: Headless boot and VNC screenshot
+      - name: Headless boot smoke test
         timeout-minutes: 3
         run: |
-          python3 tests/vnc_smoke.py \
+          python3 tests/boot_smoke.py \
             --binary releases/linux/arm64/rpcemu-interpreter \
             --datadir "$RUNNER_TEMP/rpcemu-data" \
             --save vnc-smoke-linux-arm64.png
@@ -329,10 +329,10 @@ jobs:
           cp ci-rom/ROM* "$data/roms/"
           ls -la "$data/roms/"
 
-      - name: Headless boot and VNC screenshot
+      - name: Headless boot smoke test
         timeout-minutes: 3
         run: |
-          python3 tests/vnc_smoke.py \
+          python3 tests/boot_smoke.py \
             --binary releases/windows/amd64/rpcemu-recompiler.exe \
             --datadir "$(cygpath -u "$RUNNER_TEMP")/rpcemu-data" \
             --save vnc-smoke-windows-amd64.png
@@ -568,13 +568,13 @@ jobs:
           cp ci-rom/ROM* "$RPCEMU_DATADIR/roms/"
           ls -la "$RPCEMU_DATADIR/roms/"
 
-      - name: Headless boot and VNC screenshot
+      - name: Headless boot smoke test
         timeout-minutes: 3
         run: |
           # See the fetch step: the bundle keeps its read-only payload in
           # Contents/Resources, so that has to be named rather than found.
           export RPCEMU_RESOURCE_DIR="$PWD/releases/macos/RPCEmu.app/Contents/Resources"
-          python3 tests/vnc_smoke.py \
+          python3 tests/boot_smoke.py \
             --binary releases/macos/RPCEmu.app/Contents/MacOS/rpcemu \
             --datadir "$RUNNER_TEMP/rpcemu-data" \
             --save vnc-smoke-macos-universal.png
