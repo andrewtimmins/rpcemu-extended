@@ -39,6 +39,7 @@
 #include "main_frame.h"
 #include "headless_main.h"
 #include "package_index.h"
+#include "package_sources.h"
 #include "package_install.h"
 #include "riscos_fetch.h"
 
@@ -183,6 +184,7 @@ static bool g_fetch_nightly = false;
 static bool g_fetch_disc = true;
 static bool g_fetch_accept_licence = false;
 static bool g_pkg_list = false;
+static bool g_pkg_sources = false;
 static const char *g_pkg_filter = NULL;
 static const char *g_pkg_info = NULL;
 static const char *g_pkg_install = NULL;
@@ -338,6 +340,39 @@ public:
 		PackageIndexResult result;
 
 		InitRpcemuPaths();
+
+		/* Listing the sources touches no network, so it happens before the
+		   catalogue is fetched rather than after: somebody checking why a
+		   repository is not showing up should not have to wait for the
+		   repositories to be read to find out it is turned off. */
+		if (g_pkg_sources) {
+			std::vector<wxString> warnings;
+			const std::vector<PackageSource> sources =
+			    PackageSourcesLoad(&warnings);
+
+			ConsoleMessage(false, "%s\n\n",
+			    static_cast<const char *>(PackageSourcesPath().utf8_str()));
+
+			for (const auto &source : sources) {
+				ConsoleMessage(false, "%-14s %-4s %s\n",
+				    static_cast<const char *>(source.name.utf8_str()),
+				    source.enabled ? "on" : "off",
+				    static_cast<const char *>(source.url.utf8_str()));
+				if (!source.description.empty()) {
+					ConsoleMessage(false, "%-19s %s\n", "",
+					    static_cast<const char *>(
+					        source.description.utf8_str()));
+				}
+			}
+
+			for (const auto &warning : warnings) {
+				ConsoleMessage(true, "warning: %s\n",
+				    static_cast<const char *>(warning.utf8_str()));
+			}
+
+			ConsoleMessageFlush();
+			return 0;
+		}
 
 		result = PackageIndexRefresh(packages, reporter,
 		    [this]() { return CreateMainLoop(); });
@@ -830,6 +865,9 @@ int main(int argc, char **argv)
 		} else if (strncmp(arg, "--pkg-info=", 11) == 0) {
 			g_pkg_list = true;
 			g_pkg_info = arg + 11;
+		} else if (strcmp(arg, "--pkg-sources") == 0) {
+			g_pkg_list = true;
+			g_pkg_sources = true;
 		} else if (strcmp(arg, "--pkg-list") == 0) {
 			g_pkg_list = true;
 		} else if (strncmp(arg, "--pkg-list=", 11) == 0) {

@@ -25,7 +25,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **Get RISC OS in one step** — RPCEmu ships no ROM, so a new installation has nothing to run. Creating a machine offers to fetch a ROM and the ready-made HardDisc4 hard disc from RISC OS Open and set them up on it. Stable 5.30 or the 5.31 nightly, with the licensing terms shown and agreed to first; also available headlessly as `--fetch-riscos`. An existing machine's hard disc is never overwritten. See [Getting RISC OS](#getting-risc-os).
 - **Multi-machine configuration** — create, edit, clone, and delete machine profiles from a startup selector; each machine has isolated CMOS, HostFS, and hard disc storage.
 - **Quick machine switching** — switch between machines via *File → Recent Machines* without restarting.
-- **Package manager** — install software packaged for RISC OS straight onto a machine's disc, from the same repositories a real machine uses: around 200 applications, games, fonts and libraries from RISC OS Open and the RISC OS Community. *Tools → Package Manager*, or headlessly with `--pkg-list` and `--pkg-install`. Downloads are checked against the index's MD5, and what each package installed is recorded on that machine's disc in the RISC OS Packaging Project's own format, so it removes cleanly and other RISC OS package tools can see it. See [docs/packages.md](docs/packages.md).
+- **Package manager** — install software packaged for RISC OS straight onto a machine's disc, from the same repositories a real machine uses: over 350 applications, games, fonts and libraries from RISC OS Open, the RISC OS Community, and the Archimedes Software Preservation Project's preserved commercial games. *Tools → Package Manager*, or headlessly with `--pkg-list` and `--pkg-install`. **The repository list is yours**: add, edit, disable or remove sources under *Sources…*, or edit the plain-text `pkgsources` file directly. One-click section filters (*Games*, *Graphics*, *Desktop*…, with *All* to clear) sit above the list and narrow alongside the search box. Downloads are checked against the index's MD5, and what each package installed is recorded on that machine's disc in the RISC OS Packaging Project's own format, so it removes cleanly and other RISC OS package tools can see it. See [docs/packages.md](docs/packages.md).
 - **Save/load state, suspend & resume** — snapshot a machine's complete running state (CPU, RAM, VRAM, devices, and networking) to disk and restore it exactly. Use *File → Save State* / *Load State* for named snapshots, or *File → Suspend* to save and exit and pick up right where you left off via the machine's **Resume** button in the selector. Contributed by Nick Brown.
 - **Shared clipboard** — copy text on the host and paste it in RISC OS, or the other way about. Off by default (*Settings → Share Clipboard with RISC OS*), since it puts your host clipboard within the guest's reach; the guest half loads itself and needs nothing installed. Text and images (PNG or JPEG). RiscOS Cloverleaf's design and interface, credited below. See [docs/clipboard.md](docs/clipboard.md).
 - **Dual HostFS drives** — per-machine **HostFS** plus a common **Shared** drive (`shared/`) visible to all machines.
@@ -406,6 +406,7 @@ portable between them.
 | `--fetch-riscos[=which]` | Download RISC OS from RISC OS Open, unpack it, create a machine and exit. `which` is `stable` (default) or `nightly`. |
 | `--no-disc` | With `--fetch-riscos`, fetch the ROM only. |
 | `--accept-licence` | Required by `--fetch-riscos`: agrees to the licensing terms of what is downloaded, which are printed first. |
+| `--pkg-sources` | List the package repositories and the file they are configured in, and exit. Touches no network. |
 | `--pkg-list[=text]` | List the available RISC OS packages, optionally only those matching `text`, and exit. |
 | `--pkg-info=<name>` | Show everything the catalogue holds about one package, and exit. |
 | `--pkg-install=<name>` | Install a package. Needs `--pkg-machine`. |
@@ -846,11 +847,14 @@ networking features.
   this machine exists because they published it. See `docs/usb.md`.
 - The **package manager** implements the **RISC OS Packaging Project's** package and
   database format, as defined in its policy manual: the format is **Graham Shaw's**
-  design and the manual is maintained by **Alan Buckley**. **RISC OS Open Limited** and
-  **riscoscommunity.org** host the indexes and the packages. None of their code is used
-  here; this is an implementation of a published specification, and it keeps to that
-  specification so a machine it installs onto stays usable by the project's own tools,
-  PackMan and RiscPkg. See `docs/packages.md`.
+  design and the manual is maintained by **Alan Buckley**. **RISC OS Open Limited**,
+  **riscoscommunity.org** and the **[Archimedes Software Preservation Project](https://www.jaspp.org.uk/)**
+  host the indexes and the packages; JASPP's is **Jonathan Abbott's** and its
+  contributors' work of preserving the commercial software of the period and packaging it
+  to run on a machine like this one. None of their code is used here; this is an
+  implementation of a published specification, and it keeps to that specification so a
+  machine it installs onto stays usable by the project's own tools, PackMan and RiscPkg.
+  See `docs/packages.md`.
 - Spork Edition enhancements by Andy Timmins and contributors.
 - Machine save/load state (suspend & resume) contributed by **Nick Brown**, whose
   outstanding item on that work, putting the clock right on resume, is why

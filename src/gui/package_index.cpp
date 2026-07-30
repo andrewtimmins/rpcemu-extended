@@ -36,6 +36,7 @@
 #include "config_paths.h"
 #include "http_transfer.h"
 #include "package_index.h"
+#include "package_sources.h"
 
 extern "C" {
 #include "rpcemu.h"
@@ -178,30 +179,29 @@ bool PackageRecord::RunsHere() const
 std::vector<PackageSource> PackageIndexSources()
 {
 	/*
-	 * https, not http, and it matters rather than being tidiness: macOS refuses
-	 * cleartext HTTP by default (App Transport Security), so over http these two
-	 * fetched nothing there and the catalogue arrived holding only the three
-	 * packages from the community index, which is https. Reported from a Mac as
-	 * "there are only three items listed". The server serves both and returns
-	 * byte-identical indexes.
+	 * The list used to live here. It now comes from a file the user owns, so
+	 * a repository can be added or turned off without a new release; see
+	 * package_sources.cpp, which also holds the shipped defaults and the
+	 * reason each of them is or is not in the list.
+	 *
+	 * Only the enabled ones are returned, so every caller reads "the sources
+	 * to fetch" and none of them has to remember to check the flag.
+	 *
+	 * One thing worth keeping in mind when adding one: https, not http, and
+	 * it matters rather than being tidiness. macOS refuses cleartext HTTP by
+	 * default (App Transport Security), so over http a source fetches nothing
+	 * there while working everywhere else. That was reported from a Mac as
+	 * "there are only three items listed".
 	 */
-	/* The two that suit a Risc PC. RISC OS Open also publish programs-armv5
-	   and two Raspberry Pi indexes; those hold code for machines this is not,
-	   so offering them would only hand somebody software that cannot run. */
-	return {
-		{ "rool",
-		  "https://packages.riscosopen.org/packages/pkg/rool",
-		  "Applications from the RISC OS disc image, built nightly" },
-		{ "thirdparty",
-		  "https://packages.riscosopen.org/packages/pkg/thirdparty",
-		  "Programs and libraries from other authors, for any ARM machine" },
-		/* The RISC OS Community's own repository. Small, but it is where
-		   some newer work appears first. Only the released index: there is
-		   a testing one beside it, which is unstable by design. */
-		{ "community",
-		  "https://riscoscommunity.org/packages/rpkg/arm32/released",
-		  "Released packages from the RISC OS Community repository" },
-	};
+	std::vector<PackageSource> enabled;
+
+	for (const auto &source : PackageSourcesLoad()) {
+		if (source.enabled) {
+			enabled.push_back(source);
+		}
+	}
+
+	return enabled;
 }
 
 int PackageIndexParse(const wxString &text, const wxString &source_name,

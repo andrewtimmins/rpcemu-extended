@@ -40,6 +40,7 @@ class wxListCtrl;
 class wxSearchCtrl;
 class wxStaticText;
 class wxTextCtrl;
+class wxWrapSizer;
 
 class PackageDialog : public wxDialog {
 public:
@@ -56,6 +57,17 @@ private:
 	void OnInstall(wxCommandEvent &event);
 	void OnRemove(wxCommandEvent &event);
 	void OnRefresh(wxCommandEvent &event);
+	void OnSources(wxCommandEvent &event);
+	void OnSectionFilter(wxCommandEvent &event);
+
+	/**
+	 * Rebuild the row of section buttons from the catalogue.
+	 *
+	 * The sections are whatever the enabled sources happen to use, so they
+	 * are counted from the catalogue rather than being a list in the code:
+	 * add a repository and its categories appear by themselves.
+	 */
+	void BuildSectionFilters();
 
 	/** The package the list has selected, or null. */
 	const PackageRecord *Selected() const;
@@ -70,6 +82,10 @@ private:
 	wxListCtrl *list_ = nullptr;
 	wxSearchCtrl *search_ = nullptr;
 	wxTextCtrl *details_ = nullptr;
+	wxWrapSizer *filter_sizer_ = nullptr;
+	wxWindow *filter_panel_ = nullptr;
+	/** Empty for "everything"; otherwise the Section being shown. */
+	wxString section_filter_;
 	wxStaticText *summary_ = nullptr;
 	wxButton *install_button_ = nullptr;
 	wxButton *remove_button_ = nullptr;

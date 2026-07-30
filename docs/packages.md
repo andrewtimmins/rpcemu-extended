@@ -12,27 +12,98 @@ so it can be removed again cleanly.
 
 ## Where the packages come from
 
-Three indexes are read, all of them in the format the RISC OS Packaging Project defines.
+Each source is an index in the format the RISC OS Packaging Project defines. Four are
+shipped, and the list is yours to change.
 
 | Source | What it holds |
 | --- | --- |
 | `rool` | Applications from the RISC OS disc image, built nightly by RISC OS Open |
 | `thirdparty` | Programs and libraries from other authors, for any ARM machine |
 | `community` | Released packages from the RISC OS Community repository |
+| `jaspp` | Games from the [Archimedes Software Preservation Project](https://www.jaspp.org.uk/), packaged to run on a machine like this one |
 
-**Only sources whose code can run here are offered.** RISC OS Open also publish an
+JASPP is the largest of the four by a distance and is almost entirely commercial games of
+the period, preserved and packaged so they run on a 32-bit machine. Most of them need
+**ADFFS**, which is in the same index and is offered as a dependency in the ordinary way.
+They are marked `Licence: Non free`, which is what preservation of commercial software
+looks like; what you may do with each one is between you and its copyright holder.
+
+### Adding, editing and removing sources
+
+**Tools → Package Manager → Sources…** Add a repository, edit one, turn one off without
+losing it, remove one, or put the shipped list back. Changing anything refetches the
+catalogue, because showing the old one afterwards would read as the change not having
+taken.
+
+The list lives in **`pkgsources`** in your data directory, and it is a plain text file in
+the same shape as the indexes themselves, so it can be edited by hand:
+
+```
+Name: jaspp
+URL: https://www.jaspp.org.uk/packages/release
+Description: Games from the Archimedes Software Preservation Project (JASPP)
+Enabled: yes
+```
+
+`--pkg-sources` prints the list and where it is stored, without touching the network.
+Delete the file to get the shipped list back.
+
+Three things are worth knowing before adding one:
+
+- **The URL is the index file itself**, not the page it is linked from.
+- **Use https where the server offers it.** macOS refuses cleartext HTTP by default, so an
+  `http://` source silently fetches nothing there while working everywhere else.
+- **The name becomes a filename**, because each source's index is cached under it, so it
+  is limited to letters, digits, `-` and `_`. A name that would escape the cache directory
+  is refused, whether it is typed into the dialogue or edited into the file.
+
+A record the file parser cannot use is reported and skipped rather than costing you the
+rest of the file, and a file with nothing usable in it falls back to the shipped list
+rather than leaving you with an empty catalogue that looks like every repository is down.
+
+**Only packages whose code can run here are offered.** RISC OS Open also publish a
 `programs-armv5` index and two Raspberry Pi ones; the Risc PC's StrongARM is **ARMv4**, so
-those hold code that cannot run on it. Individual packages are filtered the same way, on
-their `Environment` field: `any`, `arm` and `arm32` are accepted, and a package with no
-`Environment` is treated as portable, which is how the older third-party records read.
+those hold code that cannot run on it, and they are not in the shipped list. Individual
+packages are filtered the same way, on their `Environment` field: `any`, `arm` and `arm32`
+are accepted, and a package with no `Environment` is treated as portable, which is how the
+older third-party records read. JASPP's handful of 26-bit-only entries are dropped by that
+same rule, and the count at the bottom of the window says how many.
 
-The `arm32/testing` index at riscoscommunity.org is deliberately not offered. It is
-unstable by design.
+The `arm32/testing` index at riscoscommunity.org is deliberately not in the shipped list.
+It is unstable by design. Nothing stops you adding it.
 
 The catalogue is cached under your data directory (`pkgcache/`) for six hours, so
 browsing costs nothing and the servers are not asked for the same file repeatedly. Press
 **Refresh list** to fetch regardless. Every request identifies itself as RPCEmu, the same
 courtesy as the RISC OS download.
+
+---
+
+## Finding something
+
+The search box matches on name, section and description, so typing `pinball` or
+`printing` both work.
+
+Above the list is a row of **section buttons**, one per category with the number of
+packages in it, and **All** to clear the filter. They are counted from the catalogue
+rather than being a fixed list in the code, so adding a repository makes its categories
+appear by themselves. The eight largest get a button; the rest are reachable by typing
+the section name into the search box, and the row says how many are not shown. Without
+that cap, adding a couple of repositories would push the list of packages off the bottom
+of the window, which would take more than it gave.
+
+The section filter and the search box **narrow together** rather than replacing each
+other: press *Games*, then type `pinball`. Pressing the section already selected turns it
+off again, which is the same act as pressing *All*, and neither touches what is in the
+search box. The count underneath says what is being shown and what it is filtered to,
+for example "185 packages shown in Games, 0 installed".
+
+A note on the categories themselves: they are whatever the packagers wrote in each
+record's `Section` field, so they are not a tidy taxonomy. There is no "Applications"
+section; the everyday programs are spread across `Desktop`, `Graphics`, `Document`,
+`Printing` and others. The catalogue also carries both `Miscellaneous` and `Misc`, and
+both `Document` and `Documentation`, which are counted separately because that is what
+the indexes say.
 
 ---
 
@@ -128,6 +199,7 @@ Every part of this works from the command line and needs no display, which is ho
 tested:
 
 ```bash
+./rpcemu-recompiler --pkg-sources                 # the repositories, and where the list lives
 ./rpcemu-recompiler --pkg-list                    # the whole catalogue
 ./rpcemu-recompiler --pkg-list=games              # matching name, section or description
 ./rpcemu-recompiler --pkg-info=ChangeFSI          # everything about one package
@@ -137,6 +209,11 @@ tested:
 
 `--pkg-machine` is required for installing and removing: there is no ambiguity about which
 machine's disc is being written to.
+
+`--pkg-sources` is the only one of these that touches no network, so it answers "why is
+that repository not showing up?" straight away rather than after four indexes have been
+fetched. It reports anything wrong with the file as it goes. Adding and removing sources
+without a display means editing `pkgsources` directly, which is what the format is for.
 
 ---
 

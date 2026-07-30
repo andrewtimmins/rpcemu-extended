@@ -22,6 +22,9 @@
  * package_dialog.cpp - browsing and installing RISC OS packages.
  */
 
+#include <algorithm>
+#include <map>
+
 #include <wx/button.h>
 #include <wx/evtloop.h>
 #include <wx/filename.h>
@@ -29,13 +32,17 @@
 #include <wx/msgdlg.h>
 #include <wx/sizer.h>
 #include <wx/srchctrl.h>
+#include <wx/settings.h>
 #include <wx/statline.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
+#include <wx/tglbtn.h>
 #include <wx/tokenzr.h>
+#include <wx/wrapsizer.h>
 
 #include "guest_command.h"
 #include "package_dialog.h"
+#include "package_sources_dialog.h"
 #include "riscos_fetch.h"
 
 extern "C" {
@@ -126,7 +133,7 @@ public:
 
 PackageDialog::PackageDialog(wxWindow *parent)
     : wxDialog(parent, wxID_ANY, "Package Manager", wxDefaultPosition,
-               wxSize(880, 560),
+               wxSize(880, 620),
                wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
 {
 	BuildUi();
@@ -137,6 +144,7 @@ PackageDialog::PackageDialog(wxWindow *parent)
 	/* Show whatever was cached at once, so the window is useful immediately,
 	   then only go to the network if there is nothing to show. */
 	if (PackageIndexLoadCached(catalogue_)) {
+		BuildSectionFilters();
 		Populate();
 	} else {
 		RefreshCatalogue(false);
@@ -157,8 +165,8 @@ wxString PackageDialog::HostfsDir() const
 void PackageDialog::BuildUi()
 {
 	auto *intro = new wxStaticText(this, wxID_ANY,
-	    "Software packaged for RISC OS, from RISC OS Open and the RISC OS "
-	    "Community. Installing puts the files on this machine's disc and records "
+	    "Software packaged for RISC OS, from the repositories listed under "
+	    "Sources. Installing puts the files on this machine's disc and records "
 	    "them, so they can be removed again cleanly.");
 
 	intro->Wrap(840);
@@ -169,6 +177,7 @@ void PackageDialog::BuildUi()
 	search_->SetDescriptiveText("Search names, sections and descriptions");
 
 	auto *refresh = new wxButton(this, wxID_ANY, "Refresh list");
+	auto *sources = new wxButton(this, wxID_ANY, "Sources...");
 
 	list_ = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
 	                       wxLC_REPORT | wxLC_SINGLE_SEL);
@@ -177,6 +186,12 @@ void PackageDialog::BuildUi()
 	list_->AppendColumn("Installed", wxLIST_FORMAT_LEFT, 80);
 	list_->AppendColumn("Section", wxLIST_FORMAT_LEFT, 110);
 	list_->AppendColumn("Description", wxLIST_FORMAT_LEFT, 400);
+
+	/* Its own panel so the buttons can be thrown away and remade whenever the
+	   catalogue changes, without disturbing anything around them. */
+	filter_panel_ = new wxWindow(this, wxID_ANY);
+	filter_sizer_ = new wxWrapSizer(wxHORIZONTAL);
+	filter_panel_->SetSizer(filter_sizer_);
 
 	details_ = new wxTextCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition,
 	                          wxSize(-1, 96),
@@ -193,7 +208,8 @@ void PackageDialog::BuildUi()
 
 	auto *search_row = new wxBoxSizer(wxHORIZONTAL);
 	search_row->Add(search_, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
-	search_row->Add(refresh, 0);
+	search_row->Add(refresh, 0, wxRIGHT, 8);
+	search_row->Add(sources, 0);
 
 	auto *buttons = new wxBoxSizer(wxHORIZONTAL);
 	buttons->Add(summary_, 0, wxALIGN_CENTER_VERTICAL);
@@ -205,6 +221,7 @@ void PackageDialog::BuildUi()
 	auto *main = new wxBoxSizer(wxVERTICAL);
 	main->Add(intro, 0, wxEXPAND | wxALL, 12);
 	main->Add(search_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+	main->Add(filter_panel_, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
 	main->Add(list_, 1, wxEXPAND | wxLEFT | wxRIGHT, 12);
 	main->Add(details_, 0, wxEXPAND | wxALL, 12);
 	main->Add(new wxStaticLine(this), 0, wxEXPAND | wxLEFT | wxRIGHT, 12);
@@ -218,6 +235,7 @@ void PackageDialog::BuildUi()
 	install_button_->Bind(wxEVT_BUTTON, &PackageDialog::OnInstall, this);
 	remove_button_->Bind(wxEVT_BUTTON, &PackageDialog::OnRemove, this);
 	refresh->Bind(wxEVT_BUTTON, &PackageDialog::OnRefresh, this);
+	sources->Bind(wxEVT_BUTTON, &PackageDialog::OnSources, this);
 }
 
 void PackageDialog::RefreshCatalogue(bool force)
@@ -232,6 +250,8 @@ void PackageDialog::RefreshCatalogue(bool force)
 		    : result.message, "Package Manager", wxOK | wxICON_WARNING, this);
 	}
 
+	/* A fetch can change which sections exist and how big they are. */
+	BuildSectionFilters();
 	Populate();
 }
 
@@ -248,6 +268,12 @@ void PackageDialog::Populate()
 
 		if (!pkg.RunsHere()) {
 			unsuitable++;
+			continue;
+		}
+		/* The section buttons and the search box narrow together rather
+		   than replacing each other: pick Games, then type "pinball". */
+		if (!section_filter_.empty() &&
+		    pkg.section.CmpNoCase(section_filter_) != 0) {
 			continue;
 		}
 		if (!filter.empty() && !pkg.name.Lower().Contains(filter) &&
@@ -267,8 +293,10 @@ void PackageDialog::Populate()
 		shown_.push_back(static_cast<int>(i));
 	}
 
-	summary_->SetLabel(wxString::Format("%d package%s shown, %d installed",
+	summary_->SetLabel(wxString::Format("%d package%s shown%s, %d installed",
 	    static_cast<int>(shown_.size()), shown_.size() == 1 ? "" : "s",
+	    section_filter_.empty() ? wxString()
+	                            : wxString::Format(" in %s", section_filter_),
 	    static_cast<int>(installed_.size())));
 	UpdateButtons();
 }
@@ -338,6 +366,137 @@ void PackageDialog::OnSearch(wxCommandEvent &)
 void PackageDialog::OnRefresh(wxCommandEvent &)
 {
 	RefreshCatalogue(true);
+}
+
+/*
+ * Which sections earn a button.
+ *
+ * The catalogue's sections are long-tailed: Games has 185 and a dozen sections
+ * have one or two. A button each would be a wall of them, so the ones worth a
+ * click get one and the rest stay reachable by typing the section name into the
+ * search box, which already matches on it.
+ *
+ * The cap matters more than the threshold. Filters that push the list of
+ * packages off the bottom of the window have taken more than they gave, and
+ * without a cap that is exactly what adding a repository or two would do.
+ */
+static const int kSectionButtonMinimum = 3;
+static const size_t kSectionButtonMaximum = 8;
+
+void PackageDialog::BuildSectionFilters()
+{
+	/* Remade from scratch: the sections depend on the catalogue, and the
+	   catalogue changes when a source is added, removed or turned off. */
+	filter_sizer_->Clear(true);
+
+	std::map<wxString, int> counts;
+
+	for (const auto &pkg : catalogue_) {
+		if (pkg.RunsHere() && !pkg.section.empty()) {
+			counts[pkg.section]++;
+		}
+	}
+
+	/* Biggest first, so the button somebody wants is where they look. Ties
+	   go alphabetically, so the order does not wander between refreshes. */
+	std::vector<std::pair<wxString, int>> ordered(counts.begin(), counts.end());
+
+	std::sort(ordered.begin(), ordered.end(),
+	    [](const std::pair<wxString, int> &a, const std::pair<wxString, int> &b) {
+		    if (a.second != b.second) {
+			    return a.second > b.second;
+		    }
+		    return a.first.CmpNoCase(b.first) < 0;
+	    });
+
+	const auto add_button = [&](const wxString &label, const wxString &section,
+	                            const wxString &tip) {
+		auto *button = new wxToggleButton(filter_panel_, wxID_ANY, label,
+		                                  wxDefaultPosition, wxDefaultSize,
+		                                  wxBU_EXACTFIT);
+
+		button->SetValue(section_filter_.CmpNoCase(section) == 0);
+		button->SetToolTip(tip);
+		/* The section travels with the button rather than in a parallel
+		   array, so nothing can fall out of step when the row is rebuilt. */
+		button->SetClientObject(new wxStringClientData(section));
+		button->Bind(wxEVT_TOGGLEBUTTON, &PackageDialog::OnSectionFilter, this);
+		filter_sizer_->Add(button, 0, wxRIGHT | wxBOTTOM, 4);
+	};
+
+	add_button("All", wxEmptyString,
+	           "Show every package again, clearing the section filter");
+
+	int shown = 0;
+
+	for (const auto &entry : ordered) {
+		if (entry.second < kSectionButtonMinimum ||
+		    shown >= static_cast<int>(kSectionButtonMaximum)) {
+			break;		/* sorted, so everything after is smaller too */
+		}
+		add_button(wxString::Format("%s (%d)", entry.first, entry.second),
+		           entry.first,
+		           wxString::Format("Show only the %d package%s in %s",
+		               entry.second, entry.second == 1 ? "" : "s", entry.first));
+		shown++;
+	}
+
+	if (shown < static_cast<int>(ordered.size())) {
+		auto *rest = new wxStaticText(filter_panel_, wxID_ANY,
+		    wxString::Format("+%d smaller section%s, try the search box",
+		        static_cast<int>(ordered.size()) - shown,
+		        ordered.size() - shown == 1 ? "" : "s"));
+
+		rest->SetForegroundColour(
+		    wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
+		filter_sizer_->Add(rest, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 8);
+	}
+
+	filter_panel_->Layout();
+	Layout();
+}
+
+void PackageDialog::OnSectionFilter(wxCommandEvent &event)
+{
+	auto *button = dynamic_cast<wxToggleButton *>(event.GetEventObject());
+
+	if (button == nullptr) {
+		return;
+	}
+
+	const auto *data =
+	    dynamic_cast<wxStringClientData *>(button->GetClientObject());
+	const wxString section = data == nullptr ? wxString() : data->GetData();
+
+	/* Pressing the section already being shown turns it off again, which is
+	   what a pressed-in button invites. "All" is the same act by another
+	   name, and both leave the search box alone. */
+	section_filter_ = (button->GetValue() && !section.empty()) ? section
+	                                                           : wxString();
+
+	/* Only one section at a time, so the rest come back up. Rebuilding is
+	   simpler than hunting for the previous one and cannot leave two of them
+	   looking pressed. */
+	BuildSectionFilters();
+	Populate();
+}
+
+void PackageDialog::OnSources(wxCommandEvent &WXUNUSED(event))
+{
+	PackageSourcesDialog dialog(this);
+
+	dialog.ShowModal();
+
+	/* Changing where the catalogue comes from and still being shown the old
+	   one would read as the change not having taken. Refetch, forcing past
+	   the cache, because the cache is per source and says nothing about a
+	   source having been added or dropped. */
+	if (dialog.Changed()) {
+		RefreshCatalogue(true);
+		/* A source coming or going changes which sections exist. */
+		BuildSectionFilters();
+		Populate();
+	}
 }
 
 void PackageDialog::OnInstall(wxCommandEvent &)

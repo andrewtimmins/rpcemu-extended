@@ -165,7 +165,11 @@ const CreditGroup kCredits[] = {
 	  "  the package manager implements, designed by Graham Shaw,\n"
 	  "  its policy manual maintained by Alan Buckley\n"
 	  "RISC OS Open and riscoscommunity.org: hosting the package\n"
-	  "  indexes and the packages themselves" },
+	  "  indexes and the packages themselves\n"
+	  "The Archimedes Software Preservation Project (JASPP),\n"
+	  "  Jonathan Abbott and its contributors: preserving the games\n"
+	  "  of the period and packaging them to run on a machine\n"
+	  "  like this one" },
 };
 
 } // namespace

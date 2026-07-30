@@ -21,6 +21,8 @@ set(GUI_SOURCES
     usb_dialog.cpp
     package_index.cpp
     package_install.cpp
+    package_sources.cpp
+    package_sources_dialog.cpp
     riscos_fetch.cpp
     riscos_setup_dialog.cpp
     podule_config_dialog.cpp

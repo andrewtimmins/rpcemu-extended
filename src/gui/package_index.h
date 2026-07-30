@@ -40,6 +40,7 @@
 
 #include <wx/string.h>
 
+#include "package_sources.h"	/* PackageSource */
 #include "riscos_fetch.h"	/* RiscosFetchReporter, RiscosFetchLoopFactory */
 
 /**
@@ -84,18 +85,12 @@ struct PackageRecord {
 	bool RunsHere() const;
 };
 
-/** Where an index came from, and what it is called. */
-struct PackageSource {
-	wxString name;		/* short name, e.g. "rool" */
-	wxString url;
-	wxString description;
-};
-
 /**
- * The sources worth offering on an emulated Risc PC.
+ * The sources to fetch: the enabled ones from the user's own list.
  *
- * Deliberately not all of the ones RISC OS Open publish: the ARMv5 and
- * Raspberry Pi indexes are for machines we are not.
+ * PackageSource and the list itself live in package_sources.h, which owns the
+ * file they are read from. This returns only the enabled ones, so a caller
+ * never has to remember to check.
  */
 std::vector<PackageSource> PackageIndexSources();
 
