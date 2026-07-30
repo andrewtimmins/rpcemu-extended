@@ -1,0 +1,425 @@
+Subject: [PATCH 1/2] Find OHCI controllers on expansion cards
+
+OHCIDriver finds controllers by asking the machine's HAL what USB hardware
+exists, via HAL_USBControllerInfo. HAL_IOMD has no USB support at all, so on a
+Risc PC or A7000 nothing is ever found, however real the controller is. A module
+cannot supply the missing HAL entry either: OS_Hardware adds a device, but HAL
+entries live in the ROM, and HAL_IOMD's entry table ends at HAL_IRQMax, which
+hdr/HALEntries fixes at 107 - the USB entries begin at 108, past the end of the
+table rather than in a spare slot.
+
+This adds a third discovery stage, after PCI and the HAL have both come up
+empty, which searches the expansion cards. A card is identified by what is in
+it rather than by where it is: every card declaring EASI space is asked for its
+controller revision at +&800000, and the one answering &10 is taken to be an
+OHCI controller. An E<slot> command tail narrows the search to a single slot.
+
+The interrupt is claimed with the card's own status byte and bit rather than the
+podule manager's IntRequest and IntValue. Those are hardcoded to IOMD's shared
+registers in the Kernel's s/Tables, and PIRQ_Despatch in s/NewIRQs calls only
+the first claimant whose bit is set, jumping rather than returning - so a driver
+claiming the shared registers matches every podule interrupt in the machine and
+starves the other cards. This is the fault that makes PHCIDriver wedge any
+machine with a second card fitted. The address OS_ClaimDeviceVector needs is the
+podule manager's CombinedAddress rounded down to a 16K boundary: the combined
+address is where the card's ROM starts, not where the card starts.
+
+Two consequences of a copy carried in a card ROM rather than started from disc:
+an unrecognised command tail no longer refuses to initialise, because a card ROM
+starts its modules with a tail of its own choosing; and ResourceFS registration
+is now unconditional and tracked by a flag, because a card-carried copy is the
+first instance in every way except that r11 is not zero.
+
+Also: ohci_init's return value was discarded. When it fails the module still
+goes Active with a half-built softc, hands that softc to USBDriver, and the first
+call through a method table ohci_init never finished filling in takes the
+machine down somewhere unrecognisable. It now refuses to stay resident.
+
+Baseline: OHCIDriver 0.56, tag OHCIDriver-0_56, commit 551b4047
+           https://gitlab.riscosopen.org/RiscOS/Sources/HWSupport/USB/Controllers/OHCIDriver
+
+Apply from the root of that checkout with:  patch -p1 < <this file>
+
+ c/ohcimodule | 289 +++++++++++++++++++++++++++++++++++++++++++++++-----------
+ 1 file changed, 260 insertions(+), 29 deletions(-)
+
+--- a/c/ohcimodule
++++ b/c/ohcimodule
+@@ -35,6 +35,7 @@
+ #include "Global/OSMisc.h"
+ #include "Global/OsBytes.h"
+ #include "Interface/PCI.h"
++#include "Interface/Podule.h"
+ #include "Interface/USBDriver.h"
+ #include "USB/USBDevFS.h"
+ #include "AsmUtils/callbacks.h"
+@@ -95,9 +96,171 @@
+ int pci_device = -1;
+ int hal_device = -1;
+ int instance = 0;
++
++/*---------------------------------------------------------------------------*/
++/* Controllers on an expansion card                                          */
++/*---------------------------------------------------------------------------*/
++/*
++ * This driver finds controllers by asking the machine's HAL what USB hardware
++ * exists. A machine whose HAL has no USB support at all - IOMD, for one - can
++ * still carry an OHCI controller on an expansion card, and a module cannot
++ * make up the difference: OS_Hardware can add a device, but HAL entries live
++ * in the ROM.
++ *
++ * So the expansion cards are searched directly instead, after PCI and the HAL
++ * have both come up empty. A card is identified by what is in it rather than
++ * by where it is: every card that has EASI space is asked for its controller
++ * revision, and the one that answers like an OHCI controller is the one. A
++ * slot number would be shorter and would break the moment the card moved.
++ */
++
++/* Base address of the card we settled on; zero if we are not driving one. */
++static int expcard_base = 0;
++
++/* Which slot to use, from an E command tail. */
++#define EXPCARD_NONE (-1)     /* no E tail: search every slot */
++static int expcard_slot = EXPCARD_NONE;
++
++/* How many expansion cards there are to look through. */
++#define EXPCARD_COUNT 8
++
++/* The IOC interrupt mask register that lets this card's interrupts through. */
++static unsigned char *expcard_intmask;
++static int expcard_intbit;
++
++/*
++ * The bit in the card's own status byte that means "I am interrupting".
++ *
++ * An expansion card declares this in byte 12 of its extended identity, but
++ * the podule manager does not report it, and the value is one for every card
++ * that has ever needed it. What matters far more is that this is the card's
++ * own byte and its own bit: claiming with the podule manager's IntRequest and
++ * IntValue instead gets you IOMD's shared registers, which match every podule
++ * interrupt in the machine. The kernel calls only the first claimant that
++ * matches (PIRQ_Despatch in Kernel s.NewIRQs jumps rather than returns), so a
++ * driver that claims the shared registers starves every other card.
++ */
++#define EXPCARD_IRQ_BIT 1
++
++/*
++ * Where in the card's EASI space the controller's registers appear. Zero
++ * would leave nowhere for the card's own ROM, so cards put them further in;
++ * RPCEmu's USB card uses 8M.
++ */
++#define OHCI_EXPCARD_OFFSET 0x800000
++
++/*
++ * How much I/O space an expansion card gets, and therefore what to round the
++ * podule manager's combined address down to.
++ *
++ * The combined address is where the card's ROM starts, which is not where the
++ * card starts: on this machine it came back as &F99C4074, and the byte there
++ * reads zero. The interrupt status byte is at the bottom of the card's I/O
++ * space, &F99C4000, which reads &fa - the identity byte the card answers with
++ * its interrupt line low, and &fb with it high. Hand the kernel the ROM
++ * address instead and its LDRB finds nothing, the chain never matches, and
++ * the interrupt is asserted for ever with nobody to clear it.
++ */
++#define EXPCARD_IO_SIZE 0x4000
++
++/* The podule manager returns these in ascending bit order, so the order of
++   the bits below is the order of the words in the block.
++
++   The combined address is the one expansion card code is handed in r11, and
++   the card's interrupt status byte lives at the front of it. */
++#define OHCI_EXPCARD_READINFO (Podule_ReadInfo_CombinedAddress  | \
++                               Podule_ReadInfo_EASILogical      | \
++                               Podule_ReadInfo_IntMask          | \
++                               Podule_ReadInfo_IntValue         | \
++                               Podule_ReadInfo_IntDeviceVector)
++
++typedef struct
++{
++    unsigned char *combined;
++    unsigned char *easi;
++    unsigned char *intmask;
++    int            intbit;
++    int            devno;
++} expcard_info;
++
++/*
++ * Give the controller's interrupt back.
++ *
++ * Three places do this - finalisation, a pre-reset service call, and the
++ * error path - and an expansion card has to be released differently from a
++ * PCI or HAL device, so they share one function rather than three copies
++ * that can drift apart.
++ */
++static void release_usb_irq(void *pw);
++
+ int device_number;
+ int registers_32bit=0;
+ static bool registering=false; /* True/false for whether we're in the middle of registering. Avoids nested registration attempt during ROM init. */
++static bool registered_resources=false; /* Did this instance put the messages into ResourceFS? Only it may take them out again. */
++
++/*
++ * Look for an OHCI controller on the expansion cards.
++ *
++ * slot is a single card to try, or EXPCARD_NONE to try them all. On success
++ * hci_base, device_number, expcard_base and the interrupt details are set.
++ */
++static _kernel_oserror *find_expansion_card_controller(int slot)
++{
++    static const _kernel_tokerror err_noohci = ErrorBlock_OHCI_NoOHCI;
++    int first = (slot == EXPCARD_NONE) ? 0 : slot;
++    int last  = (slot == EXPCARD_NONE) ? EXPCARD_COUNT - 1 : slot;
++    int s;
++
++    for (s = first; s <= last; s++)
++    {
++        expcard_info card;
++        volatile int *regs;
++
++        if (_swix(Podule_ReadInfo, _INR(0,3),
++                  OHCI_EXPCARD_READINFO, &card, sizeof card, s) != NULL)
++            continue;                   /* no card in this slot */
++
++        if (card.easi == NULL)
++            continue;                   /* no EASI space, so nowhere to be */
++
++        /* A card that declares EASI space says nothing about what is in it,
++           so ask the thing itself what it is before writing to it. */
++        regs = (volatile int *) (card.easi + OHCI_EXPCARD_OFFSET);
++        if ((regs[OHCI_REVISION / 4] & 0xFF) != 0x10)
++            continue;
++
++        dprintf (("", "Found OHCI controller on expansion card %d\n", s));
++
++        hci_base        = regs;
++        expcard_base    = ((int) card.combined) & ~(EXPCARD_IO_SIZE - 1);
++        device_number   = card.devno;
++        expcard_intmask = card.intmask;
++        expcard_intbit  = card.intbit;
++        return NULL;
++    }
++
++    return _swix (MessageTrans_ErrorLookup, _INR(0,2),
++                  &err_noohci, &mod_messages, 0 /* Internal buffer */);
++}
++
++static void release_usb_irq(void *pw)
++{
++    if (expcard_base != 0)
++    {
++        /* The kernel matches a podule chain node on all four of address,
++           mask, call address and r12, so the release has to repeat exactly
++           what the claim said or it finds nothing to release. */
++        _swix (OS_ReleaseDeviceVector, _INR(0,4),
++            device_number, usb_irq_entry, pw,
++            expcard_base, EXPCARD_IRQ_BIT);
++    }
++    else
++    {
++        _swix (OS_ReleaseDeviceVector, _INR(0,2),
++            device_number | ((pci_device == -1)?0:(1u<<31)),
++            usb_irq_entry, pw);
++    }
++}
+ 
+ /*---------------------------------------------------------------------------*/
+ /* Port power controls - only used by HAL devices                            */
+@@ -379,6 +542,10 @@
+         dprintf (("", "Init-Registering with USB driver-done\n"));
+     }
+ 
++    /* An expansion card carries the one controller it carries, so there is
++       no bus left to walk and no second instance to start. */
++    if (expcard_base != 0) return NULL;
++
+     /* allow enough space for name, % and number, then space, device type,
+        and another number */
+     char name[sizeof Module_Title + 1 + 12 + 1 + 1 + 12];
+@@ -446,23 +613,32 @@
+             pci_device = (int) strtol (endptr+1, NULL, 0);
+         else if(*endptr == 'H')
+             hal_device = (int) strtol (endptr+1, NULL, 0);
++        else if(*endptr == 'E')
++            expcard_slot = (int) strtol (endptr+1, NULL, 0);
+         else
+         {
+-            static const _kernel_tokerror err_noreinit = ErrorBlock_OHCI_NoReinit;
+-
+-            return _swix (MessageTrans_ErrorLookup, _INR(0,2),
+-                          &err_noreinit, 0 /* Global messages */, 0 /* Internal buffer */);
++            /* Not a tail we put there ourselves. An expansion card ROM starts
++               the modules it carries with a tail of its own choosing, so
++               refusing here is what stops a card-carried copy from ever
++               running; leave every search enabled and let the searches say
++               whether there is a controller. */
++            pci_device = 0;
+         }
+     }
+     else
+     {
+         pci_device = 0;
++    }
++
+ #ifndef ROM
+-        /* Only first instance registers the messages in ResourceFS */
+-        e = _swix (ResourceFS_RegisterFiles, _IN (0), resource_files ());
+-        if (e != NULL) return e;
++    /* Whoever looks the messages up has to have registered them first, and
++       which instance that is depends on how the module was started - a copy
++       carried in an expansion card ROM is the first one in every way except
++       that r11 is not zero. Registering unconditionally and ignoring the
++       complaint from a second attempt is simpler than working out which. */
++    registered_resources = (_swix (ResourceFS_RegisterFiles, _IN (0),
++                                   resource_files ()) == NULL);
+ #endif
+-    }
+ 
+     e = _swix (MessageTrans_OpenFile, _INR(0,2),
+         &mod_messages,
+@@ -502,7 +678,7 @@
+             pci_device = -1;
+         }
+     }
+-    if(pci_device == -1)
++    if(pci_device == -1 && expcard_slot == EXPCARD_NONE)
+     {
+         size_t usbinfolen;
+ 
+@@ -542,16 +718,28 @@
+             }
+             else if(e || !usbinfolen)
+             {
+-                /* Reached end of list */
+-                static const _kernel_tokerror err_noohci = ErrorBlock_OHCI_NoOHCI;
+-            
+-                e = _swix (MessageTrans_ErrorLookup, _INR(0,2),
+-                           &err_noohci, &mod_messages, 0 /* Internal buffer */);
+-                goto error;
++                /* Reached the end of the list without finding one. Fall
++                   through to the expansion cards rather than giving up: a
++                   machine whose HAL knows nothing about USB can still have a
++                   controller on a card. */
++                e = NULL;
++                hal_device = -1;
++                break;
+             }
+         } while(1);
+     }
+ 
++    if(pci_device == -1 && hal_device == -1)
++    {
++        e = find_expansion_card_controller (expcard_slot);
++        if (e) goto error;
++
++        /* The card's own registers do all of this; there is no HAL here. */
++        ohci_ppower    = do_ohci_ppower;
++        ohci_error     = do_ohci_perror;
++        ohci_pirqclear = do_ohci_pirqclear;
++    }
++
+     dprintf (("Main_0", "interrupt device %d\n", device_number));
+     dprintf (("Main_0", "hardware address %p\n", hci_base));
+ 
+@@ -600,15 +788,60 @@
+     }
+     dprintf (("", "magic at %p", magic));
+ 
+-    _swix (OS_ClaimDeviceVector, _INR(0,2),
+-        device_number | ((pci_device == -1)?0:(1u<<31)),
+-        usb_irq_entry, pw);
+-    _swix (OS_Hardware, _IN(0) | _INR(8,9),
+-        device_number, OSHW_CallHAL, EntryNo_HAL_IRQEnable);
++    if (expcard_base != 0)
++    {
++        unsigned char enabled;
++
++        /* A podule device vector is claimed with the address of the status
++           byte to test and the bit in it, and the kernel calls only the
++           first claimant whose bit is set. Give it the card's own byte and
++           the card's own bit so this matches nothing but this card. */
++        _swix (OS_ClaimDeviceVector, _INR(0,4),
++            device_number, usb_irq_entry, pw,
++            expcard_base, EXPCARD_IRQ_BIT);
++
++        /* And let the card's interrupts out of the I/O controller. This is a
++           read-modify-write of a register shared with every other card, so
++           interrupts stay off across it. */
++        _swix (OS_IntOff, 0);
++        enabled = *expcard_intmask;
++        *expcard_intmask = (unsigned char) (enabled | expcard_intbit);
++        _swix (OS_IntOn, 0);
++    }
++    else
++    {
++        _swix (OS_ClaimDeviceVector, _INR(0,2),
++            device_number | ((pci_device == -1)?0:(1u<<31)),
++            usb_irq_entry, pw);
++        _swix (OS_Hardware, _IN(0) | _INR(8,9),
++            device_number, OSHW_CallHAL, EntryNo_HAL_IRQEnable);
++    }
+ 
+     /* for the L7205, clocks need to be started */
+     /* in BSD this is called from sys/pci/ohci_pci.c */
+-    ohci_init (&ohci_soft);
++    {
++        /* Refuse to stay resident when the controller will not start.
++           Throwing this result away is worse than it looks: the module goes
++           Active with a half-built softc, the callback below hands that softc
++           to USBDriver, and the first call back through its method table -
++           which ohci_init never got as far as filling in - takes the machine
++           out with an abort somewhere unrecognisable. */
++        usbd_status started = ohci_init (&ohci_soft);
++
++        if (started != USBD_NORMAL_COMPLETION)
++        {
++            static _kernel_oserror err_nostart;
++
++            release_usb_irq (pw);
++
++            sprintf (err_nostart.errmess,
++                     "OHCI controller would not start (usbd status %d)",
++                     (int) started);
++            err_nostart.errnum = ErrorBase_OHCIDriver + 4;
++            e = &err_nostart;
++            goto error;
++        }
++    }
+ 
+     dprintf (("", "Finished module initialisation\n"));
+ 
+@@ -636,7 +869,7 @@
+     _swix (MessageTrans_CloseFile, _IN(0), &mod_messages);
+ error_dereg:
+ #ifndef ROM
+-    if (podule_base == 0) _swix (ResourceFS_DeregisterFiles, _IN(0), resource_files ());
++    if (registered_resources) _swix (ResourceFS_DeregisterFiles, _IN(0), resource_files ());
+ #endif
+     return e;
+ }
+@@ -678,9 +911,9 @@
+     /* don't disable the interrupt since it is shared, the OS will disable it
+        when noone is left responding */
+ 
+-    _swix (OS_ReleaseDeviceVector, _INR(0,2),
+-        device_number | ((pci_device == -1)?0:(1u<<31)),
+-        usb_irq_entry, pw);
++    /* The I/O controller's podule interrupt bit is left alone: every card in
++       the machine shares it. */
++    release_usb_irq (pw);
+ 
+     for (v = 0; v < (sizeof(hal_oc_device) / sizeof(hal_oc_device[0])); v++)
+     {
+@@ -777,10 +1010,8 @@
+         callx_remove_all_callbacks ();
+         callx_remove_all_callafters ();
+         callx_remove_all_calleverys ();
+-        _swix (OS_ReleaseDeviceVector, _INR(0,2),
+-            device_number | ((pci_device == -1)?0:(1u<<31)),
+-            usb_irq_entry, pw);
+-    
++        release_usb_irq (pw);
++
+         for (int i = 0; i < (sizeof(hal_oc_device) / sizeof(hal_oc_device[0])); i++)
+         {
+             if (hal_oc_device_claimed[i] && (hal_oc_device[i] != -1))

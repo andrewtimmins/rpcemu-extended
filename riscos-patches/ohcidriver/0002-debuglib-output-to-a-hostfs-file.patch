@@ -1,0 +1,35 @@
+Subject: [PATCH 2/2] Send DebugLib output to a file in HostFS
+
+Local debugging aid, not for upstream: it hardcodes a HostFS path.
+
+A debug build of OHCIDriver (amu standalone DEBUG=TRUE) is by far the best
+instrument this component has, because it is full of dprintf, but the stock
+DEBUGIT_OUTPUT needs a receiver module that is not present in the guest. Writing
+to a file in HostFS instead puts the narration where the host can read it while
+the machine is still running.
+
+The path has to be given in full. "$.dbOHCI" alone does not work, because at
+module initialisation the current filing system is not HostFS.
+
+This hunk only compiles into a DEBUG=TRUE build, so it has no effect on the
+module shipped in usbroms/.
+
+Apply after 0001, from the root of an OHCIDriver 0.56 checkout:
+    patch -p1 < <this file>
+
+ c/ohcimodule | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/c/ohcimodule
++++ b/c/ohcimodule
+@@ -415,8 +582,8 @@
+ #ifdef OHCI_DEBUG
+     sprintf(debugname,"OHCIDrv-%d",podule_base);
+ #endif
+-    debug_initialise (debugname, 0, 0);
+-    debug_set_device(DEBUGIT_OUTPUT);
++    debug_initialise (debugname, "HostFS::HostFS.$.dbOHCI", 0);
++    debug_set_device(FILE_OUTPUT);
+     debug_set_unbuffered_files (TRUE);
+     /* Can't set debug_set_stamp_debug(TRUE) - causes interrupts to be briefly enabled during debug output, which breaks all kinds of stuff */
+ /*    debug_set_stamp_debug (TRUE); */
