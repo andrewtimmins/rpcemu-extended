@@ -33,9 +33,10 @@ if(RPCEMU_ENABLE_WARNINGS)
     if(NOT MSVC)
         # -Werror=implicit-function-declaration: catch missing declarations on
         # all toolchains. GCC 14 (e.g. current MSYS2) already errors on these by
-        # default; making it explicit means older GCC/Clang catch them too.
-        add_compile_options(-Wall -Wextra -Werror=switch
-                            -Werror=implicit-function-declaration -fno-common)
+        # default; making it explicit means older GCC/Clang catch them too. C
+        # only: GCC warns once per C++ source file that the flag does not apply.
+        add_compile_options(-Wall -Wextra -Werror=switch -fno-common
+                            $<$<COMPILE_LANGUAGE:C>:-Werror=implicit-function-declaration>)
     endif()
 endif()
 
