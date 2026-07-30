@@ -823,7 +823,32 @@ getpccache(uint32_t addr)
 		}
 		break;
 	}
-	fatal("Bad PC %08x %08x\n", addr, phys_addr);
+	/*
+	 * The address translated, but no memory is mapped at the physical address
+	 * it translated to.
+	 *
+	 * This used to be fatal, which turns a guest crash into ours: a wild branch
+	 * in the guest took the whole emulator down. On a real Risc PC a fetch from
+	 * unmapped physical space gives an external abort and RISC OS reports it, so
+	 * a Prefetch Abort is both the accurate response and the useful one - it
+	 * leaves the guest to say what happened, which is worth far more than a dead
+	 * process. The caller turns NULL into that abort.
+	 *
+	 * Still logged, because it usually does mean something is wrong, just not
+	 * necessarily in the emulator.
+	 */
+	{
+		static int reported;
+
+		if (reported < 8) {
+			reported++;
+			rpclog("Prefetch abort: nothing mapped for PC %08x (physical %08x)%s\n",
+			       addr, phys_addr,
+			       reported == 8 ? " - further occurrences will not be logged" : "");
+		}
+	}
+
+	return NULL;
 }
 
 /**
