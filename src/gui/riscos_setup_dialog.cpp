@@ -48,8 +48,7 @@ wxString HumanSize(long long bytes)
 
 RiscosSetupDialog::RiscosSetupDialog(wxWindow *parent, bool first_run)
     : wxDialog(parent, wxID_ANY, "Set up RISC OS", wxDefaultPosition,
-               wxDefaultSize, wxDEFAULT_DIALOG_STYLE),
-      first_run_(first_run)
+               wxDefaultSize, wxDEFAULT_DIALOG_STYLE)
 {
 	const wxString intro = first_run
 	    ? "RPCEmu did not find a RISC OS ROM, and cannot start a machine "

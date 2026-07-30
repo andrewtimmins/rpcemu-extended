@@ -158,7 +158,8 @@ public:
 	void ResetForSignal();
 
 	bool IsWindowActive() const { return window_active_; }
-	bool IsFullScreen() const { return full_screen_; }
+	/* Overrides wxTopLevelWindow's, so wx's own callers see this flag too. */
+	bool IsFullScreen() const override { return full_screen_; }
 
 	bool IsGuiThread() const override;
 	void PostVideoUpdate(VideoUpdate update) override;

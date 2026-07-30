@@ -73,8 +73,6 @@ private:
 	wxStaticText *size_label_ = nullptr;
 	wxStaticText *intro_text_ = nullptr;
 
-	bool first_run_;
-
 	/* Empty means build a new machine; otherwise the machine to fetch for. */
 	wxString target_machine_;
 	bool target_include_disc_ = false;

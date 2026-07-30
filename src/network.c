@@ -483,6 +483,7 @@ network_macaddress_parse(const char *macaddress, uint8_t hwaddr[6])
 			&hwaddr32[3], &hwaddr32[4], &hwaddr32[5]);
 
 	assert(items == 6); /* with pre-parsing it should be impossible for the above sscanf to fail */
+	NOT_USED(items); /* only the assert reads it */
 
 	for (i = 0; i < 6; i++) {
 		hwaddr[i] = hwaddr32[i];
