@@ -42,7 +42,15 @@ wxString LedText(bool active)
 
 void BindMenuItem(wxMenu *menu, int id, MainFrame *frame, void (MainFrame::*handler)(wxCommandEvent &))
 {
-	menu->Bind(wxEVT_MENU, handler, frame, id);
+	/* macOS moves wxID_ABOUT, wxID_EXIT and wxID_PREFERENCES out of our menus
+	   into the application menu, so their events no longer come from the wxMenu
+	   they were appended to and a binding on that menu would never fire. Bind
+	   those on the frame, which catches the item wherever the platform puts it. */
+	if (id == wxID_ABOUT || id == wxID_EXIT || id == wxID_PREFERENCES) {
+		frame->Bind(wxEVT_MENU, handler, frame, id);
+	} else {
+		menu->Bind(wxEVT_MENU, handler, frame, id);
+	}
 }
 
 /*
