@@ -8,5 +8,5 @@
 # only rebuilt when someone runs build.sh --podules, so a real build date would
 # record when that last happened. Override with `make MODULE_DATE="..."`.
 
-Module_MajorVersion	0.03
-Module_Date		29 Jul 2026
+Module_MajorVersion	0.05
+Module_Date		30 Jul 2026
