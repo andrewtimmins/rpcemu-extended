@@ -338,6 +338,20 @@ build_podules() {
 			cp -f rpcemuusbsupport,ffa "$SCRIPT_DIR/poduleroms/"
 		)
 	fi
+	# RPCEmuPCIEmulator supplies the PCI SWIs that RISC OS's USB stack uses to
+	# get DMA-capable memory. It has to be in poduleroms/, not usbroms/: the
+	# support card's modules start before the USB card's, and OHCIDriver needs
+	# these SWIs during its own initialisation. See docs/usb.md.
+	local pci_dir="riscos-progs/RPCEmuPCIEmulator"
+	if [ -d "$pci_dir" ]; then
+		echo "Building RPCEmuPCIEmulator podule ROM..."
+		(
+			cd "$pci_dir"
+			make clean
+			make AS=arm-linux-gnueabi-as LD=arm-linux-gnueabi-ld OBJCOPY=arm-linux-gnueabi-objcopy
+			cp -f rpcemupciemulator,ffa "$SCRIPT_DIR/poduleroms/"
+		)
+	fi
 	echo "✓ Podule ROMs copied to poduleroms/"
 
 	# The graphics card's display driver goes in gfxroms/, NOT poduleroms/: it
