@@ -456,7 +456,10 @@ name_host_to_riscos(const char *object_name, size_t len, char *riscos_name)
       *riscos_name++ = '.';
       break;
     case 32:
-      *riscos_name++ = 160;
+      /* Latin-1 hard space. Cast as the UTF-8 fold above does: char is signed
+         on most targets, so a bare 160 is an implementation-defined
+         conversion. */
+      *riscos_name++ = (char) 160;
       break;
     case '#':
       *riscos_name++ = '?';
