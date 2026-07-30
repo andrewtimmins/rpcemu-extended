@@ -36,11 +36,67 @@ int dcache = 0; /* Data cache on StrongARM, unified cache pre-StrongARM */
 #define TLBCACHESIZE 256
 
 uint32_t tlbcache[0x100000] = {0};
+/*
+ * What the cached translation in tlbcache[] is allowed to be used for.
+ *
+ * DDI 0100B section 7.6: "The TLB caches virtual to physical address
+ * translations and access permissions for each translation. If the TLB contains
+ * a translated entry for the virtual address, the access control logic
+ * determines whether access is permitted." So the permissions have to be cached
+ * with the entry and checked on every access, not decided once when the entry is
+ * filled. Before this existed, a cached entry was reused without any check at
+ * all, which is the fault ADFFS has reported since 2013.
+ *
+ * The four outcomes are precomputed when the entry is filled, so checking one is
+ * an array read and a bit test rather than a walk of the domain and AP rules.
+ */
+uint8_t tlbperm[0x100000] = {0};
 static uint32_t tlbcache2[TLBCACHESIZE];
-uintptr_t vraddrl[0x100000];
-uint32_t vraddrls[1024] = {0}, vraddrphys[1024] = {0};
-uintptr_t vwaddrl[0x100000];
-uint32_t vwaddrls[1024] = {0}, vwaddrphys[1024] = {0};
+/*
+ * The host-pointer fast maps, one pair per privilege level.
+ *
+ * These are read straight from the mem.h inline accessors and from code the
+ * recompiler emits, and the test there is a fixed "are the low bits clear" with
+ * no idea of the current privilege level. So there is a set for User and a set
+ * for privileged modes, and a page only appears in the set for a privilege level
+ * that is actually allowed the access. vraddrl/vwaddrl point at the pair for the
+ * current mode and are swapped by mem_set_privilege(), so every existing use
+ * site is unchanged and nothing extra happens per access.
+ *
+ * Indexed [privileged][page].
+ */
+static uintptr_t vraddrl_mode[2][0x100000];
+static uintptr_t vwaddrl_mode[2][0x100000];
+
+/* The current privilege level's maps. */
+uintptr_t *vraddrl = vraddrl_mode[0];
+uintptr_t *vwaddrl = vwaddrl_mode[0];
+
+/* Ring buffers of installed entries, per privilege level, for eviction and for
+   the physical-address invalidation the graphics and podule code needs. */
+uint32_t vraddrls[2][1024] = {{0}}, vraddrphys[2][1024] = {{0}};
+uint32_t vwaddrls[2][1024] = {{0}}, vwaddrphys[2][1024] = {{0}};
+
+void
+mem_set_privilege(int privileged)
+{
+	memmode = privileged;
+	vraddrl = vraddrl_mode[privileged];
+	vwaddrl = vwaddrl_mode[privileged];
+}
+
+/* Install into, or clear from, a specific privilege level's maps. */
+uintptr_t *
+mem_read_map(int privileged)
+{
+	return vraddrl_mode[privileged];
+}
+
+uintptr_t *
+mem_write_map(int privileged)
+{
+	return vwaddrl_mode[privileged];
+}
 static int tlbcachepos = 0;
 int tlbs = 0, flushes = 0;
 
@@ -77,6 +133,7 @@ static int icache = 0;
 #define CP15_FAULT_PERMISSION_SECTION	0xd
 #define CP15_FAULT_PERMISSION_PAGE	0xf
 
+
 static void
 cp15_tlb_flush(void)
 {
@@ -85,6 +142,7 @@ cp15_tlb_flush(void)
 	for (c = 0; c < TLBCACHESIZE; c++) {
 		if (tlbcache2[c] != 0xffffffff) {
 			tlbcache[tlbcache2[c]] = 0xffffffff;
+			tlbperm[tlbcache2[c]] = 0;
 			tlbcache2[c] = 0xffffffff;
 		}
 	}
@@ -95,16 +153,20 @@ cp15_vaddr_reset(void)
 {
 	int c;
 
-	for (c = 0; c < 1024; c++) {
-		if (vraddrls[c] != 0xFFFFFFFF) {
-			vraddrl[vraddrls[c]] = 0xFFFFFFFF;
-			vraddrls[c] = 0xFFFFFFFF;
-			vraddrphys[c] = 0xFFFFFFFF;
-		}
-		if (vwaddrls[c] != 0xFFFFFFFF) {
-			vwaddrl[vwaddrls[c]] = 0xFFFFFFFF;
-			vwaddrls[c] = 0xFFFFFFFF;
-			vwaddrphys[c] = 0xFFFFFFFF;
+	int m;
+
+	for (m = 0; m < 2; m++) {
+		for (c = 0; c < 1024; c++) {
+			if (vraddrls[m][c] != 0xFFFFFFFF) {
+				vraddrl_mode[m][vraddrls[m][c]] = 0xFFFFFFFF;
+				vraddrls[m][c] = 0xFFFFFFFF;
+				vraddrphys[m][c] = 0xFFFFFFFF;
+			}
+			if (vwaddrls[m][c] != 0xFFFFFFFF) {
+				vwaddrl_mode[m][vwaddrls[m][c]] = 0xFFFFFFFF;
+				vwaddrls[m][c] = 0xFFFFFFFF;
+				vwaddrphys[m][c] = 0xFFFFFFFF;
+			}
 		}
 	}
 }
@@ -120,15 +182,21 @@ cp15_tlb_invalidate_physical(uint32_t addr)
 {
 	int c;
 
-	for (c = 0; c < 1024; c++) {
-		/* Skip unused ring slots: cp15_reset() invalidates vwaddrls[] (to
-		   0xffffffff) but leaves vwaddrphys[] stale, so a stale phys entry can
-		   still match here after a reset - indexing vwaddrl[] with the invalid
-		   0xffffffff page marker would be a wild out-of-bounds write. */
-		if (vwaddrls[c] != 0xffffffff && (vwaddrphys[c] & 0x1f000000) == addr) {
-			vwaddrl[vwaddrls[c]] = 0xffffffff;
-			vwaddrls[c] = 0xffffffff;
-			vwaddrphys[c] = 0xffffffff;
+	int m;
+
+	for (m = 0; m < 2; m++) {
+		for (c = 0; c < 1024; c++) {
+			/* Skip unused ring slots: cp15_reset() invalidates vwaddrls[]
+			   (to 0xffffffff) but leaves vwaddrphys[] stale, so a stale
+			   phys entry can still match here after a reset - indexing
+			   vwaddrl_mode[] with the invalid 0xffffffff page marker would
+			   be a wild out-of-bounds write. */
+			if (vwaddrls[m][c] != 0xffffffff &&
+			    (vwaddrphys[m][c] & 0x1f000000) == addr) {
+				vwaddrl_mode[m][vwaddrls[m][c]] = 0xffffffff;
+				vwaddrls[m][c] = 0xffffffff;
+				vwaddrphys[m][c] = 0xffffffff;
+			}
 		}
 	}
 }
@@ -165,9 +233,13 @@ cp15_reset(CPUModel cpu_model)
         memset(tlbcache, 0xff, 0x100000 * sizeof(uint32_t));
         memset(tlbcache2, 0xff, TLBCACHESIZE * sizeof(uint32_t));
         tlbcachepos=0;
-	memset(vraddrl, 0xff, sizeof(vraddrl));
+	/* Both privilege levels, and by the array rather than through the pointer:
+	   sizeof(vraddrl) is the size of a pointer now, not of the map. An entry
+	   left as zero would read as "accessible" and dereference host address 0
+	   plus the guest address. */
+	memset(vraddrl_mode, 0xff, sizeof(vraddrl_mode));
+	memset(vwaddrl_mode, 0xff, sizeof(vwaddrl_mode));
 	memset(vraddrls, 0xff, sizeof(vraddrls));
-	memset(vwaddrl, 0xff, sizeof(vwaddrl));
 	memset(vwaddrls, 0xff, sizeof(vwaddrls));
 }
 
@@ -191,14 +263,52 @@ cp15_tlb_flush_all(void)
 	flushes++;
 }
 
+static int cp15_check_permissions(uint32_t ap, int is_write);
+
+/* Build the TLB_PERM_* mask for an entry, from its Domain and AP bits. */
+static uint8_t
+cp15_perm_mask(uint32_t domain_access, uint32_t ap)
+{
+	uint8_t mask = 0;
+	int privileged, is_write;
+
+	/* A Manager for the Domain is not guarded by the page's permissions at
+	   all (DDI 0100B section 7.9), so everything is allowed. */
+	if (domain_access == 3) {
+		return TLB_PERM_PRIV_R | TLB_PERM_PRIV_W |
+		       TLB_PERM_USER_R | TLB_PERM_USER_W;
+	}
+
+	for (privileged = 0; privileged < 2; privileged++) {
+		for (is_write = 0; is_write < 2; is_write++) {
+			const int prev = memmode;
+			int allowed;
+
+			/* cp15_check_permissions() reads memmode, which is the
+			   thing being varied here. */
+			memmode = privileged;
+			allowed = !cp15_check_permissions(ap, is_write);
+			memmode = prev;
+
+			if (allowed) {
+				mask |= (uint8_t) (1u << ((privileged << 1) | is_write));
+			}
+		}
+	}
+
+	return mask;
+}
+
 static void
-cp15_tlb_add_entry(uint32_t vaddr, uint32_t paddr)
+cp15_tlb_add_entry(uint32_t vaddr, uint32_t paddr, uint8_t perm)
 {
 	if (tlbcache2[tlbcachepos] != 0xffffffff) {
 		tlbcache[tlbcache2[tlbcachepos]] = 0xffffffff;
+		tlbperm[tlbcache2[tlbcachepos]] = 0;
 	}
 	tlbcache2[tlbcachepos] = vaddr >> 12;
 	tlbcache[vaddr >> 12] = paddr & 0xfffff000;
+	tlbperm[vaddr >> 12] = perm;
 
 	tlbcachepos = (tlbcachepos + 1) & (TLBCACHESIZE - 1);
 }
@@ -554,8 +664,11 @@ translateaddress2(uint32_t addr, int rw, int prefetch)
 				fault_code = CP15_FAULT_PERMISSION_PAGE;
 				goto do_fault;
 			}
+		} else {
+			access_permissions = 3;	/* Manager: unguarded */
 		}
-		cp15_tlb_add_entry(addr, phys_addr);
+		cp15_tlb_add_entry(addr, phys_addr,
+		    cp15_perm_mask(domain_access, access_permissions));
 		return phys_addr;
 
 	case 2: /* Section (1 MB) */
@@ -572,9 +685,12 @@ translateaddress2(uint32_t addr, int rw, int prefetch)
 				fault_code = CP15_FAULT_PERMISSION_SECTION;
 				goto do_fault;
 			}
+		} else {
+			access_permissions = 3;	/* Manager: unguarded */
 		}
 		phys_addr = (fld & 0xfff00000) | (addr & 0xfffff);
-		cp15_tlb_add_entry(addr, phys_addr);
+		cp15_tlb_add_entry(addr, phys_addr,
+		    cp15_perm_mask(domain_access, access_permissions));
 		return phys_addr;
 
 	default:
@@ -629,8 +745,12 @@ getpccache(uint32_t addr)
 		phys_addr = addr;
 	}
 
-	/* Invalidate write pointer for this page - so we can handle code modification */
-	vwaddrl[addr >> 12] = 0xffffffff;
+	/* Invalidate write pointer for this page - so we can handle code
+	   modification. Both privilege levels, or a page being executed stays
+	   directly writable in whichever one was missed, and the code cache would
+	   be corrupted rather than a fault raised. */
+	mem_write_map(0)[addr >> 12] = 0xffffffff;
+	mem_write_map(1)[addr >> 12] = 0xffffffff;
 
 	/* Decode 30 address bits so the Kinetic SDRAM banks (0x20000000 and
 	   0x30000000) are reachable for instruction fetch; for other models the

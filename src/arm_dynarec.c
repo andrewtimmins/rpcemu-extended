@@ -206,8 +206,10 @@ void updatemode(uint32_t m)
                 }
         }
 
-	/* Update memory access mode based on privilege level of ARM mode */
-	memmode = ARM_MODE_PRIV(arm.mode) ? 1 : 0;
+	/* Update memory access mode based on privilege level of ARM mode. Goes
+	   through mem_set_privilege() so the fast maps follow the privilege level;
+	   see the comment on vraddrl_mode[] in cp15.c. */
+	mem_set_privilege(ARM_MODE_PRIV(arm.mode) ? 1 : 0);
 }
 
 static int stmlookup[256];

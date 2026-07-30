@@ -237,6 +237,7 @@ static inline void a64_sub_w_imm(int d, int nn, uint32_t imm) { addword(0x510000
 static inline void a64_subs_w_imm(int d, int nn, uint32_t imm) { addword(0x71000000u | ((imm & 0xfff) << 10) | (nn << 5) | d); }
 static inline void a64_br(int rn) { addword(0xD61F0000u | (rn << 5)); }
 static inline void a64_ldr_w_reg(int t, int nn, int m) { addword(0xB8607800u | (m << 16) | (nn << 5) | t); } /* LDR Wt,[Xn,Xm,LSL#2] */
+static inline void a64_ldr_x_imm(int t, int nn, unsigned off8) { addword(0xF9400000u | ((off8 >> 3) << 10) | (nn << 5) | t); } /* LDR Xt,[Xn,#off] */
 static inline void a64_ldr_x_reg(int t, int nn, int m) { addword(0xF8607800u | (m << 16) | (nn << 5) | t); } /* LDR Xt,[Xn,Xm,LSL#3] */
 
 /* AArch64 condition codes. */
@@ -417,8 +418,14 @@ initcodeblock(uint32_t l)
 	a64_stp_pre(A64_VWP, A64_VRP, A64_SP, -16);
 	a64_stp_pre(A64_MADDR, A64_X24, A64_SP, -16);
 	a64_load_imm64(A64_ARM, (uintptr_t) &arm);
-	a64_load_imm64(A64_VWP, (uintptr_t) &vwaddrl[0]);
-	a64_load_imm64(A64_VRP, (uintptr_t) &vraddrl[0]);
+	/* vwaddrl/vraddrl are pointers to the current privilege level's maps, so
+	   load their current value rather than a baked-in array address. Once per
+	   block is enough: MSR/MRS are not recompiled and exceptions leave the
+	   block, so privilege cannot change part way through one. */
+	a64_load_imm64(A64_VWP, (uintptr_t) &vwaddrl);
+	a64_ldr_x_imm(A64_VWP, A64_VWP, 0);
+	a64_load_imm64(A64_VRP, (uintptr_t) &vraddrl);
+	a64_ldr_x_imm(A64_VRP, A64_VRP, 0);
 	a64_ldr_w(A64_R15, A64_ARM, R15_OFF);		/* x20 = arm.reg[15] */
 	block_enter = codeblockpos;
 }

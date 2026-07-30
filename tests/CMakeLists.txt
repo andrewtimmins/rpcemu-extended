@@ -31,6 +31,20 @@ else()
     message(STATUS "Skipping JIT differential tests (requires a native dynarec backend)")
 endif()
 
+# MMU access permissions. Builds real page tables in emulated RAM and checks the
+# ARM DDI 0100B Table 7-7 rules are enforced, including - the point of it - after
+# a translation has been cached. Needs no dynarec: the caches it exercises live in
+# the interpreter paths, and the recompiler reads the same maps.
+#
+# This is the regression test for the defect ADFFS reported from 2013 to 2026: a
+# cached translation was reused without rechecking permissions, so an illegal
+# access following a legal one to the same page was allowed. It covers cold
+# permissions, cached translations, LDRT/STRT and instruction fetch. See
+# docs/mmu-permissions.md.
+add_executable(test_mmu_perms test_mmu_perms.c test_stubs.c)
+target_link_libraries(test_mmu_perms PRIVATE rpcemu_core m)
+add_test(NAME test_mmu_perms COMMAND test_mmu_perms)
+
 # Display mode selection against a VRAM budget. Architecture-neutral and needs
 # no dynarec, so unlike the JIT tests it builds everywhere.
 # Compiles the unit under test directly rather than linking rpcemu_core: the

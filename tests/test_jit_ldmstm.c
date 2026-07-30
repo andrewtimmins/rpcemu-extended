@@ -11,7 +11,9 @@ extern void codegen_test_interp(uint32_t opcode);
 static uint8_t membuf[4096] __attribute__((aligned(4096)));
 static uint8_t saved[4096];
 static long checks=0; static int failures=0;
-static void tlb(void){ intptr_t d=(intptr_t)membuf-(intptr_t)GBASE; vraddrl[GBASE>>12]=(uintptr_t)d; vwaddrl[GBASE>>12]=(uintptr_t)d; }
+/* Both privilege levels; the maps are per-privilege (see cp15.c). */
+static void tlb(void){ intptr_t d=(intptr_t)membuf-(intptr_t)GBASE;
+    for (int m = 0; m < 2; m++) { mem_read_map(m)[GBASE>>12]=(uintptr_t)d; mem_write_map(m)[GBASE>>12]=(uintptr_t)d; } }
 static void fillmem(void){ for(int i=0;i<4096;i++) membuf[i]=(uint8_t)(i*3+5); }
 static void setregs(uint32_t base){ for(int r=0;r<15;r++) arm.reg[r]=0x1000+r*0x111; arm.reg[RN]=base; }
 static uint32_t op(int P,int U,int W,int L,uint32_t list){ return (0xeu<<28)|(0x4u<<25)|((uint32_t)P<<24)|((uint32_t)U<<23)|((uint32_t)W<<21)|((uint32_t)L<<20)|((uint32_t)RN<<16)|(list&0xffff); }

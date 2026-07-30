@@ -94,6 +94,7 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `docs/gfxcard.md` | Graphics card: display modes beyond what VRAM allows, and its GraphicsV driver |
 | `docs/kinetic.md` | Kinetic StrongARM: how the card is detected, its 512MB memory map, and the three paths a new memory region needs |
 | `docs/usb.md` | USB: the emulated OHCI host controller, passing real devices through to the guest, and why it is OHCI |
+| `docs/mmu-permissions.md` | The MMU access-permission defect ADFFS reports: what is wrong, the reproduction, and the two candidate fixes |
 | `docs/clipboard.md` | Shared clipboard: copying text and images between the host and RISC OS |
 | `docs/hostcmd.md` | HostCmd: drive the RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`) |
 | `tools/mcp/README.md` | MCP server: drive a RISC OS machine from Claude / an agent (commands, files, screen, debugger). Setup + tool reference. |

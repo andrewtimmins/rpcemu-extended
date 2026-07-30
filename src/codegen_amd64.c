@@ -361,8 +361,16 @@ initcodeblock(uint32_t l)
 	addbyte(0x48); addbyte(0x83); addbyte(0xec); addbyte(8); // SUB $8,%rsp
 
 	addbyte(0x49); addbyte(0xbf); addptr64(&arm); // MOVABS $(&arm),%r15
-	addbyte(0x49); addbyte(0xbe); addptr64(&vwaddrl[0]); // MOVABS $vwaddrl,%r14
-	addbyte(0x49); addbyte(0xbd); addptr64(&vraddrl[0]); // MOVABS $vraddrl,%r13
+	/* vwaddrl/vraddrl are pointers to the current privilege level's maps, so
+	   the block loads their current value rather than a baked-in array address.
+	   Safe to do once per block: MSR/MRS are not recompiled and exceptions leave
+	   the block, so privilege cannot change part way through one. */
+	addbyte(0x49); addbyte(0xbe); addptr64(&vwaddrl);    // MOVABS $&vwaddrl,%r14
+	addbyte(0x4d); addbyte(0x8b); addbyte(0x36);         // MOV (%r14),%r14
+	addbyte(0x49); addbyte(0xbd); addptr64(&vraddrl);    // MOVABS $&vraddrl,%r13
+	/* r13 as a base needs an explicit disp8: ModRM rm=101 with mod=00 means
+	   RIP-relative, not (%r13). */
+	addbyte(0x4d); addbyte(0x8b); addbyte(0x6d); addbyte(0x00); // MOV 0(%r13),%r13
 	addbyte(0x45); addbyte(0x8b); addbyte(0x67); addbyte(15<<2); // MOV R15,%r12d
 	block_enter = codeblockpos;
 }

@@ -49,6 +49,7 @@ uint32_t *vram  = NULL; /**< Word pointer to Video RAM */
 
 int mmu = 0;     /**< Bool of whether the MMU is enabled */
 int memmode = 0; /**< Bool of whether ARM is in a privileged mode */
+static int memcache_memmode = -1; /**< memmode the single-entry caches were filled under */
 
 uint32_t mem_rammask; /**< Mask used for SIMM Bank 0/1 to handle the repeating address space */
 uint32_t mem_vrammask; /**< Mask used for VRAM to handle the repeating address space */
@@ -97,9 +98,29 @@ void clearmemcache(void)
 	readmemcache = 0xffffffff;
 	writememcache = 0xffffffff;
 	writemembcache = 0xffffffff;
+	memcache_memmode = -1;
 }
 
-static int vraddrlpos, vwaddrlpos;
+/*
+ * Drop the single-entry page caches if the privilege level has changed.
+ *
+ * These three cache "last page translated" and are consulted before
+ * translateaddress(), so unlike the TLB they have nowhere to keep permissions.
+ * Rather than give each one a permission mask, they are simply invalidated when
+ * privilege changes, which costs three stores and happens only on the slow path.
+ */
+static inline void
+memcache_check_mode(void)
+{
+	if (memcache_memmode != memmode) {
+		memcache_memmode = memmode;
+		readmemcache = 0xffffffff;
+		writememcache = 0xffffffff;
+		writemembcache = 0xffffffff;
+	}
+}
+
+static int vraddrlpos[2], vwaddrlpos[2];
 
 /**
  * Initialise memory (called only once on program startup)
@@ -205,7 +226,8 @@ mem_reset(uint32_t ramsize, uint32_t vram_size)
 	memset(ram00, 0, ramsize / 2);
 	memset(ram01, 0, ramsize / 2);
 
-	vraddrlpos = vwaddrlpos = 0;
+	vraddrlpos[0] = vraddrlpos[1] = 0;
+	vwaddrlpos[0] = vwaddrlpos[1] = 0;
 
 	if (machine.model == Model_Phoebe || machine.model == Model_Kinetic) {
 		/* 30 address bits are decoded (IOMD2 on Phoebe; the Kinetic card
@@ -219,35 +241,82 @@ mem_reset(uint32_t ramsize, uint32_t vram_size)
 	}
 }
 
-static inline void
+/*
+ * Install a page in the read maps of every privilege level allowed to read it.
+ *
+ * The permissions come from tlbperm[], which translateaddress2() filled when it
+ * walked the tables, so this costs one array read. A privilege level that may not
+ * read the page simply has no entry, and its accesses take the slow path where
+ * translateaddress() raises the fault.
+ *
+ * Returns the biased host pointer whether or not it was installed anywhere, so
+ * the caller can use it directly rather than reading a map back.
+ */
+static inline uintptr_t
 vradd(uint32_t a, const void *v, uint32_t f, uint32_t p)
 {
+	const uint8_t perm = tlbperm[a >> 12];
+	int privileged;
+
 	NOT_USED(f);
 
-	if (vraddrls[vraddrlpos] != 0xffffffff) {
-		vraddrl[vraddrls[vraddrlpos]] = 0xffffffff;
+	for (privileged = 0; privileged < 2; privileged++) {
+		uintptr_t *map = mem_read_map(privileged);
+		const uint8_t bit = privileged ? TLB_PERM_PRIV_R : TLB_PERM_USER_R;
+		int pos;
+
+		if (!(perm & bit)) {
+			continue;
+		}
+
+		pos = vraddrlpos[privileged];
+		if (vraddrls[privileged][pos] != 0xffffffff) {
+			map[vraddrls[privileged][pos]] = 0xffffffff;
+		}
+		vraddrls[privileged][pos] = a >> 12;
+		map[a >> 12] = (uintptr_t) v;
+		vraddrphys[privileged][pos] = p;
+		vraddrlpos[privileged] = (pos + 1) & 0x3ff;
 	}
-	vraddrls[vraddrlpos] = a >> 12;
-	vraddrl[a >> 12] = (uintptr_t) v; /* | f; */
-	vraddrphys[vraddrlpos] = p;
-	vraddrlpos = (vraddrlpos + 1) & 0x3ff;
+
+	return (uintptr_t) v;
 }
 
+/*
+ * Install a page in the write maps of every privilege level allowed to write it.
+ * As vradd(), but a write also invalidates any code compiled from the page.
+ */
 static inline void
 vwadd(uint32_t a, const void *v, uint32_t f, uint32_t p)
 {
+	const uint8_t perm = tlbperm[a >> 12];
+	int privileged;
+
 	NOT_USED(f);
 
-	/* Invalidate all code blocks on this page, so that any blocks on this
-	   page are forced to be recompiled */
+	/* Unconditional: a write to this page is about to happen one way or the
+	   other, so anything compiled from it is stale even if no fast-path entry
+	   is installed. */
 	cacheclearpage(a >> 12);
-	if (vwaddrls[vwaddrlpos] != 0xffffffff) {
-		vwaddrl[vwaddrls[vwaddrlpos]] = 0xffffffff;
+
+	for (privileged = 0; privileged < 2; privileged++) {
+		uintptr_t *map = mem_write_map(privileged);
+		const uint8_t bit = privileged ? TLB_PERM_PRIV_W : TLB_PERM_USER_W;
+		int pos;
+
+		if (!(perm & bit)) {
+			continue;
+		}
+
+		pos = vwaddrlpos[privileged];
+		if (vwaddrls[privileged][pos] != 0xffffffff) {
+			map[vwaddrls[privileged][pos]] = 0xffffffff;
+		}
+		vwaddrls[privileged][pos] = a >> 12;
+		map[a >> 12] = (uintptr_t) v;
+		vwaddrphys[privileged][pos] = p;
+		vwaddrlpos[privileged] = (pos + 1) & 0x3ff;
 	}
-	vwaddrls[vwaddrlpos] = a >> 12;
-	vwaddrl[a >> 12] = (uintptr_t) v; /* | f; */
-	vwaddrphys[vwaddrlpos] = p;
-	vwaddrlpos = (vwaddrlpos + 1) & 0x3ff;
 }
 
 /**
@@ -1012,6 +1081,7 @@ readmemfl(uint32_t addr)
 	uint32_t value = 0;
 
 	if (mmu) {
+		memcache_check_mode();
 		if ((addr >> 12) == readmemcache) {
 			phys_addr = readmemcache2 + (addr & 0xfff);
 		} else {
@@ -1026,14 +1096,20 @@ readmemfl(uint32_t addr)
 		}
 		switch (readmemcache2 & (phys_space_mask & 0xff000000)) {
 		case 0x00000000: /* ROM */
-			vradd(addr, &rom[((readmemcache2 & 0x7ff000) - (uintptr_t) (addr & ~0xfffu)) >> 2], 2, readmemcache2);
-			value = *(const uint32_t *) ((vraddrl[addr >> 12] & ~3) + (addr & ~3u));
+			{
+				const uintptr_t hp = vradd(addr, &rom[((readmemcache2 & 0x7ff000) - (uintptr_t) (addr & ~0xfffu)) >> 2], 2, readmemcache2);
+
+			value = *(const uint32_t *) ((hp & ~3) + (addr & ~3u));
+			}
 			goto out;
 
 		case 0x02000000: /* VRAM */
 			if (mem_vrammask != 0) {
-				vradd(addr, &vram[((readmemcache2 & mem_vrammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
-				value = *(const uint32_t *) (vraddrl[addr >> 12] + (addr & ~3u));
+				{
+					const uintptr_t hp = vradd(addr, &vram[((readmemcache2 & mem_vrammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+
+				value = *(const uint32_t *) (hp + (addr & ~3u));
+				}
 				goto out;
 			}
 			break;
@@ -1042,16 +1118,22 @@ readmemfl(uint32_t addr)
 		case 0x11000000:
 		case 0x12000000:
 		case 0x13000000:
-			vradd(addr, &ram00[((readmemcache2 & mem_rammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
-			value = *(const uint32_t *) (vraddrl[addr >> 12] + (addr & ~3u));
+			{
+				const uintptr_t hp = vradd(addr, &ram00[((readmemcache2 & mem_rammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+
+			value = *(const uint32_t *) (hp + (addr & ~3u));
+			}
 			goto out;
 
 		case 0x14000000: /* SIMM 0 bank 1 */
 		case 0x15000000:
 		case 0x16000000:
 		case 0x17000000:
-			vradd(addr, &ram01[((readmemcache2 & mem_rammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
-			value = *(const uint32_t *) (vraddrl[addr >> 12] + (addr & ~3u));
+			{
+				const uintptr_t hp = vradd(addr, &ram01[((readmemcache2 & mem_rammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+
+			value = *(const uint32_t *) (hp + (addr & ~3u));
+			}
 			goto out;
 
 		case 0x18000000: /* SIMM 1 bank 0 */
@@ -1063,8 +1145,11 @@ readmemfl(uint32_t addr)
 		case 0x1e000000:
 		case 0x1f000000:
 			if (ram1 != NULL) {
-				vradd(addr, &ram1[((readmemcache2 & 0x7ffffff) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
-				value = *(const uint32_t *) (vraddrl[addr >> 12] + (addr & ~3u));
+				{
+					const uintptr_t hp = vradd(addr, &ram1[((readmemcache2 & 0x7ffffff) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+
+				value = *(const uint32_t *) (hp + (addr & ~3u));
+				}
 				goto out;
 			}
 			break;
@@ -1086,8 +1171,11 @@ readmemfl(uint32_t addr)
 		case 0x2e000000: /* 128MB bank aliases on undecoded A27 */
 		case 0x2f000000: /* 128MB bank aliases on undecoded A27 */
 			if (sdram0 != NULL) {
-				vradd(addr, &sdram0[((readmemcache2 & SDRAM_BANK_MASK) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
-				value = *(const uint32_t *) (vraddrl[addr >> 12] + (addr & ~3u));
+				{
+					const uintptr_t hp = vradd(addr, &sdram0[((readmemcache2 & SDRAM_BANK_MASK) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+
+				value = *(const uint32_t *) (hp + (addr & ~3u));
+				}
 				goto out;
 			}
 			break;
@@ -1109,8 +1197,11 @@ readmemfl(uint32_t addr)
 		case 0x3e000000: /* 128MB bank aliases on undecoded A27 */
 		case 0x3f000000: /* 128MB bank aliases on undecoded A27 */
 			if (sdram1 != NULL) {
-				vradd(addr, &sdram1[((readmemcache2 & SDRAM_BANK_MASK) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
-				value = *(const uint32_t *) (vraddrl[addr >> 12] + (addr & ~3u));
+				{
+					const uintptr_t hp = vradd(addr, &sdram1[((readmemcache2 & SDRAM_BANK_MASK) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+
+				value = *(const uint32_t *) (hp + (addr & ~3u));
+				}
 				goto out;
 			}
 			break;
@@ -1211,6 +1302,7 @@ readmemfb(uint32_t addr)
 	uint32_t value = 0;
 
 	if (mmu) {
+		memcache_check_mode();
 		if ((addr >> 12) == readmemcache) {
 			phys_addr = readmemcache2 + (addr & 0xfff);
 		} else {
@@ -1225,20 +1317,26 @@ readmemfb(uint32_t addr)
 		}
 		switch (readmemcache2 & (phys_space_mask & 0xff000000)) {
 		case 0x00000000: /* ROM */
-			vradd(addr, &rom[((readmemcache2 & 0x7ff000) - (uintptr_t) (addr & ~0xfffu)) >> 2], 2, readmemcache2);
+			{
+				const uintptr_t hp = vradd(addr, &rom[((readmemcache2 & 0x7ff000) - (uintptr_t) (addr & ~0xfffu)) >> 2], 2, readmemcache2);
+
 #ifdef _RPCEMU_BIG_ENDIAN
 			addr ^= 3;
 #endif
-			value = *(const uint8_t *) ((vraddrl[addr >> 12] & ~3) + addr);
+			value = *(const uint8_t *) ((hp & ~3) + addr);
+			}
 			goto out;
 
 		case 0x02000000: /* VRAM */
 			if (mem_vrammask != 0) {
-				vradd(addr, &vram[((readmemcache2 & mem_vrammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+				{
+					const uintptr_t hp = vradd(addr, &vram[((readmemcache2 & mem_vrammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+
 #ifdef _RPCEMU_BIG_ENDIAN
 				addr ^= 3;
 #endif
-				value = *(const uint8_t *) (vraddrl[addr >> 12] + addr);
+				value = *(const uint8_t *) (hp + addr);
+				}
 				goto out;
 			}
 			break;
@@ -1247,22 +1345,28 @@ readmemfb(uint32_t addr)
 		case 0x11000000:
 		case 0x12000000:
 		case 0x13000000:
-			vradd(addr, &ram00[((readmemcache2 & mem_rammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+			{
+				const uintptr_t hp = vradd(addr, &ram00[((readmemcache2 & mem_rammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+
 #ifdef _RPCEMU_BIG_ENDIAN
 			addr ^= 3;
 #endif
-			value = *(const uint8_t *) (vraddrl[addr >> 12] + addr);
+			value = *(const uint8_t *) (hp + addr);
+			}
 			goto out;
 
 		case 0x14000000: /* SIMM 0 bank 1 */
 		case 0x15000000:
 		case 0x16000000:
 		case 0x17000000:
-			vradd(addr, &ram01[((readmemcache2 & mem_rammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+			{
+				const uintptr_t hp = vradd(addr, &ram01[((readmemcache2 & mem_rammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+
 #ifdef _RPCEMU_BIG_ENDIAN
 			addr ^= 3;
 #endif
-			value = *(const uint8_t *) (vraddrl[addr >> 12] + addr);
+			value = *(const uint8_t *) (hp + addr);
+			}
 			goto out;
 
 		case 0x18000000: /* SIMM 1 bank 0 */
@@ -1274,11 +1378,14 @@ readmemfb(uint32_t addr)
 		case 0x1e000000:
 		case 0x1f000000:
 			if (ram1 != NULL) {
-				vradd(addr, &ram1[((readmemcache2 & 0x7ffffff) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+				{
+					const uintptr_t hp = vradd(addr, &ram1[((readmemcache2 & 0x7ffffff) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+
 #ifdef _RPCEMU_BIG_ENDIAN
 				addr ^= 3;
 #endif
-				value = *(const uint8_t *) (vraddrl[addr >> 12] + addr);
+				value = *(const uint8_t *) (hp + addr);
+				}
 				goto out;
 			}
 			break;
@@ -1300,11 +1407,14 @@ readmemfb(uint32_t addr)
 		case 0x2e000000: /* 128MB bank aliases on undecoded A27 */
 		case 0x2f000000: /* 128MB bank aliases on undecoded A27 */
 			if (sdram0 != NULL) {
-				vradd(addr, &sdram0[((readmemcache2 & SDRAM_BANK_MASK) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+				{
+					const uintptr_t hp = vradd(addr, &sdram0[((readmemcache2 & SDRAM_BANK_MASK) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+
 #ifdef _RPCEMU_BIG_ENDIAN
 				addr ^= 3;
 #endif
-				value = *(const uint8_t *) (vraddrl[addr >> 12] + addr);
+				value = *(const uint8_t *) (hp + addr);
+				}
 				goto out;
 			}
 			break;
@@ -1326,11 +1436,14 @@ readmemfb(uint32_t addr)
 		case 0x3e000000: /* 128MB bank aliases on undecoded A27 */
 		case 0x3f000000: /* 128MB bank aliases on undecoded A27 */
 			if (sdram1 != NULL) {
-				vradd(addr, &sdram1[((readmemcache2 & SDRAM_BANK_MASK) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+				{
+					const uintptr_t hp = vradd(addr, &sdram1[((readmemcache2 & SDRAM_BANK_MASK) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+
 #ifdef _RPCEMU_BIG_ENDIAN
 				addr ^= 3;
 #endif
-				value = *(const uint8_t *) (vraddrl[addr >> 12] + addr);
+				value = *(const uint8_t *) (hp + addr);
+				}
 				goto out;
 			}
 			break;
@@ -1351,6 +1464,7 @@ writememfl(uint32_t addr, uint32_t val)
 	uint32_t phys_addr = addr;
 
 	if (mmu) {
+		memcache_check_mode();
 		if ((addr >> 12) == writememcache) {
 			phys_addr = writememcache2 + (addr & 0xfff);
 		} else {
@@ -1450,6 +1564,7 @@ writememfb(uint32_t addr, uint8_t val)
 	uint32_t phys_addr = addr;
 
 	if (mmu) {
+		memcache_check_mode();
 		if ((addr >> 12) == writemembcache) {
 			phys_addr = writemembcache2 + (addr & 0xfff);
 		} else {

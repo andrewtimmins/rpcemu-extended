@@ -107,8 +107,11 @@ apply_state(void)
 	/* host = guest + disp; bits 0-1 clear => readable and writable fast path */
 	{
 		intptr_t disp = (intptr_t) membuf - (intptr_t) GBASE;
-		vraddrl[GBASE >> 12] = (uintptr_t) disp;
-		vwaddrl[GBASE >> 12] = (uintptr_t) disp;
+		/* Both privilege levels; the maps are per-privilege (see cp15.c). */
+		for (int m = 0; m < 2; m++) {
+			mem_read_map(m)[GBASE >> 12] = (uintptr_t) disp;
+			mem_write_map(m)[GBASE >> 12] = (uintptr_t) disp;
+		}
 	}
 }
 

@@ -24,8 +24,12 @@ static long checks = 0; static int failures = 0;
 static void tlb_setup(void)
 {
     intptr_t disp = (intptr_t)membuf - (intptr_t)GBASE;  /* host = guest + disp */
-    vraddrl[GBASE >> 12] = (uintptr_t)disp;   /* bit0 clear => readable fast path */
-    vwaddrl[GBASE >> 12] = (uintptr_t)disp;   /* bits0-1 clear => writable */
+    /* Both privilege levels: the maps are per-privilege (see cp15.c), and
+       LDRT/STRT switch to the User set part way through a case. */
+    for (int m = 0; m < 2; m++) {
+        mem_read_map(m)[GBASE >> 12] = (uintptr_t)disp;  /* bit0 clear => readable */
+        mem_write_map(m)[GBASE >> 12] = (uintptr_t)disp; /* bits0-1 clear => writable */
+    }
 }
 
 static void fill_membuf(void)
