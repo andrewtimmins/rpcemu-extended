@@ -831,12 +831,16 @@ hostcmd_poll(void)
 			int c = accept(hc.listen_fd, NULL, NULL);
 
 			if (c >= 0) {
+				char greeting[320];	/* over the 288 a full name needs */
+
 				hc_set_nonblock(c);
 				hc.client_fd = c;
 				hc.in_len = 0;
 				hc.in_overflow = 0;
 				hc.out_head = hc.out_tail = 0;
-				hc_notice("RPCEmu HostCmd v1\n");
+				snprintf(greeting, sizeof(greeting),
+				    "RPCEmu HostCmd v1 (running on %s)\n", config.name);
+				hc_notice(greeting);
 			}
 		}
 		return;
