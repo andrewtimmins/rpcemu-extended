@@ -335,7 +335,14 @@ main(int argc, char **argv)
 	{
 		char line[1024];
 
+		/* End-of-file is Ctrl-D on Unix but Ctrl-Z (then Return) on Windows,
+		   where Ctrl-D is not EOF at all - it just enters ASCII 4, which would
+		   be sent to the guest as a command. Name the key that works here. */
+#ifdef _WIN32
+		fprintf(stderr, "rpcemu-shell: connected. Ctrl-Z then Return to exit.\n");
+#else
 		fprintf(stderr, "rpcemu-shell: connected. Ctrl-D to exit.\n");
+#endif
 		for (;;) {
 			int rc;
 
