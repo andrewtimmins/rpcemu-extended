@@ -157,6 +157,11 @@ if(PkgConfig_FOUND)
 endif()
 if(SDL2_FOUND)
     target_include_directories(rpcemu_core PRIVATE ${SDL2_INCLUDE_DIRS})
+    # pkg_check_modules() returns bare library names, so the search path has to
+    # be given too (as the libusb block below does). Without it, a prefix the
+    # linker does not already know about - Homebrew on arm64, say - fails with
+    # "library 'SDL2main' not found" in anything that links the core.
+    target_link_directories(rpcemu_core PUBLIC ${SDL2_LIBRARY_DIRS})
     target_link_libraries(rpcemu_core PUBLIC ${SDL2_LIBRARIES})
 endif()
 
