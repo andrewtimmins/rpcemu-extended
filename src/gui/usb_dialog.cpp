@@ -48,7 +48,7 @@
 extern "C" {
 #include "rpcemu.h"
 #include "usb_host.h"
-#include "usb_isp1161.h"
+#include "usb_ohci.h"
 }
 
 namespace {
@@ -83,17 +83,26 @@ UsbDialog::UsbDialog(wxWindow *parent)
                wxDefaultSize, wxDEFAULT_DIALOG_STYLE)
 {
 	auto *outer = new wxBoxSizer(wxVERTICAL);
+	/* The count comes from the card rather than the prose, which said two long
+	   after the card had four. */
 	auto *intro = new wxStaticText(this, wxID_ANY,
-	    "The emulated USB controller has two ports. Choose what is plugged into "
-	    "each; the guest sees it connect or disconnect straight away. A real "
-	    "device from this computer is handed over to the guest while it is "
-	    "attached, and is not available here in the meantime.");
-	auto *grid = new wxFlexGridSizer(2, 2, 8, 12);
+	    wxString::Format("The emulated USB controller has %d ports. Choose what "
+	    "is plugged into each; the guest sees it connect or disconnect straight "
+	    "away. A real device from this computer is handed over to the guest "
+	    "while it is attached, and is not available here in the meantime.",
+	    USB_PORTS));
+	/*
+	 * Two columns and as many rows as it takes. Naming a row count instead
+	 * fixes the grid at that many cells, so a card with more ports overflows
+	 * it and wx asserts rather than laying it out - which is what happened
+	 * when this card went from two ports to four.
+	 */
+	auto *grid = new wxFlexGridSizer(0, 2, 8, 12);
 
 	intro->Wrap(kWrapWidth);
 	outer->Add(intro, 0, wxALL, 12);
 
-	for (int port = 0; port < 2; port++) {
+	for (int port = 0; port < USB_PORTS; port++) {
 		grid->Add(new wxStaticText(this, wxID_ANY,
 		    wxString::Format("Port %d:", port + 1)),
 		    0, wxALIGN_CENTRE_VERTICAL);
@@ -191,7 +200,7 @@ void UsbDialog::RebuildChoices()
 		                    d.openable != 0, d.high_speed != 0, label});
 	}
 
-	for (int port = 0; port < 2; port++) {
+	for (int port = 0; port < USB_PORTS; port++) {
 		const int selected = port_choice_[port]->GetSelection();
 		const std::string was = (selected >= 0 &&
 		    selected < static_cast<int>(choices_.size()))
@@ -219,7 +228,7 @@ void UsbDialog::RebuildChoices()
 
 void UsbDialog::SelectFromConfig()
 {
-	for (int port = 0; port < 2; port++) {
+	for (int port = 0; port < USB_PORTS; port++) {
 		int selection = 0;
 
 		for (size_t i = 0; i < choices_.size(); i++) {
@@ -279,7 +288,7 @@ void UsbDialog::UpdateStatus()
 	wxString text;
 	int host = 0;
 
-	for (int port = 0; port < 2; port++) {
+	for (int port = 0; port < USB_PORTS; port++) {
 		const Choice *choice = SelectedChoice(port);
 
 		if (choice == nullptr || choice->kind != UsbAttachment_Host) {
@@ -333,7 +342,7 @@ bool UsbDialog::ApplySettings()
 	 * hand would take the mouse away - and they would have no pointer left to
 	 * put it back with.
 	 */
-	for (int port = 0; port < 2; port++) {
+	for (int port = 0; port < USB_PORTS; port++) {
 		const Choice *choice = SelectedChoice(port);
 
 		if (choice == nullptr || choice->kind != UsbAttachment_Host ||
@@ -357,7 +366,7 @@ bool UsbDialog::ApplySettings()
 		}
 	}
 
-	for (int port = 0; port < 2; port++) {
+	for (int port = 0; port < USB_PORTS; port++) {
 		const Choice *choice = SelectedChoice(port);
 
 		if (choice == nullptr) {

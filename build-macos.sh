@@ -577,7 +577,7 @@ if [ "$DO_FUSE" = true ]; then
 	rm -rf "$APP"
 	mkdir -p "$MACOSD" "$RESD"
 
-	for d in configs poduleroms netroms gfxroms resources roms podules default; do
+	for d in configs poduleroms netroms gfxroms usbroms resources roms podules default; do
 		[ -e "$d" ] && cp -a "$d" "$RESD/"
 	done
 	# No machine is shipped; see the note in build.sh. New... creates one and

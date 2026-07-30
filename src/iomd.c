@@ -32,7 +32,7 @@
 #include "cmos.h"
 #include "savestate.h"
 #include "podules.h"
-#include "usb_isp1161.h"
+#include "usb_ohci.h"
 
 /* References -
    Acorn Risc PC - Technical Reference Manual
@@ -284,10 +284,11 @@ gentimerirq(uint64_t nsec_timer)
         /* Update Podule interrupts */
         runpoduletimers(2); /* 2ms * 500 = 1 sec */
 
-        /* The USB controller's frame counter. runpoduletimers() deliberately
-           skips slot 0, where the support card lives, so it is ticked here. */
-        usb_isp1161_frame();
-        usb_isp1161_frame();
+        /* The USB controller's frame, which is where OHCI walks its lists.
+           runpoduletimers() deliberately skips slot 0, so it is ticked here.
+           Twice, because this runs every 2ms and a USB frame is 1ms. */
+        usb_ohci_frame();
+        usb_ohci_frame();
 }
 
 /**

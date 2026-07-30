@@ -202,6 +202,15 @@ typedef enum {
 } CPUModel;
 
 /**
+ * How many USB ports the machine has.
+ *
+ * OHCI's root hub allows up to fifteen. Four is what the interface offers -
+ * more than the two the ISP1161 had, and enough that nothing has to be
+ * unplugged to try something else.
+ */
+#define USB_PORTS 4
+
+/**
  * What can be plugged into an emulated USB port.
  *
  * 1 was a synthesised gamepad, used to exercise the controller before there was
@@ -240,8 +249,8 @@ typedef struct {
 	int fit_to_window;	/**< Scale the display to fit a freely-resizable window, preserving aspect ratio */
 	int follow_host_display;	/**< Guest changes screen mode to match the host display when it changes */
 	int gfxcard_enabled;	/**< Present the graphics expansion card (its own framestore, modes beyond VRAM) */
-	int usb_port[2];	/**< What is plugged into each emulated USB port (UsbAttachment) */
-	char usb_host[2][16];	/**< For a UsbAttachment_Host port, the device's "vvvv:pppp" */
+	int usb_port[USB_PORTS];	/**< What is plugged into each emulated USB port (UsbAttachment) */
+	char usb_host[USB_PORTS][16];	/**< For a UsbAttachment_Host port, the device's "vvvv:pppp" */
 	int gfxcard_boot_display;	/**< Let the card take the display as the machine boots */
 
 	char *network_capture;		///< Path to capture network traffic file, or NULL to disable

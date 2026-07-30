@@ -43,7 +43,7 @@ extern "C" {
 #include "cmos.h"
 #include "debugcmd.h"
 #include "hostcmd.h"
-#include "usb_isp1161.h"
+#include "usb_ohci.h"
 #include "hostfs.h"
 #include "ide.h"
 #include "keyboard.h"
@@ -782,7 +782,7 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 		break;
 
 	case EmuCommandType::UsbApplyConfig:
-		usb_isp1161_apply_config();
+		usb_ohci_apply_config();
 		break;
 
 	case EmuCommandType::Restart: {

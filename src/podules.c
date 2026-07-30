@@ -463,6 +463,19 @@ add_header_podule(const podule_header_t *header, int backplane_slot)
 		return;
 	}
 
+	/*
+	 * The built-in cards own the low slots and are not up for negotiation.
+	 * An old configuration may still name one - they used to be allocated in
+	 * call order and a user podule could land there - so this is a refusal
+	 * rather than an assertion.
+	 */
+	if (backplane_slot < PODULE_CONFIG_FIRST_USER_SLOT) {
+		rpclog("podules: slot %d belongs to a built-in card, so '%s' is not "
+		       "fitted; move it to slot %d or above\n", backplane_slot,
+		       header->short_name, PODULE_CONFIG_FIRST_USER_SLOT);
+		return;
+	}
+
 	slot = &podules[backplane_slot];
 	if (slot->api.header != NULL ||
 	    slot->readb != NULL || slot->readw != NULL || slot->readl != NULL ||

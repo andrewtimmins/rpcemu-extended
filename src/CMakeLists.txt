@@ -45,7 +45,8 @@ set(RPCEMU_CORE_SOURCES
     podules/am7202a.c
     podules/common/sound_out_sdl2.c
     podulerom.c
-    usb_isp1161.c
+    usb_ohci.c
+    usbcard.c
     usb_host.c
     icside.c
     rpc.c

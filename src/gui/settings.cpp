@@ -658,7 +658,7 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	cfg->gfxcard_boot_display = static_cast<int>(value);
 	/* USB ports. Nothing is plugged in unless the machine says so, since a
 	   device appearing on its own would be a surprise to the guest. */
-	for (int port = 0; port < 2; port++) {
+	for (int port = 0; port < USB_PORTS; port++) {
 		settings.Read(wxString::Format("usb_port%d", port + 1), &sText,
 		    wxEmptyString);
 		ParseUsbPort(sText, &cfg->usb_port[port], cfg->usb_host[port],
@@ -759,7 +759,7 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	settings.Write("follow_host_display", static_cast<long>(cfg->follow_host_display));
 	settings.Write("gfxcard_enabled", static_cast<long>(cfg->gfxcard_enabled));
 	settings.Write("gfxcard_boot_display", static_cast<long>(cfg->gfxcard_boot_display));
-	for (int port = 0; port < 2; port++) {
+	for (int port = 0; port < USB_PORTS; port++) {
 		settings.Write(wxString::Format("usb_port%d", port + 1),
 		    FormatUsbPort(cfg->usb_port[port], cfg->usb_host[port]));
 	}

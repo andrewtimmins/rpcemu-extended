@@ -196,6 +196,8 @@ stage_linux_release() {
 	# The graphics card driver, which lives in that card's own ROM rather
 	# than the general-purpose expansion card (see src/gfxcard.c).
 	[ -d gfxroms ] && cp -a gfxroms "$LINUX_RELEASE/" || true
+	# RISC OS's USB stack, in the USB card's ROM (see src/usbcard.c).
+	[ -d usbroms ] && cp -a usbroms "$LINUX_RELEASE/" || true
 	cp -a netroms "$LINUX_RELEASE/"
 	cp -a resources "$LINUX_RELEASE/"
 	cp -a roms "$LINUX_RELEASE/"

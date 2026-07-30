@@ -55,6 +55,8 @@ install(DIRECTORY netroms/ DESTINATION share/rpcemu/netroms)
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/gfxroms)
     install(DIRECTORY gfxroms/ DESTINATION share/rpcemu/gfxroms)
 endif()
+# RISC OS's own USB stack, carried in the USB card's ROM for the same reason.
+install(DIRECTORY usbroms/ DESTINATION share/rpcemu/usbroms)
 install(DIRECTORY roms/ DESTINATION share/rpcemu/roms)
 # Expansion-card (podule) ROMs are shipped system components, read from the
 # shared resource dir; users select which podules to use per machine config.

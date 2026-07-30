@@ -116,10 +116,12 @@ usb_host_poll(void)
 /**
  * The most one transfer will move.
  *
- * The controller's own buffer is 4K and a descriptor's byte count is ten bits,
- * so nothing larger can be asked for through it anyway.
+ * Matches OHCI_MAX_TRANSFER on the controller side: one OHCI descriptor can
+ * cover two 4K pages, so a guest can legitimately ask for 8K at once. The old
+ * value of 1K came from the ISP1161's ten-bit byte count and silently truncated
+ * anything bigger - a webcam's configuration descriptor among them.
  */
-#define HOST_MAX_TRANSFER	1024
+#define HOST_MAX_TRANSFER	8192
 
 /*
  * One slot per endpoint and direction, so that a driver polling an interrupt
@@ -850,6 +852,7 @@ usb_host_control(UsbDevice *dev, const UsbSetup *setup, uint8_t *data,
 	if (usb_host_control_is_ours(hd, setup, &result)) {
 		return result;
 	}
+
 
 	if (slot->state == SLOT_DONE && usb_host_same_setup(&slot->setup, setup)) {
 		unsigned actual = slot->actual;

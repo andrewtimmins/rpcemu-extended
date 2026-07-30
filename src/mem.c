@@ -681,7 +681,7 @@ mem_phys_read8_debug(uint32_t addr)
  * @param addr Physical address
  * @param val  32-bit word to write
  */
-static void
+void
 mem_phys_write32(uint32_t addr, uint32_t val)
 {
 	addr &= phys_space_mask;

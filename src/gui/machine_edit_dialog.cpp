@@ -953,6 +953,28 @@ wxSizer *MachineEditDialog::BuildPoduleSection(wxWindow *parent)
 	grid->AddGrowableCol(1, 1);
 
 	for (int i = 0; i < PODULE_CONFIG_SLOTS; i++) {
+		/*
+		 * The low slots carry the cards RPCEmu fits itself and are shown
+		 * rather than offered. The vectors stay indexed by slot number so
+		 * that everything else can go on saying "slot i" and mean it.
+		 */
+		if (i < PODULE_CONFIG_FIRST_USER_SLOT) {
+			grid->Add(new wxStaticText(p, wxID_ANY,
+			              wxString::Format("Slot %d:", i)),
+			          0, wxALIGN_CENTER_VERTICAL);
+			grid->Add(new wxStaticText(p, wxID_ANY,
+			              i == 0 ? "USB card (built in)"
+			                     : "RPCEmu support card (built in)"),
+			          1, wxALIGN_CENTER_VERTICAL);
+			grid->Add(new wxStaticText(p, wxID_ANY, ""), 0);
+
+			podule_combos_.push_back(nullptr);
+			podule_config_btns_.push_back(nullptr);
+			podule_selection_.push_back("");
+			podule_item_names_.emplace_back();
+			continue;
+		}
+
 		grid->Add(new wxStaticText(p, wxID_ANY, wxString::Format("Slot %d:", i)),
 		          0, wxALIGN_CENTER_VERTICAL);
 
@@ -1003,6 +1025,10 @@ void MachineEditDialog::RebuildPoduleChoices()
 
 	for (size_t i = 0; i < podule_combos_.size(); i++) {
 		wxChoice *combo = podule_combos_[i];
+
+		if (combo == nullptr) {
+			continue;	/* a built-in card's slot */
+		}
 		std::vector<wxString> &names = podule_item_names_[i];
 
 		combo->Clear();
@@ -1098,7 +1124,8 @@ void MachineEditDialog::OnPoduleConfigure(int slot)
 void MachineEditDialog::OnPoduleChanged(wxCommandEvent &event)
 {
 	for (size_t i = 0; i < podule_combos_.size(); i++) {
-		if (podule_combos_[i] != event.GetEventObject()) {
+		if (podule_combos_[i] == nullptr ||
+		    podule_combos_[i] != event.GetEventObject()) {
 			continue;
 		}
 		const int sel = podule_combos_[i]->GetSelection();
@@ -1118,7 +1145,8 @@ void MachineEditDialog::LoadPoduleSettings(wxFileConfig &settings)
 	for (int i = 0; i < PODULE_CONFIG_SLOTS &&
 	     i < static_cast<int>(podule_selection_.size()); i++) {
 		wxString val;
-		if (settings.Read(wxString::Format("slot%d", i), &val) && !val.IsEmpty()) {
+		if (i >= PODULE_CONFIG_FIRST_USER_SLOT &&
+		    settings.Read(wxString::Format("slot%d", i), &val) && !val.IsEmpty()) {
 			podule_selection_[i] = val;
 		} else {
 			podule_selection_[i] = "";

@@ -56,7 +56,8 @@
 #include "podulerom.h"
 #include "gfxcard.h"
 #include "hostclipboard.h"
-#include "usb_isp1161.h"
+#include "usb_ohci.h"
+#include "usbcard.h"
 #include "podules.h"
 #include "fdc.h"
 #include "hostfs.h"
@@ -220,9 +221,11 @@ Config config = {
 	0,			/* fit_to_window */
 	0,			/* follow_host_display (OFF: it reflows the guest desktop) */
 	0,			/* gfxcard_enabled (OFF: needs its guest driver) */
-	{ UsbAttachment_None,	/* usb_port: nothing plugged into either USB port */
+	{ UsbAttachment_None,	/* usb_port: nothing plugged into any USB port */
+	  UsbAttachment_None,
+	  UsbAttachment_None,
 	  UsbAttachment_None },
-	{ "", "" },		/* usb_host: no host device named for either port */
+	{ "", "", "", "" },	/* usb_host: no host device named for any port */
 	0,			/* gfxcard_boot_display (OFF: the card is taken up on request) */
 	NULL,			/* network_capture */
 	0,			/* vnc_enabled */
@@ -872,7 +875,11 @@ resetrpc(void)
 	i8042_reset();
 	cmos_reset();
         podules_reset();
+        /* Slot order. The support card goes back in slot 0, where it has always
+           been: only PHCIDriver needed USB in slot 0, and OHCIDriver finds the
+           controller by asking the HAL rather than by looking at a slot. */
         podulerom_reset(); // must be called after podules_reset()
+        usbcard_reset();
         /* The graphics card takes the next slot after the extension-ROM card,
            and must be registered here rather than at start-up: podules_reset()
            clears every slot, so a card registered before this point would be
@@ -1038,6 +1045,7 @@ rpcemu_start(void)
         iso_init();
         if (config.cdromtype == 2) /* ISO */
                 iso_open(config.isoname);
+        usbcard_init();
         initpodulerom();
         podule_build_list();
 
@@ -1227,7 +1235,7 @@ endrpcemu(void)
         debugcmd_close();
         /* Before anything else: a device passed through from the host is only
            borrowed, and this is what hands it back. */
-        usb_isp1161_shutdown();
+        usb_ohci_shutdown();
         sound_thread_close();
         closevideo();
         iomd_end();

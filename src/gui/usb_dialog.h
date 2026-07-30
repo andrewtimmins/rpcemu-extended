@@ -35,6 +35,10 @@
 
 #include <wx/wx.h>
 
+extern "C" {
+#include "rpcemu.h"
+}
+
 class UsbDialog : public wxDialog {
 public:
 	explicit UsbDialog(wxWindow *parent);
@@ -74,7 +78,7 @@ private:
 	const Choice *SelectedChoice(int port) const;
 
 	std::vector<Choice> choices_;
-	wxChoice *port_choice_[2];
+	wxChoice *port_choice_[USB_PORTS];
 	wxStaticText *status_;
 };
 
