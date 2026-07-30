@@ -27,6 +27,16 @@ without the card behaves exactly as before.
 
 Leave it unticked and RISC OS keeps using VIDC20 until you run `*GfxCardOn`.
 
+## Not compatible with ADFFS
+
+ADFFS writes straight to screen memory at its physical address, and this card moves the
+framestore into its own memory, so those writes land on nothing and the game aborts as soon
+as it draws. Turn the card off to run anything from the JASPP repository. The package
+manager warns about this at install time; see [docs/packages.md](packages.md).
+
+A real ViewFinder would behave the same way, so this is an assumption in ADFFS rather than
+a defect here, but it needs saying because the failure looks like a broken emulator.
+
 ## Using it
 
 The card carries its own display driver in its ROM, so RISC OS starts the driver

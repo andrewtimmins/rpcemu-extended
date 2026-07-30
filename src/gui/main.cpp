@@ -415,6 +415,7 @@ public:
 			{
 				const wxString wanted =
 				    wxString::FromUTF8(g_pkg_install).Lower();
+				bool adffs_noted = false;
 				const PackageRecord *found = nullptr;
 
 				for (const auto &pkg : packages) {
@@ -464,6 +465,19 @@ public:
 					    static_cast<const char *>(pkg.name.utf8_str()),
 					    static_cast<const char *>(pkg.version.utf8_str()),
 					    r.files);
+
+					/* No machine is running here, so its graphics card
+					   setting cannot be read - say it unconditionally rather
+					   than not at all, and only once however many packages
+					   the dependency resolution pulled in. */
+					if (PackageNeedsAdffs(pkg) && !adffs_noted) {
+						adffs_noted = true;
+						ConsoleMessage(false,
+						    "  note: ADFFS writes straight to screen memory, "
+						    "which the graphics card moves into its own "
+						    "framestore. Set gfxcard_enabled=0 for this machine "
+						    "or games will abort as soon as they draw.\n");
+					}
 				}
 			}
 

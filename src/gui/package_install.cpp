@@ -1038,6 +1038,36 @@ PackageActionResult PackageRemove(const wxString &package_name,
 	return result;
 }
 
+/* The package that provides the floppy/JIT layer the JASPP games are built on. */
+static const char *const kAdffsPackage = "ADFFS";
+
+bool
+PackageNeedsAdffs(const PackageRecord &pkg)
+{
+	wxStringTokenizer deps(pkg.depends, ",", wxTOKEN_STRTOK);
+
+	if (pkg.name.CmpNoCase(kAdffsPackage) == 0) {
+		return true;
+	}
+
+	/* Depends entries may carry a version constraint, "ADFFS (>= 2.88)", so
+	   compare the name only. */
+	while (deps.HasMoreTokens()) {
+		wxString dep = deps.GetNextToken();
+
+		dep.Trim(true).Trim(false);
+		dep = dep.BeforeFirst(' ');
+		dep = dep.BeforeFirst('(');
+		dep.Trim(true);
+
+		if (dep.CmpNoCase(kAdffsPackage) == 0) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 std::vector<PackageRecord> PackageResolveDepends(
     const PackageRecord &record,
     const std::vector<PackageRecord> &catalogue,

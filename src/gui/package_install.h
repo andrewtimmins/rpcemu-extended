@@ -133,4 +133,13 @@ std::vector<PackageRecord> PackageResolveDepends(
     const PackageInstalledMap &installed,
     std::vector<wxString> &missing);
 
+/**
+ * Does this package need ADFFS, either by being it or by depending on it?
+ *
+ * Worth knowing at install time, because ADFFS reaches screen memory directly
+ * and our graphics card moves the framestore off the motherboard's VRAM, so the
+ * two cannot both be in use. See docs/mmu-permissions.md and docs/gfxcard.md.
+ */
+bool PackageNeedsAdffs(const PackageRecord &pkg);
+
 #endif /* PACKAGE_INSTALL_H */

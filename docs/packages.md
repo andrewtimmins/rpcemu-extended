@@ -28,6 +28,30 @@ the period, preserved and packaged so they run on a 32-bit machine. Most of them
 They are marked `Licence: Non free`, which is what preservation of commercial software
 looks like; what you may do with each one is between you and its copyright holder.
 
+### ★ ADFFS and the graphics card cannot both be used
+
+**ADFFS writes straight to screen memory at its physical address.** The
+[graphics card](gfxcard.md) moves the framestore into its own memory, so those writes land
+on nothing, the game takes a translation fault and aborts as soon as it draws. Confirmed
+the hard way: with the card fitted the JASPP games abort immediately, and with it off they
+run.
+
+This is not really a bug in either. ADFFS assumes it can reach VRAM the way the hardware of
+the day did, and a card with its own framestore legitimately breaks that assumption. A real
+ViewFinder would do the same.
+
+So the package manager says so rather than letting you find out:
+
+- Selecting anything that is ADFFS or depends on it puts a line at the **top** of the
+  details pane. If the card is fitted it names the setting to change; if not, it just notes
+  the requirement for later.
+- **Installing** one on a machine with the card fitted asks first, and can be cancelled.
+- `--pkg-install` prints the note once. No machine is running for it to inspect, so it
+  cannot tell whether the card is fitted and says it unconditionally.
+
+Turn the card off in **Settings → Machine → Video** (`gfxcard_enabled=0`) and restart the
+machine.
+
 ### Adding, editing and removing sources
 
 **Tools → Package Manager → Sources…** Add a repository, edit one, turn one off without

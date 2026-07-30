@@ -335,7 +335,20 @@ void PackageDialog::OnSelect(wxListEvent &)
 		return;
 	}
 
-	wxString text = pkg->description;
+	wxString text;
+
+	/* First, not last: the details pane is a few lines tall and scrolls, so
+	   anything further down is effectively invisible. This is the one line that
+	   changes what somebody should do. */
+	if (PackageNeedsAdffs(*pkg)) {
+		text += config.gfxcard_enabled
+		    ? "! Uses ADFFS, and this machine has the graphics card fitted. "
+		      "Turn it off in Settings > Machine > Video or games will abort as "
+		      "soon as they draw.\n\n"
+		    : "Uses ADFFS, which needs the graphics card left off.\n\n";
+	}
+
+	text += pkg->description;
 
 	if (!pkg->description_long.empty()) {
 		text += "\n\n" + pkg->description_long;
@@ -536,6 +549,38 @@ void PackageDialog::OnInstall(wxCommandEvent &)
 		        "%s also needs %s.\n\nInstall %s as well?",
 		        pkg->name, names, to_install.size() == 1 ? "it" : "them"),
 		        "Package Manager", wxYES_NO | wxICON_QUESTION, this) != wxYES) {
+			return;
+		}
+	}
+
+	/*
+	 * ADFFS and the graphics card cannot both be in use.
+	 *
+	 * ADFFS writes to screen memory at its physical address, and the graphics
+	 * card moves the framestore into its own memory, so those writes land on
+	 * nothing and the game takes a translation fault. Confirmed the hard way:
+	 * with the card fitted the JASPP games abort immediately, and with it off
+	 * they run. Only worth interrupting for when the card is actually fitted -
+	 * the details pane says so regardless.
+	 */
+	if (config.gfxcard_enabled) {
+		bool needs_adffs = PackageNeedsAdffs(*pkg);
+
+		for (const auto &dep : to_install) {
+			if (PackageNeedsAdffs(dep)) {
+				needs_adffs = true;
+			}
+		}
+
+		if (needs_adffs &&
+		    wxMessageBox(wxString::Format(
+		        "%s uses ADFFS, and this machine has the graphics card fitted.\n\n"
+		        "ADFFS writes straight to screen memory, which the graphics card "
+		        "moves into its own framestore, so games will abort as soon as "
+		        "they draw anything. Turn the card off in Settings > Machine > "
+		        "Video and restart the machine.\n\n"
+		        "Install anyway?", pkg->name),
+		        "Package Manager", wxYES_NO | wxICON_WARNING, this) != wxYES) {
 			return;
 		}
 	}
