@@ -154,6 +154,56 @@ read_exact(int fd, void *buf, size_t n)
 }
 
 /*
+ * Print any frames the server has already sent, without waiting for more.
+ *
+ * The server greets a new client with a notice, but nothing reads the socket
+ * until a command is sent, so the greeting used to appear interleaved with the
+ * first command's output - or never at all, if the user quit without running
+ * one. Draining here puts it above the first prompt, where it belongs.
+ *
+ * Only whole frames that have already arrived are consumed: the loop stops as
+ * soon as the socket has nothing more to offer, so it cannot block waiting for
+ * a frame that is not coming.
+ */
+static void
+drain_pending(int fd)
+{
+	for (;;) {
+		struct pollfd pfd;
+		uint8_t hdr[5];
+		uint32_t len;
+
+		pfd.fd = fd;
+		pfd.events = POLLIN;
+		pfd.revents = 0;
+		if (poll(&pfd, 1, 0) <= 0 || !(pfd.revents & POLLIN)) {
+			return;
+		}
+		if (read_exact(fd, hdr, 5) != 0) {
+			return;
+		}
+		len = ((uint32_t) hdr[1] << 24) | ((uint32_t) hdr[2] << 16) |
+		      ((uint32_t) hdr[3] << 8) | hdr[4];
+
+		{
+			FILE *out = (hdr[0] == 'O') ? stdout : stderr;
+			uint8_t buf[4096];
+
+			while (len > 0) {
+				size_t chunk = (len < sizeof(buf)) ? len : sizeof(buf);
+
+				if (read_exact(fd, buf, chunk) != 0) {
+					return;
+				}
+				fwrite(buf, 1, chunk, out);
+				len -= (uint32_t) chunk;
+			}
+			fflush(out);
+		}
+	}
+}
+
+/*
  * Send a command line and stream the response until the 'D' frame.
  * Returns the guest return code, or -1 on a connection error.
  */
@@ -343,6 +393,20 @@ main(int argc, char **argv)
 #else
 		fprintf(stderr, "rpcemu-shell: connected. Ctrl-D to exit.\n");
 #endif
+		/* The server's greeting is on its way but has not necessarily landed
+		   yet, so wait briefly for it rather than printing the first prompt
+		   above it. Nothing is lost if it does not arrive in time: the next
+		   command's read picks it up, which is what used to happen anyway. */
+		{
+			struct pollfd pfd;
+
+			pfd.fd = fd;
+			pfd.events = POLLIN;
+			pfd.revents = 0;
+			poll(&pfd, 1, 250);
+		}
+		drain_pending(fd);
+
 		for (;;) {
 			int rc;
 
