@@ -325,6 +325,9 @@ fdc_write(uint32_t addr, uint32_t val)
 				case FD_CMD_READ_DATA_MFM:
 					fdc_activity_increment();
 					fdc.in_read = 1;
+					/* A read is a verify that also returns
+					   the data. */
+					/* fall through */
 				case FD_CMD_VERIFY_DATA_MFM:
 					fdc.st0        = fdc.parameters[0] & 7;
 					fdc.st1        = 0;
