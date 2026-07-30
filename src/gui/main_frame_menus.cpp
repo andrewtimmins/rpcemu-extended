@@ -234,10 +234,11 @@ void MainFrame::BuildMenus()
 	help_menu->Append(ID_MENU_VISIT_WEBSITE, "Visit Website...");
 	help_menu->AppendSeparator();
 	/* RISC OS itself is somebody else's work and has its own home; the two
-	   About entries sit together so that is plain. */
+	   About entries sit together so that is plain. On macOS the RPCEmu one
+	   moves to the application menu, where that platform expects it. */
 	help_menu->Append(ID_MENU_ABOUT_RISCOS, "About RISC OS...")
 	    ->SetHelp("Visit RISC OS Open, who publish RISC OS.");
-	help_menu->Append(ID_MENU_ABOUT, "About RPCEmu...");
+	help_menu->Append(wxID_ABOUT, "About RPCEmu...");
 
 	auto *menu_bar = new wxMenuBar;
 	menu_bar->Append(file_menu, "&File");
@@ -311,7 +312,7 @@ void MainFrame::BuildMenus()
 
 	BindMenuItem(help_menu, ID_MENU_ONLINE_MANUAL, this, &MainFrame::OnOnlineManual);
 	BindMenuItem(help_menu, ID_MENU_VISIT_WEBSITE, this, &MainFrame::OnVisitWebsite);
-	BindMenuItem(help_menu, ID_MENU_ABOUT, this, &MainFrame::OnAbout);
+	BindMenuItem(help_menu, wxID_ABOUT, this, &MainFrame::OnAbout);
 
 	BindAllMenuOpenCloseHandlers();
 
