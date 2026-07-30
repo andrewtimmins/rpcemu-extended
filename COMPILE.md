@@ -94,6 +94,7 @@ Installed automatically by `./setup-build-env.sh` on Debian/Ubuntu:
 | `libwxgtk3.2-dev` | wxWidgets GUI (GTK 3 backend) |
 | `libsdl2-dev` | Audio output |
 | `libvncserver-dev` | Built-in VNC server |
+| `libusb-1.0-0-dev` | USB passthrough: handing a real host device to the guest |
 | `libgs-dev`, `ghostscript` | In-process PostScript → PDF conversion (optional but recommended) |
 
 Optional extras:
@@ -126,6 +127,7 @@ cmake --build build -j"$(nproc)"
 | `RPCEMU_ENABLE_VNC` | ON | VNC server support (requires libvncserver) |
 | `RPCEMU_ENABLE_GHOSTPDL` | ON | Link against Ghostscript/GhostPDL for in-process PDF conversion |
 | `RPCEMU_ENABLE_WARNINGS` | ON | Extra compiler warnings (`-Wall -Wextra -Werror=switch`) |
+| `RPCEMU_REQUIRE_LIBUSB` | OFF | Fail the build if libusb-1.0 is missing. The release scripts turn this ON so a platform cannot quietly ship without USB passthrough |
 
 Interpreter build:
 
@@ -202,6 +204,7 @@ to publish a GitHub Release with the Linux tarball. Update `VERSION` before tagg
 | wxWidgets not found | Install `libwxgtk3.2-dev` |
 | VNC build fails | Install `libvncserver-dev`, or `-DRPCEMU_ENABLE_VNC=OFF` |
 | Ghostscript not detected | Install `libgs-dev`, or `-DRPCEMU_ENABLE_GHOSTPDL=OFF` |
+| `USB passthrough was required ... libusb-1.0 was not found` | Install `libusb-1.0-0-dev`, or `-DRPCEMU_REQUIRE_LIBUSB=OFF` to build without it |
 | Dynarec misbehaves on arm64 (new backend) | Fall back with `./build.sh --interpreter` and report it |
 
 ---
@@ -214,4 +217,5 @@ to publish a GitHub Release with the Linux tarball. Update `VERSION` before tagg
 | No audio | Ensure PulseAudio or PipeWire is running (SDL2) |
 | No network | Confirm NAT is selected in machine settings; SLiRP is always enabled on Linux |
 | No VNC menu item | Rebuild with `libvncserver-dev` installed |
+| USB dialogue lists no devices | Built without libusb (check `BUILDINFO.txt`), or the host has not granted access to the device: see [USB devices](README.md#usb-devices) |
 | Log file | Check `rpclog.txt` in the data directory |

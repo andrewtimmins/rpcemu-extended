@@ -33,6 +33,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **Expansion cards (podules)** — assign emulated podules per machine (*Settings → Machine → Podules*): ROM, MIDI (AKA16/AKA12/MIDI Max, host MIDI via ALSA), and the Computer Concepts Lark sampler. Plugin ABI for adding more. See [docs/podules.md](docs/podules.md).
 - **Full FPA10 emulation** — floating-point coprocessor with cycle-accurate timing; works with interpreter and dynarec.
 - **Graphics card — display modes VRAM cannot reach** — an optional emulated expansion card with 15MB of its own display memory, so **2560 x 1440 in full colour** is available on a machine whose 2MB of VRAM otherwise stops at 800 x 600. An ordinary card in an ordinary EASI slot with its own GraphicsV driver in its ROM; off by default, and RISC OS keeps using VIDC20 until you run `*GfxCardOn`. See [docs/gfxcard.md](docs/gfxcard.md).
+- **USB — real devices from the host, in RISC OS** — an emulated **OHCI** host controller on its own expansion card with four ports, carrying RISC OS Open's own USB stack in its ROM, so nothing needs installing in the guest. Plug a device on the host into a port from *Settings → USB…* and RISC OS enumerates it and names it as the real hardware, reading its descriptors, strings and serial number over the emulated bus. Isochronous transfers are not implemented yet, so cameras and audio devices appear but do not stream; verified on Linux, and untested on Windows and macOS. See [USB devices](#usb-devices) and [docs/usb.md](docs/usb.md).
 - **Pixel Perfect scaling** — optional integer scaling for sharp pixels (*Settings → Pixel Perfect*).
 - **Built-in VNC server** — remote desktop access from any VNC client.
 - **Command-line control** — launch straight into a named machine (`--machine <name>`), and resume its saved state (`--resume`) or load a specific one (`--state <file>`), in either the GUI or headless. Options, messages and exit statuses are the same on all three platforms. Contributed by David Ramsden. See [Command-line reference](#command-line-reference).
@@ -80,7 +81,9 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `poduleroms/` | Compiled extension ROM images (HostFS, ScrollWheel — the built-in Support podule) |
 | `podules/` | Expansion-card (podule) ROMs — shipped system components, selectable per machine |
 | `gfxroms/` | The graphics card's display driver, carried in that card's own ROM |
-| `riscos-progs/` | RISC OS module source (HostFS, HostFSFiler, ScrollWheel, EtherRPCEm, RPCEmuSupport, RPCEmuGfx, SyncClock, RPCEmuUSBSupport) |
+| `usbroms/` | RISC OS Open's USB stack (USBDriver, OHCIDriver), carried in the USB card's own ROM — not ours and not GPL, see `usbroms/LICENCES.txt` |
+| `riscos-progs/` | RISC OS module source (HostFS, HostFSFiler, ScrollWheel, EtherRPCEm, RPCEmuSupport, RPCEmuGfx, SyncClock, RPCEmuUSBSupport, RPCEmuPCIEmulator) |
+| `riscos-patches/` | Our changes to RISC OS components that are not ours, as patches against a named upstream revision (currently OHCIDriver) |
 | `packaging/` | Desktop entry and other packaging files |
 | `build.sh` | Unified build and release script |
 | `docs/dynarec.md` | ARM dynamic recompiler (build, behaviour, limitations) |
@@ -90,7 +93,7 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `docs/podules.md` | Expansion cards (podules): bundled devices, configuration, plugin ABI |
 | `docs/gfxcard.md` | Graphics card: display modes beyond what VRAM allows, and its GraphicsV driver |
 | `docs/kinetic.md` | Kinetic StrongARM: how the card is detected, its 512MB memory map, and the three paths a new memory region needs |
-| `docs/usb.md` | USB: the emulated ISP1161 host controller, its registers, and the module that exercises it |
+| `docs/usb.md` | USB: the emulated OHCI host controller, passing real devices through to the guest, and why it is OHCI |
 | `docs/clipboard.md` | Shared clipboard: copying text and images between the host and RISC OS |
 | `docs/hostcmd.md` | HostCmd: drive the RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`) |
 | `tools/mcp/README.md` | MCP server: drive a RISC OS machine from Claude / an agent (commands, files, screen, debugger). Setup + tool reference. |
@@ -225,22 +228,26 @@ See [COMPILE.md](COMPILE.md) for manual CMake, GhostPDL, and podule ROM rebuilds
 dual-mode:
 
 - **Native, on Windows** — from an **MSYS2 MINGW64** shell (install the
-  `mingw-w64-x86_64-` toolchain, cmake, wxwidgets3.2-msw, SDL2, libvncserver), just
-  run `./build-windows.sh --zip`.
+  `mingw-w64-x86_64-` toolchain, cmake, wxwidgets3.2-msw, SDL2, libvncserver, libusb),
+  just run `./build-windows.sh --zip`.
 - **Cross-compile, from Linux** — run `./setup-cross-build-env.sh` once (builds
-  wxWidgets/SDL2/libvncserver for the mingw target into the sysroot), then
+  wxWidgets/SDL2/libvncserver/libusb for the mingw target into the sysroot), then
   `./build-windows.sh --zip`.
 
 It defaults to the recompiler (`rpcemu-recompiler.exe`); pass `--interpreter` for the
 interpreter build. Runtime DLLs are bundled into the staged folder automatically. This
 is exactly what the `windows-amd64` CI job runs.
 
+libusb is required, so that USB passthrough is not silently dropped from a release; see
+[Building with USB support](#building-with-usb-support).
+
 ### Build for macOS
 
 `build-macos.sh` produces a **universal** `RPCEmu.app` — the Intel (x86-64) slice includes
 the dynamic recompiler, the Apple Silicon (arm64) slice is the interpreter — fused with
 `lipo`, then ad-hoc signed and wrapped in a drag-to-Applications `.dmg`. Dependencies come
-from Homebrew. (A native arm64 recompiler now exists, including the `MAP_JIT` support the
+from Homebrew (`cmake ninja pkg-config wxwidgets sdl2 libvncserver libusb`), and both
+slices must have the same versions of them or `lipo` will not fuse the result. (A native arm64 recompiler now exists, including the `MAP_JIT` support the
 hardened runtime needs, but it is not yet used for the Apple Silicon slice pending testing
 on real arm64 hardware — see [docs/arm64-dynarec.md](docs/arm64-dynarec.md).) Build each
 slice, then fuse and package:
@@ -584,6 +591,98 @@ Full details, including AT commands and how RISC OS drives each port, are in
 
 ---
 
+## USB devices
+
+The machine has a USB expansion card with an emulated **OHCI** host controller and four
+ports, and RISC OS Open's own USB stack rides in that card's ROM. Nothing needs
+installing in the guest and there is no switch to throw: the card is always fitted and
+the modules start at boot.
+
+A device on the host's own USB bus can be handed to the guest through
+[libusb](https://libusb.info/). RISC OS enumerates it and names it as the real thing:
+
+```
+*USBDevices
+No. Bus Dev Class Description
+  1   1   1  9/ 0 Built-in OHCI root hub
+  2   1   2 EF/ 2 Azurewave USB2.0 HD IR UVC WebCam
+```
+
+Pick a device per port in **Settings → USB…**. The choice is per machine and is
+remembered as the device's identifiers rather than its position, so moving it to a
+different socket does not lose it. Handing a device over is not a neutral act: the
+host's own driver is detached from it for as long as the guest has it, and a device the
+host is currently using takes a confirmation first.
+
+### What to expect
+
+Devices enumerate, and their descriptors, manufacturer and product strings and serial
+numbers all come from the real hardware. **Isochronous transfers are not implemented**,
+so a webcam or an audio device will appear and describe itself and then have nothing to
+say; hubs cannot be passed through, and a high-speed device is flagged rather than
+handled. Keyboards and mice are the useful case today, since HID is compiled into
+USBDriver.
+
+This is **verified on Linux**. Windows and macOS builds only gained libusb in this
+release, so passthrough there is expected to work but has not yet been confirmed on
+real hardware. Reports welcome.
+
+### Letting RPCEmu reach the device
+
+The emulated card needs nothing. Reaching a *real* device means getting past the host's
+own claim on it, and each platform does that differently.
+
+**Linux.** The device nodes under `/dev/bus/usb` belong to root, so add a udev rule
+naming the device you want:
+
+```
+# /etc/udev/rules.d/70-rpcemu-usb.rules
+SUBSYSTEM=="usb", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c077", TAG+="uaccess"
+```
+
+Then `sudo udevadm control --reload-rules && sudo udevadm trigger`, and unplug and
+replug the device. `TAG+="uaccess"` grants access to whoever is logged in at the
+machine rather than to every account on it. Without the rule the dialogue still lists
+the device, marked "no permission", rather than failing when you try to use it.
+
+**Windows.** Windows binds its own class driver to a device (`usbstor`, HID, `usbccgp`
+for composite devices) and libusb cannot open it through that. The device needs the
+**WinUSB** driver bound instead, which is what [Zadig](https://zadig.akeo.ie/) is for:
+run it, *Options → List All Devices*, pick the device, choose **WinUSB**, and replace
+the driver. Two things worth knowing before you do: Windows itself stops using the
+device while WinUSB is bound, and reverting means *Device Manager → the device →
+Uninstall device*, ticking "delete the driver software", then replugging. Keyboards,
+mice and hubs are held by Windows and are not candidates.
+
+**macOS.** `brew install libusb` covers it, and most devices need no driver work
+because libusb reaches them through IOKit directly. A device already claimed by one of
+Apple's own class drivers, which includes HID, mass storage and audio, may refuse the
+interface claim; there is no supported way to detach an Apple driver, so those are not
+available.
+
+### Building with USB support
+
+The emulated controller and the card are always built. Passthrough needs **libusb-1.0**
+at build time, and a release build now **fails** rather than quietly producing a binary
+that cannot reach a device.
+
+| Platform | How |
+| --- | --- |
+| Linux | `./setup-build-env.sh` (installs `libusb-1.0-0-dev`) |
+| Windows, native MSYS2 | `pacman -S mingw-w64-x86_64-libusb` |
+| Windows, cross from Linux | `./setup-cross-build-env.sh` (builds libusb for the MinGW target) |
+| macOS | `brew install libusb` |
+
+Set `RPCEMU_REQUIRE_LIBUSB=OFF` in the environment to build without it deliberately.
+`BUILDINFO.txt` in a Linux release records whether the binary has it, and the USB
+dialogue says so plainly if it does not.
+
+Full details, including the descriptor cache, how transfers avoid blocking the emulator
+thread, and why the controller is OHCI rather than the historically correct ISP1161, are
+in [docs/usb.md](docs/usb.md).
+
+---
+
 ## Keyboard and host controls
 
 RPCEmu does **not** bind any host keyboard shortcuts, so every key — including the
@@ -731,6 +830,20 @@ networking features.
   guest modules use, so it builds with them, and the assembled code is
   byte-identical to the module built from their original. See
   `riscos-progs/SyncClock/`.
+- **USB** uses **RISC OS Open Limited's** own USB stack, not one of ours: the modules
+  in `usbroms/` are their **USBDriver** and **OHCIDriver**, carried in the USB card's
+  ROM and run by the emulated CPU. They are not GPL and `COPYING` does not cover
+  them: they are a mixture of Apache 2.0 for the ROOL and Castle code and BSD for
+  the NetBSD USB core it is built on, some of that the original four-clause BSD.
+  Nothing is linked into RPCEmu, which reads them at run time as data in the same
+  way it reads a ROM image. `usbroms/LICENCES.txt` carries the notices in full.
+  **OHCIDriver is modified.** The stock driver finds controllers by asking the
+  machine's HAL, and `HAL_IOMD` has no USB support at all, so ours also searches the
+  expansion cards. That change is ours and not ROOL's, and it is kept as a patch
+  against their OHCIDriver 0.56 in `riscos-patches/ohcidriver/` so it can be read
+  and rebuilt rather than only taken on trust. The emulated controller, the card and
+  the host passthrough are ours; the stack that drives them is theirs, and USB on
+  this machine exists because they published it. See `docs/usb.md`.
 - The **package manager** implements the **RISC OS Packaging Project's** package and
   database format, as defined in its policy manual: the format is **Graham Shaw's**
   design and the manual is maintained by **Alan Buckley**. **RISC OS Open Limited** and
