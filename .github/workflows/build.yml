@@ -239,6 +239,7 @@ jobs:
             mingw-w64-x86_64-wxwidgets3.2-msw
             mingw-w64-x86_64-SDL2
             mingw-w64-x86_64-libvncserver
+            mingw-w64-x86_64-libusb
 
       - name: Build and stage release (native MSYS2)
         run: |
@@ -387,9 +388,9 @@ jobs:
           # against 3.4.10 (arm64) before the bundler caught it. "brew update"
           # puts both on the same formula revision.
           arch -x86_64 /usr/local/bin/brew update
-          arch -x86_64 /usr/local/bin/brew install cmake ninja pkg-config wxwidgets sdl2 libvncserver
+          arch -x86_64 /usr/local/bin/brew install cmake ninja pkg-config wxwidgets sdl2 libvncserver libusb
           echo "==> x86_64 dependency versions"
-          arch -x86_64 /usr/local/bin/brew list --versions sdl2-compat sdl3 wxwidgets libvncserver || true
+          arch -x86_64 /usr/local/bin/brew list --versions sdl2-compat sdl3 wxwidgets libvncserver libusb || true
 
       - name: Build x86_64 slice + test (Rosetta)
         run: |
@@ -430,9 +431,9 @@ jobs:
           # against 3.4.10 (arm64) before the bundler caught it. "brew update"
           # puts both on the same formula revision.
           brew update
-          brew install cmake ninja pkg-config wxwidgets sdl2 libvncserver
+          brew install cmake ninja pkg-config wxwidgets sdl2 libvncserver libusb
           echo "==> arm64 dependency versions"
-          brew list --versions sdl2-compat sdl3 wxwidgets libvncserver || true
+          brew list --versions sdl2-compat sdl3 wxwidgets libvncserver libusb || true
 
       - name: Build arm64 slice (interpreter) + test
         run: |

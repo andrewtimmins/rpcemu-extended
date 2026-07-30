@@ -34,6 +34,7 @@ JPEG=3.0.3
 LIBVNC=0.9.14
 SDL2=2.30.9
 WX=3.2.6
+LIBUSB=1.0.28
 
 echo "==> Cross-build prefix: ${PREFIX}"
 command -v ${TARGET}-gcc >/dev/null || { echo "error: ${TARGET}-gcc not found (apt install mingw-w64)"; exit 1; }
@@ -48,8 +49,9 @@ fetch "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${JPEG}/
 fetch "https://github.com/LibVNC/libvncserver/archive/refs/tags/LibVNCServer-${LIBVNC}.tar.gz" vnc.tar.gz
 fetch "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2}/SDL2-devel-${SDL2}-mingw.tar.gz" sdl2.tar.gz
 fetch "https://github.com/wxWidgets/wxWidgets/releases/download/v${WX}/wxWidgets-${WX}.tar.bz2" wx.tar.bz2
+fetch "https://github.com/libusb/libusb/releases/download/v${LIBUSB}/libusb-${LIBUSB}.tar.bz2" libusb.tar.bz2
 for t in *.tar.gz; do tar xzf "$t"; done
-tar xjf wx.tar.bz2
+for t in *.tar.bz2; do tar xjf "$t"; done
 
 cmake_dep() { # <srcdir> <extra cmake args...>
 	local src="$1"; shift
@@ -90,6 +92,16 @@ cmake_dep "libvncserver-LibVNCServer-${LIBVNC}" \
 	-DWITH_EXAMPLES=OFF -DWITH_TESTS=OFF -DWITH_GNUTLS=OFF -DWITH_OPENSSL=OFF \
 	-DWITH_SDL=OFF -DWITH_GTK=OFF -DWITH_FFMPEG=OFF -DWITH_SYSTEMD=OFF \
 	-DWITH_LZO=OFF -DWITH_SASL=OFF -DBUILD_SHARED_LIBS=ON
+
+# libusb gives USB passthrough (src/usb_host.c). Without it the cross-built
+# Windows binary still runs, but the emulated USB card has nothing to plug into
+# it, and build-windows.sh now fails rather than shipping that quietly.
+# Autotools rather than cmake_dep: libusb's own configure emits the
+# libusb-1.0.pc that pkg_check_modules looks for.
+echo "==> libusb"
+( cd "libusb-${LIBUSB}" && ./configure --host=${TARGET} --prefix="$PREFIX" \
+	--enable-shared --disable-static --disable-udev &&
+  make -j"$JOBS" && sudo make install )
 
 echo "==> wxWidgets (wxMSW, static, bundled image/zlib/expat libs)"
 ( cd "wxWidgets-${WX}" && mkdir -p build-mingw && cd build-mingw &&

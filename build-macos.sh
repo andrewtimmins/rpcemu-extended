@@ -131,6 +131,9 @@ build_slice() {
 	local -a tc_args=()
 
 	local -a extra_args=()
+	# A native build must have libusb or the slice ships without USB
+	# passthrough; the cross path deliberately has no libusb to find.
+	local require_libusb="${RPCEMU_REQUIRE_LIBUSB:-ON}"
 	if [ "$MODE" = native ]; then
 		tc_args+=(-DCMAKE_OSX_ARCHITECTURES="$arch"
 		          -DCMAKE_OSX_DEPLOYMENT_TARGET="$deploy")
@@ -143,6 +146,7 @@ build_slice() {
 		[ -f "$tc" ] || { echo "error: $tc not found. Run ./setup-macos-cross-build-env.sh"; exit 1; }
 		tc_args+=(-DCMAKE_TOOLCHAIN_FILE="$tc")
 		extra_args+=(-DRPCEMU_ENABLE_VNC=OFF)
+		require_libusb=OFF
 	fi
 
 	echo "==> [$arch] configuring ($MODE, dynarec=$dyn, tests=$tests)"
@@ -154,6 +158,7 @@ build_slice() {
 		-DCMAKE_BUILD_TYPE=Release \
 		-DRPCEMU_DYNAREC="$dyn" \
 		-DRPCEMU_BUILD_TESTS="$tests" \
+		"-DRPCEMU_REQUIRE_LIBUSB=$require_libusb" \
 		-DRPCEMU_ENABLE_GHOSTPDL=OFF
 	echo "==> [$arch] building"
 	cmake --build "$build_dir" -j"$(njobs)"

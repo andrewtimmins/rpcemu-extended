@@ -183,6 +183,10 @@ cmake_common_args() {
 	else
 		echo -DCMAKE_BUILD_TYPE=Release
 	fi
+	# This is the release script, so a build that quietly cannot reach a USB
+	# device is a broken release rather than a lesser one. Set
+	# RPCEMU_REQUIRE_LIBUSB=OFF in the environment to build without it anyway.
+	echo "-DRPCEMU_REQUIRE_LIBUSB=${RPCEMU_REQUIRE_LIBUSB:-ON}"
 	echo -DCMAKE_INSTALL_PREFIX=/usr
 }
 
@@ -247,12 +251,21 @@ stage_linux_release() {
 	# Ship the full docs/ set so the README and MCP/HostCmd/debugger docs resolve.
 	[ -d docs ] && cp -a docs "$LINUX_RELEASE/" 2>/dev/null || true
 
+	# Whether USB passthrough is in this build, read from the binary rather than
+	# assumed: it is the one feature that silently disappears if a build host is
+	# missing a library, and "the USB dialogue is empty" is otherwise a puzzle.
+	local usb_state="no (built without libusb)"
+	if ldd "$release_binary" 2>/dev/null | grep -q "libusb-1.0"; then
+		usb_state="yes (libusb)"
+	fi
+
 	cat > "$LINUX_RELEASE/BUILDINFO.txt" <<EOF
 RPCEmu (Spork Edition) $VERSION
 Built: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 Host:  $(uname -s) $(uname -m)
 Binary: $binary_name
 Toolkit: wxWidgets + CMake (Linux)
+USB passthrough: $usb_state
 EOF
 }
 
