@@ -50,6 +50,28 @@ target_include_directories(test_vdu_filter PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src/tools)
 add_test(NAME test_vdu_filter COMMAND test_vdu_filter)
 
+# The VNC machine selector: navigation as a state machine, plus the drawing.
+# Compiles the units directly; they deliberately depend on nothing but the font,
+# so a test needs neither wx nor libvncserver. Given a path it also writes a PPM,
+# which is how the layout gets looked at rather than merely asserted.
+add_executable(test_machine_selector test_machine_selector.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui/machine_selector.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui/text_screen.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui/console_font.c)
+target_include_directories(test_machine_selector PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui)
+add_test(NAME test_machine_selector COMMAND test_machine_selector)
+
+# App-level settings: the ways in to the process (VNC, HostCmd), which are not
+# properties of an emulated machine. The migration is the part worth testing - a
+# key the file omits must leave the legacy per-machine value alone - so the cases
+# lean on that. Runs in the build directory, since it writes a settings file.
+add_executable(test_app_settings test_app_settings.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/app_settings.c test_stubs.c)
+target_link_libraries(test_app_settings PRIVATE rpcemu_core m)
+add_test(NAME test_app_settings COMMAND test_app_settings
+         ${CMAKE_CURRENT_BINARY_DIR})
+
 # MMU access permissions. Builds real page tables in emulated RAM and checks the
 # ARM DDI 0100B Table 7-7 rules are enforced, including - the point of it - after
 # a translation has been cached. Needs no dynarec: the caches it exercises live in

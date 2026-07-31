@@ -28,6 +28,7 @@
 
 extern "C" {
 #include "rpcemu.h"
+#include "app_settings.h"
 #include "peripheral_config.h"
 #include "podule_config.h"
 }
@@ -668,6 +669,11 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	cfg->start_fullscreen = static_cast<int>(value);
 	settings.Read("suspend_on_exit", &value, 0L);
 	cfg->suspend_on_exit = static_cast<int>(value);
+	/* The five channel keys below are read for compatibility only. They belong to
+	   the emulator rather than to a machine and now live in the app settings file,
+	   which is overlaid at the end of this function and wins where it says
+	   anything. An existing machine file keeps working; nothing writes these keys
+	   back. See src/app_settings.c. */
 	settings.Read("vnc_enabled", &value, 0L);
 	cfg->vnc_enabled = static_cast<int>(value);
 	settings.Read("vnc_port", &value, 5900L);
@@ -696,6 +702,28 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	config_nat_rules_load(settings);
 	peripheral_config_load(settings);
 	podule_config_load(settings);
+
+	/*
+	 * Last, so it wins: the emulator's own settings, which are not this machine's
+	 * business. Only keys the file actually contains are applied, so a legacy
+	 * value read above survives until the user sets one app-wide - which is what
+	 * stops an existing installation behaving differently after an upgrade.
+	 *
+	 * A file that exists but cannot be read is reported rather than passed over,
+	 * because otherwise the user's settings are being ignored in silence.
+	 */
+	{
+		const int applied = app_settings_load(rpcemu_get_datadir(), cfg);
+
+		if (applied < 0) {
+			rpclog("config_load: cannot read %s, using per-machine values\n",
+			    app_settings_path(rpcemu_get_datadir()));
+		} else if (applied > 0) {
+			rpclog("config_load: %d setting%s from %s\n", applied,
+			    applied == 1 ? "" : "s",
+			    app_settings_path(rpcemu_get_datadir()));
+		}
+	}
 }
 
 extern "C" void config_save(Config *cfg)
@@ -765,12 +793,12 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	}
 	settings.Write("start_fullscreen", static_cast<long>(cfg->start_fullscreen));
 	settings.Write("suspend_on_exit", static_cast<long>(cfg->suspend_on_exit));
-	settings.Write("vnc_enabled", static_cast<long>(cfg->vnc_enabled));
-	settings.Write("vnc_port", static_cast<long>(cfg->vnc_port));
-	settings.Write("vnc_password", wxString(cfg->vnc_password, wxConvUTF8));
-	settings.Write("hostcmd_enabled", static_cast<long>(cfg->hostcmd_enabled));
+	/* vnc_* and hostcmd_* are not written here any more: they are the emulator's
+	   settings, not this machine's, and live in the app settings file. Writing
+	   them per machine is what made "which machine did I enable VNC on?" a
+	   question. Existing keys in an older file are still read, above. */
 	settings.Write("clipboard_enabled", static_cast<long>(cfg->clipboard_enabled));
-	settings.Write("hostcmd_socket", wxString(cfg->hostcmd_socket, wxConvUTF8));
+
 	settings.Write("debug_enabled", static_cast<long>(cfg->debug_enabled));
 	settings.Write("debug_socket", wxString(cfg->debug_socket, wxConvUTF8));
 	settings.Write("network_capture", cfg->network_capture ? wxString(cfg->network_capture, wxConvUTF8) : wxString());

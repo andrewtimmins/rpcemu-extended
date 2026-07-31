@@ -1,4 +1,5 @@
 set(RPCEMU_CORE_SOURCES
+    app_settings.c
     superio.c
     parallel.c
     serial.c

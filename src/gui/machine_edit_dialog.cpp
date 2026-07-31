@@ -18,6 +18,7 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include "app_settings.h"
 #include "machine_edit_dialog.h"
 #include "http_transfer.h"	/* RPCEMU_HAVE_HTTP, HttpUnavailableMessage */
 #include "riscos_setup_dialog.h"
@@ -341,8 +342,9 @@ wxWindow *MachineEditDialog::BuildOptionsPage(wxWindow *parent)
 
 	vnc_check_ = new wxCheckBox(page, wxID_ANY, "VNC server");
 	vnc_check_->SetToolTip(
-	    "Serve this machine's display over VNC. The port and password are under "
-	    "Settings > VNC Server once the machine is running.");
+	    "Serve the display over VNC. This is an emulator setting rather than a "
+	    "machine one, so it applies whichever machine you load. The port and "
+	    "password are under Settings > VNC Server once the machine is running.");
 	clipboard_check_ = new wxCheckBox(page, wxID_ANY, "Share the clipboard with RISC OS");
 	clipboard_check_->SetToolTip(
 	    "Copy and paste text and images between the host and RISC OS. Off by "
@@ -1426,7 +1428,18 @@ void MachineEditDialog::SaveSettings()
 	write_flag("mouse_twobutton", mouse_twobutton_check_->GetValue());
 	write_flag("cpu_idle", cpu_idle_check_->GetValue());
 	write_flag("suspend_on_exit", suspend_on_exit_check_->GetValue());
-	write_flag("vnc_enabled", vnc_check_->GetValue());
+	/* Not written into the machine file: VNC is how you reach the emulator, not a
+	   property of this Risc PC, so it lives in the app settings. Writing it here
+	   per machine is what made "which machine did I turn VNC on for?" a question
+	   somebody had to ask. */
+	{
+		Config app = config;
+
+		app.vnc_enabled = vnc_check_->GetValue() ? 1 : 0;
+		if (app_settings_save(rpcemu_get_datadir(), &app) != 0) {
+			rpclog("machine editor: could not save the VNC setting app-wide\n");
+		}
+	}
 	write_flag("clipboard_enabled", clipboard_check_->GetValue());
 
 	/* The default machine is a host preference keyed by name, so a rename has
