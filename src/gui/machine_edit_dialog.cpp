@@ -851,10 +851,10 @@ void MachineEditDialog::UpdateRomModelCompatibility()
 	switch (model) {
 	case Model_Kinetic:
 		/* Defined by its 512MB (two on-card SDRAM banks), so there is nothing to
-		   choose. VRAM is clamped to 2MB because more than that faults on the
-		   HAL physical-map path; the graphics card supersedes that work, since it
-		   carries its own display memory and reaches modes no amount of VRAM
-		   would offer here. */
+		   choose. VRAM is clamped to 2MB because 512MB of RAM and more VRAM
+		   together overrun the RISC OS memory map; the graphics card answers the
+		   ceiling that leaves, carrying its own display memory and reaching modes
+		   no amount of VRAM would offer here. See docs/kinetic.md. */
 		mem_combo_->SetSelection(7);   /* 512 MB */
 		mem_combo_->Enable(false);
 		vram_combo_->SetSelection(1);  /* 2 MB */

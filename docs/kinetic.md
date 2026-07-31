@@ -82,23 +82,39 @@ SDRAM banks.
 
 ## Why VRAM is fixed at 2MB
 
-A Kinetic with more than 2MB of VRAM hits a second, unrelated data abort during
-early boot, before the banner: a ROM service call reaches a screen module with a
-bad parameter, and the faulting address is the SDRAM bank 1 base shifted left by
-two, which points at an address or page-number calculation overflowing somewhere
-on the VRAM path. It only happens with SDRAM present and only with VRAM other than
-2MB.
-
-Rather than chase it, VRAM is clamped to 2MB on a Kinetic, which is what the real
-card shipped with. The clamp is applied in three places so that no route round it
+Because 512MB of RAM and 16MB of VRAM together do not fit in the RISC OS memory
+map. That is a limit in the operating system, not a defect in the emulator or in
+any particular ROM build, and it is the reason this is settled rather than
+outstanding: a Kinetic is defined by its 512MB, so on this machine the VRAM is
+what has to give. The clamp is applied in three places so no route round it
 exists: when the GUI applies new settings, when a configuration file is loaded,
 and in the machine editor, which also locks the combo box.
 
-The ceiling that this used to imply for the display no longer applies, because the
-[graphics card](gfxcard.md) carries its own 15MB of display memory and is not
-limited by fitted VRAM. An earlier attempt to raise the Kinetic VRAM limit by
-patching the ROM was removed for that reason; the patch and its anchor sequences
-are preserved in the message of commit 9b4dd61 if anyone wants them back.
+The symptom is a data abort during boot. It survives long enough to reach the
+supervisor prompt, which makes it easy to mistake for working, and then fails once
+a full `!Boot` brings up the desktop and networking, which is where enough of the
+map is in use for the overrun to matter. Anything tested against this limit has to
+be tested with a complete desktop boot; a prompt is not evidence.
+
+The ceiling this used to imply for the display does not apply, because the
+[graphics card](gfxcard.md) carries its own 15MB of display memory, is not limited
+by the fitted VRAM, and is not bound by the OS memory map at all. That is the
+supported route to high resolutions on a Kinetic.
+
+Two records exist of attempts to lift the limit by patching the ROM, and neither
+should be treated as a starting point. The patch and its anchor sequences are in
+the message of commit 9b4dd61. They were revisited on 31/07/2026 and applied
+successfully to RISC OS 5.31 once two anchors were repaired, only one of the three
+having matched as recorded: `MOVEQ ip,#8` occurs three times in that build so it
+cannot anchor anything on its own, and the gap-fill `BL` is three words after the
+`RSB` it is located from, not two. The patched machine still aborted, which is
+what established the limit above. The ROM detail is nonetheless correct and worth
+not re-deriving: the HAL guards its VRAM region fill with `MOVNE`/`LDRNE`/`BLNE`
+but leaves the following gap fill unguarded, so at exactly 16MB, where
+`RSB r3,r3,#0x1000000` leaves zero and the count is therefore zero, the do-while
+runs the fill anyway. Only 16MB degenerates that way, so 4MB and 8MB were never
+affected by that particular fault, though they remain clamped along with
+everything else.
 
 ## What a working Kinetic looks like
 
