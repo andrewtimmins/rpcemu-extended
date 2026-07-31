@@ -39,6 +39,7 @@
 #include <wx/icon.h>
 #include <wx/image.h>
 #include <wx/mstream.h>
+#include <wx/richmsgdlg.h>
 
 #include "about_dialog.h"
 #include "config_paths.h"
@@ -770,13 +771,18 @@ void MainFrame::EnterFullScreen()
 	}
 
 	if (config_copy_.show_fullscreen_message) {
-		wxMessageDialog dlg(this,
-		                    "This window will now be switched to full-screen mode.\n\n"
-		                    "To leave full-screen mode press Ctrl+End.\n\n"
-		                    "Select 'No' on the next prompt to hide this message in future.",
-		                    "RPCEmu - Full-screen mode",
-		                    wxOK | wxCANCEL | wxICON_INFORMATION);
+		/* One dialogue with a checkbox rather than two. Asking "do not show
+		   this again?" and answering Yes/No made the reader work out a double
+		   negative, and the first dialogue named the wrong button anyway: it
+		   said to answer No, while the code acted on Yes. A ticked checkbox
+		   means what it says. */
+		wxRichMessageDialog dlg(this,
+		                        "This window will now be switched to full-screen mode.\n\n"
+		                        "To leave full-screen mode press Ctrl+End.",
+		                        "RPCEmu - Full-screen mode",
+		                        wxOK | wxCANCEL | wxICON_INFORMATION);
 		dlg.SetOKCancelLabels("OK", "Cancel");
+		dlg.ShowCheckBox("Do not show this message again");
 
 		if (dlg.ShowModal() != wxID_OK) {
 			if (fullscreen_menu_item_ != nullptr) {
@@ -785,10 +791,7 @@ void MainFrame::EnterFullScreen()
 			return;
 		}
 
-		if (wxMessageBox("Do not show the full-screen message again?",
-		                  "RPCEmu - Full-screen mode",
-		                  wxYES_NO | wxICON_QUESTION,
-		                  this) == wxYES) {
+		if (dlg.IsCheckBoxChecked()) {
 			if (emulator_) {
 				emulator_->ShowFullscreenMessageOff();
 			}
