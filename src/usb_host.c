@@ -205,6 +205,20 @@ typedef struct {
 	UsbResult result;
 	unsigned actual;
 
+	/**
+	 * Bytes a finished IN transfer left in the buffer, and how many of them
+	 * the guest has taken.
+	 *
+	 * A real device must be asked for whole packets, and the guest asks for
+	 * whatever its transfer descriptor says - which for a high speed device
+	 * in front of this full speed controller is routinely less than one
+	 * packet. The surplus is kept here and handed over on the reads that
+	 * follow, rather than being thrown away or, worse, asked for in a size
+	 * the endpoint cannot answer.
+	 */
+	unsigned have;
+	unsigned taken;
+
 	/* Which device this belongs to, so a transfer that comes back saying the
 	   device has gone can say which one. */
 	struct HostDevice *owner;
@@ -260,6 +274,12 @@ typedef struct HostDevice {
 	/* The last submit failure reported, so a request that keeps failing says
 	   so once rather than a thousand times a second. */
 	int last_control_error;
+
+	/** Likewise for a transfer that comes back in a state worth mentioning. */
+	enum libusb_transfer_status last_transfer_status;
+
+	/** Said once, if an interrupt endpoint's surplus has to be dropped. */
+	int said_surplus;
 } HostDevice;
 
 /*
@@ -600,6 +620,31 @@ usb_host_transfer_done(struct libusb_transfer *xfer)
 			    slot->owner->product);
 		}
 		slot->result = USB_NO_DEVICE;
+		break;
+
+	case LIBUSB_TRANSFER_OVERFLOW:
+	case LIBUSB_TRANSFER_ERROR:
+		/*
+		 * Something went wrong on the wire, or the device sent more than was
+		 * asked for. Reported as a stall, which a driver knows how to clear
+		 * and retry.
+		 *
+		 * These used to fall into the catch-all below and be reported as a
+		 * device that had stopped answering, which is a different fault
+		 * entirely and sent a day's diagnosis in the wrong direction: an
+		 * overflow caused by asking a 512-byte endpoint for 36 bytes came
+		 * back as "device not responding", the endpoint was halted, and a
+		 * mass storage driver waited for ever for a status block that could
+		 * no longer arrive.
+		 */
+		if (slot->owner != NULL &&
+		    slot->owner->last_transfer_status != xfer->status) {
+			slot->owner->last_transfer_status = xfer->status;
+			rpclog("USB: %04x:%04x transfer failed: %s\n",
+			    slot->owner->vendor, slot->owner->product,
+			    libusb_error_name(xfer->status));
+		}
+		slot->result = USB_STALL;
 		break;
 
 	default:
@@ -1089,6 +1134,48 @@ usb_host_iso_write(HostDevice *hd, unsigned index, unsigned char ep,
 	return USB_ACK;
 }
 
+/**
+ * How much to ask a real endpoint for.
+ *
+ * An endpoint can only be asked for whole packets. Ask for a part of one and the
+ * host's stack has nowhere to put the rest of the packet the device sends, which
+ * it reports as an overflow - the transfer fails and its data is lost.
+ *
+ * The guest asks for whatever its transfer descriptor says, and that is not the
+ * same number. This controller is full speed, so a driver sizes its buffers for
+ * full speed packets, while a passed-through device may be a high speed one whose
+ * endpoints are 512 bytes: a mass storage driver asking for a 36-byte reply on a
+ * 512-byte endpoint is an ordinary thing to want and an impossible thing to ask.
+ *
+ * So the request is rounded to whole packets and the surplus kept for the reads
+ * that follow. Never rounded up past what the guest wants when that is already
+ * more than a packet: reading further into a stream than the driver asked for is
+ * harmless, but it is pointless.
+ */
+static unsigned
+usb_host_request_size(unsigned packet, unsigned max)
+{
+	unsigned req;
+
+	if (packet == 0) {
+		/* Nothing said how big a packet is; ask for what was wanted. */
+		req = max;
+	} else if (max < packet) {
+		req = packet;			/* one whole packet, not part of one */
+	} else {
+		req = max - (max % packet);	/* whole packets only */
+	}
+
+	if (req > HOST_MAX_TRANSFER) {
+		req = HOST_MAX_TRANSFER;
+		if (packet != 0) {
+			req -= req % packet;
+		}
+	}
+
+	return req;
+}
+
 /** Two requests are the same request if all eight bytes of them agree. */
 static int
 usb_host_same_setup(const UsbSetup *a, const UsbSetup *b)
@@ -1296,6 +1383,10 @@ usb_host_reset(UsbDevice *dev)
 			slot->state = SLOT_IDLE;
 		}
 
+		/* Anything read but not collected belongs to before the reset. */
+		slot->have = 0;
+		slot->taken = 0;
+
 		/*
 		 * A stream keeps running, but what it has collected is thrown away:
 		 * those packets belong to frames before the reset, and a driver
@@ -1390,28 +1481,91 @@ usb_host_read(UsbDevice *dev, unsigned endpoint, uint8_t *data, unsigned *len)
 		return result;
 	}
 
-	if (wanted == 0 || wanted > max) {
-		wanted = max;
+	wanted = usb_host_request_size(hd->ep_packet[index], max);
+
+	/*
+	 * Bytes from a previous transfer that the guest has not taken yet. Handed
+	 * over before anything else, and nothing new is asked for until they are
+	 * gone: the next transfer would reuse the same buffer and overwrite them.
+	 */
+	if (slot->have > slot->taken) {
+		unsigned give = slot->have - slot->taken;
+
+		if (give > max) {
+			give = max;
+		}
+		memcpy(data, slot->buffer + slot->taken, give);
+		slot->taken += give;
+		*len = give;
+
+		if (slot->taken >= slot->have) {
+			slot->have = 0;
+			slot->taken = 0;
+			if (slot->state == SLOT_IDLE) {
+				usb_host_start_endpoint(hd, index,
+				    (unsigned char) (endpoint | LIBUSB_ENDPOINT_IN),
+				    wanted, NULL);
+			}
+		}
+
+		return USB_ACK;
 	}
 
 	if (slot->state == SLOT_DONE) {
 		const UsbResult result = slot->result;
-		unsigned actual = slot->actual;
 
 		slot->state = SLOT_IDLE;
 
 		if (result == USB_ACK) {
-			if (actual > max) {
-				actual = max;
+			unsigned give = slot->actual;
+
+			slot->have = slot->actual;
+			slot->taken = 0;
+
+			if (give > max) {
+				give = max;
 			}
-			memcpy(data, slot->buffer, actual);
-			*len = actual;
+			if (give > 0) {
+				memcpy(data, slot->buffer, give);
+			}
+			slot->taken = give;
+			*len = give;
+
+			/*
+			 * An interrupt endpoint carries messages, not a stream, so a
+			 * report longer than the guest can take is truncated rather
+			 * than continued into the next read - joining two reports
+			 * together would be worse than losing part of one.
+			 */
+			if (hd->ep_type[index] == LIBUSB_TRANSFER_TYPE_INTERRUPT &&
+			    slot->have > slot->taken) {
+				if (!hd->said_surplus) {
+					hd->said_surplus = 1;
+					rpclog("USB: %04x:%04x sends %u-byte reports on "
+					       "endpoint %u and the machine asks for %u; "
+					       "the rest of each is dropped\n", hd->vendor,
+					    hd->product, slot->have, endpoint, max);
+				}
+				slot->have = 0;
+				slot->taken = 0;
+			}
+
+			if (slot->have == slot->taken) {
+				slot->have = 0;
+				slot->taken = 0;
+				/* Keep one in flight. An interrupt endpoint is polled
+				   without pause, and having asked already is what makes
+				   the next report ready by the time the driver comes
+				   back. */
+				usb_host_start_endpoint(hd, index,
+				    (unsigned char) (endpoint | LIBUSB_ENDPOINT_IN),
+				    wanted, NULL);
+			}
+
+			return USB_ACK;
 		}
 
-		if (result == USB_ACK || result == USB_NAK) {
-			/* Keep one in flight. An interrupt endpoint is polled without
-			   pause, and having asked already is what makes the next
-			   report ready by the time the driver comes back. */
+		if (result == USB_NAK) {
 			usb_host_start_endpoint(hd, index,
 			    (unsigned char) (endpoint | LIBUSB_ENDPOINT_IN), wanted, NULL);
 		}
