@@ -293,16 +293,77 @@ supplies it - see `riscos-progs/RPCEmuPCIEmulator/`.
 get it the wrong way round and the bus is registered twice and no port is ever
 examined.
 
+## Streaming: isochronous transfers
+
+Audio and video devices do not move their data the way everything else does.
+A keyboard is asked for its state and answers; a camera produces a packet every
+millisecond whether anyone asked or not, and a packet that misses its millisecond
+is of no use to anybody. USB gives that its own kind of transfer, isochronous,
+with no handshake and no retry, and OHCI gives it its own kind of descriptor.
+
+An isochronous descriptor is eight words rather than four, and it describes up to
+eight consecutive frames rather than one transfer: a starting frame, a buffer
+given as two pages, and a halfword per packet which is an offset going in and a
+length and status coming back. The controller visits it once per frame, fills
+that frame's packet, and only when its last frame has gone does the descriptor
+join the done queue. A device that sent nothing in a frame produces a packet with
+no bytes in it, which is a truthful answer and not a reason to wait: a camera
+between frames does exactly that, every frame.
+
+Two consequences are worth knowing, because both differ from every other transfer
+here. An error does **not** halt the endpoint, unlike a general descriptor, since
+a stream that stops at its first lost packet loses everything after it as well and
+the driver is told which packet failed regardless. And a descriptor whose frames
+have already gone by is retired immediately rather than run late, because those
+frames cannot be replayed and a descriptor that is never returned is a driver
+waiting for ever.
+
+On the host side a stream cannot be run as a question and an answer either. Four
+transfers of eight packets each are kept in flight and resubmitted the moment they
+come back, and what they collect waits in a short queue for the guest to take a
+packet at a time. When the queue fills, the oldest packets go: in a stream the
+recent ones are the useful ones. That is logged, once.
+
+One thing this needed elsewhere: an endpoint's maximum packet size is a property
+of the **alternate setting** in force, not of the interface. A streaming device
+typically asks for no bandwidth at all in setting 0 and offers a range above it,
+so the endpoint map is now read from the setting the guest has selected. Reading
+any other one gets every packet's size wrong.
+
+### Streaming from a device
+
+Nothing in RISC OS will open a webcam for you, but `USBDriver` exposes every
+endpoint through DeviceFS, so a few lines of BASIC will read one. Note the
+parameters are separated by **semicolons**: a comma is not a separator and gives a
+bad-name error.
+
+```basic
+DIM b% 4096
+d$="devices#endpoint1;interface1;alternate1:$.USB2"
+SYS "XOS_Find",&4F,d$ TO f%;e%
+IF (e% AND 1)=1 THEN PRINT "OPEN ERR &";~!f%:END
+SYS "XOS_GBPB",4,f%,b%,1024 TO ,,,notdone%
+PRINT 1024-notdone%;" bytes"
+CLOSE#f%
+```
+
+`alternate1` matters. Without it the endpoint is matched in setting 0, where a
+streaming device reserves no bandwidth and there is nothing to read. Which
+settings a device offers, and what they cost, is in its own descriptors.
+
+Reading a laptop's built-in camera this way returns its video payload, headers and
+all - the first two bytes of each are the UVC header's length and flags. Around
+90 KB/s of a 128-byte-per-frame setting reaches a BASIC program, which is most of
+what that setting can carry.
+
 ## Where it is not finished
 
 Not implemented:
 
-- **Isochronous transfers.** Endpoint descriptors marked isochronous are passed
-  over rather than misread, so audio and video devices will describe themselves
-  correctly and then have nothing to say.
-- **Only one transfer in flight per endpoint and direction** in the passthrough.
-  Fine for control traffic; it would cap throughput on bulk, where a real driver
-  double-buffers.
+- **Only one transfer in flight per endpoint and direction** for bulk and
+  interrupt in the passthrough. Fine for control traffic; it would cap throughput
+  on bulk, where a real driver double-buffers. Streams are not affected: those
+  keep four transfers in flight, as described above.
 - **Hubs cannot be passed through.** Taking one would take everything below it,
   and the root hub is the only hub in the emulated bus.
 - **High speed devices.** The controller is full speed, so a high speed device is

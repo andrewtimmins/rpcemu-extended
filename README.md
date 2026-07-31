@@ -619,11 +619,15 @@ host is currently using takes a confirmation first.
 ### What to expect
 
 Devices enumerate, and their descriptors, manufacturer and product strings and serial
-numbers all come from the real hardware. **Isochronous transfers are not implemented**,
-so a webcam or an audio device will appear and describe itself and then have nothing to
-say; hubs cannot be passed through, and a high-speed device is flagged rather than
-handled. Keyboards and mice are the useful case today, since HID is compiled into
-USBDriver.
+numbers all come from the real hardware. Keyboards and mice work without anything being
+installed, since HID is compiled into USBDriver.
+
+**Streaming devices work too.** Isochronous transfers are implemented, so a webcam or an
+audio device does more than describe itself: its packets reach the guest a frame at a
+time, and a few lines of BASIC reading the endpoint through DeviceFS get the real data.
+Nothing in RISC OS will display a webcam for you, so this is a foundation rather than a
+feature, and [docs/usb.md](docs/usb.md) shows how to read one. Hubs still cannot be
+passed through, and a high-speed device is flagged rather than handled.
 
 This is **verified on Linux**. Windows and macOS builds only gained libusb in this
 release, so passthrough there is expected to work but has not yet been confirmed on
