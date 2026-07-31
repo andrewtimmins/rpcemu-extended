@@ -143,6 +143,60 @@ typedef enum {
 
 struct HostDevice;
 
+/*
+ * Isochronous streaming.
+ *
+ * Every other kind of transfer here is one question and one answer: the guest
+ * asks, a transfer is submitted, and the answer is picked up whenever it comes
+ * back. Isochronous cannot work that way, because its frames do not wait. The
+ * guest wants one packet per millisecond and a real device produces them at
+ * exactly that rate, so a scheme that asks for a packet and then waits for it
+ * would miss most of them.
+ *
+ * So a stream runs ahead of the guest instead. Several multi-packet transfers
+ * are kept in flight at once and resubmitted the moment they come back, and
+ * what they collect waits in a queue for the guest to take a packet at a time.
+ * The queue is what turns the host's bursts back into the steady one-per-frame
+ * the emulated controller asks for.
+ *
+ * Eight packets a transfer is eight milliseconds of a full speed stream, and
+ * four transfers means one can be coming back while three are still collecting.
+ */
+#define HOST_ISO_PACKETS	8
+#define HOST_ISO_TRANSFERS	4
+#define HOST_ISO_QUEUE		32
+
+struct IsoStream;
+
+typedef struct {
+	struct libusb_transfer *xfer;
+	uint8_t *buffer;
+	int pending;			/* submitted, and not back yet */
+	struct IsoStream *stream;
+} IsoTransfer;
+
+typedef struct IsoStream {
+	struct HostDevice *owner;
+	unsigned char ep;
+	unsigned packet_size;
+	int reading;
+
+	IsoTransfer xfers[HOST_ISO_TRANSFERS];
+
+	/*
+	 * Packets waiting. On the way in, what the device has sent and the guest
+	 * has not collected; on the way out, what the guest has given us and we
+	 * have not sent.
+	 */
+	uint8_t *queue;			/* HOST_ISO_QUEUE packets, back to back */
+	uint16_t length[HOST_ISO_QUEUE];
+	unsigned head;			/* the next packet out */
+	unsigned count;			/* how many are waiting */
+
+	int dropped;			/* said once, not once a millisecond */
+	int failed;			/* a submission failure, likewise */
+} IsoStream;
+
 typedef struct {
 	SlotState state;
 	struct libusb_transfer *xfer;
@@ -154,6 +208,9 @@ typedef struct {
 	/* Which device this belongs to, so a transfer that comes back saying the
 	   device has gone can say which one. */
 	struct HostDevice *owner;
+
+	/* Only for an isochronous endpoint, and only once one is used. */
+	IsoStream *iso;
 } Slot;
 
 typedef struct HostDevice {
@@ -187,6 +244,18 @@ typedef struct HostDevice {
 	/* Interfaces taken from the host, to be given back on the way out. */
 	uint8_t claimed[32];
 	int claimed_count;
+
+	/**
+	 * The alternate setting the guest has chosen for each interface.
+	 *
+	 * Worth keeping because an interface's endpoints are a property of its
+	 * alternate setting, not of the interface: an isochronous endpoint
+	 * typically appears with a maximum packet size of zero in setting 0 and
+	 * its real size in the settings above, which is how a device with a
+	 * stream asks not to be given any bandwidth until somebody wants it. Read
+	 * the wrong setting's descriptor and every packet is the wrong size.
+	 */
+	uint8_t alt_setting[32];
 
 	/* The last submit failure reported, so a request that keeps failing says
 	   so once rather than a thousand times a second. */
@@ -655,6 +724,371 @@ usb_host_start_endpoint(HostDevice *hd, unsigned slot_index, unsigned char ep,
 	}
 }
 
+/* --- Isochronous streams -------------------------------------------------- */
+
+/** Where a packet sits in the stream's queue. */
+static uint8_t *
+usb_host_iso_slot(IsoStream *s, unsigned index)
+{
+	return s->queue + (index % HOST_ISO_QUEUE) * s->packet_size;
+}
+
+/**
+ * Add a packet to the queue.
+ *
+ * A full queue loses its oldest packet rather than refusing the new one. In a
+ * stream the recent packets are the useful ones: for input the guest has fallen
+ * behind and the old frames are of no interest to it, and for output they are
+ * frames whose moment has passed. Either way, keeping the queue current beats
+ * keeping it complete.
+ */
+static void
+usb_host_iso_push(IsoStream *s, const uint8_t *data, unsigned len)
+{
+	unsigned at;
+
+	if (len > s->packet_size) {
+		len = s->packet_size;
+	}
+
+	if (s->count == HOST_ISO_QUEUE) {
+		s->head++;
+		s->count--;
+
+		if (!s->dropped) {
+			s->dropped = 1;
+			rpclog("USB: %04x:%04x is streaming on endpoint %02x faster than "
+			       "the machine is taking it; dropping the oldest packets\n",
+			    s->owner->vendor, s->owner->product, s->ep);
+		}
+	}
+
+	at = s->head + s->count;
+	if (len > 0 && data != NULL) {
+		memcpy(usb_host_iso_slot(s, at), data, len);
+	}
+	s->length[at % HOST_ISO_QUEUE] = (uint16_t) len;
+	s->count++;
+}
+
+static void LIBUSB_CALL usb_host_iso_done(struct libusb_transfer *xfer);
+
+/**
+ * Send one of a stream's transfers on its way.
+ *
+ * For input every packet is offered the endpoint's full size, because there is
+ * no telling how much the device will send. For output the packets have the
+ * lengths the guest gave them, and @p length is their total: libusb lays
+ * isochronous packets out one after another by their own lengths rather than on
+ * a fixed stride, so a buffer of eight maximum-sized slots would describe eight
+ * packets of the wrong size and mostly padding.
+ */
+static void
+usb_host_iso_submit(IsoTransfer *it, unsigned packets, unsigned length)
+{
+	IsoStream *s = it->stream;
+	int err;
+
+	if (it->pending || packets == 0) {
+		return;
+	}
+
+	libusb_fill_iso_transfer(it->xfer, s->owner->handle, s->ep, it->buffer,
+	    (int) length, (int) packets, usb_host_iso_done, it, 0);
+
+	if (s->reading) {
+		libusb_set_iso_packet_lengths(it->xfer, s->packet_size);
+	}
+
+	it->pending = 1;
+
+	err = libusb_submit_transfer(it->xfer);
+	if (err != 0) {
+		it->pending = 0;
+
+		/*
+		 * Worth one line. The usual cause is that the alternate setting in
+		 * force reserves no bandwidth for this endpoint, which is a guest that
+		 * has started reading without selecting a setting that streams - and
+		 * that is invisible from the guest, where it looks like a device with
+		 * nothing to say.
+		 */
+		if (!s->failed) {
+			s->failed = 1;
+			rpclog("USB: %04x:%04x would not take an isochronous transfer on "
+			       "endpoint %02x: %s\n", s->owner->vendor, s->owner->product,
+			    s->ep, libusb_strerror(err));
+		}
+	}
+}
+
+/**
+ * A stream's transfer has come back.
+ *
+ * Runs inside usb_host_poll() on the emulator thread, like every other callback
+ * here, so the queue needs no lock.
+ */
+static void LIBUSB_CALL
+usb_host_iso_done(struct libusb_transfer *xfer)
+{
+	IsoTransfer *it = xfer->user_data;
+	IsoStream *s = it->stream;
+	int i;
+
+	it->pending = 0;
+
+	if (xfer->status == LIBUSB_TRANSFER_NO_DEVICE) {
+		if (s->owner != NULL && !s->owner->gone) {
+			s->owner->gone = 1;
+			rpclog("USB: %s (%04x:%04x) did not answer; treating it as "
+			       "unplugged\n", s->owner->name, s->owner->vendor,
+			    s->owner->product);
+		}
+		return;
+	}
+
+	if (xfer->status == LIBUSB_TRANSFER_CANCELLED) {
+		return;		/* being taken down; do not put it back */
+	}
+
+	if (s->reading) {
+		for (i = 0; i < xfer->num_iso_packets; i++) {
+			const struct libusb_iso_packet_descriptor *p =
+			    &xfer->iso_packet_desc[i];
+
+			/*
+			 * A packet that the device did not fill is still a packet: it
+			 * is queued with no bytes in it, so that the guest sees the
+			 * silence at the right moment in the stream rather than seeing
+			 * the stream close up around it.
+			 */
+			if (p->status == LIBUSB_TRANSFER_COMPLETED) {
+				usb_host_iso_push(s,
+				    libusb_get_iso_packet_buffer_simple(xfer, (unsigned) i),
+				    p->actual_length);
+			} else {
+				usb_host_iso_push(s, NULL, 0);
+			}
+		}
+
+		/* Straight back out, so the device is never left with nowhere to put
+		   what it produces next. */
+		usb_host_iso_submit(it, HOST_ISO_PACKETS,
+		    HOST_ISO_PACKETS * s->packet_size);
+	}
+}
+
+/** Make a stream for an endpoint, or return the one it already has. */
+static IsoStream *
+usb_host_iso_stream(HostDevice *hd, unsigned index, unsigned char ep, int reading)
+{
+	Slot *slot = &hd->slots[index];
+	IsoStream *s = slot->iso;
+	unsigned i;
+
+	if (s != NULL) {
+		return s;
+	}
+
+	if (hd->ep_packet[index] == 0) {
+		/* No bandwidth in the setting in force, so there is nothing to stream
+		   and libusb would refuse every transfer. */
+		return NULL;
+	}
+
+	s = calloc(1, sizeof(*s));
+	if (s == NULL) {
+		return NULL;
+	}
+
+	s->owner = hd;
+	s->ep = ep;
+	s->packet_size = hd->ep_packet[index];
+	s->reading = reading;
+
+	s->queue = malloc((size_t) HOST_ISO_QUEUE * s->packet_size);
+	if (s->queue == NULL) {
+		free(s);
+		return NULL;
+	}
+
+	for (i = 0; i < HOST_ISO_TRANSFERS; i++) {
+		IsoTransfer *it = &s->xfers[i];
+
+		it->stream = s;
+		it->xfer = libusb_alloc_transfer(HOST_ISO_PACKETS);
+		it->buffer = malloc((size_t) HOST_ISO_PACKETS * s->packet_size);
+
+		if (it->xfer == NULL || it->buffer == NULL) {
+			/* Fewer transfers than hoped for still streams, just with less
+			   to spare, so this is not worth failing over. */
+			libusb_free_transfer(it->xfer);
+			free(it->buffer);
+			it->xfer = NULL;
+			it->buffer = NULL;
+		}
+	}
+
+	slot->iso = s;
+
+	rpclog("USB: streaming %s endpoint %02x of %04x:%04x, %u bytes a packet\n",
+	    reading ? "from" : "to", ep, hd->vendor, hd->product, s->packet_size);
+
+	if (reading) {
+		for (i = 0; i < HOST_ISO_TRANSFERS; i++) {
+			if (s->xfers[i].xfer != NULL) {
+				usb_host_iso_submit(&s->xfers[i], HOST_ISO_PACKETS,
+				    HOST_ISO_PACKETS * s->packet_size);
+			}
+		}
+	}
+
+	return s;
+}
+
+/**
+ * Take a stream down and free it.
+ *
+ * Same shape as the tidying up in usb_host_destroy(), and for the same reason: a
+ * submitted transfer belongs to libusb until its callback has run, so cancelling
+ * is only half of it and the events have to be pumped until each one is back.
+ * Anything that will not come back is leaked rather than freed underneath it.
+ */
+static void
+usb_host_iso_close(Slot *slot)
+{
+	IsoStream *s = slot->iso;
+	unsigned i;
+	int rounds, waiting = 0;
+
+	if (s == NULL) {
+		return;
+	}
+	slot->iso = NULL;
+
+	for (i = 0; i < HOST_ISO_TRANSFERS; i++) {
+		if (s->xfers[i].pending) {
+			libusb_cancel_transfer(s->xfers[i].xfer);
+			waiting = 1;
+		}
+	}
+
+	for (rounds = 0; waiting && rounds < 100; rounds++) {
+		struct timeval tv;
+
+		tv.tv_sec = 0;
+		tv.tv_usec = 10000;
+		libusb_handle_events_timeout_completed(usb_host_context, &tv, NULL);
+
+		waiting = 0;
+		for (i = 0; i < HOST_ISO_TRANSFERS; i++) {
+			if (s->xfers[i].pending) {
+				waiting = 1;
+			}
+		}
+	}
+
+	for (i = 0; i < HOST_ISO_TRANSFERS; i++) {
+		if (s->xfers[i].pending) {
+			rpclog("USB: an isochronous transfer to %04x:%04x would not come "
+			       "back; leaving it to libusb\n", s->owner->vendor,
+			    s->owner->product);
+			continue;
+		}
+		libusb_free_transfer(s->xfers[i].xfer);
+		free(s->xfers[i].buffer);
+	}
+
+	free(s->queue);
+	free(s);
+}
+
+/** Give the guest the next packet of an input stream. */
+static UsbResult
+usb_host_iso_read(HostDevice *hd, unsigned index, unsigned char ep,
+                  uint8_t *data, unsigned *len)
+{
+	IsoStream *s = usb_host_iso_stream(hd, index, ep, 1);
+	unsigned take;
+
+	if (s == NULL) {
+		return USB_STALL;
+	}
+
+	if (s->count == 0) {
+		/*
+		 * Nothing collected yet. The controller turns this into a packet with
+		 * no bytes in it, which is what the frame actually contained.
+		 */
+		return USB_NAK;
+	}
+
+	take = s->length[s->head % HOST_ISO_QUEUE];
+	if (take > *len) {
+		take = *len;
+	}
+	if (take > 0) {
+		memcpy(data, usb_host_iso_slot(s, s->head), take);
+	}
+
+	s->head++;
+	s->count--;
+	*len = take;
+
+	return USB_ACK;
+}
+
+/**
+ * Take a packet from the guest for an output stream.
+ *
+ * The packets are gathered rather than sent one at a time: a transfer of one
+ * packet a frame would spend more time being submitted than transferring, and
+ * the host's own scheduler wants a few frames of work in hand.
+ */
+static UsbResult
+usb_host_iso_write(HostDevice *hd, unsigned index, unsigned char ep,
+                   const uint8_t *data, unsigned len)
+{
+	IsoStream *s = usb_host_iso_stream(hd, index, ep, 0);
+	unsigned i;
+
+	if (s == NULL) {
+		return USB_STALL;
+	}
+
+	usb_host_iso_push(s, data, len);
+
+	if (s->count < HOST_ISO_PACKETS) {
+		return USB_ACK;		/* not a transfer's worth yet */
+	}
+
+	for (i = 0; i < HOST_ISO_TRANSFERS; i++) {
+		IsoTransfer *it = &s->xfers[i];
+		unsigned p, total = 0;
+
+		if (it->xfer == NULL || it->pending) {
+			continue;
+		}
+
+		for (p = 0; p < HOST_ISO_PACKETS; p++) {
+			const unsigned plen = s->length[(s->head + p) % HOST_ISO_QUEUE];
+
+			memcpy(it->buffer + total, usb_host_iso_slot(s, s->head + p),
+			    plen);
+			it->xfer->iso_packet_desc[p].length = plen;
+			total += plen;
+		}
+
+		s->head += HOST_ISO_PACKETS;
+		s->count -= HOST_ISO_PACKETS;
+
+		usb_host_iso_submit(it, HOST_ISO_PACKETS, total);
+		break;
+	}
+
+	return USB_ACK;
+}
+
 /** Two requests are the same request if all eight bytes of them agree. */
 static int
 usb_host_same_setup(const UsbSetup *a, const UsbSetup *b)
@@ -719,6 +1153,15 @@ usb_host_adopt_configuration(HostDevice *hd)
 		}
 	}
 
+	/*
+	 * Any stream in progress described endpoints of the setting that was in
+	 * force a moment ago, so it goes now rather than carrying a stale packet
+	 * size into the new one. The next read or write builds a fresh one.
+	 */
+	for (i = 0; i < HOST_SLOTS; i++) {
+		usb_host_iso_close(&hd->slots[i]);
+	}
+
 	for (i = 0; i < config->bNumInterfaces; i++) {
 		const struct libusb_interface *iface = &config->interface[i];
 
@@ -733,6 +1176,21 @@ usb_host_adopt_configuration(HostDevice *hd)
 					rpclog("USB: could not claim interface %d of %04x:%04x\n",
 					    alt->bInterfaceNumber, hd->vendor, hd->product);
 				}
+			}
+
+			/*
+			 * Only the setting that is actually in force describes the
+			 * endpoints as they are now. Taking every setting in turn and
+			 * letting the last win was harmless while everything here was
+			 * bulk or interrupt, whose descriptors hardly differ between
+			 * settings; it is not harmless for a stream, where setting 0
+			 * commonly asks for no bandwidth at all and the sizes above it
+			 * differ from one another. Recording the wrong one gets every
+			 * packet's size wrong.
+			 */
+			if (alt->bAlternateSetting !=
+			    hd->alt_setting[alt->bInterfaceNumber & 31]) {
+				continue;
 			}
 
 			for (k = 0; k < alt->bNumEndpoints; k++) {
@@ -772,6 +1230,9 @@ usb_host_control_is_ours(HostDevice *hd, const UsbSetup *setup, UsbResult *resul
 	switch (setup->request) {
 	case USB_REQ_SET_CONFIGURATION:
 		usb_host_release_interfaces(hd);
+		/* Every interface goes back to its first setting with the
+		   configuration, which is where the endpoint map has to start from. */
+		memset(hd->alt_setting, 0, sizeof(hd->alt_setting));
 		if (libusb_set_configuration(hd->handle, (int) (setup->value & 0xff)) != 0) {
 			/*
 			 * Not fatal. A device with one configuration is already in
@@ -790,6 +1251,9 @@ usb_host_control_is_ours(HostDevice *hd, const UsbSetup *setup, UsbResult *resul
 		        (int) (setup->index & 0xff), (int) (setup->value & 0xff)) != 0) {
 			*result = USB_STALL;
 		} else {
+			/* Recorded before the endpoints are read back, because which
+			   setting is in force is what decides which to read. */
+			hd->alt_setting[setup->index & 31] = (uint8_t) (setup->value & 0xff);
 			usb_host_adopt_configuration(hd);
 			*result = USB_ACK;
 		}
@@ -830,6 +1294,17 @@ usb_host_reset(UsbDevice *dev)
 
 		if (slot->state == SLOT_DONE) {
 			slot->state = SLOT_IDLE;
+		}
+
+		/*
+		 * A stream keeps running, but what it has collected is thrown away:
+		 * those packets belong to frames before the reset, and a driver
+		 * starting again wants the stream from now rather than a few
+		 * milliseconds of history first.
+		 */
+		if (slot->iso != NULL) {
+			slot->iso->head = 0;
+			slot->iso->count = 0;
 		}
 	}
 }
@@ -898,6 +1373,23 @@ usb_host_read(UsbDevice *dev, unsigned endpoint, uint8_t *data, unsigned *len)
 		return USB_STALL;
 	}
 
+	if (hd->ep_type[index] == LIBUSB_TRANSFER_TYPE_ISOCHRONOUS) {
+		/*
+		 * A stream, which runs ahead of the guest and has packets waiting; this
+		 * takes the next one rather than starting a transfer. Given `max`
+		 * rather than *len, which has already been zeroed above.
+		 */
+		unsigned room = max;
+		const UsbResult result = usb_host_iso_read(hd, index,
+		    (unsigned char) (endpoint | LIBUSB_ENDPOINT_IN), data, &room);
+
+		if (result == USB_ACK) {
+			*len = room;
+		}
+
+		return result;
+	}
+
 	if (wanted == 0 || wanted > max) {
 		wanted = max;
 	}
@@ -948,6 +1440,11 @@ usb_host_write(UsbDevice *dev, unsigned endpoint, const uint8_t *data,
 	}
 	if (hd->ep_type[index] == 0xff) {
 		return USB_STALL;
+	}
+
+	if (hd->ep_type[index] == LIBUSB_TRANSFER_TYPE_ISOCHRONOUS) {
+		return usb_host_iso_write(hd, index,
+		    (unsigned char) (endpoint & 0x7f), data, len);
 	}
 
 	if (slot->state == SLOT_DONE) {
@@ -1128,6 +1625,12 @@ usb_host_destroy(UsbDevice *dev)
 	if (hd == NULL) {
 		free(dev);
 		return;
+	}
+
+	/* Streams first: each one has several transfers of its own in flight, and
+	   takes itself down the same careful way. */
+	for (i = 0; i < HOST_SLOTS; i++) {
+		usb_host_iso_close(&hd->slots[i]);
 	}
 
 	/*

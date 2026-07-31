@@ -137,6 +137,16 @@ else()
     message(STATUS "Skipping test_gfxrom (gfxroms/RPCEmuGfx,ffa not built)")
 endif()
 
+# The OHCI controller's isochronous transfer descriptors: the one place the
+# emulator writes a length back that a driver reads, so a mistake there is a
+# stream that appears to work and produces rubbish rather than a failure anybody
+# notices. Compiles usb_ohci.c directly and stubs guest memory and the
+# passthrough, so it links nothing - no libusb, and no SDL through rpcemu_core.
+add_executable(test_ohci_iso test_ohci_iso.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/usb_ohci.c)
+target_include_directories(test_ohci_iso PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+add_test(NAME test_ohci_iso COMMAND test_ohci_iso)
+
 # The zip reader used to unpack downloaded RISC OS archives. Compiles unzip.c
 # directly rather than linking rpcemu_core, for the same reason as the tests
 # above: the core drags in SDL. unzip.c needs only the logger, which the test

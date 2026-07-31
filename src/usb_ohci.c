@@ -145,12 +145,55 @@
 #define TD_TOGGLE_USE_ED	0x00000000
 #define TD_CC_SHIFT		28
 
+/*
+ * Isochronous transfer descriptor, eight words in guest memory.
+ *
+ * A different shape from the general one. Where a general descriptor describes
+ * one transfer, this describes up to eight - one per frame, starting at
+ * StartingFrame - and carries a halfword for each. That halfword is an offset
+ * into the buffer on the way in and a status word on the way out, which is why
+ * the specification names it both ways round.
+ */
+#define ITD_FLAGS		0
+#define ITD_BP0			4	/* the buffer's first page */
+#define ITD_NEXTTD		8	/* same word as a general descriptor */
+#define ITD_BE			12	/* buffer end, inclusive */
+#define ITD_PSW			16	/* eight halfwords */
+
+#define ITD_SF(f)		((f) & 0xffff)		/* starting frame */
+#define ITD_FC(f)		((((f) >> 24) & 7) + 1)	/* held as count - 1 */
+#define ITD_PACKETS		8
+
+/*
+ * The offset/status halfword.
+ *
+ * Going in it is a thirteen-bit offset, whose top bit chooses which of the two
+ * pages the packet starts in, and the driver leaves the remaining bits set so
+ * that a packet the controller never reached reads back as NotAccessed. Coming
+ * out it is a twelve-bit length and a condition code.
+ */
+#define PSW_OFFSET_MASK		0x1fff
+#define PSW_PAGE_SELECT		0x1000
+#define PSW_LENGTH_MASK		0x0fff
+#define PSW_CC_SHIFT		12
+
 /* Condition codes, as OHCI numbers them. */
 #define CC_NO_ERROR		0x0
 #define CC_STALL		0x4
 #define CC_DEVICE_NOT_RESPONDING 0x5
+#define CC_DATA_OVERRUN		0x8
 #define CC_DATA_UNDERRUN	0x9
 #define CC_NOT_ACCESSED		0xe
+
+/**
+ * Both spellings of NotAccessed.
+ *
+ * OHCI gives it two values, 0xe and 0xf, and a driver tests the code against
+ * this mask rather than for either one. The shipped OHCIDriver does exactly
+ * that, so a packet must be left with one of the two and not with anything else
+ * that happens to mean nothing was moved.
+ */
+#define CC_NOT_ACCESSED_MASK	0xe
 
 /* Root hub port status, which is where OHCI's names came from. */
 #define RH_CONNECTED		(1u << 0)
@@ -187,6 +230,18 @@
  * smaller stops enumeration dead at the first interesting device.
  */
 #define OHCI_MAX_TRANSFER	8192
+
+/**
+ * Most bytes one isochronous packet can carry.
+ *
+ * A full speed isochronous endpoint may name up to 1023 bytes a frame, which is
+ * the most the controller we present should ever be asked for. The allowance is
+ * larger than that on purpose: a passed-through device may be a high speed one
+ * whose descriptors name a bigger packet, and refusing those outright would turn
+ * a device that half works into one that does not work at all. Anything beyond
+ * this is reported as an overrun rather than quietly truncated.
+ */
+#define ITD_PACKET_MAX		4096
 
 /**
  * Frames a root hub port change waits before being reported.
@@ -778,6 +833,263 @@ ohci_run_td(uint32_t ed, uint32_t ed_flags, uint32_t td)
 	return 1;
 }
 
+/* --- Isochronous transfer descriptors ----------------------------------- */
+
+/*
+ * Isochronous is the one kind of transfer that is about time rather than about
+ * data. A general descriptor says "move these bytes and tell me how it went",
+ * and if the device has nothing to say the controller comes back to the same
+ * descriptor next frame. An isochronous descriptor instead says "in frame N,
+ * whatever this device has to say goes here" for up to eight consecutive
+ * frames, and each of those frames happens once whether the device spoke in it
+ * or not. Nothing is retried, because by the time anyone noticed, the frame it
+ * belonged to has gone.
+ *
+ * That is why this is a separate path rather than a flag on the general one:
+ * a descriptor is visited on eight frames instead of one, a device saying
+ * nothing is a result rather than a reason to wait, and an error must not halt
+ * the endpoint, because halting a stream to report one lost packet loses all
+ * the rest as well.
+ */
+
+/** Read one of the eight offset/status halfwords. */
+static uint16_t
+itd_psw_read(uint32_t itd, unsigned index)
+{
+	const uint32_t word = ohci_read32(itd + ITD_PSW + (index & ~1u) * 2);
+
+	return (uint16_t) ((index & 1) ? (word >> 16) : word);
+}
+
+/** Write one of them back, leaving its neighbour alone. */
+static void
+itd_psw_write(uint32_t itd, unsigned index, uint16_t val)
+{
+	const uint32_t at = itd + ITD_PSW + (index & ~1u) * 2;
+	uint32_t word = ohci_read32(at);
+
+	if (index & 1) {
+		word = (word & 0x0000ffffu) | ((uint32_t) val << 16);
+	} else {
+		word = (word & 0xffff0000u) | val;
+	}
+
+	ohci_write32(at, word);
+}
+
+/**
+ * Turn an offset within the descriptor's buffer into a physical address.
+ *
+ * The buffer is described as two pages, and an offset's top bit says which of
+ * them it is in. The two need not be next to each other in physical memory, so
+ * this is a choice between two bases rather than an addition.
+ */
+static uint32_t
+itd_address(uint32_t page0, uint32_t page1, unsigned offset)
+{
+	return ((offset & PSW_PAGE_SELECT) ? page1 : page0) | (offset & 0xfff);
+}
+
+/**
+ * Move one frame's packet.
+ *
+ * @param index Which of the descriptor's packets, which is how far into its run
+ *              of frames this frame is.
+ */
+static void
+itd_run_packet(uint32_t itd, uint32_t bp0, uint32_t be, unsigned count,
+               unsigned index, UsbDevice *dev, unsigned endpoint, int reading)
+{
+	const uint32_t page0 = bp0 & ~0xfffu;
+	const uint32_t page1 = be & ~0xfffu;
+	const unsigned offset = itd_psw_read(itd, index) & PSW_OFFSET_MASK;
+	const unsigned end = (page1 == page0) ? (be & 0xfff)
+	    : (PSW_PAGE_SELECT | (be & 0xfff));
+
+	uint8_t buffer[ITD_PACKET_MAX];
+	unsigned room, len = 0, cc = CC_NO_ERROR;
+
+	/*
+	 * How much room this packet has. Every packet but the last is bounded by
+	 * where the next one starts; the last is bounded by the end of the buffer,
+	 * which the specification gives as the address of its final byte.
+	 */
+	if (index + 1 < count) {
+		const unsigned next = itd_psw_read(itd, index + 1) & PSW_OFFSET_MASK;
+
+		room = (next > offset) ? next - offset : 0;
+	} else {
+		room = (end >= offset) ? end - offset + 1 : 0;
+	}
+
+	if (room > sizeof(buffer)) {
+		cc = CC_DATA_OVERRUN;
+		room = sizeof(buffer);
+	}
+
+	if (reading) {
+		unsigned got = room;
+
+		if (dev->ops->read == NULL) {
+			cc = CC_STALL;
+		} else {
+			switch (dev->ops->read(dev, endpoint, buffer, &got)) {
+			case USB_ACK:
+				len = (got > room) ? room : got;
+				if (len > 0) {
+					td_buffer(itd_address(page0, page1, offset),
+					    itd_address(page0, page1, offset + len - 1),
+					    buffer, len, 1);
+				}
+				break;
+
+			case USB_NAK:
+				/*
+				 * Nothing from the device this frame. On any other kind of
+				 * transfer that would mean come back later; here it is the
+				 * answer, and a truthful one - a camera between frames and
+				 * a microphone in silence both send a packet with no bytes
+				 * in it, every frame, and a driver expects exactly that.
+				 */
+				len = 0;
+				break;
+
+			case USB_STALL:
+				cc = CC_STALL;
+				break;
+
+			default:
+				cc = CC_DEVICE_NOT_RESPONDING;
+				break;
+			}
+		}
+	} else if (dev->ops->write == NULL) {
+		cc = CC_STALL;
+	} else {
+		if (room > 0) {
+			td_buffer(itd_address(page0, page1, offset),
+			    itd_address(page0, page1, offset + room - 1),
+			    buffer, room, 0);
+		}
+
+		switch (dev->ops->write(dev, endpoint, buffer, room)) {
+		case USB_STALL:
+			cc = CC_STALL;
+			break;
+
+		case USB_NO_DEVICE:
+			cc = CC_DEVICE_NOT_RESPONDING;
+			break;
+
+		default:
+			/*
+			 * Taken, or dropped because the host end could not keep up.
+			 * Both are reported to the guest as sent, because that is what
+			 * a real controller would have done with the frame and there is
+			 * no way to hand the packet back for a later one. A drop is
+			 * logged where it happens, in usb_host.c, which is the only
+			 * place that knows it happened.
+			 */
+			len = room;
+			break;
+		}
+	}
+
+	itd_psw_write(itd, index,
+	    (uint16_t) ((cc << PSW_CC_SHIFT) | (len & PSW_LENGTH_MASK)));
+}
+
+/**
+ * The condition code for a descriptor as a whole, from its packets.
+ *
+ * The first packet that went wrong is what the descriptor reports. Packets that
+ * were never reached are not failures: a driver reads them as having moved
+ * nothing, which is what happened.
+ */
+static unsigned
+itd_result(uint32_t itd, unsigned count)
+{
+	unsigned i;
+
+	for (i = 0; i < count; i++) {
+		const unsigned cc = itd_psw_read(itd, i) >> PSW_CC_SHIFT;
+
+		if (cc != CC_NO_ERROR &&
+		    (cc & CC_NOT_ACCESSED_MASK) != CC_NOT_ACCESSED) {
+			return cc;
+		}
+	}
+
+	return CC_NO_ERROR;
+}
+
+/**
+ * Run an isochronous descriptor for this frame.
+ *
+ * @return Non-zero when the descriptor is finished with and the endpoint may go
+ *         on to the next one. Zero leaves it at the head of the queue, which is
+ *         how a descriptor covering several frames is visited on each of them.
+ */
+static int
+ohci_run_itd(uint32_t ed_flags, uint32_t itd)
+{
+	const uint32_t flags = ohci_read32(itd + ITD_FLAGS);
+	const uint32_t bp0 = ohci_read32(itd + ITD_BP0);
+	const uint32_t be = ohci_read32(itd + ITD_BE);
+	const unsigned count = ITD_FC(flags);
+	const unsigned index = (ohci.fm_number - ITD_SF(flags)) & 0xffff;
+
+	/*
+	 * An isochronous endpoint names its own direction and its descriptors
+	 * carry no direction of their own. Anything that is not explicitly OUT is
+	 * read as IN, which for a malformed endpoint returns nothing rather than
+	 * sending a device whatever happened to be in the buffer.
+	 */
+	const int reading = (ed_flags & ED_DIR_MASK) != ED_DIR_OUT;
+	UsbDevice *dev;
+
+	/*
+	 * Its first frame has not arrived yet. Frame numbers are sixteen bits and
+	 * wrap, so "still to come" is the far half of the difference rather than a
+	 * comparison - which also gets the descriptor scheduled just before a wrap
+	 * right, where a comparison would run it 65535 frames early.
+	 */
+	if (index >= 0x8000) {
+		return 0;
+	}
+
+	dev = usb_device_at_address(ED_FA(ed_flags));
+	if (dev == NULL) {
+		td_retire(itd, CC_DEVICE_NOT_RESPONDING);
+		return 1;
+	}
+
+	if (index < count) {
+		itd_run_packet(itd, bp0, be, count, index, dev, ED_EN(ed_flags),
+		    reading);
+	}
+
+	/*
+	 * Finished once its last frame has been and gone. Note the retirement is
+	 * a plain one: unlike a general descriptor, a failed packet must not halt
+	 * the endpoint, because a stream that stops at the first lost packet loses
+	 * everything after it as well, and the driver is told which packet went
+	 * wrong either way.
+	 *
+	 * The test is "past the end" rather than "at the end" so that a descriptor
+	 * whose frames went by while the machine was busy elsewhere is still
+	 * retired rather than sitting at the head of the queue for ever. Its
+	 * unreached packets keep the NotAccessed the driver left in them.
+	 */
+	if (index + 1 < count) {
+		return 0;
+	}
+
+	td_retire(itd, itd_result(itd, count));
+
+	return 1;
+}
+
 /**
  * Run one endpoint descriptor: its queue of transfer descriptors, head first.
  *
@@ -793,9 +1105,7 @@ ohci_run_ed(uint32_t ed)
 	uint32_t halted;
 	int guard = 0;
 
-	if (flags & (ED_SKIP | ED_FORMAT_ISO)) {
-		/* Skipped, or isochronous - which is not implemented, and is
-		   passed over rather than misread as a general descriptor. */
+	if (flags & ED_SKIP) {
 		return next;
 	}
 	if (head & ED_HALTED) {
@@ -821,7 +1131,17 @@ ohci_run_ed(uint32_t ed)
 
 		td_next = ohci_read32(td + TD_NEXTTD) & ED_HEADMASK;
 
-		if (!ohci_run_td(ed, flags, td)) {
+		/*
+		 * The endpoint says which shape its descriptors are, and the two are
+		 * read quite differently - eight words against four, and a packet per
+		 * frame against one transfer. Only the link word is in the same place,
+		 * which is what lets one queue walk serve both.
+		 */
+		if (flags & ED_FORMAT_ISO) {
+			if (!ohci_run_itd(flags, td)) {
+				break;	/* its frames are not all done with yet */
+			}
+		} else if (!ohci_run_td(ed, flags, td)) {
 			break;		/* not ready; leave the queue alone */
 		}
 
