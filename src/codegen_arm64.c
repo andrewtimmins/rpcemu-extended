@@ -1237,7 +1237,7 @@ generatecall(OpFn addr, uint32_t opcode, uint32_t *pcpsr)
 {
 	lastrecompiled = 0;
 
-	if (canrecompile[(opcode >> 20) & 0xff]) {
+	if (canrecompile[(opcode >> 20) & 0xff] && !jit_deny[(opcode >> 20) & 0xff]) {
 		if (recompile(opcode, pcpsr)) {
 			return;
 		}

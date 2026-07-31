@@ -74,6 +74,10 @@ extern void arm_dump(void);
 extern void exception(uint32_t mmode, uint32_t address, uint32_t diff);
 extern void set_memory_executable(void *ptr, size_t len);
 
+/** Opcode classes the recompiler must leave to the interpreter; see
+    jit_deny_init() in arm_dynarec.c. Indexed by (opcode >> 20) & 0xff. */
+extern uint8_t jit_deny[256];
+
 extern ARMState arm;
 
 extern int prog32;

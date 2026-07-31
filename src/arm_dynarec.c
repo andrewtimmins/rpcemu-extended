@@ -26,6 +26,7 @@ int blockend;
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <time.h>
@@ -216,6 +217,100 @@ static int stmlookup[256];
 
 int countbitstable[65536];
 
+/**
+ * Opcode classes the recompiler has been told to leave to the interpreter.
+ *
+ * Indexed exactly as canrecompile[] is, by (opcode >> 20) & 0xff, so an entry
+ * covers one instruction class with one set of condition-independent bits. Zero
+ * throughout unless RPCEMU_JIT_DENY says otherwise, and read only while a block
+ * is being compiled, so it costs nothing at run time.
+ *
+ * This exists to bisect a backend fault that only shows on a real boot. If the
+ * machine misbehaves under the recompiler but is well under the interpreter, the
+ * difference is one of these classes, and denying half of them at a time finds
+ * which in about eight boots. That works on hardware we do not have, which is
+ * the point: a tester can bisect a fault on their own machine without building
+ * anything.
+ */
+uint8_t jit_deny[256];
+
+/**
+ * Read RPCEMU_JIT_DENY and mark the classes it names.
+ *
+ * Accepts a comma-separated list of decimal or 0x-prefixed indices and lo-hi
+ * ranges, or "all" for every class:
+ *
+ *   RPCEMU_JIT_DENY=all           nothing is recompiled (so, the interpreter)
+ *   RPCEMU_JIT_DENY=0x00-0x7f     the bottom half of the table
+ *   RPCEMU_JIT_DENY=0x31,0x3b     TST immediate and MOV immediate alone
+ *
+ * A malformed entry is reported and ignored rather than being taken as zero: a
+ * typo that silently denied class 0 would send a bisection off in the wrong
+ * direction entirely.
+ */
+static void
+jit_deny_init(void)
+{
+	const char *spec = getenv("RPCEMU_JIT_DENY");
+	unsigned denied = 0;
+	const char *p;
+
+	memset(jit_deny, 0, sizeof(jit_deny));
+
+	if (spec == NULL || *spec == '\0') {
+		return;
+	}
+
+	if (strcmp(spec, "all") == 0) {
+		memset(jit_deny, 1, sizeof(jit_deny));
+		rpclog("JIT: RPCEMU_JIT_DENY=all, recompiling nothing\n");
+		return;
+	}
+
+	p = spec;
+	while (*p != '\0') {
+		char *end;
+		unsigned long lo, hi;
+
+		while (*p == ',' || *p == ' ') {
+			p++;
+		}
+		if (*p == '\0') {
+			break;
+		}
+
+		lo = strtoul(p, &end, 0);
+		if (end == p) {
+			rpclog("JIT: RPCEMU_JIT_DENY: cannot parse \"%s\", ignoring the rest\n", p);
+			break;
+		}
+		hi = lo;
+		if (*end == '-') {
+			p = end + 1;
+			hi = strtoul(p, &end, 0);
+			if (end == p) {
+				rpclog("JIT: RPCEMU_JIT_DENY: range with no end at \"%s\", ignoring the rest\n", p);
+				break;
+			}
+		}
+		p = end;
+
+		if (lo > 0xff || hi > 0xff || lo > hi) {
+			rpclog("JIT: RPCEMU_JIT_DENY: %lu-%lu is not a valid class range, ignored\n", lo, hi);
+			continue;
+		}
+		for (unsigned long i = lo; i <= hi; i++) {
+			if (!jit_deny[i]) {
+				jit_deny[i] = 1;
+				denied++;
+			}
+		}
+	}
+
+	rpclog("JIT: RPCEMU_JIT_DENY=%s, %u opcode classes left to the interpreter\n",
+	    spec, denied);
+}
+
 void
 arm_init(void)
 {
@@ -263,6 +358,8 @@ arm_init(void)
 			flaglookup[c][d] = (uint8_t) exec;
 		}
 	}
+
+	jit_deny_init();
 }
 
 /**
