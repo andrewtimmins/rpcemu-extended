@@ -43,10 +43,35 @@ extern void mem_init(void);
 extern void mem_reset(uint32_t ramsize, uint32_t vram_size);
 
 extern uintptr_t *vraddrl;
-extern uint32_t vraddrls[2][1024],vraddrphys[2][1024];
+/*
+ * Ring buffers of installed entries, per privilege level, for eviction and for
+ * the physical-address invalidation the graphics and podule code needs.
+ *
+ * The size is how many guest pages can have a host pointer at once, so it is
+ * also how much of the guest's working set gets the inlined fast path rather
+ * than a call into readmemfl()/writememfl(). At 1024 entries - 4MB of pages -
+ * an idle RISC OS desktop was installing around 480,000 entries a second and
+ * evicting about 900,000, recycling the whole map some 500 times a second:
+ * anything not touched again within about 2ms had already gone. 16384 entries
+ * takes that to about 24,000 installs a second, with the same number of
+ * evictions rather than double.
+ *
+ * Nothing about correctness depends on the size. An entry lives until the ring
+ * wraps onto it, the guest flushes its TLB (cp15_vaddr_reset() clears both maps
+ * outright), or the screen's write entries are invalidated for the next frame -
+ * so a longer-lived entry cannot go stale behind a remapping. The costs that do
+ * scale with it are the two linear scans over the ring, in cp15_vaddr_reset()
+ * and cp15_tlb_invalidate_physical(). Measured, the guest flushes its TLB 0
+ * times a second while idling and while running a benchmark, and the physical
+ * invalidation is once a frame, so at this size those come to about 2 million
+ * trivial comparisons a second.
+ */
+#define VADDR_RING_SIZE 16384
+
+extern uint32_t vraddrls[2][VADDR_RING_SIZE],vraddrphys[2][VADDR_RING_SIZE];
 
 extern uintptr_t *vwaddrl;
-extern uint32_t vwaddrls[2][1024],vwaddrphys[2][1024];
+extern uint32_t vwaddrls[2][VADDR_RING_SIZE],vwaddrphys[2][VADDR_RING_SIZE];
 
 //uint8_t pagedirty[0x1000];
 #define HASH(l) (((l)>>2)&0x7FFF)

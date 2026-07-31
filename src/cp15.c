@@ -73,9 +73,11 @@ uintptr_t *vraddrl = vraddrl_mode[0];
 uintptr_t *vwaddrl = vwaddrl_mode[0];
 
 /* Ring buffers of installed entries, per privilege level, for eviction and for
-   the physical-address invalidation the graphics and podule code needs. */
-uint32_t vraddrls[2][1024] = {{0}}, vraddrphys[2][1024] = {{0}};
-uint32_t vwaddrls[2][1024] = {{0}}, vwaddrphys[2][1024] = {{0}};
+   the physical-address invalidation the graphics and podule code needs. See
+   VADDR_RING_SIZE in mem.h for what the size means and what it was chosen from. */
+
+uint32_t vraddrls[2][VADDR_RING_SIZE] = {{0}}, vraddrphys[2][VADDR_RING_SIZE] = {{0}};
+uint32_t vwaddrls[2][VADDR_RING_SIZE] = {{0}}, vwaddrphys[2][VADDR_RING_SIZE] = {{0}};
 
 void
 mem_set_privilege(int privileged)
@@ -156,7 +158,7 @@ cp15_vaddr_reset(void)
 	int m;
 
 	for (m = 0; m < 2; m++) {
-		for (c = 0; c < 1024; c++) {
+		for (c = 0; c < VADDR_RING_SIZE; c++) {
 			if (vraddrls[m][c] != 0xFFFFFFFF) {
 				vraddrl_mode[m][vraddrls[m][c]] = 0xFFFFFFFF;
 				vraddrls[m][c] = 0xFFFFFFFF;
@@ -185,7 +187,7 @@ cp15_tlb_invalidate_physical(uint32_t addr)
 	int m;
 
 	for (m = 0; m < 2; m++) {
-		for (c = 0; c < 1024; c++) {
+		for (c = 0; c < VADDR_RING_SIZE; c++) {
 			/* Skip unused ring slots: cp15_reset() invalidates vwaddrls[]
 			   (to 0xffffffff) but leaves vwaddrphys[] stale, so a stale
 			   phys entry can still match here after a reset - indexing

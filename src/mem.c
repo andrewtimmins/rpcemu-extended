@@ -263,7 +263,7 @@ vradd(uint32_t a, const void *v, uint32_t f, uint32_t p)
 		vraddrls[privileged][pos] = a >> 12;
 		map[a >> 12] = (uintptr_t) v;
 		vraddrphys[privileged][pos] = p;
-		vraddrlpos[privileged] = (pos + 1) & 0x3ff;
+		vraddrlpos[privileged] = (pos + 1) & (VADDR_RING_SIZE - 1);
 	}
 
 	return (uintptr_t) v;
@@ -302,7 +302,7 @@ vwadd(uint32_t a, const void *v, uint32_t f, uint32_t p)
 		vwaddrls[privileged][pos] = a >> 12;
 		map[a >> 12] = (uintptr_t) v;
 		vwaddrphys[privileged][pos] = p;
-		vwaddrlpos[privileged] = (pos + 1) & 0x3ff;
+		vwaddrlpos[privileged] = (pos + 1) & (VADDR_RING_SIZE - 1);
 	}
 }
 
