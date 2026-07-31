@@ -32,6 +32,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **Access/ShareFS networking** — NAT-mode relay for Acorn Access and ShareFS file sharing between emulated and real machines.
 - **Expansion cards (podules)** — assign emulated podules per machine (*Settings → Machine → Podules*): ROM, MIDI (AKA16/AKA12/MIDI Max, host MIDI via ALSA), and the Computer Concepts Lark sampler. Plugin ABI for adding more. See [docs/podules.md](docs/podules.md).
 - **Full FPA10 emulation** — floating-point coprocessor with cycle-accurate timing; works with interpreter and dynarec.
+- **MMU access permissions — ADFFS works** — RPCEmu did not enforce page access permissions when an address translation was already cached, so a User-mode write to a Supervisor-only page succeeded instead of faulting. That is why [ADFFS](https://www.jaspp.org.uk/) told people to avoid RPCEmu from 2013 onwards: its JIT uses page protection to detect self-modifying code, and without working faults very few games ran. Fixed, with a 19-check regression test, so ADFFS and the preserved games that need it run here. See [docs/mmu-permissions.md](docs/mmu-permissions.md).
 - **Graphics card — display modes VRAM cannot reach** — an optional emulated expansion card with 15MB of its own display memory, so **2560 x 1440 in full colour** is available on a machine whose 2MB of VRAM otherwise stops at 800 x 600. An ordinary card in an ordinary EASI slot with its own GraphicsV driver in its ROM; off by default, and RISC OS keeps using VIDC20 until you run `*GfxCardOn`. See [docs/gfxcard.md](docs/gfxcard.md).
 - **USB — real devices from the host, in RISC OS** — an emulated **OHCI** host controller on its own expansion card with four ports, carrying RISC OS Open's own USB stack in its ROM, so nothing needs installing in the guest. Plug a device on the host into a port from *Settings → USB…* and RISC OS enumerates it and names it as the real hardware, reading its descriptors, strings and serial number over the emulated bus. Keyboards and mice work immediately, since HID is compiled into USBDriver. Streaming devices work: isochronous transfers are implemented, so a camera's packets reach the guest a frame at a time, although nothing in RISC OS will display a webcam for you. **USB drives work too**, through the SCSI modules the card's ROM also carries, with one caveat worth knowing before you plug one in: RISC OS only mounts a FileCore disc, so a FAT-formatted stick needs a FAT filing system such as Fat32FS on top, which is not bundled. Verified on Linux, and untested on Windows and macOS. See [USB devices](#usb-devices) and [docs/usb.md](docs/usb.md).
 - **Pixel Perfect scaling** — optional integer scaling for sharp pixels (*Settings → Pixel Perfect*).
@@ -94,7 +95,7 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `docs/gfxcard.md` | Graphics card: display modes beyond what VRAM allows, and its GraphicsV driver |
 | `docs/kinetic.md` | Kinetic StrongARM: how the card is detected, its 512MB memory map, and the three paths a new memory region needs |
 | `docs/usb.md` | USB: the emulated OHCI host controller, passing real devices through to the guest, streaming from a camera, USB drives, and why it is OHCI |
-| `docs/mmu-permissions.md` | The MMU access-permission defect ADFFS reports: what is wrong, the reproduction, and the two candidate fixes |
+| `docs/mmu-permissions.md` | MMU access permissions: the defect that made ADFFS unusable, how it was fixed, and the regression test that holds it |
 | `docs/clipboard.md` | Shared clipboard: copying text and images between the host and RISC OS |
 | `docs/hostcmd.md` | HostCmd: drive the RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`) |
 | `tools/mcp/README.md` | MCP server: drive a RISC OS machine from Claude / an agent (commands, files, screen, debugger). Setup + tool reference. |
@@ -410,7 +411,7 @@ portable between them.
 | `--machine <name>` | Run this machine, skipping the selector. Also accepts `--machine=<name>`. |
 | `--resume` | Resume the machine's own snapshot, consuming it to `.bak`. Requires `--machine`. |
 | `--state <file>` | Load an explicit state file, leaving it in place. Requires `--machine`. |
-| `--headless` | Run with no GUI window, over VNC. Requires `--machine`. |
+| `--headless` | Run with no GUI window, over VNC. Requires `--machine`. VNC is started for the run whether or not the machine has it enabled, since it is the only way in; the machine's own setting is left alone. |
 | `--list-machines` | List the available machine configs and exit. |
 | `--fetch-riscos[=which]` | Download RISC OS from RISC OS Open, unpack it, create a machine and exit. `which` is `stable` (default) or `nightly`. |
 | `--no-disc` | With `--fetch-riscos`, fetch the ROM only. |
@@ -761,6 +762,7 @@ how the JIT is built and when it falls back to interpretation.
 - Dual HostFS drives (per-machine + shared)
 - Access/ShareFS broadcast relay for NAT networking
 - Full FPA10 emulation with cycle timing
+- MMU access permissions enforced on cached translations, which upstream does not do — the defect that made ADFFS and most of the games needing it unusable (see [docs/mmu-permissions.md](docs/mmu-permissions.md))
 - Pixel Perfect integer scaling
 - Built-in VNC server
 - Headless mode for display-less servers (run a machine over VNC with no GUI)
@@ -772,7 +774,7 @@ how the JIT is built and when it falls back to interpretation.
 - Dynarec debugger hooks for consistent breakpoint/watchpoint behaviour
 - Debugger exception trapping, SWI tracing, and logging watchpoints (see [docs/debugger-tracing.md](docs/debugger-tracing.md))
 - Native arm64 (AArch64) recompiler backend, in addition to upstream's x86 dynarec — implemented and validated under emulation, not yet enabled in prebuilt releases (see [docs/arm64-dynarec.md](docs/arm64-dynarec.md))
-- Robustness & memory-safety hardening: bounds-checked HFE/ADF disc-image and HostFS input handling, FPA faults raised as undefined instructions rather than aborting the emulator, and a fixed use-after-free on GUI shutdown
+- Robustness & memory-safety hardening: bounds-checked HFE/ADF disc-image and HostFS input handling, FPA faults raised as undefined instructions rather than aborting the emulator, a wild branch in the guest reported as a Prefetch Abort instead of killing the emulator, and a fixed use-after-free on GUI shutdown
 - CMake build system, cross-platform: Linux (amd64 and arm64), Windows (amd64, MinGW-w64), and macOS (universal — Intel + Apple Silicon)
 
 ---
