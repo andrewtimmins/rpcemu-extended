@@ -1,14 +1,20 @@
 Licences for the USB modules in this directory
 ==============================================
 
-The two module ROM images here, 10-usbdriver,ffa and 20-ohcidriver,ffa, are not
-part of RPCEmu and are not covered by RPCEmu's GPL. They are RISC OS Open's
-USBDriver and OHCIDriver, built from ROOL's own sources, and they run inside the
-emulated machine as ordinary RISC OS modules. RPCEmu reads them at run time as
-data and never links against them.
+The module ROM images here are not part of RPCEmu and are not covered by
+RPCEmu's GPL. They are RISC OS Open's own modules, built from ROOL's sources, and
+they run inside the emulated machine as ordinary RISC OS modules. RPCEmu reads
+them at run time as data and never links against them.
 
-Neither module is simply "Apache 2.0", which is what an earlier version of the
-README here said. Both are a mixture:
+  10-usbdriver,ffa    USBDriver      Apache 2.0 + BSD (2, 3 and 4 clause)
+  20-ohcidriver,ffa   OHCIDriver     Apache 2.0 + BSD (2, 3 and 4 clause)
+  30-rtsupport,ffa    RTSupport      Apache 2.0
+  40-scsidriver,ffa   SCSISwitch     Apache 2.0
+  50-scsisoftusb,ffa  SCSISoftUSB    Apache 2.0 + BSD (2 and 4 clause)
+  60-scsifs,ffa       SCSIFS         Apache 2.0
+
+No module here is simply "Apache 2.0", which is what an earlier version of the
+README said of the first two. The mixture, where there is one, is:
 
   Apache License 2.0         Castle Technology Ltd, and ROOL's own work
   BSD, four clause           code derived from NetBSD and from the Regents of
@@ -17,13 +23,21 @@ README here said. Both are a mixture:
                              acknowledgement requirement
   BSD, two and three clause  other derived code
 
-The four clause files are the NetBSD USB core: in USBDriver, dev/usb/c/usb,
+The four clause files are the NetBSD code: in USBDriver, dev/usb/c/usb,
 dev/usb/c/usbdi, dev/usb/c/usbdi_util, dev/usb/c/usb_subr, dev/usb/c/uhub,
-their headers and sys/h/device; in OHCIDriver, c/ohci, h/ohcireg and h/ohcivar.
+their headers and sys/h/device; in OHCIDriver, c/ohci, h/ohcireg and h/ohcivar;
+in SCSISoftUSB, the umass driver and its headers.
 
-Both modules also have ROOL's CALLXLIB linked into them, which is Apache 2.0
-throughout and carries no attribution notices of its own beyond the licence
-text reproduced below.
+USBDriver, OHCIDriver and SCSISwitch also have ROOL's CALLXLIB linked into them,
+which is Apache 2.0 throughout and carries no attribution notices of its own
+beyond the licence text reproduced below. SCSISwitch additionally links ASMUTILS,
+on the same terms.
+
+RTSupport, SCSISwitch and SCSIFS ship a LICENSE file containing the Apache
+License 2.0 text and nothing else - byte for byte the same text in all three. It
+is reproduced once below rather than four times over: one copy accompanies this
+distribution, which is what section 4(a) asks for, and this file is long enough
+already.
 
 
 Modification notice, per Apache License 2.0 section 4(b)
@@ -42,14 +56,34 @@ expansion cards and identifies the controller by reading its revision register
 through each card's EASI space. HAL_IOMD has no USB support at all, so without
 that addition the driver finds nothing on a Risc PC. No other file is touched.
 
-10-usbdriver,ffa is an unmodified build of ROOL's USBDriver.
+Every other module here is an unmodified build of ROOL's source: USBDriver,
+RTSupport, SCSISwitch, SCSISoftUSB and SCSIFS. OHCIDriver is the only one we
+changed, and the only one this notice applies to.
+
+Each was built from the commit named below, and each build is reproducible: build
+it twice from a clean tree and the bytes are identical, which is the only sound
+way to check a shipped module against its source, since ROOL's makefiles compress
+the module body with modsqz and so strings(1) finds nothing of the source in it.
+
+  USBDriver      1.33   tag USBDriver-1_33
+  OHCIDriver     0.56   tag OHCIDriver-0_56, commit 551b4047   (modified)
+  RTSupport      0.18   commit c569874, 11 Oct 2023
+  SCSISwitch     2.15   commit 5531025, 13 Jul 2018
+  SCSISoftUSB    0.28   commit dd44bd4, 10 May 2020
+  SCSIFS         1.36   commit 92870ae, 15 Aug 2020
+
+See riscos-patches/README.md for where each comes from and how to rebuild it.
 
 
 Notices reproduced from the upstream sources
 ============================================
 
-What follows is the LICENSE file distributed with ROOL's USBDriver, then the
-LICENSE file distributed with ROOL's OHCIDriver, both verbatim.
+What follows is the LICENSE file distributed with ROOL's USBDriver, then the one
+distributed with OHCIDriver, then the notices from SCSISoftUSB's, all verbatim.
+
+RTSupport's, SCSISwitch's and SCSIFS's LICENSE files are the Apache License 2.0
+text alone, identical to one another and to the copy that appears below, so they
+are not repeated.
 
 
 --------------------------- USBDriver/LICENSE ---------------------------
@@ -613,3 +647,76 @@ Some source code is distributed under the Apache License:
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+
+--------------------------- SCSISoftUSB/LICENSE ---------------------------
+
+Some source code is distributed under the Original BSD License:
+
+
+Copyright (c) 2001 The NetBSD Foundation, Inc.
+All rights reserved.
+
+This code is derived from software contributed to The NetBSD Foundation
+by MAEKAWA Masahide (gehenna@NetBSD.org).
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. All advertising materials mentioning features or use of this software
+   must display the following acknowledgement:
+	  This product includes software developed by the NetBSD
+	  Foundation, Inc. and its contributors.
+4. Neither the name of The NetBSD Foundation nor the names of its
+   contributors may be used to endorse or promote products derived
+   from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
+BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+
+Some source code is distributed under the Simplified BSD License:
+
+
+Copyright (c) 1999 MAEKAWA Masahide <bishop@rr.iij4u.or.jp>,
+		      Nick Hibma <n_hibma@freebsd.org>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+
+Its LICENSE continues "Some source code is distributed under the Apache
+License:" followed by the Apache License 2.0 text, which is the same text
+reproduced above and is not repeated.

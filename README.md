@@ -626,8 +626,16 @@ installed, since HID is compiled into USBDriver.
 audio device does more than describe itself: its packets reach the guest a frame at a
 time, and a few lines of BASIC reading the endpoint through DeviceFS get the real data.
 Nothing in RISC OS will display a webcam for you, so this is a foundation rather than a
-feature, and [docs/usb.md](docs/usb.md) shows how to read one. Hubs still cannot be
-passed through, and a high-speed device is flagged rather than handled.
+feature, and [docs/usb.md](docs/usb.md) shows how to read one.
+
+**USB drives work as well.** The card's ROM carries RISC OS Open's SCSI modules, so a
+drive appears in `*SCSIDevices` with its real capacity and its sectors read and write
+correctly. One caveat, and it is not a small one: RISC OS itself will only mount a
+FileCore disc, so a FAT-formatted stick - which is to say almost any stick - needs a FAT
+filing system such as Fat32FS on top. That is not bundled, being somebody else's LGPL
+work to distribute; [docs/usb.md](docs/usb.md) explains the arrangement.
+
+Hubs still cannot be passed through.
 
 This is **verified on Linux**. Windows and macOS builds only gained libusb in this
 release, so passthrough there is expected to work but has not yet been confirmed on

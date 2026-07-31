@@ -356,6 +356,68 @@ all - the first two bytes of each are the UVC header's length and flags. Around
 90 KB/s of a 128-byte-per-frame setting reaches a BASIC program, which is most of
 what that setting can carry.
 
+## Drives: USB mass storage
+
+A USB drive works, in the sense that RISC OS sees it, reads it and writes it. What
+it does not get you by itself is a mountable disc, and the reason is worth
+understanding before you plug something in expecting your files.
+
+RISC OS has no mass storage driver in a Risc PC ROM at all - no SCSI anything - so
+the card's ROM carries four more of ROOL's modules to supply the chain:
+
+```
+30-rtsupport     the thread scheduler SCSISoftUSB runs its transfers on
+40-scsidriver    SCSISwitch: provides the SCSI_* SWIs, dispatches to back ends
+50-scsisoftusb   SCSI over USB, the mass storage transport
+60-scsifs        the filing system that presents a SCSI disc
+```
+
+With those present a drive turns up as a SCSI device:
+
+```
+*SCSIDevices
+Device Type              Capacity    Vendor   Product          Revision
+0:0.0  Direct-access       14 Gbytes Verbatim STORE N GO       PMAP
+```
+
+That capacity is read off the device, so INQUIRY and READ CAPACITY are working and
+sectors move in both directions.
+
+**But FileCore will only mount a FileCore disc.** Almost every USB stick in the
+world is FAT formatted, and `*Cat SCSI::0.$` on one says "Disc not understood -
+has it been formatted?". That is the correct answer rather than a fault: the
+sector was read, and it simply is not an ADFS-style disc. For FAT media you need a
+FAT filing system, and RISC OS's own DOSFS does not do the job - it handles DOS
+floppies and images, not a partitioned drive.
+
+The usual answer in the RISC OS world is **Fat32FS** by Jeff Doggett, which reads
+FAT12, FAT16 and FAT32 through `SCSIFS_DiscOp` and `SectorOp` - the layer these
+modules provide. It is not shipped here: it is built on the LGPL efsl library and
+is somebody else's work to distribute. Install it yourself, load it after the
+modules above, and a FAT stick mounts under its own volume name:
+
+```
+*Cat Fat32Fs::0.$
+Dir. Fat32fs::USB STICK.$
+RPCTEST      WR/WR
+```
+
+That file was written from RISC OS and read back on the host, which is what
+"reads it and writes it" above is standing on.
+
+### Two things that will waste your afternoon
+
+**They have to be in the card's ROM, not loaded afterwards.** `*RMLoad` them once
+the machine is up and `*SCSIDevices` stays empty even with a drive attached:
+USBDriver announces a device while it enumerates it, and nothing goes looking for
+devices that arrived before it did.
+
+**The component called SCSIDriver is the wrong one.** ROOL's
+`HWSupport/SCSI/SCSIDriver` drives a WD33C93 chip directly, and on a machine
+without one it spins in its own initialisation and never returns - the machine
+appears to hang on the `*RMLoad`. SCSISwitch is what you want; it registers itself
+under the name `SCSIDriver`, which is how the confusion arises in the first place.
+
 ## Where it is not finished
 
 Not implemented:
@@ -367,5 +429,12 @@ Not implemented:
 - **Hubs cannot be passed through.** Taking one would take everything below it,
   and the root hub is the only hub in the emulated bus.
 - **High speed devices.** The controller is full speed, so a high speed device is
-  flagged in the dialogue; its maximum packet sizes will not be what a full speed
-  driver expects.
+  flagged in the dialogue. Its packet sizes are handled rather than ignored - a
+  request to a real endpoint is rounded to whole packets and the surplus kept for
+  the following reads, because a 512-byte endpoint cannot be asked for the 36
+  bytes a full speed driver wants - but the guest is still driving a full speed
+  controller and a device that only works at high speed will not become one that
+  works here.
+- **A FileCore-formatted drive** has not been tried. A FAT drive works with
+  Fat32FS, as above, and the transport underneath is the same either way, but
+  nothing here has formatted a drive from inside RISC OS.

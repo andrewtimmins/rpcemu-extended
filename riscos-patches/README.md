@@ -7,6 +7,10 @@ a named upstream revision rather than only as a modified binary.
 somebody else's, so that a binary we ship can be inspected, rebuilt, offered
 upstream, and rebased when a new upstream version appears.
 
+Only one component has needed changing so far. The rest of what we ship from other
+people is built from their source untouched, and is recorded at the bottom of this
+file so that a binary can still be traced back to a commit.
+
 ## ohcidriver
 
 RISC OS Open's OHCI host controller driver, shipped as
@@ -64,3 +68,41 @@ The module is built inside the emulator with the RISC OS DDE, from
 exported first, for `-IC:USB`, along with CALLXLIB and ASMUTILS. `amu standalone`
 gives a RAM-loadable module; the `rom` target needs a generated `s.init` that is
 not in the repository. See [docs/usb.md](../docs/usb.md).
+
+## Components we ship unmodified
+
+These have no patches, which is why they have no directory here. They are ROOL's
+source built as it comes, and this is the record of which commit each binary was
+built from - the thing a patch directory would otherwise tell you.
+
+| Binary | Component | Version | Upstream commit |
+| --- | --- | --- | --- |
+| `usbroms/10-usbdriver,ffa` | USBDriver | 1.33 | tag `USBDriver-1_33` |
+| `usbroms/30-rtsupport,ffa` | [RTSupport](https://gitlab.riscosopen.org/RiscOS/Sources/Programmer/RTSupport) | 0.18 | `c569874`, 11 Oct 2023 |
+| `usbroms/40-scsidriver,ffa` | [SCSISwitch](https://gitlab.riscosopen.org/RiscOS/Sources/HWSupport/SCSI/SCSISwitch) | 2.15 | `5531025`, 13 Jul 2018 |
+| `usbroms/50-scsisoftusb,ffa` | [SCSISoftUSB](https://gitlab.riscosopen.org/RiscOS/Sources/HWSupport/SCSI/SCSISoftUSB) | 0.28 | `dd44bd4`, 10 May 2020 |
+| `usbroms/60-scsifs,ffa` | [SCSIFS](https://gitlab.riscosopen.org/RiscOS/Sources/FileSys/SCSIFS/SCSIFS) | 1.36 | `92870ae`, 15 Aug 2020 |
+
+Each is built with `amu standalone` (`amu export` first, where a later component
+needs its headers) in the same guest DDE as OHCIDriver, and each is reproducible
+the same way: clean every object and the cmhg-generated header, build twice, and
+the bytes match. Confirmed for SCSISoftUSB on 31/07/2026:
+
+```
+e76d382fe6f8aa54d6440a9296f588f4  usbroms/50-scsisoftusb,ffa   (11,524 bytes)
+```
+
+Note the trap that makes this worth stating. The obvious-looking component for the
+SCSI side is ROOL's `HWSupport/SCSI/SCSIDriver`, and it is the wrong one: its
+default build drives a WD33C93 chip and hangs a machine that has not got one. The
+component that provides the SCSI SWIs and dispatches them to back ends is
+SCSISwitch, whose own documentation calls itself "SCSIdriver 2" and which
+registers under the name `SCSIDriver`. That is why the binary above is named
+`40-scsidriver,ffa` while the component is SCSISwitch.
+
+Three assembler headers the DDE does not carry are needed to build SCSIFS -
+`FileCore`, `FileCoreErr` and `Portable` - taken from
+[FileCore](https://gitlab.riscosopen.org/RiscOS/Sources/FileSys/FileCore) and
+[Portable](https://gitlab.riscosopen.org/RiscOS/Sources/HWSupport/Portable) and
+dropped into the build tree's own header set. See
+[reference in docs/usb.md](../docs/usb.md).
