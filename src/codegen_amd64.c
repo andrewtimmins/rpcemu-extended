@@ -531,6 +531,61 @@ gen_data_proc_imm(uint32_t opcode, uint8_t op, uint32_t imm)
 unsigned long codegen_test_flag_emits = 0;
 #endif
 
+/**
+ * The barrel shifter's carry output for an immediate operand.
+ *
+ * ARM builds an immediate from an 8-bit value rotated right by twice a 4-bit
+ * field, and for a logical operation with S set the C flag takes the shifter's
+ * carry out. DDI 0100: a zero rotate leaves C alone, otherwise the carry out is
+ * bit 31 of the rotated value - which is why this can be answered here at all.
+ * arm_imm_cflag() in arm_common.h is the interpreter doing the same thing at run
+ * time, and is the behaviour the differential tests compare against.
+ *
+ * @return 1 or 0 for the carry, or -1 for "C is unchanged".
+ */
+static int
+arm_imm_carry_out(uint32_t opcode)
+{
+	if ((opcode & 0xf00) == 0) {
+		return -1;
+	}
+
+	return (int) (arm_imm(opcode) >> 31);
+}
+
+/**
+ * Set or clear the ARM carry flag, where the value is known while compiling.
+ *
+ * Emitted after gen_native_flags(mode26, 0, 0), which sets N and Z from the
+ * host's flags and leaves C and V alone - so this is the whole of the difference
+ * between a rotated immediate and an unrotated one. Two instructions, against a
+ * call into the interpreter for the whole opcode, which is what these
+ * instructions used to cost.
+ */
+static void
+gen_carry_constant(int mode26, int carry)
+{
+	if (mode26) {
+		if (carry) {
+			addbyte(0x41); addbyte(0x81); addbyte(0xcc); // OR $CFLAG,%r12d
+			addlong(0x20000000u);
+		} else {
+			addbyte(0x41); addbyte(0x81); addbyte(0xe4); // AND $~CFLAG,%r12d
+			addlong(~0x20000000u);
+		}
+	} else {
+		if (carry) {
+			addbyte(0x41); addbyte(0x81); addbyte(0x4f); // ORL $CFLAG,arm.reg[16]
+			addbyte(16 << 2);
+			addlong(0x20000000u);
+		} else {
+			addbyte(0x41); addbyte(0x81); addbyte(0x67); // ANDL $~CFLAG,arm.reg[16]
+			addbyte(16 << 2);
+			addlong(~0x20000000u);
+		}
+	}
+}
+
 static void
 gen_native_flags(int mode26, int set_cv, int invert_carry)
 {
@@ -940,6 +995,7 @@ recompile(uint32_t opcode, uint32_t *pcpsr)
 {
 	uint32_t rhs;
 	uint32_t offset;
+	int carry;
 	const int mode26 = (pcpsr == &arm.reg[15]);
 
 	if (arm.arch_v4) {
@@ -1265,65 +1321,97 @@ recompile(uint32_t opcode, uint32_t *pcpsr)
 		break;
 
 	case 0x21: // ANDS imm
-		if (RD == 15 || (opcode & 0xf00)) return 0;
+		if (RD == 15) return 0;
+		carry = arm_imm_carry_out(opcode);
 		rhs = arm_imm(opcode);
 		gen_data_proc_imm(opcode, X86_OP_AND, rhs);
 		gen_native_flags(mode26, 0, 0);
+		if (carry >= 0) {
+			gen_carry_constant(mode26, carry);
+		}
 		break;
 
 	case 0x23: // EORS imm
-		if (RD == 15 || (opcode & 0xf00)) return 0;
+		if (RD == 15) return 0;
+		carry = arm_imm_carry_out(opcode);
 		rhs = arm_imm(opcode);
 		gen_data_proc_imm(opcode, X86_OP_XOR, rhs);
 		gen_native_flags(mode26, 0, 0);
+		if (carry >= 0) {
+			gen_carry_constant(mode26, carry);
+		}
 		break;
 
 	case 0x39: // ORRS imm
-		if (RD == 15 || (opcode & 0xf00)) return 0;
+		if (RD == 15) return 0;
+		carry = arm_imm_carry_out(opcode);
 		rhs = arm_imm(opcode);
 		gen_data_proc_imm(opcode, X86_OP_OR, rhs);
 		gen_native_flags(mode26, 0, 0);
+		if (carry >= 0) {
+			gen_carry_constant(mode26, carry);
+		}
 		break;
 
 	case 0x3d: // BICS imm
-		if (RD == 15 || (opcode & 0xf00)) return 0;
+		if (RD == 15) return 0;
+		carry = arm_imm_carry_out(opcode);
 		rhs = ~arm_imm(opcode);
 		gen_data_proc_imm(opcode, X86_OP_AND, rhs);
 		gen_native_flags(mode26, 0, 0);
+		if (carry >= 0) {
+			gen_carry_constant(mode26, carry);
+		}
 		break;
 
 	case 0x3b: // MOVS imm
-		if (RD == 15 || (opcode & 0xf00)) return 0;
+		if (RD == 15) return 0;
+		carry = arm_imm_carry_out(opcode);
 		rhs = arm_imm(opcode);
 		addbyte(0xb8); addlong(rhs);  // MOV $rhs,%eax
 		addbyte(0x85); addbyte(0xc0); // TEST %eax,%eax
 		gen_save_reg(RD, EAX);
 		gen_native_flags(mode26, 0, 0);
+		if (carry >= 0) {
+			gen_carry_constant(mode26, carry);
+		}
 		break;
 
 	case 0x3f: // MVNS imm
-		if (RD == 15 || (opcode & 0xf00)) return 0;
+		if (RD == 15) return 0;
+		carry = arm_imm_carry_out(opcode);
 		rhs = ~arm_imm(opcode);
 		addbyte(0xb8); addlong(rhs);  // MOV $rhs,%eax
 		addbyte(0x85); addbyte(0xc0); // TEST %eax,%eax
 		gen_save_reg(RD, EAX);
 		gen_native_flags(mode26, 0, 0);
+		if (carry >= 0) {
+			gen_carry_constant(mode26, carry);
+		}
 		break;
 
 	case 0x31: // TST imm
-		if (RN == 15 || (opcode & 0xf00)) return 0;
+		if (RN == 15) return 0;
+		carry = arm_imm_carry_out(opcode);
 		rhs = arm_imm(opcode);
 		gen_load_reg(RN, EAX);
 		addbyte(0xa9); addlong(rhs); // TEST $rhs,%eax
 		gen_native_flags(mode26, 0, 0);
+		if (carry >= 0) {
+			gen_carry_constant(mode26, carry);
+		}
 		break;
 
 	case 0x33: // TEQ imm
-		if (RN == 15 || (opcode & 0xf00)) return 0;
+		if (RN == 15) return 0;
+		carry = arm_imm_carry_out(opcode);
 		rhs = arm_imm(opcode);
 		gen_load_reg(RN, EAX);
 		addbyte(0x35); addlong(rhs); // XOR $rhs,%eax
 		gen_native_flags(mode26, 0, 0);
+		if (carry >= 0) {
+			gen_carry_constant(mode26, carry);
+		}
 		break;
 
 	case 0x40: // STR Rd, [Rn], #-imm
