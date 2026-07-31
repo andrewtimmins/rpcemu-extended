@@ -91,7 +91,7 @@ Installed automatically by `./setup-build-env.sh` on Debian/Ubuntu:
 | Package | Purpose |
 | --- | --- |
 | `build-essential`, `cmake`, `pkg-config` | Build toolchain |
-| `libwxgtk3.2-dev` | wxWidgets GUI (GTK 3 backend). **Must have wxWebRequest**: 3.1.5 or later, built with a backend (libcurl on Linux), which the distribution packages are. The package manager and the RISC OS download need it, and a wxWidgets without it is refused at configure time rather than failing most of the way through the build. |
+| `libwxgtk3.2-dev` | wxWidgets GUI (GTK 3 backend). **Must have wxWebRequest** for the package manager and the RISC OS download: 3.1.5 or later, built with a backend (libcurl on Linux). Not every distribution's is — see the note below. Configure refuses a wxWidgets without it rather than failing most of the way through the build. |
 | `libsdl2-dev` | Audio output |
 | `libvncserver-dev` | Built-in VNC server |
 | `libusb-1.0-0-dev` | USB passthrough: handing a real host device to the guest |
@@ -202,12 +202,43 @@ to publish a GitHub Release with the Linux tarball. Update `VERSION` before tagg
 | --- | --- |
 | `cmake not found` | Run `./setup-build-env.sh` |
 | wxWidgets not found | Install `libwxgtk3.2-dev` |
-| `This wxWidgets was built without wxWebRequest support` | Your wxWidgets has `wxUSE_WEBREQUEST` set to 0, so `wx/webrequest.h` declares nothing. Install a distribution wxWidgets, or if you built your own, install `libcurl4-openssl-dev` and configure wxWidgets again: it turns web request support off silently when it can find no backend. Check with `grep 'define wxUSE_WEBREQUEST ' $(wx-config --cflags \| tr ' ' '\n' \| grep '^-I' \| sed 's/^-I//')/wx/setup.h` |
+| `This wxWidgets was built without wxWebRequest support` | Your wxWidgets has `wxUSE_WEBREQUEST` set to 0, so `wx/webrequest.h` declares nothing. See **wxWidgets and wxWebRequest** below. Check what you have with `grep 'define wxUSE_WEBREQUEST ' $(wx-config --cflags \| tr ' ' '\n' \| grep '^-I' \| sed 's/^-I//')/wx/setup.h` |
 | `'wxWebRequest' has not been declared` part-way through a build | The same problem on a tree from before that check existed. Update, reconfigure, and the error above will explain it. |
 | VNC build fails | Install `libvncserver-dev`, or `-DRPCEMU_ENABLE_VNC=OFF` |
 | Ghostscript not detected | Install `libgs-dev`, or `-DRPCEMU_ENABLE_GHOSTPDL=OFF` |
 | `USB passthrough was required ... libusb-1.0 was not found` | Install `libusb-1.0-0-dev`, or `-DRPCEMU_REQUIRE_LIBUSB=OFF` to build without it |
 | Dynarec misbehaves on arm64 (new backend) | Fall back with `./build.sh --interpreter` and report it |
+
+### wxWidgets and wxWebRequest
+
+The package manager and the RISC OS download are built on `wxWebRequest`, which
+needs a backend inside wxWidgets: libcurl on Linux, WinHTTP on Windows,
+NSURLSession on macOS. **wxWidgets turns `wxUSE_WEBREQUEST` off silently when its
+own configure cannot find one**, and it is the distribution's build that decides
+this, not anything you install afterwards. A new enough wxWidgets is necessary
+but not sufficient.
+
+Checked against the packages themselves:
+
+| Distribution | `libwxgtk3.2-dev` | wxWebRequest |
+| --- | --- | --- |
+| Debian 12 bookworm, and Raspberry Pi OS built on it | 3.2.2 | **No** |
+| Debian 13 trixie | 3.2.8 | Yes |
+| Ubuntu 24.04 | 3.2.4 | Yes |
+
+On bookworm, `apt install libcurl4-openssl-dev` changes nothing, because the
+wxWidgets library is already built. The options are a newer distribution, or
+building wxWidgets from source with libcurl development files present:
+
+```sh
+sudo apt install libcurl4-openssl-dev libgtk-3-dev
+# from a wxWidgets 3.2.x source tree
+./configure --with-gtk=3 --enable-webrequest && make -j4 && sudo make install
+sudo ldconfig
+```
+
+Then point CMake at it if it is not first on the path:
+`cmake -B build -DwxWidgets_CONFIG_EXECUTABLE=/usr/local/bin/wx-config`.
 
 ---
 
