@@ -155,7 +155,7 @@ function(rpcemu_check_wx_webrequest inc_dirs defs)
         RPCEMU_WX_HAS_WEBREQUEST)
 
     if(NOT RPCEMU_WX_HAS_WEBREQUEST)
-        message(FATAL_ERROR
+        message(WARNING
             "This wxWidgets was built without wxWebRequest support "
             "(wxUSE_WEBREQUEST is 0 in its setup.h), so wx/webrequest.h "
             "declares nothing and RPCEmu's package manager and RISC OS "
@@ -174,7 +174,16 @@ function(rpcemu_check_wx_webrequest inc_dirs defs)
             "do.\n"
             "To check what you have:\n"
             "  grep 'define wxUSE_WEBREQUEST ' $(wx-config --cflags | tr ' ' "
-            "'\\n' | grep '^-I' | sed 's/^-I//')/wx/setup.h")
+            "'\\n' | grep '^-I' | sed 's/^-I//')/wx/setup.h\n"
+            "\n"
+            "THE BUILD WILL CONTINUE. RPCEmu will work, without these two "
+            "features:\n"
+            "  - Tools > Package Manager, and the --pkg-* options\n"
+            "  - downloading RISC OS: New Machine's download choices, the "
+            "machine editor's Get RISC OS button, and --fetch-riscos\n"
+            "You will need to supply a ROM image yourself. Each of those says "
+            "so when used.")
+        return()
     endif()
 
     message(STATUS "wxWidgets: wxWebRequest available")

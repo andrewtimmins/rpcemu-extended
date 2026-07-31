@@ -202,8 +202,8 @@ to publish a GitHub Release with the Linux tarball. Update `VERSION` before tagg
 | --- | --- |
 | `cmake not found` | Run `./setup-build-env.sh` |
 | wxWidgets not found | Install `libwxgtk3.2-dev` |
-| `This wxWidgets was built without wxWebRequest support` | Your wxWidgets has `wxUSE_WEBREQUEST` set to 0, so `wx/webrequest.h` declares nothing. See **wxWidgets and wxWebRequest** below. Check what you have with `grep 'define wxUSE_WEBREQUEST ' $(wx-config --cflags \| tr ' ' '\n' \| grep '^-I' \| sed 's/^-I//')/wx/setup.h` |
-| `'wxWebRequest' has not been declared` part-way through a build | The same problem on a tree from before that check existed. Update, reconfigure, and the error above will explain it. |
+| `This wxWidgets was built without wxWebRequest support` (a warning, not an error) | Expected on some distributions, and the build carries on: you get RPCEmu without the package manager and without downloading RISC OS. See **wxWidgets and wxWebRequest** below for what that means and how to get them. |
+| `'wxWebRequest' has not been declared` part-way through a build | A tree from before this was handled. Update: current versions build without it. |
 | VNC build fails | Install `libvncserver-dev`, or `-DRPCEMU_ENABLE_VNC=OFF` |
 | Ghostscript not detected | Install `libgs-dev`, or `-DRPCEMU_ENABLE_GHOSTPDL=OFF` |
 | `USB passthrough was required ... libusb-1.0 was not found` | Install `libusb-1.0-0-dev`, or `-DRPCEMU_REQUIRE_LIBUSB=OFF` to build without it |
@@ -211,12 +211,30 @@ to publish a GitHub Release with the Linux tarball. Update `VERSION` before tagg
 
 ### wxWidgets and wxWebRequest
 
+**RPCEmu builds and runs either way. Two features are absent when wxWidgets
+cannot do HTTP, and nothing else changes.**
+
 The package manager and the RISC OS download are built on `wxWebRequest`, which
 needs a backend inside wxWidgets: libcurl on Linux, WinHTTP on Windows,
 NSURLSession on macOS. **wxWidgets turns `wxUSE_WEBREQUEST` off silently when its
 own configure cannot find one**, and it is the distribution's build that decides
 this, not anything you install afterwards. A new enough wxWidgets is necessary
 but not sufficient.
+
+Configure says which you have got, and a build without it warns rather than
+stopping. What such a build cannot do:
+
+| Absent | Instead |
+| --- | --- |
+| **Tools → Package Manager**, and `--pkg-list`, `--pkg-install`, `--pkg-remove`, `--pkg-info`, `--pkg-sources` | The menu item explains; the options refuse and exit 2. Install software into the guest by hand, or from inside RISC OS. |
+| **Downloading RISC OS**: New Machine's two download choices, the machine editor's *Get RISC OS*, and `--fetch-riscos` | New Machine shows those choices disabled and selects "I will choose a ROM myself". You supply a ROM image: fetch one from [riscosopen.org](https://www.riscosopen.org/) on any machine and point RPCEmu at it. |
+
+Everything else - the emulator, HostFS, networking, sound, VNC, USB, the graphics
+card, HostCmd, the MCP server - is unaffected, because none of it uses HTTP.
+
+There is deliberately **no build option** to turn this on or off. The code tests
+`wxUSE_WEBREQUEST` itself, so a tree either has the support or it has not, and
+there is nothing to set wrongly or to forget.
 
 Checked against the packages themselves:
 

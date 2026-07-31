@@ -46,6 +46,44 @@ extern "C" {
 }
 
 /**
+ * Whether this build can fetch anything over HTTP at all.
+ *
+ * wxWebRequest is what every download here is built on, and it is not always
+ * present: wxWidgets sets wxUSE_WEBREQUEST to 0 when its own configure finds no
+ * backend for it, and ships that way on some distributions - Debian 12 bookworm
+ * among them, which is what Raspberry Pi OS is built on. The header then exists
+ * and declares nothing.
+ *
+ * Rather than refuse to build, RPCEmu builds without the two features that need
+ * it: the package manager and downloading RISC OS. Everything else is
+ * unaffected, and each entry point says what is missing and why instead of
+ * failing obscurely. Testing wxUSE_WEBREQUEST directly rather than adding a
+ * build option of our own means there is nothing for anybody to set wrongly:
+ * a tree either has the support or it does not.
+ */
+#if wxUSE_WEBREQUEST
+#define RPCEMU_HAVE_HTTP 1
+#else
+#define RPCEMU_HAVE_HTTP 0
+#endif
+
+/**
+ * One sentence to show wherever a download would have been offered.
+ *
+ * Kept in one place so the dialogue, the menu and the command line all say the
+ * same thing, and so it can be corrected once.
+ */
+inline wxString HttpUnavailableMessage()
+{
+	return "This build of RPCEmu cannot download anything: the wxWidgets it was "
+	       "built against has no wxWebRequest support, which the package "
+	       "manager and the RISC OS download both need.\n\n"
+	       "Everything else works normally. To get these features, build "
+	       "against a wxWidgets with a web request backend - see the "
+	       "wxWidgets and wxWebRequest section of COMPILE.md.";
+}
+
+/**
  * RISC OS Open asked to be able to identify the emulator's own traffic, so
  * every request carries this. It is not a licence check or a tracker, just a
  * courtesy to somebody hosting the files for us. The package indexes are on the
@@ -55,6 +93,48 @@ inline wxString HttpRequestedByHeader()
 {
 	return wxString::Format("RPCEmu Spork Edition/%s", VERSION);
 }
+
+#if !RPCEMU_HAVE_HTTP
+
+/**
+ * A Transfer that cannot transfer.
+ *
+ * Same surface as the real one below, so every caller compiles and links
+ * unchanged; each attempt fails at once with the explanation above. The callers
+ * are all written to report Error() to the user, so this arrives as a sentence
+ * rather than as silence.
+ */
+class Transfer {
+public:
+	Transfer(RiscosFetchReporter &reporter, const wxString &stage,
+	         const RiscosFetchLoopFactory &make_loop)
+	    : error_(HttpUnavailableMessage())
+	{
+		(void) reporter;
+		(void) stage;
+		(void) make_loop;
+	}
+
+	bool ToMemory(const wxString &url) { (void) url; return false; }
+
+	bool ToFile(const wxString &url, const wxString &dest_path)
+	{
+		(void) url;
+		(void) dest_path;
+		return false;
+	}
+
+	const wxString &Body() const { return body_; }
+	const wxString &Error() const { return error_; }
+	bool WasCancelled() const { return false; }
+	wxString Header(const wxString &name) const { (void) name; return wxString(); }
+
+private:
+	wxString body_;
+	wxString error_;
+};
+
+#else
 
 /**
  * One HTTP GET, run to completion against a nested event loop.
@@ -227,5 +307,7 @@ private:
 	bool ok_ = false;
 	bool cancelled_ = false;
 };
+
+#endif /* RPCEMU_HAVE_HTTP */
 
 #endif /* HTTP_TRANSFER_H */

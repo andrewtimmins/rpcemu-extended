@@ -48,6 +48,7 @@
 #include "machine_inspector_window.h"
 #include "nat_list_dialog.h"
 #include "guest_command.h"
+#include "http_transfer.h"	/* RPCEMU_HAVE_HTTP, HttpUnavailableMessage */
 #include "package_dialog.h"
 #include "usb_dialog.h"
 #include "parallel_dialog.h"
@@ -1275,6 +1276,14 @@ void MainFrame::OnVnc(wxCommandEvent &)
 
 void MainFrame::OnPackages(wxCommandEvent &)
 {
+	/* Said here rather than letting the dialogue open and fail on its first
+	   fetch: the answer is the same whatever the user then clicks. */
+	if (!RPCEMU_HAVE_HTTP) {
+		wxMessageBox(HttpUnavailableMessage(), "Package Manager unavailable",
+		    wxOK | wxICON_INFORMATION, this);
+		return;
+	}
+
 	PackageDialog dialog(this);
 
 	dialog.ShowModal();

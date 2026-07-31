@@ -19,6 +19,7 @@
  */
 
 #include "machine_edit_dialog.h"
+#include "http_transfer.h"	/* RPCEMU_HAVE_HTTP, HttpUnavailableMessage */
 #include "riscos_setup_dialog.h"
 #include "riscos_fetch.h"
 
@@ -626,6 +627,14 @@ void MachineEditDialog::UpdateDiscDownloadAvailability()
  */
 void MachineEditDialog::OnGetRiscos(wxCommandEvent &)
 {
+	if (!RPCEMU_HAVE_HTTP) {
+		wxMessageBox(HttpUnavailableMessage() +
+		    "\n\nA ROM image can still be pointed at by hand: put one in this "
+		    "machine's directory, or fetch it from riscosopen.org yourself.",
+		    "Cannot download RISC OS", wxOK | wxICON_INFORMATION, this);
+		return;
+	}
+
 	RiscosSetupDialog dialog(this, false);
 	RiscosFetchOutcome outcome;
 

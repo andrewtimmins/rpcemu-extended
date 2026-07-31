@@ -40,6 +40,7 @@
 
 #include "config_paths.h"
 #include "new_machine_dialog.h"
+#include "http_transfer.h"	/* RPCEMU_HAVE_HTTP, HttpUnavailableMessage */
 #include "riscos_fetch.h"
 
 namespace {
@@ -64,6 +65,18 @@ NewMachineDialog::NewMachineDialog(wxWindow *parent)
 	no_download_ = new wxRadioButton(this, wxID_ANY,
 	    "Do not download; I will choose a ROM myself");
 	stable_->SetValue(true);
+
+	/*
+	 * A build without wxWebRequest cannot fetch anything, so the two download
+	 * choices are shown disabled rather than removed: the dialogue keeps its
+	 * shape, and it is obvious that the option exists and is unavailable here
+	 * rather than never having existed. UpdateSizeLabel() says why.
+	 */
+	if (!RPCEMU_HAVE_HTTP) {
+		no_download_->SetValue(true);
+		stable_->Enable(false);
+		nightly_->Enable(false);
+	}
 
 	include_disc_ = new wxCheckBox(this, wxID_ANY,
 	    "Include a ready-to-use hard disc");
@@ -126,7 +139,12 @@ void NewMachineDialog::OnChoiceChanged(wxCommandEvent &)
 
 void NewMachineDialog::UpdateSizeLabel()
 {
-	if (no_download_->GetValue()) {
+	if (!RPCEMU_HAVE_HTTP) {
+		size_label_->SetLabel("This build cannot download: the wxWidgets it was "
+		                      "built against has no web request support. The "
+		                      "machine will need a ROM provided by hand before "
+		                      "it can start. See COMPILE.md.");
+	} else if (no_download_->GetValue()) {
 		size_label_->SetLabel("Nothing will be downloaded. The machine will "
 		                      "need a ROM before it can start.");
 	} else {

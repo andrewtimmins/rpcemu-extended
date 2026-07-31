@@ -38,6 +38,7 @@
 #include "config_selector_dialog.h"
 #include "main_frame.h"
 #include "headless_main.h"
+#include "http_transfer.h"	/* RPCEMU_HAVE_HTTP */
 #include "package_index.h"
 #include "package_sources.h"
 #include "package_install.h"
@@ -982,6 +983,24 @@ int main(int argc, char **argv)
 	if ((resume || state_file != nullptr) && machine_name == nullptr) {
 		ConsoleMessage(true, "error: %s requires --machine <name>.\n",
 		               resume ? "--resume" : "--state");
+		ConsoleMessageFlush();
+		return 2;
+	}
+
+	/*
+	 * Every option below this point downloads something, and a build whose
+	 * wxWidgets has no wxWebRequest cannot. Refused here, once, rather than
+	 * each of them reaching the network layer and reporting the same thing in
+	 * its own words.
+	 */
+	if (!RPCEMU_HAVE_HTTP &&
+	    (g_fetch_riscos || g_pkg_list || g_pkg_sources || g_pkg_info != NULL ||
+	     g_pkg_install != NULL || g_pkg_remove != NULL)) {
+		ConsoleMessage(true,
+		    "error: this build of RPCEmu cannot download anything, so the "
+		    "package and RISC OS options are unavailable.\n"
+		    "The wxWidgets it was built against has no wxWebRequest support. "
+		    "Everything else works normally; see COMPILE.md.\n");
 		ConsoleMessageFlush();
 		return 2;
 	}

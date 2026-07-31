@@ -8,6 +8,13 @@ There are around 200 packages: applications, games, fonts, libraries and system
 components. Installing one puts its files on the disc and **records what it put there**,
 so it can be removed again cleanly.
 
+> **Not in every build.** The package manager needs a wxWidgets with
+> `wxWebRequest` support, which some distributions do not provide - Debian 12
+> bookworm and the Raspberry Pi OS built on it among them. RPCEmu still builds
+> and runs there, but *Tools -> Package Manager* and the `--pkg-*` options are
+> absent and say so. See
+> [wxWidgets and wxWebRequest](../COMPILE.md#wxwidgets-and-wxwebrequest).
+
 ---
 
 ## Where the packages come from
