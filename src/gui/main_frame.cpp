@@ -849,8 +849,9 @@ void MainFrame::ExitFullScreen()
 	if (tool_bar_ != nullptr) {
 		tool_bar_->Show(true);
 	}
+	/* No Fit(): ShowFullScreen(false) has already restored the size, and
+	   fitting would shrink-wrap the frame to a panel that has no minimum. */
 	Layout();
-	Fit();
 	full_screen_ = false;
 
 	/* Force a full repaint once the windowed layout has settled (see the note
