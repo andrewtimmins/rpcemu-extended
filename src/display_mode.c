@@ -45,11 +45,23 @@
    1400x1050 and 1366x768 were dropped for that reason. There is no spare
    standard-timing slot for the first, and the second cannot be a standard timing
    at all: the width field counts in units of 8 and 1366 is not a multiple of 8.
-   Their rungs are covered by the neighbours either side. */
+   Their rungs are covered by the neighbours either side.
+
+   The list runs above 2560 wide even though no framestore we currently offer can
+   hold such a mode, because the top entry is a ceiling on everything that calls
+   here and a ceiling is the wrong place to record a memory limit. The budget
+   argument already refuses a mode that will not fit, so on today's 15MB card
+   these two are simply never chosen; on a 4K or ultrawide host they stop the
+   answer being silently truncated to 1440p the moment there is room for more.
+   Both are inside what a preferred timing can describe: build_detailed_timing()
+   carries 12 bits of horizontal active, so up to 4095, and clamps the dot clock
+   rather than overflowing it. */
 static const struct {
 	unsigned width;
 	unsigned height;
 } display_modes[] = {
+	{ 3840, 2160 },	/* 8294400 - preferred timing only */
+	{ 3440, 1440 },	/* 4953600 - preferred timing only */
 	{ 2560, 1440 },	/* 3686400 - preferred timing only */
 	{ 1920, 1200 },	/* 2304000 - preferred timing only */
 	{ 1920, 1080 },	/* 2073600 */

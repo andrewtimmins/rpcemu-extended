@@ -146,13 +146,15 @@ edid_advertises(const uint8_t *block, unsigned want_w, unsigned want_h)
 }
 
 /* Every mode the chooser can pick has to be one the guest will accept, because
-   RISC OS validates a mode against the monitor definition in force. The two
+   RISC OS validates a mode against the monitor definition in force. The four
    largest are exempt: they appear only as the preferred timing, which covers
    whichever mode was chosen at boot. */
 static void
 check_edid_advertises_every_mode(void)
 {
 	static const struct { unsigned w, h; int preferred_only; } modes[] = {
+		{ 3840, 2160, 1 },
+		{ 3440, 1440, 1 },
 		{ 2560, 1440, 1 },
 		{ 1920, 1200, 1 },
 		{ 1920, 1080, 0 },
@@ -214,10 +216,23 @@ main(void)
 	/* 1920x1080 at 32bpp is 7.91MB, which just fits 8MB. */
 	expect_mode("stock 8MB, 1080p host", 1920, 1080, 4, 8, 1920, 1080);
 
-	/* 2560x1440 at 32bpp is 14.06MB: fits 16MB, and is the table's ceiling, so
-	   a 4K host is bounded by the table rather than by VRAM. */
+	/* 2560x1440 at 32bpp is 14.06MB, so 16MB reaches 1440p and no further: the
+	   next rungs up need 18.9MB and 31.6MB. A 4K host is therefore bounded by
+	   memory here, which is the honest reason, and not by the table. */
 	expect_mode("16MB, 4K host", 3840, 2160, 4, 16, 2560, 1440);
 	expect_mode("16MB, 1440p host", 2560, 1440, 4, 16, 2560, 1440);
+
+	/* Given the memory, the chooser must go above 1440p rather than stopping
+	   there. These are the cases an artificial ceiling in the table used to
+	   truncate: an ultrawide or a 4K panel was answered with 2560x1440 however
+	   much framestore was available. */
+	expect_mode("64MB, 4K host", 3840, 2160, 4, 64, 3840, 2160);
+	expect_mode("32MB, ultrawide host", 3440, 1440, 4, 32, 3440, 1440);
+	expect_mode("24MB, 4K host (2160p needs 31.6MB)", 3840, 2160, 4, 24, 3440, 1440);
+
+	/* An ultrawide host with only the card's 15MB still gets a mode that fits
+	   inside its width rather than one that overhangs it. */
+	expect_mode("15MB, ultrawide host", 3440, 1440, 4, 15, 2560, 1440);
 
 	/* Bounded by an unusually short display rather than by VRAM. */
 	expect_mode("2MB, 1920x515 host", 1920, 515, 4, 2, 640, 480);
