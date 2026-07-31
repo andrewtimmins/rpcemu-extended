@@ -2,7 +2,7 @@
 
 **A modern ('ish), cross-platform RISC OS machine on your desktop — and a serious platform for RISC OS development.**
 
-Spork Edition is an extended fork of **[RPCEmu](http://www.marutan.net/rpcemu/)**, the
+Extened Edition is an extended fork of **[RPCEmu](http://www.marutan.net/rpcemu/)**, the
 open-source emulator for Acorn's Risc PC and A7000, brought right up to date. It runs on
 **Linux, Windows and macOS** with a clean wxWidgets interface and a full-speed dynamic
 recompiler. Run **several machines** from a startup selector, **suspend and resume** a
