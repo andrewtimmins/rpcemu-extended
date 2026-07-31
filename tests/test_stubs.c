@@ -59,7 +59,13 @@ void rpcemu_move_host_mouse(uint16_t x, uint16_t y) { (void) x; (void) y; }
 void rpcemu_idle_process_events(void) {}
 void rpcemu_request_poweroff(void) {}
 void rpcemu_send_nat_rule_to_gui(void) {}
-uint64_t rpcemu_nsec_timer_ticks(void) { return 0; }
+/* Emulated time. Most tests never run a timer and are happy with zero, but a
+   test that boots a machine must have time advance or the IOMD timers never fire
+   and RISC OS waits for an interrupt for ever. Such a test defines
+   rpcemu_test_virtual_ns() and overrides this weak default, which keeps every
+   other test's behaviour exactly as it was. */
+__attribute__((weak)) uint64_t rpcemu_test_virtual_ns(void) { return 0; }
+uint64_t rpcemu_nsec_timer_ticks(void) { return rpcemu_test_virtual_ns(); }
 
 /* Activity indicators */
 void fdc_activity_increment(void) {}

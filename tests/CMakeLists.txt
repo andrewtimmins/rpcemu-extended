@@ -31,6 +31,14 @@ else()
     message(STATUS "Skipping JIT differential tests (requires a native dynarec backend)")
 endif()
 
+# boot_trace: boots a real machine with no GUI and reports how far it got. Not a
+# ctest - it needs a ROM in RPCEMU_DATADIR, which a unit test cannot assume - but
+# it builds everywhere the core does, including cross-compiled for aarch64 so the
+# arm64 backend can be examined under qemu on a machine that has no arm64 in it.
+# See the comment at the top of boot_trace.c, and issue #30.
+add_executable(boot_trace EXCLUDE_FROM_ALL boot_trace.c test_stubs.c)
+target_link_libraries(boot_trace PRIVATE rpcemu_core m)
+
 # MMU access permissions. Builds real page tables in emulated RAM and checks the
 # ARM DDI 0100B Table 7-7 rules are enforced, including - the point of it - after
 # a translation has been cached. Needs no dynarec: the caches it exercises live in
