@@ -84,4 +84,92 @@ function(rpcemu_setup_wxwidgets target)
             LANGUAGE RC COMPILE_FLAGS "${_wx_rc_flags}")
         target_sources(${target} PRIVATE "${_wx_rc_file}")
     endif()
+
+    # The defines wx's own headers need (__WXGTK__ and friends): without them
+    # wx/defs.h refuses to compile at all, so the check below cannot run.
+    set(_wx_defs "")
+    if(CMAKE_CROSSCOMPILING)
+        foreach(_f IN LISTS _wx_cxxflags_list)
+            if(_f MATCHES "^-D")
+                list(APPEND _wx_defs "${_f}")
+            endif()
+        endforeach()
+    else()
+        foreach(_d IN LISTS wxWidgets_DEFINITIONS)
+            list(APPEND _wx_defs "-D${_d}")
+        endforeach()
+    endif()
+
+    rpcemu_check_wx_webrequest("${_wx_inc_dirs}" "${_wx_defs}")
+endfunction()
+
+# Check that this wxWidgets actually has wxWebRequest in it.
+#
+# The package manager and the "download RISC OS" feature are built on
+# wxWebRequest, which arrived in wxWidgets 3.1.5. Having a new enough wxWidgets
+# is not sufficient: wx/webrequest.h wraps the whole class in
+# "#if wxUSE_WEBREQUEST", and a wxWidgets configured without a backend for it -
+# libcurl on Linux, WinHTTP on Windows, NSURLSession on macOS - sets that to 0.
+# The header then exists and declares nothing.
+#
+# Left alone that surfaces as around sixty lines of "'wxWebRequest' has not been
+# declared" from src/gui/http_transfer.h, 90% of the way through a build, which
+# says nothing about the cause. Reported from a Raspberry Pi, 31/07/2026.
+#
+# The check is deliberately careful about when it fails. A configure test that
+# gets a false negative would block somebody whose build works perfectly, which
+# is worse than the wall of errors. So it only refuses when it can prove the
+# case: the header compiles, and the same file with wxUSE_WEBREQUEST asserted
+# does not. Anything else is reported and allowed through.
+function(rpcemu_check_wx_webrequest inc_dirs defs)
+    if(DEFINED RPCEMU_WX_WEBREQUEST_CHECKED)
+        return()
+    endif()
+    set(RPCEMU_WX_WEBREQUEST_CHECKED TRUE CACHE INTERNAL "")
+
+    include(CheckCXXSourceCompiles)
+    set(CMAKE_REQUIRED_INCLUDES ${inc_dirs})
+    set(CMAKE_REQUIRED_DEFINITIONS ${defs})
+    set(CMAKE_REQUIRED_QUIET TRUE)
+
+    # Compile only, do not link. check_cxx_source_compiles() links by default,
+    # and merely including wx headers emits inline code that wants symbols from
+    # the wx libraries - which this test is not given, so every answer would
+    # come back "no" and the check would be useless.
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+
+    check_cxx_source_compiles(
+        "#include <wx/webrequest.h>\nint main() { return 0; }"
+        RPCEMU_WX_HEADER_USABLE)
+
+    if(NOT RPCEMU_WX_HEADER_USABLE)
+        # Cannot tell: the header would not compile here for some other reason,
+        # or the flags this test was given are not the ones the build uses.
+        message(STATUS
+            "wxWidgets: could not test for wxWebRequest support; carrying on")
+        return()
+    endif()
+
+    check_cxx_source_compiles(
+        "#include <wx/webrequest.h>\n#if !wxUSE_WEBREQUEST\n#error no webrequest\n#endif\nint main() { return 0; }"
+        RPCEMU_WX_HAS_WEBREQUEST)
+
+    if(NOT RPCEMU_WX_HAS_WEBREQUEST)
+        message(FATAL_ERROR
+            "This wxWidgets was built without wxWebRequest support "
+            "(wxUSE_WEBREQUEST is 0 in its setup.h), so wx/webrequest.h "
+            "declares nothing and RPCEmu's package manager and RISC OS "
+            "download cannot compile.\n"
+            "wxWebRequest needs a backend: libcurl on Linux, WinHTTP on "
+            "Windows, NSURLSession on macOS. Either install a distribution "
+            "wxWidgets built with one (on Debian and Raspberry Pi OS, "
+            "libwxgtk3.2-dev), or if you built wxWidgets yourself, install "
+            "libcurl4-openssl-dev and configure it again - wx turns "
+            "wxUSE_WEBREQUEST off silently when it can find no backend.\n"
+            "To check what you have:\n"
+            "  grep 'define wxUSE_WEBREQUEST ' $(wx-config --cflags | tr ' ' "
+            "'\\n' | grep '^-I' | sed 's/^-I//')/wx/setup.h")
+    endif()
+
+    message(STATUS "wxWidgets: wxWebRequest available")
 endfunction()

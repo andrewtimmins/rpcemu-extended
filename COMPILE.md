@@ -91,7 +91,7 @@ Installed automatically by `./setup-build-env.sh` on Debian/Ubuntu:
 | Package | Purpose |
 | --- | --- |
 | `build-essential`, `cmake`, `pkg-config` | Build toolchain |
-| `libwxgtk3.2-dev` | wxWidgets GUI (GTK 3 backend) |
+| `libwxgtk3.2-dev` | wxWidgets GUI (GTK 3 backend). **Must have wxWebRequest**: 3.1.5 or later, built with a backend (libcurl on Linux), which the distribution packages are. The package manager and the RISC OS download need it, and a wxWidgets without it is refused at configure time rather than failing most of the way through the build. |
 | `libsdl2-dev` | Audio output |
 | `libvncserver-dev` | Built-in VNC server |
 | `libusb-1.0-0-dev` | USB passthrough: handing a real host device to the guest |
@@ -202,6 +202,8 @@ to publish a GitHub Release with the Linux tarball. Update `VERSION` before tagg
 | --- | --- |
 | `cmake not found` | Run `./setup-build-env.sh` |
 | wxWidgets not found | Install `libwxgtk3.2-dev` |
+| `This wxWidgets was built without wxWebRequest support` | Your wxWidgets has `wxUSE_WEBREQUEST` set to 0, so `wx/webrequest.h` declares nothing. Install a distribution wxWidgets, or if you built your own, install `libcurl4-openssl-dev` and configure wxWidgets again: it turns web request support off silently when it can find no backend. Check with `grep 'define wxUSE_WEBREQUEST ' $(wx-config --cflags \| tr ' ' '\n' \| grep '^-I' \| sed 's/^-I//')/wx/setup.h` |
+| `'wxWebRequest' has not been declared` part-way through a build | The same problem on a tree from before that check existed. Update, reconfigure, and the error above will explain it. |
 | VNC build fails | Install `libvncserver-dev`, or `-DRPCEMU_ENABLE_VNC=OFF` |
 | Ghostscript not detected | Install `libgs-dev`, or `-DRPCEMU_ENABLE_GHOSTPDL=OFF` |
 | `USB passthrough was required ... libusb-1.0 was not found` | Install `libusb-1.0-0-dev`, or `-DRPCEMU_REQUIRE_LIBUSB=OFF` to build without it |
