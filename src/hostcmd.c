@@ -824,6 +824,24 @@ hostcmd_poll(void)
 	}
 
 	if (hc.client_fd < 0) {
+		/*
+		 * Nothing connected, which is the ordinary case. This function is called
+		 * every 20000 emulated cycles - tens of thousands of times a second -
+		 * and asking the kernel whether anybody has connected costs a syscall
+		 * every time. That was most of the cost of a feature nobody was using.
+		 *
+		 * Only this branch is throttled. A client waiting to connect can wait a
+		 * few milliseconds; data on an open connection cannot, so the path below
+		 * is unchanged. Sixty-four calls is about 3ms of guest time at full
+		 * speed, and about 75ms while the machine idles under "Reduce CPU
+		 * usage", where this is called from the idle loop instead.
+		 */
+		static unsigned since_listen_check;
+
+		if ((++since_listen_check & 0x3fu) != 0) {
+			return;
+		}
+
 		pfd.fd = hc.listen_fd;
 		pfd.events = POLLIN;
 		pfd.revents = 0;
