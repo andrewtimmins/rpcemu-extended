@@ -458,6 +458,21 @@ drawscr(void)
 	   bookkeeping, none of which has been maintained meanwhile. */
 	if (thr.gfx_active) {
 		lastframeborder = 1;
+
+		/*
+		 * Re-arm the card's dirty tracking, the same way this function does for
+		 * VRAM below. The framestore's write entries are dropped, so the next
+		 * write to each page goes the long way round once and marks the page as
+		 * changed; every write after that is inlined. Without this the entries
+		 * installed by mem.c would keep the writes off the books entirely and
+		 * the card would scan out a frame it thought had not changed.
+		 *
+		 * Done here rather than after taking the dirty rows above only for
+		 * readability: this runs on the emulator thread, so nothing of the
+		 * guest's can happen in between.
+		 */
+		cp15_tlb_invalidate_physical(gfxcard_fb_phys & 0x1f000000);
+
 		thr.threadpending = 1;
 		iomd_flyback(0);
 		vidcwakeupthread();

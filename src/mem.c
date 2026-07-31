@@ -1527,6 +1527,42 @@ writememfl(uint32_t addr, uint32_t val)
 			writememcache2 = phys_addr & 0xfffff000;
 		}
 		switch (writememcache2 & (phys_space_mask & 0xff000000)) {
+		case 0x08000000: /* EASI space: the graphics card's framestore */
+		case 0x09000000:
+		case 0x0a000000:
+		case 0x0b000000:
+		case 0x0c000000:
+		case 0x0d000000:
+		case 0x0e000000:
+		case 0x0f000000:
+			/*
+			 * Give the framestore a host pointer for writes too, so a page is
+			 * slow once a frame rather than once a pixel. At 2560x1440 in full
+			 * colour a repaint is fourteen megabytes, and every word of it was
+			 * arriving here.
+			 *
+			 * The card's dirty record stays honest because this only installs
+			 * the entry - the write itself, and the gfxcard_mark_dirty() that
+			 * goes with it, happen below on this first write. drawscr() then
+			 * invalidates these entries once a frame, exactly as it does for
+			 * VRAM, so the next write to each page comes back through here and
+			 * marks it again. Granularity is unchanged: the card's record has
+			 * always been per 4KB page.
+			 *
+			 * Safe to do in the frame's own thread order: drawscr() runs on this
+			 * same thread, so no guest write can slip between the dirty record
+			 * being taken and these entries being invalidated.
+			 */
+			if (gfxcard_fb != NULL &&
+			    (writememcache2 - gfxcard_fb_phys) < GFXCARD_FB_SIZE) {
+				vwadd(addr,
+				    (const void *) ((uintptr_t) gfxcard_fb +
+				        (writememcache2 - gfxcard_fb_phys) -
+				        (uintptr_t) (addr & ~0xfffu)),
+				    0, writememcache2);
+			}
+			break;
+
 		case 0x02000000: /* VRAM */
 			if (mem_vrammask != 0) {
 				vwadd(addr, &vram[((writememcache2 & mem_vrammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, writememcache2);
@@ -1627,6 +1663,42 @@ writememfb(uint32_t addr, uint8_t val)
 			writemembcache2 = phys_addr & 0xfffff000;
 		}
 		switch (writemembcache2 & (phys_space_mask & 0xff000000)) {
+		case 0x08000000: /* EASI space: the graphics card's framestore */
+		case 0x09000000:
+		case 0x0a000000:
+		case 0x0b000000:
+		case 0x0c000000:
+		case 0x0d000000:
+		case 0x0e000000:
+		case 0x0f000000:
+			/*
+			 * Give the framestore a host pointer for writes too, so a page is
+			 * slow once a frame rather than once a pixel. At 2560x1440 in full
+			 * colour a repaint is fourteen megabytes, and every word of it was
+			 * arriving here.
+			 *
+			 * The card's dirty record stays honest because this only installs
+			 * the entry - the write itself, and the gfxcard_mark_dirty() that
+			 * goes with it, happen below on this first write. drawscr() then
+			 * invalidates these entries once a frame, exactly as it does for
+			 * VRAM, so the next write to each page comes back through here and
+			 * marks it again. Granularity is unchanged: the card's record has
+			 * always been per 4KB page.
+			 *
+			 * Safe to do in the frame's own thread order: drawscr() runs on this
+			 * same thread, so no guest write can slip between the dirty record
+			 * being taken and these entries being invalidated.
+			 */
+			if (gfxcard_fb != NULL &&
+			    (writememcache2 - gfxcard_fb_phys) < GFXCARD_FB_SIZE) {
+				vwadd(addr,
+				    (const void *) ((uintptr_t) gfxcard_fb +
+				        (writememcache2 - gfxcard_fb_phys) -
+				        (uintptr_t) (addr & ~0xfffu)),
+				    0, writememcache2);
+			}
+			break;
+
 		case 0x02000000: /* VRAM */
 			if (mem_vrammask != 0) {
 				vwadd(addr, &vram[((writemembcache2 & mem_vrammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, writemembcache2);
