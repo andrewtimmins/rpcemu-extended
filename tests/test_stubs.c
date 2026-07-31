@@ -83,3 +83,14 @@ void vidcendthread(void) {}
 void vidcwakeupthread(void) {}
 void vidcreleasemutex(void) {}
 int  vidctrymutex(void) { return 0; }
+
+/*
+ * Supplied by the front end: says whether host input or another command is
+ * waiting, so the idle loop can stop and let the main loop act on it. Nothing in
+ * a test posts any, and no test reaches rpcemu_idle() anyway.
+ */
+int
+rpcemu_host_commands_pending(void)
+{
+	return 0;
+}

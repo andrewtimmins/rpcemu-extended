@@ -1139,8 +1139,16 @@ execrpcemu(void)
 void
 rpcemu_idle(void)
 {
-	/* Loop while no interrupts pending */
-	while (!arm.event) {
+	/*
+	 * Loop while no interrupts are pending and the host has nothing waiting.
+	 *
+	 * The second test is what keeps the machine responsive with this option on.
+	 * Host input, and the flyback interrupt the video thread raises, are queued
+	 * for the emulator thread's main loop, and staying in here holds that up:
+	 * without this the queue was taken once or twice a second, so a mouse move
+	 * could wait most of a second (issue #36).
+	 */
+	while (!arm.event && !rpcemu_host_commands_pending()) {
 		idle_ticks++;
 		/* Run down any callback timers */
 		if (kcallback) {
@@ -1220,6 +1228,20 @@ rpcemu_idle(void)
 			hostcmd_poll();
 			debugcmd_poll();
 		}
+	}
+
+	/*
+	 * Leaving because the host has something queued: give up the rest of the
+	 * cycle budget so execrpcemu() returns and the main loop drains it.
+	 *
+	 * Without this the guest would return from the SWI, find nothing to do, call
+	 * Portable_Idle again and come straight back here - where the condition above
+	 * now fails, so it would spin without sleeping until the budget ran out. The
+	 * budget is only a scheduling quantum; emulated time is taken from the host
+	 * clock, so dropping it does not disturb the machine's timekeeping.
+	 */
+	if (rpcemu_host_commands_pending()) {
+		cycles = 0;
 	}
 }
 

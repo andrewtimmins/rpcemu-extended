@@ -479,10 +479,51 @@ void EmulatorHost::WakeAllWaiters()
 	disasm_cv_.notify_all();
 }
 
+/**
+ * Set while the queue has anything in it, cleared as the queue is taken.
+ *
+ * The emulator thread only acts on commands at the top of MainEmuLoop, because
+ * that is the one place it is safe to: Reset, SwitchMachine and Exit cannot be
+ * run from inside a SWI half way through an instruction. Under "Reduce CPU
+ * usage" it takes a long time to get back there. It sits in rpcemu_idle()
+ * sleeping a millisecond at a time and only returns once the 20000-cycle budget
+ * is spent, about 35 times a second measured, and kEmuBatch runs 32 of those
+ * before draining - so the queue was being taken once or twice a second.
+ *
+ * Every mouse move and key press waited that long, which is issue #36. So did
+ * the flyback interrupt, which is worse than it sounds: RISC OS applies pointer
+ * and palette changes on vsync, and the interrupt that says a frame has gone out
+ * is posted from the video thread through this same queue.
+ *
+ * This flag lets rpcemu_idle() stop as soon as there is something to do, so the
+ * main loop reaches the drain in the ordinary way. Nothing is executed from the
+ * idle path, so the reason the drain lives where it does is undisturbed.
+ */
+static std::atomic<int> g_commands_pending{0};
+
 void EmulatorHost::PostCommand(EmuCommand command)
 {
-	std::lock_guard<std::mutex> lock(command_mutex_);
-	commands_.push(std::move(command));
+	{
+		std::lock_guard<std::mutex> lock(command_mutex_);
+		commands_.push(std::move(command));
+	}
+
+	/* After the push, so the emulator thread never sees the flag set with an
+	   empty queue. */
+	g_commands_pending.store(1, std::memory_order_release);
+}
+
+/**
+ * Whether the host has queued anything for the emulator thread.
+ *
+ * Called from rpcemu_idle() on the emulator thread. Deliberately a plain flag
+ * rather than a lock: this is read in the idle loop's condition, and taking the
+ * command mutex there would put the queue's lock on the path of every idle
+ * iteration for no benefit.
+ */
+extern "C" int rpcemu_host_commands_pending(void)
+{
+	return g_commands_pending.load(std::memory_order_acquire);
 }
 
 static EmuCommand MakeCommand(EmuCommandType type)
@@ -501,6 +542,11 @@ int64_t EmulatorHost::GetElapsedTimerNs() const
 void EmulatorHost::DrainCommands()
 {
 	std::queue<EmuCommand> pending;
+
+	/* Cleared before the queue is taken, so a command posted while this is
+	   running sets it again rather than being left unnoticed until the next
+	   one arrives. */
+	g_commands_pending.store(0, std::memory_order_release);
 
 	{
 		std::lock_guard<std::mutex> lock(command_mutex_);

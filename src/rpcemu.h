@@ -315,6 +315,14 @@ extern void rpcemu_nat_forward_remove(PortForwardRule rule);
 
 extern uint32_t inscount;
 
+/**
+ * Whether the host front end has queued anything for the emulator thread.
+ *
+ * Supplied by the front end. The idle loop stops when this is true so that the
+ * main loop can act on it; see the comment on the flag in emulator_host.cpp.
+ */
+extern int rpcemu_host_commands_pending(void);
+
 /* Activity counters for status bar indicators (implemented in wx host) */
 extern void hostfs_activity_increment(void);
 extern void network_activity_increment(void);
