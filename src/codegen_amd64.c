@@ -1222,7 +1222,13 @@ recompile(uint32_t opcode, uint32_t *pcpsr)
 		break;
 
 	case 0x15: // CMP reg
-		if (RN == 15) return 0;
+		/* RD == 15 with S set is the 26-bit PSR transfer form (TSTP/TEQP/
+		   CMPP/CMNP), which writes the PSR and can change processor mode.
+		   opTEQreg() and friends handle it via arm_compare_rd15(); compiling
+		   it as a plain compare would set the flags and silently drop the
+		   mode change, which is how RISC OS 3.71 died with "branch through
+		   zero". Leave it to the interpreter. */
+		if (RN == 15 || RD == 15) return 0;
 		if (!generate_shift(opcode)) return 0; // operand -> EAX
 		gen_load_reg(RN, EDX);
 		addbyte(0x39); addbyte(0xc2); // CMP %eax,%edx  (Rn - operand)
@@ -1230,7 +1236,13 @@ recompile(uint32_t opcode, uint32_t *pcpsr)
 		break;
 
 	case 0x17: // CMN reg
-		if (RN == 15) return 0;
+		/* RD == 15 with S set is the 26-bit PSR transfer form (TSTP/TEQP/
+		   CMPP/CMNP), which writes the PSR and can change processor mode.
+		   opTEQreg() and friends handle it via arm_compare_rd15(); compiling
+		   it as a plain compare would set the flags and silently drop the
+		   mode change, which is how RISC OS 3.71 died with "branch through
+		   zero". Leave it to the interpreter. */
+		if (RN == 15 || RD == 15) return 0;
 		if (!generate_shift(opcode)) return 0; // operand -> EAX
 		gen_load_reg(RN, EDX);
 		addbyte(0x01); addbyte(0xc2); // ADD %eax,%edx  (Rn + operand)
@@ -1238,7 +1250,13 @@ recompile(uint32_t opcode, uint32_t *pcpsr)
 		break;
 
 	case 0x35: // CMP imm
-		if (RN == 15) return 0;
+		/* RD == 15 with S set is the 26-bit PSR transfer form (TSTP/TEQP/
+		   CMPP/CMNP), which writes the PSR and can change processor mode.
+		   opTEQreg() and friends handle it via arm_compare_rd15(); compiling
+		   it as a plain compare would set the flags and silently drop the
+		   mode change, which is how RISC OS 3.71 died with "branch through
+		   zero". Leave it to the interpreter. */
+		if (RN == 15 || RD == 15) return 0;
 		rhs = arm_imm(opcode);
 		gen_load_reg(RN, EAX);
 		addbyte(0x3d); addlong(rhs); // CMP $rhs,%eax  (Rn - rhs)
@@ -1246,7 +1264,13 @@ recompile(uint32_t opcode, uint32_t *pcpsr)
 		break;
 
 	case 0x37: // CMN imm
-		if (RN == 15) return 0;
+		/* RD == 15 with S set is the 26-bit PSR transfer form (TSTP/TEQP/
+		   CMPP/CMNP), which writes the PSR and can change processor mode.
+		   opTEQreg() and friends handle it via arm_compare_rd15(); compiling
+		   it as a plain compare would set the flags and silently drop the
+		   mode change, which is how RISC OS 3.71 died with "branch through
+		   zero". Leave it to the interpreter. */
+		if (RN == 15 || RD == 15) return 0;
 		rhs = arm_imm(opcode);
 		gen_load_reg(RN, EAX);
 		addbyte(0x05); addlong(rhs); // ADD $rhs,%eax  (Rn + rhs)
@@ -1305,7 +1329,13 @@ recompile(uint32_t opcode, uint32_t *pcpsr)
 		break;
 
 	case 0x11: // TST reg
-		if (RN == 15 || (opcode & 0xff0)) return 0;
+		/* RD == 15 with S set is the 26-bit PSR transfer form (TSTP/TEQP/
+		   CMPP/CMNP), which writes the PSR and can change processor mode.
+		   opTEQreg() and friends handle it via arm_compare_rd15(); compiling
+		   it as a plain compare would set the flags and silently drop the
+		   mode change, which is how RISC OS 3.71 died with "branch through
+		   zero". Leave it to the interpreter. */
+		if (RN == 15 || RD == 15 || (opcode & 0xff0)) return 0;
 		if (!generate_shift(opcode)) return 0; // operand -> EAX
 		gen_load_reg(RN, EDX);
 		addbyte(0x21); addbyte(0xc2); // AND %eax,%edx
@@ -1313,7 +1343,13 @@ recompile(uint32_t opcode, uint32_t *pcpsr)
 		break;
 
 	case 0x13: // TEQ reg
-		if (RN == 15 || (opcode & 0xff0)) return 0;
+		/* RD == 15 with S set is the 26-bit PSR transfer form (TSTP/TEQP/
+		   CMPP/CMNP), which writes the PSR and can change processor mode.
+		   opTEQreg() and friends handle it via arm_compare_rd15(); compiling
+		   it as a plain compare would set the flags and silently drop the
+		   mode change, which is how RISC OS 3.71 died with "branch through
+		   zero". Leave it to the interpreter. */
+		if (RN == 15 || RD == 15 || (opcode & 0xff0)) return 0;
 		if (!generate_shift(opcode)) return 0; // operand -> EAX
 		gen_load_reg(RN, EDX);
 		addbyte(0x31); addbyte(0xc2); // XOR %eax,%edx
@@ -1391,7 +1427,13 @@ recompile(uint32_t opcode, uint32_t *pcpsr)
 		break;
 
 	case 0x31: // TST imm
-		if (RN == 15) return 0;
+		/* RD == 15 with S set is the 26-bit PSR transfer form (TSTP/TEQP/
+		   CMPP/CMNP), which writes the PSR and can change processor mode.
+		   opTEQreg() and friends handle it via arm_compare_rd15(); compiling
+		   it as a plain compare would set the flags and silently drop the
+		   mode change, which is how RISC OS 3.71 died with "branch through
+		   zero". Leave it to the interpreter. */
+		if (RN == 15 || RD == 15) return 0;
 		carry = arm_imm_carry_out(opcode);
 		rhs = arm_imm(opcode);
 		gen_load_reg(RN, EAX);
@@ -1403,7 +1445,13 @@ recompile(uint32_t opcode, uint32_t *pcpsr)
 		break;
 
 	case 0x33: // TEQ imm
-		if (RN == 15) return 0;
+		/* RD == 15 with S set is the 26-bit PSR transfer form (TSTP/TEQP/
+		   CMPP/CMNP), which writes the PSR and can change processor mode.
+		   opTEQreg() and friends handle it via arm_compare_rd15(); compiling
+		   it as a plain compare would set the flags and silently drop the
+		   mode change, which is how RISC OS 3.71 died with "branch through
+		   zero". Leave it to the interpreter. */
+		if (RN == 15 || RD == 15) return 0;
 		carry = arm_imm_carry_out(opcode);
 		rhs = arm_imm(opcode);
 		gen_load_reg(RN, EAX);

@@ -1108,6 +1108,13 @@ recompile(uint32_t opcode, uint32_t *pcpsr)
 	if (writes_rd && RD == 15) {
 		return 0; /* PC destination -> fall back */
 	}
+	/* A compare with RD == 15 and S set is the 26-bit PSR transfer form
+	   (TSTP/TEQP/CMPP/CMNP): it writes the PSR and can change processor mode.
+	   The interpreter handles it through arm_compare_rd15(); compiling it as an
+	   ordinary compare would set the flags and drop the mode change silently. */
+	if (!writes_rd && RD == 15) {
+		return 0;
+	}
 
 	/* Compute the operand into W_OP2. */
 	if (I) {
