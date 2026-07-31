@@ -1101,6 +1101,43 @@ readmemfl(uint32_t addr)
 			}
 			break;
 
+		case 0x08000000: /* EASI space: the graphics card's framestore */
+		case 0x09000000:
+		case 0x0a000000:
+		case 0x0b000000:
+		case 0x0c000000:
+		case 0x0d000000:
+		case 0x0e000000:
+		case 0x0f000000:
+			/*
+			 * Give the card's framestore a host pointer, as RAM and VRAM get.
+			 *
+			 * Every pixel the VDU drivers read passes through here, and there
+			 * was no case for it: the access fell out of this switch to the
+			 * general expansion-card path below, so the page never entered the
+			 * fast map and every single read was another call into this
+			 * function. VRAM has had an entry all along, which is why the same
+			 * mode drawn on the card cost more than on VIDC.
+			 *
+			 * The framestore starts a megabyte into the slot and is a whole
+			 * number of pages long, so a page beginning inside it lies inside it
+			 * entirely - which is what makes a page-granular entry safe. Any
+			 * other expansion card in EASI space falls through to the handlers
+			 * exactly as before.
+			 */
+			if (gfxcard_fb != NULL &&
+			    (readmemcache2 - gfxcard_fb_phys) < GFXCARD_FB_SIZE) {
+				const uintptr_t hp = vradd(addr,
+				    (const void *) ((uintptr_t) gfxcard_fb +
+				        (readmemcache2 - gfxcard_fb_phys) -
+				        (uintptr_t) (addr & ~0xfffu)),
+				    0, readmemcache2);
+
+			value = *(const uint32_t *) (hp + (addr & ~3u));
+				goto out;
+			}
+			break;
+
 		case 0x10000000: /* SIMM 0 bank 0 */
 		case 0x11000000:
 		case 0x12000000:
@@ -1324,6 +1361,32 @@ readmemfb(uint32_t addr)
 #endif
 				value = *(const uint8_t *) (hp + addr);
 				}
+				goto out;
+			}
+			break;
+
+		case 0x08000000: /* EASI space: the graphics card's framestore */
+		case 0x09000000:
+		case 0x0a000000:
+		case 0x0b000000:
+		case 0x0c000000:
+		case 0x0d000000:
+		case 0x0e000000:
+		case 0x0f000000:
+			/* As the word read above: give the framestore a host pointer so a
+			   page is only slow once, rather than every byte being a call. */
+			if (gfxcard_fb != NULL &&
+			    (readmemcache2 - gfxcard_fb_phys) < GFXCARD_FB_SIZE) {
+				const uintptr_t hp = vradd(addr,
+				    (const void *) ((uintptr_t) gfxcard_fb +
+				        (readmemcache2 - gfxcard_fb_phys) -
+				        (uintptr_t) (addr & ~0xfffu)),
+				    0, readmemcache2);
+
+#ifdef _RPCEMU_BIG_ENDIAN
+				addr ^= 3;
+#endif
+				value = *(const uint8_t *) (hp + addr);
 				goto out;
 			}
 			break;
