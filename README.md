@@ -1,4 +1,4 @@
-# RPCEmu – Spork Edition
+# RPCEmu – Extended Edition
 
 **A modern ('ish), cross-platform RISC OS machine on your desktop — and a serious platform for RISC OS development.**
 
