@@ -333,35 +333,35 @@ void MainFrame::BuildToolBar()
 
 	// Normal operations (left)
 	tool_bar_->AddTool(ID_MENU_SCREENSHOT, wxEmptyString, ToolbarIconScreenshot(icon_size),
-	                   "Save screenshot (F12)");
+	                   "Save screenshot");
 	tool_bar_->AddSeparator();
 	tool_bar_->AddTool(ID_MENU_LOAD_DISC0, wxEmptyString, ToolbarIconFloppy(icon_size),
-	                   "Load floppy disc into drive :0 (Ctrl+1)");
+	                   "Load floppy disc into drive :0");
 	tool_bar_->AddTool(ID_MENU_CDROM_ISO, wxEmptyString, ToolbarIconCdrom(icon_size),
 	                   "Load CD-ROM ISO image");
 	tool_bar_->AddSeparator();
 	tool_bar_->AddTool(ID_MENU_RESET, wxEmptyString, ToolbarIconReset(icon_size),
-	                   "Reset machine (Ctrl+R)");
+	                   "Reset machine");
 	tool_bar_->AddSeparator();
 	tb_mute_tool_ = tool_bar_->AddCheckTool(ID_MENU_MUTE, wxEmptyString,
 	                                        ToolbarIconMute(false, icon_size), wxNullBitmap,
-	                                        "Toggle sound mute (F10)");
+	                                        "Toggle sound mute");
 	tool_bar_->AddTool(ID_MENU_FULLSCREEN, wxEmptyString, ToolbarIconFullscreen(icon_size),
-	                   "Toggle full-screen mode (F11)");
+	                   "Toggle full-screen mode (Ctrl+End to leave)");
 	tool_bar_->AddTool(ID_MENU_MACHINE, wxEmptyString, ToolbarIconConfigure(icon_size),
-	                   "Edit machine settings (Ctrl+,)");
+	                   "Edit machine settings");
 
 	// Debugger (right)
 	tool_bar_->AddStretchableSpace();
 	tool_bar_->AddSeparator();
 	tool_bar_->AddTool(ID_MENU_DEBUG_RUN, wxEmptyString, ToolbarIconDebugRun(icon_size),
-	                   "Run emulation (F5)");
+	                   "Run emulation");
 	tool_bar_->AddTool(ID_MENU_DEBUG_PAUSE, wxEmptyString, ToolbarIconDebugPause(icon_size),
-	                   "Pause emulation (F6)");
+	                   "Pause emulation");
 	tool_bar_->AddTool(ID_MENU_DEBUG_STEP, wxEmptyString, ToolbarIconDebugStep(icon_size),
-	                   "Single step (F7)");
+	                   "Single step");
 	tool_bar_->AddTool(ID_MENU_MACHINE_INSPECTOR, wxEmptyString, ToolbarIconInspector(icon_size),
-	                   "Open Machine Inspector (F9)");
+	                   "Open Machine Inspector");
 	tool_bar_->Realize();
 
 	tool_bar_->Bind(wxEVT_TOOL, &MainFrame::OnScreenshot, this, ID_MENU_SCREENSHOT);
