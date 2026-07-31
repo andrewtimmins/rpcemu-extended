@@ -30,6 +30,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "vdu_filter.h"
 #include "../socket-compat.h"
 #ifndef _WIN32
 #include <sys/un.h>
@@ -136,6 +137,36 @@ connect_tcp(const char *hostport)
 }
 
 /* Read exactly n bytes; returns 0 on success, -1 on EOF/error. */
+/*
+ * Output, normalised unless --raw.
+ *
+ * The two frame loops below both write guest output, so the filtering lives here
+ * rather than being repeated. One filter state per stream: stdout and stderr can
+ * interleave frames, and a VDU sequence split across two frames of the same
+ * stream still has to be swallowed correctly.
+ */
+static int raw_output = 0;
+static VduFilter filter_out, filter_err;
+
+static void
+write_guest_output(FILE *dest, const uint8_t *buf, size_t n)
+{
+	uint8_t clean[4096];
+	VduFilter *f;
+	size_t w;
+
+	if (raw_output) {
+		fwrite(buf, 1, n, dest);
+		return;
+	}
+
+	f = (dest == stdout) ? &filter_out : &filter_err;
+	w = vdu_filter(f, buf, n, clean);
+	if (w > 0) {
+		fwrite(clean, 1, w, dest);
+	}
+}
+
 static int
 read_exact(int fd, void *buf, size_t n)
 {
@@ -195,7 +226,7 @@ drain_pending(int fd)
 				if (read_exact(fd, buf, chunk) != 0) {
 					return;
 				}
-				fwrite(buf, 1, chunk, out);
+				write_guest_output(out, buf, chunk);
 				len -= (uint32_t) chunk;
 			}
 			fflush(out);
@@ -258,7 +289,7 @@ run_one(int fd, const char *cmdline)
 				if (read_exact(fd, buf, chunk) != 0) {
 					return -1;
 				}
-				fwrite(buf, 1, chunk, out);
+				write_guest_output(out, buf, chunk);
 				len -= (uint32_t) chunk;
 			}
 			fflush(out);
@@ -275,7 +306,12 @@ usage(const char *argv0)
 	    "  rpcemu-shell [--socket PATH | --tcp host:port]         (interactive)\n"
 	    "\n"
 	    "Drives the guest RISC OS command line over the emulator's HostCmd\n"
-	    "socket. Default socket: $RPCEMU_DATADIR/hostcmd.sock (or ./hostcmd.sock).\n",
+	    "socket. Default socket: $RPCEMU_DATADIR/hostcmd.sock (or ./hostcmd.sock).\n"
+	    "\n"
+	    "Guest output is normalised for a host shell: RISC OS ends its lines\n"
+	    "LF then CR, and VDU control codes are in-band, so the trailing carriage\n"
+	    "returns and the control codes (with their parameter bytes) are removed.\n"
+	    "  --raw    pass the guest's VDU stream through byte for byte instead\n",
 	    argv0);
 }
 
@@ -316,6 +352,8 @@ main(int argc, char **argv)
 			sock_path = argv[++i];
 		} else if (strcmp(argv[i], "--tcp") == 0 && i + 1 < argc) {
 			tcp = argv[++i];
+		} else if (strcmp(argv[i], "--raw") == 0) {
+			raw_output = 1;
 		} else if (strcmp(argv[i], "--shell") == 0) {
 			interactive = 1;
 		} else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {

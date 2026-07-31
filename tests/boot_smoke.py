@@ -361,7 +361,10 @@ def hostcmd_version(binary: str, datadir: str, env: dict) -> str:
     except subprocess.TimeoutExpired:
         raise SmokeError("the guest did not answer *FX 0 within 30s") from None
 
-    # RISC OS ends its lines with a carriage return.
+    # rpcemu-run normalises the guest's VDU stream, so lines arrive LF-terminated.
+    # The carriage-return strip is kept as a belt and braces for an older client
+    # on PATH: RISC OS ends its lines LF then CR, so a raw stream leaves a stray
+    # CR after each newline.
     out = proc.stdout.decode("latin-1").replace("\r", "")
     lines = [line for line in out.splitlines() if line.strip()]
     reply = lines[-1] if lines else ""

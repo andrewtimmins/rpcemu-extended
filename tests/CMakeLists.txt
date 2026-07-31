@@ -39,6 +39,17 @@ endif()
 add_executable(boot_trace EXCLUDE_FROM_ALL boot_trace.c test_stubs.c)
 target_link_libraries(boot_trace PRIVATE rpcemu_core m)
 
+# The VDU-stream filter rpcemu-run uses to turn guest output into host text.
+# Compiles the unit directly rather than linking anything: it has no dependencies,
+# which is why it is a separate file. Covers the cases that make a naive filter
+# wrong - VDU parameters that look like line endings, and sequences split across
+# a read boundary. See docs/hostcmd.md.
+add_executable(test_vdu_filter test_vdu_filter.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/tools/vdu_filter.c)
+target_include_directories(test_vdu_filter PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src/tools)
+add_test(NAME test_vdu_filter COMMAND test_vdu_filter)
+
 # MMU access permissions. Builds real page tables in emulated RAM and checks the
 # ARM DDI 0100B Table 7-7 rules are enforced, including - the point of it - after
 # a translation has been cached. Needs no dynarec: the caches it exercises live in

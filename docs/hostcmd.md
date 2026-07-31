@@ -94,12 +94,39 @@ exposed on the network. The optional TCP mode binds `127.0.0.1` only; it is
 reachable by any local user, so enable it deliberately. To disable HostCmd
 entirely, set `hostcmd_enabled=0`.
 
+## What the output looks like
+
+The socket carries what the guest wrote, byte for byte, because anything wanting
+the real VDU stream should be able to have it. `rpcemu-run` then normalises that
+for a host shell, since its output usually lands in a pipe. Two things need it:
+
+**Lines end LF then CR, in that order.** Not CR LF, and not CR alone. So the
+newline a host expects is already there and is followed by a stray carriage
+return, which is why output looks correct on a terminal and then fails `grep`.
+`rpcemu-run` collapses LF CR, CR LF and either alone to a single `\n`.
+
+**VDU control codes are in-band, and most take parameters.** `*Status` emits
+VDU 14 to turn on paged mode; setting a colour emits VDU 17 and one parameter
+byte; a palette change emits VDU 19 and five. `rpcemu-run` removes them together
+with their parameters, using the same queue lengths RISC OS uses. Removing only
+the introducer would leave the parameters to appear as text, and since a parameter
+can be any byte, including 10 or 13, that would corrupt a line for reasons nobody
+could see.
+
+`rpcemu-run --raw` turns the filter off and passes the stream through untouched.
+
+One thing that is *not* normalised, because it is the guest being literal rather
+than the channel being awkward: `*Echo "Test"` prints `"Test"` with the quotes.
+RISC OS `*Echo` does not treat `"` as quoting. A leading quote is easy to mistake
+for an invisible control code when a `^` anchor stops matching.
+
 ## Limitations
 
 - **No stdin / mid-command interaction.** The channel forwards whole command
   lines and captures output; a command that prompts for keyboard input
   (editors, `Y/N` confirmations) will hang. Prefer non-interactive tool
-  invocations (`-quit`, batch flags).
+  invocations (`-quit`, batch flags). `*Status` is a live example: it turns on
+  paged mode, so it pauses for a keypress and never returns.
 - **Text output only.** WrchV captures everything written through the VDU
   character stream (`OS_WriteC`, `OS_Write0`, C `printf`, …). Programs that draw
   directly to the screen bypass it.

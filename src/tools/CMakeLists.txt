@@ -1,7 +1,7 @@
 # Standalone host-side client for the HostCmd channel. Does not link the
 # emulator core - it is just a small socket client.
 
-add_executable(rpcemu-run rpcemu_run.c)
+add_executable(rpcemu-run rpcemu_run.c vdu_filter.c)
 set_target_properties(rpcemu-run PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # Winsock for the socket client (Linux gets sockets from libc).
