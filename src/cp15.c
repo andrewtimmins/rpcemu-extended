@@ -174,10 +174,26 @@ cp15_vaddr_reset(void)
 }
 
 /**
- * Invalidate Write-TLB entries corresponding to the given region of physical
+ * Invalidate fast-map entries, read and write, for the given region of physical
  * addresses.
  *
- * @param addr Physical address
+ * Callers use this when the host memory behind a physical region stops being the
+ * memory a cached entry points at: the graphics card does it once a frame so the
+ * next frame's writes are seen (its dirty tracking depends on the write entries
+ * being re-armed), and the video path does it when the framestore moves.
+ *
+ * The read entries matter just as much, and for a long time only the write ones
+ * were dropped here. A fast-map read entry is a host pointer, so once the memory
+ * under a physical page changes - the card's framestore is reallocated on a mode
+ * change, or the screen moves between VRAM and the card - a surviving read entry
+ * quietly serves the old buffer. Anything that reads screen memory back then
+ * works from stale pixels, and read-modify-write drawing is the common case: it
+ * reads the background, merges, and writes the result.
+ *
+ * Both rings are scanned in one pass. This runs about once a frame, so it is two
+ * linear scans of VADDR_RING_SIZE at 60Hz.
+ *
+ * @param addr Physical address, already masked to its 16MB region
  */
 void
 cp15_tlb_invalidate_physical(uint32_t addr)
@@ -198,6 +214,12 @@ cp15_tlb_invalidate_physical(uint32_t addr)
 				vwaddrl_mode[m][vwaddrls[m][c]] = 0xffffffff;
 				vwaddrls[m][c] = 0xffffffff;
 				vwaddrphys[m][c] = 0xffffffff;
+			}
+			if (vraddrls[m][c] != 0xffffffff &&
+			    (vraddrphys[m][c] & 0x1f000000) == addr) {
+				vraddrl_mode[m][vraddrls[m][c]] = 0xffffffff;
+				vraddrls[m][c] = 0xffffffff;
+				vraddrphys[m][c] = 0xffffffff;
 			}
 		}
 	}
