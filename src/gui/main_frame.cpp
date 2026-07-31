@@ -829,7 +829,7 @@ void MainFrame::EnterFullScreen()
 		panel_->UpdateMouseCursor();
 	}
 	if (fullscreen_menu_item_ != nullptr) {
-		fullscreen_menu_item_->Check(false);
+		fullscreen_menu_item_->Check(true);
 	}
 }
 
