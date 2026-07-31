@@ -554,8 +554,12 @@ unlock_mutex_return:
  *
  * Kept apart from the VIDC path because the card is a far simpler source: the
  * framestore is linear, the stride is known, and there is no DMA wrap to follow.
- * Every line is redrawn - the card has no dirty-page tracking, the guest writing
- * to its framestore through mem.c's fast path rather than anything we can see.
+ *
+ * Only the rows that changed are converted: the card records which pages of its
+ * framestore have been written since the last frame, and drawscr() passes that
+ * range in. (This comment used to say every line was redrawn because the card had
+ * no dirty tracking, which stopped being true when the card gained it - and it is
+ * the kind of stale note that gets read as a performance fact.)
  */
 /**
  * Read a byte of the pointer shape out of guest memory.
