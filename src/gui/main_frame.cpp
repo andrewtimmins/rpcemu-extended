@@ -901,6 +901,7 @@ void MainFrame::OnIntegerScaling(wxCommandEvent &event)
 	if (panel_ != nullptr) {
 		panel_->SetFitToWindow(config_copy_.fit_to_window != 0);
 		panel_->SetIntegerScaling(config_copy_.integer_scaling != 0);
+		Layout();
 	}
 	if (emulator_) {
 		emulator_->IntegerScaling();
@@ -926,6 +927,7 @@ void MainFrame::OnFitToWindow(wxCommandEvent &event)
 	if (panel_ != nullptr) {
 		panel_->SetIntegerScaling(config_copy_.integer_scaling != 0);
 		panel_->SetFitToWindow(config_copy_.fit_to_window != 0);
+		Layout();
 	}
 	if (emulator_) {
 		emulator_->FitToWindow();
