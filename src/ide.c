@@ -1155,6 +1155,17 @@ void callbackide(void)
                         rpclog("IDE: sector write failed at offset %llu: %s\n",
                                (unsigned long long) addr, strerror(errno));
                 }
+                /* Hand the sector to the host now rather than leaving it in
+                   stdio's buffer. The guest believes a sector is on the disc as
+                   soon as this command completes, and if the emulator is killed
+                   - which is how an emulator is usually stopped - anything still
+                   buffered is lost. ADFS keeps its map and directories in the
+                   same medium as the data, so a lost buffer is not one lost file
+                   but a corrupt filesystem. This costs a write syscall per
+                   sector, which is a fair price for not eating discs. It is not
+                   fsync(): a host power failure can still lose the data, but a
+                   killed process no longer can. */
+                fflush(ide.hdfile[ide.drive]);
                 ide_irq_raise();
                 IDE_R.secount--;
                 if (IDE_R.secount != 0) {
@@ -1211,6 +1222,10 @@ void callbackide(void)
                                 break;
                         }
                 }
+                /* As for WIN_WRITE above, but once for the whole run of sectors
+                   rather than per sector: a format writes many in one command and
+                   the guest is not told any of them are done until the end. */
+                fflush(ide.hdfile[ide.drive]);
                 IDE_R.atastat = READY_STAT;
                 ide_irq_raise();
                 return;
