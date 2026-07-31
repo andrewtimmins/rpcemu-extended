@@ -12,6 +12,25 @@ set(CMAKE_C_EXTENSIONS ON)
 option(RPCEMU_DYNAREC "Build with ARM dynamic recompiler" ON)
 option(RPCEMU_ENABLE_WARNINGS "Enable extra compiler warnings" ON)
 option(RPCEMU_ENABLE_GHOSTPDL "Enable in-process Ghostscript PDF conversion" ON)
+option(RPCEMU_PROFILE "Sample the emulator thread and log where its time goes (development tool)" OFF)
+if(RPCEMU_PROFILE)
+    # It classifies a sample by whether it landed in the recompiler's code cache,
+    # so there has to be one. Said here rather than as a link error later.
+    if(NOT RPCEMU_DYNAREC)
+        message(FATAL_ERROR
+            "RPCEMU_PROFILE needs the recompiler: it tells recompiled code from C "
+            "by the code cache's address range, which an interpreter build has "
+            "not got. Configure without --interpreter, or with "
+            "-DRPCEMU_PROFILE=OFF.")
+    endif()
+    add_compile_definitions(RPCEMU_PROFILE)
+    # Debug info, without changing the optimiser: the profiler reports file
+    # offsets and they are resolved with addr2line afterwards. Without -g that
+    # resolution falls back to the nearest preceding symbol, which silently names
+    # the wrong function - so a profiling build always carries it.
+    add_compile_options(-g)
+endif()
+
 option(RPCEMU_ENABLE_VNC "Enable VNC server support (requires libvncserver)" ON)
 option(RPCEMU_BUILD_TESTS "Build unit tests (amd64 dynarec only)" ON)
 # Off by default so a casual build still works without libusb. Release builds

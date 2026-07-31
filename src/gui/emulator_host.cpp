@@ -20,6 +20,10 @@
 
 #include "emulator_host.h"
 
+extern "C" {
+#include "perfprof.h"
+}
+
 #include "emulator_snapshot.h"
 
 #include <algorithm>
@@ -1550,6 +1554,10 @@ void EmulatorHost::MainEmuLoop()
 	unsigned network_nat_rate = 0;
 	bool last_paused = debugger_is_paused() != 0;
 
+	/* Nothing unless the build asked for it. Started here because the timer is
+	   charged to this thread and delivered to it. */
+	perfprof_start(10);
+
 	while (!quited) {
 		DrainCommands();
 
@@ -1596,6 +1604,7 @@ void EmulatorHost::MainEmuLoop()
 		}
 
 		ServiceTimers(GetElapsedTimerNs());
+		perfprof_poll();
 
 		if (config.network_type == NetworkType_NAT) {
 			network_nat_rate++;
@@ -1605,5 +1614,6 @@ void EmulatorHost::MainEmuLoop()
 		}
 	}
 
+	perfprof_stop();
 	endrpcemu();
 }

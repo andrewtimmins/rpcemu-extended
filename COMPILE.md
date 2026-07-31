@@ -128,6 +128,7 @@ cmake --build build -j"$(nproc)"
 | `RPCEMU_ENABLE_GHOSTPDL` | ON | Link against Ghostscript/GhostPDL for in-process PDF conversion |
 | `RPCEMU_ENABLE_WARNINGS` | ON | Extra compiler warnings (`-Wall -Wextra -Werror=switch`) |
 | `RPCEMU_REQUIRE_LIBUSB` | OFF | Fail the build if libusb-1.0 is missing. The release scripts turn this ON so a platform cannot quietly ship without USB passthrough |
+| `RPCEMU_PROFILE` | OFF | Build in a sampling profiler for the emulator thread, a development tool. See [Profiling the emulator thread](#profiling-the-emulator-thread) |
 
 Interpreter build:
 
@@ -208,6 +209,32 @@ to publish a GitHub Release with the Linux tarball. Update `VERSION` before tagg
 | Ghostscript not detected | Install `libgs-dev`, or `-DRPCEMU_ENABLE_GHOSTPDL=OFF` |
 | `USB passthrough was required ... libusb-1.0 was not found` | Install `libusb-1.0-0-dev`, or `-DRPCEMU_REQUIRE_LIBUSB=OFF` to build without it |
 | Dynarec misbehaves on arm64 (new backend) | Fall back with `./build.sh --interpreter` and report it |
+
+### Profiling the emulator thread
+
+The emulator thread runs at 100% of a core by design, so "what is it doing?" sits
+behind every performance question here - and `perf` and `gdb` are unavailable on
+some development machines. `-DRPCEMU_PROFILE=ON` builds in a sampling profiler for
+that one thread:
+
+```sh
+cmake -B build -DRPCEMU_PROFILE=ON && cmake --build build
+```
+
+It samples the thread's own CPU clock at 1kHz, so a sample is work rather than
+waiting, and logs every ten seconds: what share was inside the recompiler's code
+cache, and the twenty hottest addresses outside it. Resolve those with the file
+offset it prints:
+
+```sh
+addr2line -fipe build/bin/rpcemu-recompiler 0x1cd2a6
+```
+
+A profiling build carries `-g` for that reason - without debug info addr2line
+falls back to the nearest preceding symbol and quietly names the wrong function.
+It needs the recompiler (it classifies samples by the code cache's address range),
+and configure says so if you ask for it with `--interpreter`. Off by default and
+compiled out entirely, so a release build is untouched.
 
 ### wxWidgets and wxWebRequest
 
