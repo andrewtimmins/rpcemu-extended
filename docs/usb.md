@@ -2,7 +2,8 @@
 
 RPCEmu can present a USB host controller to the guest, so that a machine which
 never had USB can be given it, and can hand it a real USB device plugged into
-the computer it is running on.
+the computer it is running on. Keyboards and mice work with nothing installed,
+cameras and audio devices stream, and a drive can be read and written.
 
 ## What is being emulated
 

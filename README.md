@@ -33,7 +33,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **Expansion cards (podules)** — assign emulated podules per machine (*Settings → Machine → Podules*): ROM, MIDI (AKA16/AKA12/MIDI Max, host MIDI via ALSA), and the Computer Concepts Lark sampler. Plugin ABI for adding more. See [docs/podules.md](docs/podules.md).
 - **Full FPA10 emulation** — floating-point coprocessor with cycle-accurate timing; works with interpreter and dynarec.
 - **Graphics card — display modes VRAM cannot reach** — an optional emulated expansion card with 15MB of its own display memory, so **2560 x 1440 in full colour** is available on a machine whose 2MB of VRAM otherwise stops at 800 x 600. An ordinary card in an ordinary EASI slot with its own GraphicsV driver in its ROM; off by default, and RISC OS keeps using VIDC20 until you run `*GfxCardOn`. See [docs/gfxcard.md](docs/gfxcard.md).
-- **USB — real devices from the host, in RISC OS** — an emulated **OHCI** host controller on its own expansion card with four ports, carrying RISC OS Open's own USB stack in its ROM, so nothing needs installing in the guest. Plug a device on the host into a port from *Settings → USB…* and RISC OS enumerates it and names it as the real hardware, reading its descriptors, strings and serial number over the emulated bus. Isochronous transfers are not implemented yet, so cameras and audio devices appear but do not stream; verified on Linux, and untested on Windows and macOS. See [USB devices](#usb-devices) and [docs/usb.md](docs/usb.md).
+- **USB — real devices from the host, in RISC OS** — an emulated **OHCI** host controller on its own expansion card with four ports, carrying RISC OS Open's own USB stack in its ROM, so nothing needs installing in the guest. Plug a device on the host into a port from *Settings → USB…* and RISC OS enumerates it and names it as the real hardware, reading its descriptors, strings and serial number over the emulated bus. Keyboards and mice work immediately, since HID is compiled into USBDriver. Streaming devices work: isochronous transfers are implemented, so a camera's packets reach the guest a frame at a time, although nothing in RISC OS will display a webcam for you. **USB drives work too**, through the SCSI modules the card's ROM also carries, with one caveat worth knowing before you plug one in: RISC OS only mounts a FileCore disc, so a FAT-formatted stick needs a FAT filing system such as Fat32FS on top, which is not bundled. Verified on Linux, and untested on Windows and macOS. See [USB devices](#usb-devices) and [docs/usb.md](docs/usb.md).
 - **Pixel Perfect scaling** — optional integer scaling for sharp pixels (*Settings → Pixel Perfect*).
 - **Built-in VNC server** — remote desktop access from any VNC client.
 - **Command-line control** — launch straight into a named machine (`--machine <name>`), and resume its saved state (`--resume`) or load a specific one (`--state <file>`), in either the GUI or headless. Options, messages and exit statuses are the same on all three platforms. Contributed by David Ramsden. See [Command-line reference](#command-line-reference).
@@ -81,7 +81,7 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `poduleroms/` | Compiled extension ROM images (HostFS, ScrollWheel — the built-in Support podule) |
 | `podules/` | Expansion-card (podule) ROMs — shipped system components, selectable per machine |
 | `gfxroms/` | The graphics card's display driver, carried in that card's own ROM |
-| `usbroms/` | RISC OS Open's USB stack (USBDriver, OHCIDriver), carried in the USB card's own ROM — not ours and not GPL, see `usbroms/LICENCES.txt` |
+| `usbroms/` | RISC OS Open's USB stack (USBDriver, OHCIDriver) and the modules a USB drive needs (RTSupport, SCSISwitch, SCSISoftUSB, SCSIFS), carried in the USB card's own ROM — not ours and not GPL, see `usbroms/LICENCES.txt` |
 | `riscos-progs/` | RISC OS module source (HostFS, HostFSFiler, ScrollWheel, EtherRPCEm, RPCEmuSupport, RPCEmuGfx, SyncClock, RPCEmuUSBSupport, RPCEmuPCIEmulator) |
 | `riscos-patches/` | Our changes to RISC OS components that are not ours, as patches against a named upstream revision (currently OHCIDriver) |
 | `packaging/` | Desktop entry and other packaging files |
@@ -93,7 +93,7 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `docs/podules.md` | Expansion cards (podules): bundled devices, configuration, plugin ABI |
 | `docs/gfxcard.md` | Graphics card: display modes beyond what VRAM allows, and its GraphicsV driver |
 | `docs/kinetic.md` | Kinetic StrongARM: how the card is detected, its 512MB memory map, and the three paths a new memory region needs |
-| `docs/usb.md` | USB: the emulated OHCI host controller, passing real devices through to the guest, and why it is OHCI |
+| `docs/usb.md` | USB: the emulated OHCI host controller, passing real devices through to the guest, streaming from a camera, USB drives, and why it is OHCI |
 | `docs/mmu-permissions.md` | The MMU access-permission defect ADFFS reports: what is wrong, the reproduction, and the two candidate fixes |
 | `docs/clipboard.md` | Shared clipboard: copying text and images between the host and RISC OS |
 | `docs/hostcmd.md` | HostCmd: drive the RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`) |
