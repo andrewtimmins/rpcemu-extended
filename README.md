@@ -1,6 +1,6 @@
 # RPCEmu – Spork Edition
 
-**A modern, cross-platform RISC OS machine on your desktop — and a serious platform for RISC OS development.**
+**A modern ('ish), cross-platform RISC OS machine on your desktop — and a serious platform for RISC OS development.**
 
 Spork Edition is an extended fork of **[RPCEmu](http://www.marutan.net/rpcemu/)**, the
 open-source emulator for Acorn's Risc PC and A7000, brought right up to date. It runs on
