@@ -36,10 +36,9 @@
  * so they can be tested by rendering into a buffer. This file is only the plumbing
  * between that and a socket.
  *
- * One wart, deliberately accepted for now: the selector's server stops before the
- * machine's starts, so a client is disconnected once and has to reconnect on the
- * same port. Avoiding it means hoisting the VNC server above the machine's
- * lifetime, which is a larger change to EmulatorHost than this is worth yet.
+ * The server it uses belongs to the process (see vnc_app.h), so it is the same one
+ * the machine then attaches to and a client keeps its connection across the
+ * handover.
  */
 
 #include <atomic>
@@ -54,6 +53,7 @@
 #include "app_settings.h"
 #include "machine_selector.h"
 #include "text_screen.h"
+#include "vnc_app.h"
 #include "vnc_server.h"
 #include "headless_selector.h"
 
@@ -118,10 +118,10 @@ std::string HeadlessChooseMachine(const std::vector<std::string> &names)
 	app.vnc_password[0] = '\0';
 	app_settings_load(rpcemu_get_datadir(), &app);
 
-	VncServer server(nullptr);	/* no emulator yet; keys go to the hook */
+	VncServer &server = VncAppServer();
 
 	server.setKeySymHook(queue_key);
-	if (!server.start(app.vnc_port, std::string(app.vnc_password))) {
+	if (!VncAppStart(true)) {
 		fprintf(stderr, "error: could not start the VNC server on port %d for the\n"
 		                "       machine selector.\n", app.vnc_port);
 		return std::string();
@@ -161,7 +161,7 @@ std::string HeadlessChooseMachine(const std::vector<std::string> &names)
 				break;
 			}
 			case MACHINE_SELECTOR_CANCELLED:
-				server.stop();
+				VncAppStop();
 				return std::string();
 			case MACHINE_SELECTOR_REDRAW:
 				redraw = true;
@@ -184,8 +184,7 @@ std::string HeadlessChooseMachine(const std::vector<std::string> &names)
 		std::this_thread::sleep_for(std::chrono::milliseconds(200));
 	}
 
-	/* Stopped here rather than left to the destructor, so the port is free before
-	   the machine's own server tries to bind it. */
-	server.stop();
+	/* Left running: the machine attaches to this same server, so the client that
+	   just chose keeps its connection. Only the hook is cleared, by VncAppAttach(). */
 	return chosen;
 }

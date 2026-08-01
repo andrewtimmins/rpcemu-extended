@@ -21,10 +21,21 @@
 #ifndef CONFIG_PATHS_H
 #define CONFIG_PATHS_H
 
+#include <string>
+#include <vector>
+
 #include <wx/fileconf.h>
 #include <wx/string.h>
 
 wxString ConfigPathsConfigsDir();
+
+/**
+ * Machine names, from the configs directory.
+ *
+ * The same list the selector dialogue shows, so the dialogue and the VNC selector
+ * cannot disagree about what exists. Names only, without the .cfg.
+ */
+std::vector<std::string> ConfigPathsMachineNames();
 wxString ConfigPathsMachinesDir();
 wxString ConfigPathsRomsDir();
 wxString ConfigPathsResourceDir();

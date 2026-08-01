@@ -46,10 +46,12 @@
 #include "emulator_host.h"
 #ifdef RPCEMU_VNC
 #include "vnc_server.h"
+#include "vnc_app.h"
 #endif
 
 extern "C" {
 #include "rpcemu.h"
+#include "app_settings.h"
 #include "savestate.h"
 }
 
@@ -497,20 +499,26 @@ int RunHeadless(const char *machine_name, bool resume, const char *state_file)
 	HeadlessBridge bridge;
 	auto emulator = std::make_unique<EmulatorHost>(&bridge);
 
-	auto vnc = std::make_unique<VncServer>(emulator.get());
-	g_vnc_server = vnc.get();
-	if (!vnc->start(config.vnc_port, std::string(config.vnc_password))) {
-		fprintf(stderr, "error: failed to start the VNC server on port %d.\n", config.vnc_port);
+	/*
+	 * The process owns the server, so it may already be listening: the machine
+	 * selector uses it before any machine exists, and reusing it means the client
+	 * that chose the machine is not disconnected on the way in. Only start it if
+	 * it is not already up.
+	 */
+	if (!VncAppRunning() && !VncAppStart(true)) {
+		fprintf(stderr, "error: failed to start the VNC server on port %d.\n",
+		        config.vnc_port);
 		fprintf(stderr,
-		        "       The port is most likely already in use - each machine needs its\n"
-		        "       own vnc_port, and machines that have never had VNC enabled all\n"
-		        "       default to 5900. Set a different port for this machine.\n");
-		g_vnc_server = nullptr;
+		        "       The port is most likely already in use. It is set in\n"
+		        "       %s, which is the emulator's own settings file\n"
+		        "       rather than a machine's.\n",
+		        app_settings_path(rpcemu_get_datadir()));
 		return 1;
 	}
+	VncAppAttach(emulator.get());
 
 	printf("RPCEmu headless: machine '%s' running.\n", config.name);
-	printf("VNC server listening on port %d%s.\n", config.vnc_port,
+	printf("VNC server listening on port %d%s.\n", VncAppPort(),
 	       config.vnc_password[0] == '\0' ? " (no password set)" : "");
 	if (vnc_implied) {
 		printf("This machine has the VNC server disabled; --headless has started it\n"
@@ -598,8 +606,9 @@ int RunHeadless(const char *machine_name, bool resume, const char *state_file)
 	emulator->Stop();
 	emulator->Join(); /* MainEmuLoop runs endrpcemu(): saves CMOS/discs/config */
 
-	vnc->stop();
-	g_vnc_server = nullptr;
+	/* Stopped here rather than merely detached: headless has nothing else to show
+	   once the machine has gone, and the process is about to exit. */
+	VncAppStop();
 	emulator.reset();
 
 	return 0;

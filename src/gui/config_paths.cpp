@@ -1,3 +1,4 @@
+#include <algorithm>
 /*
   RPCEmu - An Acorn system emulator
 
@@ -246,4 +247,22 @@ wxString ConfigPathsSnapshotForConfig(const wxString &config_path)
 
 	const wxString sep = wxFileName::GetPathSeparator();
 	return ConfigPathsMachinesDir() + sep + name + sep + "suspend.state";
+}
+
+std::vector<std::string> ConfigPathsMachineNames()
+{
+	wxArrayString files;
+	std::vector<std::string> names;
+
+	/* The same source the selector dialogue lists from (see
+	   config_selector_dialog.cpp), so the local dialogue and the VNC selector
+	   cannot disagree about which machines exist. */
+	wxDir::GetAllFiles(ConfigPathsConfigsDir(), &files, "*.cfg", wxDIR_FILES);
+	for (const wxString &file : files) {
+		const wxFileName fn(file);
+
+		names.push_back(std::string(fn.GetName().utf8_str()));
+	}
+	std::sort(names.begin(), names.end());
+	return names;
 }

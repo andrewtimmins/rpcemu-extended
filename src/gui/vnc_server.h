@@ -74,6 +74,15 @@ public:
 	 * connects and is shown an empty buffer.
 	 */
 	void primeFramebuffer(const uint32_t *buffer, int width, int height);
+
+	/*
+	 * Point the server at a machine, or at none.
+	 *
+	 * Input goes to whatever is attached, so detaching leaves a connected client
+	 * able to look but not touch - which is what should happen between machines.
+	 */
+	void setEmulatorHost(EmulatorHost *host) { emulator_host_.store(host); }
+	EmulatorHost *emulatorHost() const { return emulator_host_.load(); }
 	void processEvents();
 
 	friend enum rfbNewClientAction vnc_new_client_callback(rfbClientPtr cl);
@@ -88,7 +97,16 @@ private:
 	void copyFrameLines(const uint32_t *buffer, int width, int start_y, int end_y);
 	void eventLoop();
 
-	EmulatorHost *emulator_host_;
+	/*
+	 * The emulator to deliver input to, or nullptr when there is none.
+	 *
+	 * Atomic because it is read on the server's event thread every time a key or
+	 * a mouse event arrives, and written on the GUI thread when a machine starts
+	 * or stops. The server now outlives any particular machine, which is what
+	 * lets it show the selector before one exists and keep the same connection
+	 * across a machine starting.
+	 */
+	std::atomic<EmulatorHost *> emulator_host_{nullptr};
 	rfbScreenInfoPtr rfb_screen_ = nullptr;
 	KeySymHook keysym_hook_;
 	std::thread event_thread_;

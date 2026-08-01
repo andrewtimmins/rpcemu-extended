@@ -286,7 +286,10 @@ private:
 	std::unique_ptr<NatListDialog> nat_list_dialog_;
 	MachineInspectorWindow *machine_inspector_window_ = nullptr;
 #ifdef RPCEMU_VNC
-	std::unique_ptr<VncServer> vnc_server_;
+	/* Borrowed from vnc_app: the process owns the server, this window only points
+	   a machine at it. Not owning it is what lets a client stay connected while
+	   machines start and stop. */
+	VncServer *vnc_server_ = nullptr;
 #endif
 	EmulatorPanel *panel_ = nullptr;
 	wxToolBar *tool_bar_ = nullptr;

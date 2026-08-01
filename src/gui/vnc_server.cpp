@@ -43,8 +43,8 @@ enum rfbNewClientAction vnc_new_client_callback(rfbClientPtr cl);
 void vnc_client_gone_callback(rfbClientPtr cl);
 
 VncServer::VncServer(EmulatorHost *emulator_host)
-	: emulator_host_(emulator_host)
 {
+	emulator_host_.store(emulator_host);
 }
 
 VncServer::~VncServer()
@@ -487,7 +487,9 @@ void vnc_kbd_callback(rfbBool down, rfbKeySym keysym, rfbClientPtr cl)
 		return;
 	}
 
-	if (!server->emulator_host_) {
+	EmulatorHost *host = server->emulator_host_.load();
+
+	if (!host) {
 		return;
 	}
 
@@ -497,20 +499,22 @@ void vnc_kbd_callback(rfbBool down, rfbKeySym keysym, rfbClientPtr cl)
 	}
 
 	if (down) {
-		server->emulator_host_->KeyPress(scan_code);
+		host->KeyPress(scan_code);
 	} else {
-		server->emulator_host_->KeyRelease(scan_code);
+		host->KeyRelease(scan_code);
 	}
 }
 
 void vnc_ptr_callback(int buttonMask, int x, int y, rfbClientPtr cl)
 {
 	auto *server = static_cast<VncServer *>(cl->screen->screenData);
-	if (!server || !server->emulator_host_) {
+	EmulatorHost *host = server ? server->emulator_host_.load() : nullptr;
+
+	if (!host) {
 		return;
 	}
 
-	server->emulator_host_->MouseMove(x, y);
+	host->MouseMove(x, y);
 
 	/* RFB reports buttons as bit 0 = left, bit 1 = middle, bit 2 = right. The
 	   guest button encoding (matching the native panel's MapClickButton) is
@@ -525,10 +529,10 @@ void vnc_ptr_callback(int buttonMask, int x, int y, rfbClientPtr cl)
 	const int pressed = guest & ~last_buttons;
 	const int released = last_buttons & ~guest;
 	if (pressed) {
-		server->emulator_host_->MousePress(pressed);
+		host->MousePress(pressed);
 	}
 	if (released) {
-		server->emulator_host_->MouseRelease(released);
+		host->MouseRelease(released);
 	}
 	last_buttons = guest;
 
@@ -539,10 +543,10 @@ void vnc_ptr_callback(int buttonMask, int x, int y, rfbClientPtr cl)
 	const int wheel = buttonMask & ((1 << 3) | (1 << 4));
 	const int wheel_pressed = wheel & ~last_wheel;
 	if (wheel_pressed & (1 << 3)) {
-		server->emulator_host_->MouseWheel(120);
+		host->MouseWheel(120);
 	}
 	if (wheel_pressed & (1 << 4)) {
-		server->emulator_host_->MouseWheel(-120);
+		host->MouseWheel(-120);
 	}
 	last_wheel = wheel;
 }

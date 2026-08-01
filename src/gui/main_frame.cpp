@@ -60,6 +60,7 @@
 #endif
 
 #ifdef RPCEMU_VNC
+#include "vnc_app.h"
 #include "vnc_server.h"
 #endif
 
@@ -240,11 +241,18 @@ MainFrame::MainFrame()
 	nat_list_dialog_ = std::make_unique<NatListDialog>(this, emulator_.get());
 
 #ifdef RPCEMU_VNC
-	vnc_server_ = std::make_unique<VncServer>(emulator_.get());
-	g_vnc_server = vnc_server_.get();
-	if (config_copy_.vnc_enabled) {
-		vnc_server_->start(config_copy_.vnc_port, std::string(config_copy_.vnc_password));
+	/*
+	 * The server belongs to the process, not to this window: it may already be
+	 * running and showing the machine selector to a client, and stopping and
+	 * restarting it here would drop that connection for no reason. Attach the
+	 * machine to it instead, and start it if it is not up yet - which is the case
+	 * when VNC was switched on for a machine rather than app-wide.
+	 */
+	vnc_server_ = &VncAppServer();
+	if (!VncAppRunning() && config_copy_.vnc_enabled) {
+		VncAppStart(false);
 	}
+	VncAppAttach(emulator_.get());
 #endif
 
 	panel_ = new EmulatorPanel(this, *emulator_);
@@ -281,9 +289,10 @@ MainFrame::~MainFrame()
 {
 #ifdef RPCEMU_VNC
 	if (vnc_server_) {
-		vnc_server_->stop();
+		/* Detached, not stopped: the server outlives this window, and a client
+		   should stay connected across a machine going away. */
+		VncAppDetach();
 	}
-	g_vnc_server = nullptr;
 #endif
 	if (machine_inspector_window_ != nullptr) {
 		machine_inspector_window_->Destroy();
@@ -1263,7 +1272,7 @@ void MainFrame::OnVnc(wxCommandEvent &)
 	if (!vnc_server_) {
 		return;
 	}
-	VncDialog dlg(this, vnc_server_.get(), wxString::FromUTF8(config_copy_.vnc_password), &config_copy_);
+	VncDialog dlg(this, vnc_server_, wxString::FromUTF8(config_copy_.vnc_password), &config_copy_);
 	if (dlg.ShowModal() == wxID_OK) {
 		config.vnc_enabled = config_copy_.vnc_enabled;
 		config.vnc_port = config_copy_.vnc_port;
