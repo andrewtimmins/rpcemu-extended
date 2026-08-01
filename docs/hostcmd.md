@@ -59,7 +59,11 @@ so it drops straight into Makefiles, scripts and agent tool-calls.
 
 ## Configuration
 
-Per-machine `.cfg` keys (under `[General]`):
+These belong to the emulator rather than to a machine, and live in `rpcemu.cfg` in
+the data directory, as the VNC settings do. The channel is how a script reaches the
+running process, which is not a property of the emulated Risc PC. A key still found
+in a machine's own `.cfg` is honoured and moved into `rpcemu.cfg` the first time
+that machine is loaded; see [vnc.md](vnc.md) for the same story in more detail.
 
 | Key | Default | Meaning |
 | --- | --- | --- |

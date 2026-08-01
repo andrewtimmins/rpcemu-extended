@@ -36,9 +36,9 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **Graphics card — display modes VRAM cannot reach** — an optional emulated expansion card with 15MB of its own display memory, so **2560 x 1440 in full colour** is available on a machine whose 2MB of VRAM otherwise stops at 800 x 600. An ordinary card in an ordinary EASI slot with its own GraphicsV driver in its ROM; off by default, and RISC OS keeps using VIDC20 until you run `*GfxCardOn`. See [docs/gfxcard.md](docs/gfxcard.md).
 - **USB — real devices from the host, in RISC OS** — an emulated **OHCI** host controller on its own expansion card with four ports, carrying RISC OS Open's own USB stack in its ROM, so nothing needs installing in the guest. Plug a device on the host into a port from *Settings → USB…* and RISC OS enumerates it and names it as the real hardware, reading its descriptors, strings and serial number over the emulated bus. Keyboards and mice work immediately, since HID is compiled into USBDriver. Streaming devices work: isochronous transfers are implemented, so a camera's packets reach the guest a frame at a time, although nothing in RISC OS will display a webcam for you. **USB drives work too**, through the SCSI modules the card's ROM also carries, with one caveat worth knowing before you plug one in: RISC OS only mounts a FileCore disc, so a FAT-formatted stick needs a FAT filing system such as Fat32FS on top, which is not bundled. Verified on Linux, and untested on Windows and macOS. See [USB devices](#usb-devices) and [docs/usb.md](docs/usb.md).
 - **Pixel Perfect scaling** — optional integer scaling for sharp pixels (*Settings → Pixel Perfect*).
-- **Built-in VNC server** — remote desktop access from any VNC client. The server belongs to the emulator rather than to a machine, so it stays up across a machine starting and stopping rather than dropping the connection. Port and password live in the emulator's own settings (`rpcemu.cfg`), not in each machine's. **A VNC client is not limited to typing at the guest:** `Ctrl+Alt+Shift+M` brings up a control menu over the running machine, to reset it or shut the emulator down. It is drawn into the VNC display only, so a local user never sees it, and it works whether the session is headless or an ordinary desktop one you have reconnected to.
+- **Built-in VNC server** — remote desktop access from any VNC client. The server belongs to the emulator rather than to a machine, so it stays up across a machine starting and stopping rather than dropping the connection. Port and password live in the emulator's own settings (`rpcemu.cfg`), not in each machine's. **A VNC client is not limited to typing at the guest:** `Ctrl+Alt+Shift+M` brings up a control menu over the running machine, to reset it or shut the emulator down. It is drawn into the VNC display only, so a local user never sees it, and it works whether the session is headless or an ordinary desktop one you have reconnected to. See [docs/vnc.md](docs/vnc.md).
 - **Command-line control** — launch straight into a named machine (`--machine <name>`), and resume its saved state (`--resume`) or load a specific one (`--state <file>`), in either the GUI or headless. Options, messages and exit statuses are the same on all three platforms. Contributed by David Ramsden. See [Command-line reference](#command-line-reference).
-- **Headless mode** — run a machine with no GUI window, accessed entirely over VNC (`--headless --machine <name>`). Genuinely display-less: no GUI toolkit is initialised at all, so it runs on a headless server (on Linux, with no X11/Wayland session). **Without `--machine` it offers the machine list over VNC**, so a remote emulator no longer has to be told which machine to run on the command line. See [Headless mode](#headless-mode).
+- **Headless mode** — run a machine with no GUI window, accessed entirely over VNC (`--headless --machine <name>`). Genuinely display-less: no GUI toolkit is initialised at all, so it runs on a headless server (on Linux, with no X11/Wayland session). **Without `--machine` it offers the machine list over VNC**, so a remote emulator no longer has to be told which machine to run on the command line. See [Headless mode](#headless-mode) and [docs/vnc.md](docs/vnc.md).
 - **HostCmd — drive the RISC OS command line from the host** — run guest commands from the host over a local socket and stream their output back, with the return code. Edit on the host (via HostFS), compile on the guest (`rpcemu-run -- cc -c hello`), or open an interactive RISC OS shell (`rpcemu-shell`). Ideal for IDE/LLM-driven development. See [docs/hostcmd.md](docs/hostcmd.md).
 - **MCP server — drive RISC OS from Claude / an agent** — a [Model Context Protocol](https://modelcontextprotocol.io) server exposing tools to run guest commands, read/write/list files (via HostFS), capture and click the screen, and inspect/control the emulated ARM CPU (registers, memory, disassembly, breakpoints, watchpoints, single-step). Point Claude Code / Desktop at it for agent-driven RISC OS development. Setup and tool reference in [tools/mcp/README.md](tools/mcp/README.md).
 - **Parallel port** — log raw output to a file, a virtual printer that captures jobs to `.prn` files with optional in-process PDF conversion via Ghostscript, or print on a real printer the host already has.
@@ -97,6 +97,7 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `docs/usb.md` | USB: the emulated OHCI host controller, passing real devices through to the guest, streaming from a camera, USB drives, and why it is OHCI |
 | `docs/mmu-permissions.md` | MMU access permissions: the defect that made ADFFS unusable, how it was fixed, and the regression test that holds it |
 | `docs/clipboard.md` | Shared clipboard: copying text and images between the host and RISC OS |
+| `docs/vnc.md` | VNC: using a machine remotely, choosing one over VNC in headless mode, and the control menu for a running machine |
 | `docs/hostcmd.md` | HostCmd: drive the RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`) |
 | `tools/mcp/README.md` | MCP server: drive a RISC OS machine from Claude / an agent (commands, files, screen, debugger). Setup + tool reference. |
 | `docs/debugcmd.md` | DebugCmd: control the emulated CPU over a socket (registers, memory, disassembly, breakpoints, single-step) |
@@ -411,7 +412,7 @@ portable between them.
 | `--machine <name>` | Run this machine, skipping the selector. Also accepts `--machine=<name>`. |
 | `--resume` | Resume the machine's own snapshot, consuming it to `.bak`. Requires `--machine`. |
 | `--state <file>` | Load an explicit state file, leaving it in place. Requires `--machine`. |
-| `--headless` | Run with no GUI window, over VNC. Requires `--machine`. VNC is started for the run whether or not the machine has it enabled, since it is the only way in; the machine's own setting is left alone. |
+| `--headless` | Run with no GUI window, over VNC. Without `--machine`, the machine list is offered over VNC and you choose one from a client. VNC is started for the run whether or not the settings enable it, since it is the only way in; the setting itself is left alone. |
 | `--list-machines` | List the available machine configs and exit. |
 | `--fetch-riscos[=which]` | Download RISC OS from RISC OS Open, unpack it, create a machine and exit. `which` is `stable` (default) or `nightly`. |
 | `--no-disc` | With `--fetch-riscos`, fetch the ROM only. |
@@ -481,17 +482,23 @@ built-in VNC server — useful for servers or always-on machines:
 - `--list-machines` prints the available machine names and exits.
 - `--help` (or `-h`) prints usage and exits. All three of these run without a display.
 - VNC is the only way into a headless machine, so `--headless` **implies it**: the
-  server is started for the session even if the machine has `vnc_enabled=0`. The
-  machine's own setting is your choice and is left alone — the config file is not
-  rewritten, so running headless once does not enable VNC for the GUI afterwards.
-  The port and password come from that same config (port defaulting to 5900). A
-  machine that has never enabled VNC will not have a password set, so set one if
-  the port is reachable from anywhere untrusted; headless says so at startup.
-- **Running more than one machine at once needs a different `vnc_port` for each.**
-  Ports are not allocated automatically and every machine defaults to 5900, so a
-  second machine left at the default cannot bind and exits with an error rather
-  than starting unreachable. The port and password can also be changed while a
-  machine is running from **Settings > VNC Server** in the GUI.
+  server is started for the session even if `vnc_enabled=0`. The setting itself is
+  your choice and is left alone, so running headless once does not enable VNC for
+  the GUI afterwards. The port and password come from `rpcemu.cfg` in the data
+  directory — the emulator's own settings rather than any machine's — with the port
+  defaulting to 5900. There is no password unless you set one, so do set one if the
+  port is reachable from anywhere untrusted; headless says so at startup.
+- **A VNC client can control the machine, not just type at it.** `Ctrl`+`Alt`+`Shift`+`M`
+  brings up a menu over the running machine to reset it or shut the emulator down,
+  which matters most here, where there is no window and no menu bar. See
+  [docs/vnc.md](docs/vnc.md).
+- **Running more than one emulator at once needs a different `vnc_port` for each.**
+  Ports are not allocated automatically and the default is 5900, so a second
+  instance left at the default cannot bind and exits with an error rather than
+  starting unreachable. Since the port is now per-installation rather than per
+  machine, two instances sharing a data directory need one of them overridden. The
+  port and password can also be changed while a machine is running from
+  **Settings > VNC Server** in the GUI.
 - Press **Ctrl-C** (or send `SIGTERM`) to shut down cleanly — CMOS, disc images, and
   configuration are saved on exit, just as when closing the GUI window.
 - Send `SIGUSR1` to reset the machine without stopping it (see
@@ -770,8 +777,8 @@ how the JIT is built and when it falls back to interpretation.
 - Full FPA10 emulation with cycle timing
 - MMU access permissions enforced on cached translations, which upstream does not do — the defect that made ADFFS and most of the games needing it unusable (see [docs/mmu-permissions.md](docs/mmu-permissions.md))
 - Pixel Perfect integer scaling
-- Built-in VNC server
-- Headless mode for display-less servers (run a machine over VNC with no GUI)
+- Built-in VNC server, with a control menu a VNC client can call up over the running machine (`Ctrl`+`Alt`+`Shift`+`M`) to reset it or shut the emulator down
+- Headless mode for display-less servers (run a machine over VNC with no GUI), including choosing which machine to run from a list shown over VNC
 - HostCmd: drive the guest RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`) for edit-on-host/compile-on-guest workflows
 - MCP server for agent-driven RISC OS development: run commands, edit/build, screenshot, and inspect/control the emulated CPU (see `tools/mcp/`)
 - Virtual printer with optional Ghostscript PDF conversion
