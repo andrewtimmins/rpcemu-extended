@@ -53,6 +53,10 @@ extern "C" {
 #include "savestate.h"
 }
 
+/* C++ linkage: it takes a std::vector, so it must not be inside the extern "C"
+   block above. */
+#include "headless_selector.h"
+
 namespace {
 
 /*
@@ -295,10 +299,10 @@ void HeadlessPrintUsage(const char *argv0)
 	    "                        cannot be combined with --resume.\n"
 	    "  --headless            Run a machine without the GUI window; access it\n"
 	    "                        over the built-in VNC server, which is started for\n"
-	    "                        the session even if the machine has VNC disabled\n"
-	    "                        (its configuration is left unchanged). Requires\n"
-	    "                        --machine. Needs no display or desktop session on\n"
-	    "                        any platform.\n"
+	    "                        the session whatever the settings say. Without\n"
+	    "                        --machine, the machine list is offered over VNC.\n"
+	    "                        Needs no display or desktop session on any\n"
+	    "                        platform.\n"
 	    "  --list-machines       List available machine configs and exit.\n"
 	    "  --fetch-riscos[=which]\n"
 	    "                        Download RISC OS from RISC OS Open, unpack it and\n"
@@ -344,6 +348,33 @@ void HeadlessPrintUsage(const char *argv0)
 	    name);
 }
 
+/**
+ * Machine names, from the configuration directory.
+ *
+ * Shared by --list-machines and the VNC selector so the two can never disagree
+ * about what exists. Paths must already be initialised.
+ */
+std::vector<std::string> HeadlessMachineNames(void)
+{
+	const std::string configs = std::string(rpcemu_get_datadir()) + "configs";
+	std::vector<std::string> names;
+
+	DIR *dir = opendir(configs.c_str());
+	if (dir == nullptr) {
+		return names;
+	}
+	for (struct dirent *entry = readdir(dir); entry != nullptr; entry = readdir(dir)) {
+		const std::string n = entry->d_name;
+
+		if (n.size() > 4 && n.compare(n.size() - 4, 4, ".cfg") == 0) {
+			names.push_back(n.substr(0, n.size() - 4));
+		}
+	}
+	closedir(dir);
+	std::sort(names.begin(), names.end());
+	return names;
+}
+
 int HeadlessListMachines(void)
 {
 	if (!InitHeadlessPaths()) {
@@ -352,28 +383,13 @@ int HeadlessListMachines(void)
 	}
 
 	const std::string configs = std::string(rpcemu_get_datadir()) + "configs";
-
-	DIR *dir = opendir(configs.c_str());
-	if (dir == nullptr) {
-		HeadlessOutput("No machines found in %s\n", configs.c_str());
-		return 0;
-	}
-
-	std::vector<std::string> names;
-	for (struct dirent *entry = readdir(dir); entry != nullptr; entry = readdir(dir)) {
-		const std::string n = entry->d_name;
-		if (n.size() > 4 && n.compare(n.size() - 4, 4, ".cfg") == 0) {
-			names.push_back(n.substr(0, n.size() - 4));
-		}
-	}
-	closedir(dir);
+	std::vector<std::string> names = HeadlessMachineNames();
 
 	if (names.empty()) {
 		HeadlessOutput("No machines found in %s\n", configs.c_str());
 		return 0;
 	}
 
-	std::sort(names.begin(), names.end());
 	HeadlessOutput("Available machines (in %s):\n", configs.c_str());
 	for (const std::string &n : names) {
 		HeadlessOutput("  %s\n", n.c_str());
@@ -392,17 +408,45 @@ int RunHeadless(const char *machine_name, bool resume, const char *state_file)
 	        "       has no way to expose the machine. Rebuild with RPCEMU_ENABLE_VNC=ON.\n");
 	return 1;
 #else
-	if (machine_name == nullptr || machine_name[0] == '\0') {
-		fprintf(stderr,
-		        "error: --headless requires --machine <name> (there is no\n"
-		        "       interactive selector in headless mode).\n"
-		        "       Use --list-machines to see available machines.\n");
-		return 2;
-	}
-
 	if (!InitHeadlessPaths()) {
 		PrintNoDataError();
 		return 2;
+	}
+
+	/*
+	 * No machine named: offer the list over VNC rather than refusing. This is why
+	 * the VNC port and password had to stop being machine settings - there is no
+	 * machine here to read them from.
+	 *
+	 * The selector's server is stopped before it returns so the machine's own
+	 * server can bind the same port, which does mean a connected client is
+	 * disconnected once at that point and reconnects.
+	 */
+	std::string selected;
+	if (machine_name == nullptr || machine_name[0] == '\0') {
+		const std::vector<std::string> names = HeadlessMachineNames();
+
+		if (names.empty()) {
+			fprintf(stderr,
+			        "error: no machines found in %sconfigs\n", rpcemu_get_datadir());
+			fprintf(stderr,
+			        "       Create one with the graphical interface first.\n");
+			return 2;
+		}
+		if (resume || (state_file != nullptr && state_file[0] != '\0')) {
+			/* Both name a machine's state, so they need the machine named too
+			   rather than one being chosen afterwards. */
+			fprintf(stderr,
+			        "error: --resume and --state need --machine <name>.\n");
+			return 2;
+		}
+
+		selected = HeadlessChooseMachine(names);
+		if (selected.empty()) {
+			HeadlessOutput("No machine chosen.\n");
+			return 0;
+		}
+		machine_name = selected.c_str();
 	}
 
 	const std::string config_path = ResolveMachineConfig(machine_name);

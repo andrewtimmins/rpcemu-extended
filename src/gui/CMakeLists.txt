@@ -7,6 +7,10 @@ set(GUI_SOURCES
     main_frame_menus.cpp
     headless_bridge.cpp
     headless_main.cpp
+    headless_selector.cpp
+    machine_selector.c
+    text_screen.c
+    console_font.c
     emulator_panel.cpp
     emulator_host.cpp
     emulator_snapshot.cpp

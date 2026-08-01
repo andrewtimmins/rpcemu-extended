@@ -38,7 +38,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **Pixel Perfect scaling** — optional integer scaling for sharp pixels (*Settings → Pixel Perfect*).
 - **Built-in VNC server** — remote desktop access from any VNC client.
 - **Command-line control** — launch straight into a named machine (`--machine <name>`), and resume its saved state (`--resume`) or load a specific one (`--state <file>`), in either the GUI or headless. Options, messages and exit statuses are the same on all three platforms. Contributed by David Ramsden. See [Command-line reference](#command-line-reference).
-- **Headless mode** — run a machine with no GUI window, accessed entirely over VNC (`--headless --machine <name>`). Genuinely display-less: no GUI toolkit is initialised at all, so it runs on a headless server (on Linux, with no X11/Wayland session). See [Headless mode](#headless-mode).
+- **Headless mode** — run a machine with no GUI window, accessed entirely over VNC (`--headless --machine <name>`). Genuinely display-less: no GUI toolkit is initialised at all, so it runs on a headless server (on Linux, with no X11/Wayland session). **Without `--machine` it offers the machine list over VNC**, so a remote emulator no longer has to be told which machine to run on the command line. See [Headless mode](#headless-mode).
 - **HostCmd — drive the RISC OS command line from the host** — run guest commands from the host over a local socket and stream their output back, with the return code. Edit on the host (via HostFS), compile on the guest (`rpcemu-run -- cc -c hello`), or open an interactive RISC OS shell (`rpcemu-shell`). Ideal for IDE/LLM-driven development. See [docs/hostcmd.md](docs/hostcmd.md).
 - **MCP server — drive RISC OS from Claude / an agent** — a [Model Context Protocol](https://modelcontextprotocol.io) server exposing tools to run guest commands, read/write/list files (via HostFS), capture and click the screen, and inspect/control the emulated ARM CPU (registers, memory, disassembly, breakpoints, watchpoints, single-step). Point Claude Code / Desktop at it for agent-driven RISC OS development. Setup and tool reference in [tools/mcp/README.md](tools/mcp/README.md).
 - **Parallel port** — log raw output to a file, a virtual printer that captures jobs to `.prn` files with optional in-process PDF conversion via Ghostscript, or print on a real printer the host already has.
@@ -467,9 +467,15 @@ built-in VNC server — useful for servers or always-on machines:
 ```
 
 - `--machine <name>` selects a machine by its config name (the file in `configs/`,
-  with or without the `.cfg` suffix). It is required in headless mode, since there
-  is no interactive selector. On its own — without `--headless` — it starts the GUI
-  on that machine, skipping the selector (see above).
+  with or without the `.cfg` suffix). On its own, without `--headless`, it starts the
+  GUI on that machine, skipping the selector (see above).
+- **Without `--machine`, the machine list is offered over VNC.** Connect a client to
+  the VNC port and choose with the arrow keys, or type the number beside a machine,
+  then press Enter. Escape gives up and exits. The port and password come from the
+  emulator's own settings (`rpcemu.cfg` in the data directory) rather than from a
+  machine, since no machine has been chosen yet. Note that the selector's VNC server
+  stops when the machine starts, so a connected client is disconnected once at that
+  point and reconnects on the same port.
 - `--resume` and `--state <file>` work here too, so a headless machine can be brought
   back up from a snapshot — useful when a service manager restarts it.
 - `--list-machines` prints the available machine names and exits.

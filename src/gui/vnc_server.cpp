@@ -245,6 +245,22 @@ void VncServer::updateFramebuffer(const uint32_t *buffer, int width, int height,
 	rfbMarkRectAsModified(rfb_screen_, 0, start_y, width, end_y);
 }
 
+void VncServer::primeFramebuffer(const uint32_t *buffer, int width, int height)
+{
+	if (!running_ || !rfb_screen_ || !buffer || width <= 0 || height <= 0) {
+		return;
+	}
+
+	std::lock_guard<std::mutex> lock(mutex_);
+	if (width != current_width_ || height != current_height_) {
+		if (!resizeFramebuffer(width, height)) {
+			return;
+		}
+	}
+	copyFrameLines(buffer, width, 0, height);
+	rfbMarkRectAsModified(rfb_screen_, 0, 0, width, height);
+}
+
 void VncServer::processEvents()
 {
 	if (!running_ || !rfb_screen_) {
@@ -459,7 +475,19 @@ unsigned int VncServer::keysymToScanCode(rfbKeySym keysym) const
 void vnc_kbd_callback(rfbBool down, rfbKeySym keysym, rfbClientPtr cl)
 {
 	auto *server = static_cast<VncServer *>(cl->screen->screenData);
-	if (!server || !server->emulator_host_) {
+	if (!server) {
+		return;
+	}
+
+	/* Diverted: something the emulator is drawing itself wants the keys, and the
+	   guest must not also see them. Checked before the host, so this works with
+	   no emulator at all. */
+	if (server->keysym_hook_) {
+		server->keysym_hook_(static_cast<uint32_t>(keysym), down != FALSE);
+		return;
+	}
+
+	if (!server->emulator_host_) {
 		return;
 	}
 
