@@ -69,17 +69,34 @@ every packet is relayed once per instance: the network sees duplicates and each
 instance sees the others' copies, with no error to notice. The claim is an exclusive
 loopback TCP bind, which is the smallest thing that makes ownership explicit.
 
+## What was tried and rejected: displays embedded in a manager
+
+A manager window listing machines, with their screens embedded in tabs, was built and
+abandoned. It worked, and it was far too slow to use.
+
+The reasoning behind it was that embedded displays came almost free, because each
+instance already runs a VNC server. They do not. The direct path draws the guest's
+framebuffer into the window; going through VNC on the same machine means the emulator
+copies the frame and encodes it, and the viewer decodes it, converts it to the
+toolkit's pixel format, scales it and blits it. Some of that first attempt was simply
+wasteful and could have been fixed, but the copies that remain are inherent to using
+a network protocol as a local display path, and the gap against a direct draw was
+obvious to anyone using it.
+
+The premise was also wrong about the thing it was imitating. **VirtualBox does not
+embed VM displays in its manager.** The manager is a list; starting a machine launches
+a separate process with its own window and its own direct rendering. VMware
+Workstation does put displays in tabs, and does it over shared memory rather than a
+network protocol. So a manager that starts machines in their own windows is not a
+compromised version of the idea, it is what the model being copied actually does.
+
+If embedded displays are ever wanted, the route is a shared framebuffer between the
+emulator and the viewer, not VNC. That needs cross-platform shared memory, a
+tear-free hand-off, and input over a side channel. VNC keeps the job it is good at:
+reaching a machine that is headless or on another computer, where the alternative is
+nothing at all.
+
 ## What is planned
-
-### A manager window
-
-A list of machines with their state, and buttons to start and stop them. Machines
-run as child processes, as they do under VirtualBox, and the manager allocates each
-one a VNC port and socket paths so they do not collide.
-
-The first version gives each machine its own display window. Embedding the displays
-in tabs is a later step, and comes almost free through the VNC server that each
-instance already runs — which also means managing machines on another computer.
 
 ### A virtual switch, so machines can see each other
 
