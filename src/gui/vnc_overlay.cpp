@@ -218,6 +218,14 @@ bool on_key(uint32_t keysym, bool down)
 		g_state.visible = !g_state.visible;
 		server.setOverlayActive(g_state.visible);
 		if (g_state.visible) {
+			/*
+			 * The guest saw Ctrl, Alt and Shift go down and is about to not see
+			 * them come up, because everything is swallowed from here. Left alone
+			 * it believes all three are still held and interprets everything
+			 * afterwards through them, which looks like keys being pressed by
+			 * themselves.
+			 */
+			server.releaseAllKeys();
 			g_state.selected = 0;
 			draw(server);
 		}

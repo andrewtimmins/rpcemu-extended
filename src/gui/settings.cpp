@@ -713,6 +713,46 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	 * because otherwise the user's settings are being ignored in silence.
 	 */
 	{
+		/*
+		 * Migrate before overlaying. config_save() no longer writes these keys, and
+		 * endrpcemu() saves the config on the way out, so a legacy value would be
+		 * stripped from the machine file the first time the machine ran and be
+		 * gone by the next start - the exact silent change the fallback was meant
+		 * to prevent. Copying it into the app settings the first time it is seen
+		 * makes the migration actually happen rather than merely being described.
+		 *
+		 * First machine loaded wins if two disagree, which is inherent in the
+		 * setting becoming app-wide, so say so rather than letting it be a
+		 * mystery.
+		 */
+		static const char *const legacy_keys[] = {
+			"vnc_enabled", "vnc_port", "vnc_password",
+			"hostcmd_enabled", "hostcmd_socket"
+		};
+		bool migrate = false;
+
+		/* These keys live in [General], and the loaders above leave the current
+		   group at /Podules or /nat_port_forward_rules, so say which group rather
+		   than trusting wherever the last one finished. Asking at the root is just
+		   as wrong as asking at /Podules: every HasEntry() comes back false and
+		   the migration silently never happens. */
+		ConfigFileUseGeneralGroup(settings);
+
+		for (const char *key : legacy_keys) {
+			if (settings.HasEntry(key) &&
+			    !app_settings_has(rpcemu_get_datadir(), key)) {
+				rpclog("config_load: moving %s out of the machine's config and "
+				       "into %s, where it belongs\n", key,
+				    app_settings_path(rpcemu_get_datadir()));
+				migrate = true;
+			}
+		}
+		if (migrate && app_settings_save(rpcemu_get_datadir(), cfg) != 0) {
+			rpclog("config_load: could not write %s; the machine's own values "
+			       "are still in use for this session\n",
+			    app_settings_path(rpcemu_get_datadir()));
+		}
+
 		const int applied = app_settings_load(rpcemu_get_datadir(), cfg);
 
 		if (applied < 0) {

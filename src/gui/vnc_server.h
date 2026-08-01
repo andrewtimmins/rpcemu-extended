@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <mutex>
 #include <functional>
+#include <set>
 #include <string>
 #include <thread>
 
@@ -92,6 +93,17 @@ public:
 	 * screen comes back in one go rather than a line at a time as it happens to
 	 * change.
 	 */
+	/*
+	 * Tell the guest that every key it thinks is held is now up.
+	 *
+	 * Needed whenever input stops being passed through mid-keystroke, which is
+	 * what happens when an overlay opens: the presses reached the guest and the
+	 * releases will not, so without this it is left believing keys are still down.
+	 * Held modifiers are the worst of it, because everything typed afterwards is
+	 * interpreted through them.
+	 */
+	void releaseAllKeys();
+
 	void setOverlayActive(bool active);
 	bool overlayActive() const { return overlay_active_.load(); }
 
@@ -136,6 +148,11 @@ private:
 	std::atomic<int> client_count_{0};
 	std::atomic<bool> force_full_update_{false};
 	std::atomic<bool> overlay_active_{false};
+
+	/* Keysyms currently down as far as the guest is concerned, so they can be
+	   released if input is diverted before they come back up. Touched only on the
+	   server's event thread. */
+	std::set<uint32_t> keys_down_;
 	bool running_ = false;
 	char *password_list_[2] = {nullptr, nullptr};
 	std::string current_password_;

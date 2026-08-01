@@ -268,6 +268,24 @@ void VncServer::primeFramebuffer(const uint32_t *buffer, int width, int height)
 	rfbMarkRectAsModified(rfb_screen_, 0, 0, width, height);
 }
 
+void VncServer::releaseAllKeys()
+{
+	EmulatorHost *host = emulator_host_.load();
+
+	if (host == nullptr) {
+		keys_down_.clear();
+		return;
+	}
+	for (const uint32_t keysym : keys_down_) {
+		const unsigned int scan_code = keysymToScanCode(keysym);
+
+		if (scan_code != 0xff) {
+			host->KeyRelease(scan_code);
+		}
+	}
+	keys_down_.clear();
+}
+
 void VncServer::setOverlayActive(bool active)
 {
 	const bool was = overlay_active_.exchange(active);
@@ -518,11 +536,21 @@ void vnc_kbd_callback(rfbBool down, rfbKeySym keysym, rfbClientPtr cl)
 		return;
 	}
 
+	/* Remembered so releaseAllKeys() can undo them if input is diverted before
+	   the key comes back up. */
 	if (down) {
+		server->keys_down_.insert(static_cast<uint32_t>(keysym));
 		host->KeyPress(scan_code);
-	} else {
+	} else if (server->keys_down_.erase(static_cast<uint32_t>(keysym)) > 0) {
 		host->KeyRelease(scan_code);
 	}
+	/*
+	 * A release for a key the guest never saw pressed is dropped. That happens
+	 * every time an overlay closes: the shortcut's modifiers went down before it
+	 * opened, were released for the guest as it opened, and the client's real
+	 * releases arrive afterwards. Sending those on would be telling the machine to
+	 * let go of keys it is not holding.
+	 */
 }
 
 void vnc_ptr_callback(int buttonMask, int x, int y, rfbClientPtr cl)

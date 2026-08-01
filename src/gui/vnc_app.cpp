@@ -64,11 +64,20 @@ bool VncAppStart(bool force)
 		return true;
 	}
 
-	/* Defaults first, then whatever the app settings say. Not the machine's
-	   config: there may not be a machine yet, and these are not its business. */
-	app.vnc_enabled = 0;
-	app.vnc_port = 5900;
-	app.vnc_password[0] = '\0';
+	/*
+	 * Start from whatever the loaded machine has, then let the app settings
+	 * override it.
+	 *
+	 * Taking the built-in defaults instead would ignore a legacy per-machine
+	 * vnc_port entirely, so an existing installation with a non-default port would
+	 * quietly move to 5900 the moment it upgraded - which is precisely what
+	 * carrying the old values forward was supposed to prevent. config_load() has
+	 * already put the machine's values, legacy or migrated, into the global
+	 * config; with no machine loaded those are the defaults anyway.
+	 */
+	app.vnc_enabled = config.vnc_enabled;
+	app.vnc_port = (config.vnc_port > 0) ? config.vnc_port : 5900;
+	snprintf(app.vnc_password, sizeof(app.vnc_password), "%s", config.vnc_password);
 	app_settings_load(rpcemu_get_datadir(), &app);
 
 	if (!force && !app.vnc_enabled) {
