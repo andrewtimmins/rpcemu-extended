@@ -34,6 +34,7 @@
 #include "mem.h"
 #include "network.h"
 #include "network-nat.h"
+#include "net_slot.h"
 #include "savestate.h"
 #include "podules.h"
 #include "broadcast_relay.h"
@@ -180,13 +181,16 @@ network_nat_init_mac_address(void)
 		error("Unable to parse '%s' as a MAC address", config.macaddress);
 	}
 
-	// Generate MAC address
+	// Generate MAC address. The last byte follows this emulator's slot, because the
+	// address was otherwise the same constant in every instance and two machines
+	// with one MAC address on one network is fatal to both. Slot 0 keeps the
+	// original value, so a single machine is unchanged.
 	network_hwaddr[0] = 0x06;
 	network_hwaddr[1] = 0x02;
 	network_hwaddr[2] = 0x03;
 	network_hwaddr[3] = 0x04;
 	network_hwaddr[4] = 0x05;
-	network_hwaddr[5] = 0x06;
+	network_hwaddr[5] = (unsigned char) (0x06 + net_slot_acquire());
 }
 
 /**
@@ -207,7 +211,14 @@ network_nat_open(void)
 	mask.s_addr = htonl(0xffffff00); // 255.255.255.0
 	net_addr.s_addr = htonl(0x0a0a0a00); // 10.10.10.0
 	dns.s_addr = htonl(0x0a0a0a03); // 10.10.10.3
-	dhcp.s_addr = htonl(0x0a0a0a0a); // 10.10.10.10
+
+	// 10.10.10.10 upwards, one address per emulator on this host. Every instance ran
+	// its own NAT with these same constants, so every guest believed it was
+	// 10.10.10.10: two machines could not have addressed each other whatever carried
+	// the frames between them. Slot 0 gets the original .10, leaving a single
+	// machine exactly as it was. The gateway and DNS stay put, since each machine
+	// keeps its own NAT and only the guest's own address has to differ.
+	dhcp.s_addr = htonl(0x0a0a0a0a + (uint32_t) net_slot_acquire());
 
 	// Port Forwarding
 	nat.forward_addr.s_addr = dhcp.s_addr; // Which address to apply port forwards to (same as address given out by DHCP)
@@ -505,6 +516,7 @@ void
 network_nat_close(void)
 {
 	broadcast_relay_close();
+	net_slot_release();
 
 	if (nat.capture != NULL) {
 		fclose(nat.capture);

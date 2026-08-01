@@ -1,6 +1,7 @@
 set(RPCEMU_CORE_SOURCES
     app_settings.c
     machine_lock.c
+    net_slot.c
     superio.c
     parallel.c
     serial.c
