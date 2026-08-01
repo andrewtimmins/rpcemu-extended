@@ -732,6 +732,136 @@ mem_phys_read8_debug(uint32_t addr)
 }
 
 /**
+ * Write a byte to a physical address for debugging.
+ *
+ * The counterpart of mem_phys_read8_debug(), and deliberately narrower: it
+ * writes RAM and VRAM only, so it cannot trigger I/O side effects or data
+ * aborts. ROM is refused rather than silently ignored, because a debugger that
+ * appears to poke ROM and does nothing is worse than one that says it cannot.
+ *
+ * Writing RAM behind the emulator's back does not invalidate any recompiled
+ * code, so poking an address the guest is executing from will keep running the
+ * old instructions. That is a real limit, but the recompiler's own
+ * invalidation is driven from guest writes and reaching it from here would
+ * mean taking the write path this function exists to avoid.
+ *
+ * @param addr Physical address
+ * @param val  Byte to write
+ * @return 1 if it was written, 0 for ROM, I/O or unmapped
+ */
+int
+mem_phys_write8_debug(uint32_t addr, uint8_t val)
+{
+	addr &= phys_space_mask;
+
+	switch (addr & (phys_space_mask & 0xff000000)) {
+	case 0x00000000: /* ROM: refused, it is not writable on real hardware either */
+		return 0;
+
+	case 0x02000000: /* VRAM */
+		if (mem_vrammask == 0)
+			return 0;
+#ifdef _RPCEMU_BIG_ENDIAN
+		addr ^= 3;
+#endif
+		vramb[addr & mem_vrammask] = val;
+		return 1;
+
+	case 0x10000000: /* SIMM 0 bank 0 */
+	case 0x11000000:
+	case 0x12000000:
+	case 0x13000000:
+#ifdef _RPCEMU_BIG_ENDIAN
+		addr ^= 3;
+#endif
+		ramb00[addr & mem_rammask] = val;
+		return 1;
+
+	case 0x14000000: /* SIMM 0 bank 1 */
+	case 0x15000000:
+	case 0x16000000:
+	case 0x17000000:
+#ifdef _RPCEMU_BIG_ENDIAN
+		addr ^= 3;
+#endif
+		ramb01[addr & mem_rammask] = val;
+		return 1;
+
+	case 0x18000000: /* SIMM 1 bank 0 */
+	case 0x19000000:
+	case 0x1a000000:
+	case 0x1b000000:
+	case 0x1c000000: /* SIMM 1 bank 1 */
+	case 0x1d000000:
+	case 0x1e000000:
+	case 0x1f000000:
+		if (ramb1 != NULL) {
+#ifdef _RPCEMU_BIG_ENDIAN
+			addr ^= 3;
+#endif
+			ramb1[addr & 0x7ffffff] = val;
+			return 1;
+		}
+		break;
+
+	case 0x20000000: /* Kinetic SDRAM bank 0 */
+	case 0x21000000:
+	case 0x22000000:
+	case 0x23000000:
+	case 0x24000000:
+	case 0x25000000:
+	case 0x26000000:
+	case 0x27000000:
+	case 0x28000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x29000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2a000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2b000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2c000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2d000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2e000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2f000000: /* 128MB bank aliases on undecoded A27 */
+		if (sdramb0 != NULL) {
+#ifdef _RPCEMU_BIG_ENDIAN
+			addr ^= 3;
+#endif
+			sdramb0[addr & SDRAM_BANK_MASK] = val;
+			return 1;
+		}
+		break;
+
+	case 0x30000000: /* Kinetic SDRAM bank 1 */
+	case 0x31000000:
+	case 0x32000000:
+	case 0x33000000:
+	case 0x34000000:
+	case 0x35000000:
+	case 0x36000000:
+	case 0x37000000:
+	case 0x38000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x39000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3a000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3b000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3c000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3d000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3e000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3f000000: /* 128MB bank aliases on undecoded A27 */
+		if (sdramb1 != NULL) {
+#ifdef _RPCEMU_BIG_ENDIAN
+			addr ^= 3;
+#endif
+			sdramb1[addr & SDRAM_BANK_MASK] = val;
+			return 1;
+		}
+		break;
+
+	default:
+		/* IO space or unmapped: refused, deliberately */
+		break;
+	}
+	return 0;
+}
+
+/**
  * Write a 32-bit word to a physical address.
  *
  * @param addr Physical address

@@ -32,6 +32,7 @@ extern uint32_t mem_phys_read32(uint32_t addr);
    thing does - a device reaching into RAM without the CPU's involvement. */
 extern void mem_phys_write32(uint32_t addr, uint32_t val);
 extern uint32_t mem_phys_read8_debug(uint32_t addr);
+extern int mem_phys_write8_debug(uint32_t addr, uint8_t val);
 
 extern uint32_t readmemfl(uint32_t addr);
 extern uint32_t readmemfb(uint32_t addr);

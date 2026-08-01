@@ -172,6 +172,210 @@ dc_read8(uint32_t addr, int physical, int *mapped)
 	return (uint8_t) mem_phys_read8_debug(phys);
 }
 
+static int dc_write8(uint32_t addr, int physical, uint8_t val);
+
+/**
+ * reg set <n|pc|cpsr> <hexvalue>
+ *
+ * Registers were readable and not writable, so a theory about what a register
+ * should have held could only be tested by finding the code that sets it. R15 is
+ * accepted as "pc" as well as "15" because that is what people type.
+ */
+static void
+dc_cmd_reg(char *r, char *args)
+{
+	char *a1 = strtok(args, " \t");
+	char *a2 = strtok(NULL, " \t");
+	char *a3 = strtok(NULL, " \t");
+	uint32_t val;
+	int n;
+
+	if (!a1 || strcmp(a1, "set") != 0 || !a2 || !a3) {
+		dc_error("usage: reg set <0-15|pc|cpsr> <hexvalue>");
+		return;
+	}
+
+	/* Only while stopped: writing a register underneath a running core races the
+	   emulator thread, and the value would be overwritten immediately anyway. */
+	if (!debugger_is_paused()) {
+		dc_error("the machine must be paused to write a register");
+		return;
+	}
+
+	val = (uint32_t) strtoul(a3, NULL, 16);
+
+	if (strcmp(a2, "cpsr") == 0) {
+		arm.reg[16] = val;
+		snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"reg\":\"cpsr\",\"value\":\"%08x\"}",
+		    (unsigned) val);
+		return;
+	}
+	n = (strcmp(a2, "pc") == 0) ? 15 : atoi(a2);
+	if (n < 0 || n > 15) {
+		dc_error("register must be 0-15, pc or cpsr");
+		return;
+	}
+	arm.reg[n] = val;
+	snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"reg\":%d,\"value\":\"%08x\"}",
+	    n, (unsigned) val);
+}
+
+/**
+ * trace config [key=value ...]
+ *
+ * The GUI could already halt on a data abort, an undefined instruction or a SWI;
+ * nothing driving the machine over this socket could turn any of it on, which made
+ * the most useful stopping conditions unreachable from a script or an agent. With no
+ * arguments it reports the current configuration.
+ */
+static void
+dc_cmd_trace_config(char *r, char *args)
+{
+	DebugTraceConfig cfg;
+	char *tok;
+
+	debugger_get_trace_config(&cfg);
+
+	for (tok = strtok(args, " \t"); tok != NULL; tok = strtok(NULL, " \t")) {
+		char *eq = strchr(tok, '=');
+		uint32_t v;
+
+		if (eq == NULL) {
+			dc_error("usage: trace config [data_abort=0|1] [prefetch_abort=0|1] "
+			         "[undefined=0|1] [log_exceptions=0|1] [swi_log=0|1] "
+			         "[swi_halt=0|1] [swi_min=<hex>] [swi_max=<hex>]");
+			return;
+		}
+		*eq = '\0';
+		v = (uint32_t) strtoul(eq + 1, NULL, 0);
+
+		if (strcmp(tok, "data_abort") == 0)          { cfg.trap_data_abort = v ? 1 : 0; }
+		else if (strcmp(tok, "prefetch_abort") == 0) { cfg.trap_prefetch_abort = v ? 1 : 0; }
+		else if (strcmp(tok, "undefined") == 0)      { cfg.trap_undefined = v ? 1 : 0; }
+		else if (strcmp(tok, "log_exceptions") == 0) { cfg.log_exceptions = v ? 1 : 0; }
+		else if (strcmp(tok, "swi_log") == 0)        { cfg.swi_trace_enabled = v ? 1 : 0; }
+		else if (strcmp(tok, "swi_halt") == 0)       { cfg.swi_trace_halt = v ? 1 : 0; }
+		else if (strcmp(tok, "swi_min") == 0)        { cfg.swi_filter_min = (uint32_t) strtoul(eq + 1, NULL, 16); }
+		else if (strcmp(tok, "swi_max") == 0)        { cfg.swi_filter_max = (uint32_t) strtoul(eq + 1, NULL, 16); }
+		else {
+			dc_error("unknown trace config key");
+			return;
+		}
+		debugger_set_trace_config(&cfg);
+	}
+
+	debugger_get_trace_config(&cfg);
+	snprintf(r, DC_RESP_SZ,
+	    "{\"ok\":true,\"data_abort\":%u,\"prefetch_abort\":%u,\"undefined\":%u,"
+	    "\"log_exceptions\":%u,\"swi_log\":%u,\"swi_halt\":%u,"
+	    "\"swi_min\":\"%08x\",\"swi_max\":\"%08x\"}",
+	    cfg.trap_data_abort, cfg.trap_prefetch_abort, cfg.trap_undefined,
+	    cfg.log_exceptions, cfg.swi_trace_enabled, cfg.swi_trace_halt,
+	    (unsigned) cfg.swi_filter_min, (unsigned) cfg.swi_filter_max);
+}
+
+/**
+ * help
+ *
+ * The socket had no way to ask what it accepted, so the only reference was the
+ * source. Kept to one line per verb deliberately: it is a reminder, not a manual.
+ */
+static void
+dc_cmd_help(char *r)
+{
+	snprintf(r, DC_RESP_SZ,
+	    "{\"ok\":true,\"commands\":["
+	    "\"ping\","
+	    "\"status\","
+	    "\"regs\","
+	    "\"reg set <0-15|pc|cpsr> <hex>\","
+	    "\"mem <hexaddr> <len> [phys]\","
+	    "\"mem write <hexaddr> <hexbytes> [phys]\","
+	    "\"dis <hexaddr> [count]\","
+	    "\"bp add|del <hexaddr> | bp clear\","
+	    "\"wp add|del <hexaddr> <size> <r|w|rw> [log] | wp clear\","
+	    "\"trace [max]\","
+	    "\"trace config [key=value ...]\","
+	    "\"pause\",\"resume\",\"continue\",\"step [count]\",\"reset\","
+	    "\"state save|load <path>\","
+	    "\"clipboard get|set [text]\""
+	    "]}");
+}
+
+/**
+ * mem write <hexaddr> <hexbytes> [phys]
+ *
+ * Bytes are given as hex pairs, so "mem write 8000 e1a00000" writes four bytes in
+ * the order written. Reports how many landed rather than failing the whole request
+ * on the first refusal, so a run that crosses out of RAM says where it stopped.
+ */
+static void
+dc_mem_write(char *r, const char *a_addr, const char *a_bytes, const char *a_phys)
+{
+	uint32_t addr;
+	size_t len, i;
+	uint32_t written = 0;
+	int physical;
+
+	if (!a_addr || !a_bytes) {
+		dc_error("usage: mem write <hexaddr> <hexbytes> [phys]");
+		return;
+	}
+	len = strlen(a_bytes);
+	if (len == 0 || (len & 1) != 0) {
+		dc_error("hex bytes must be an even number of hex digits");
+		return;
+	}
+	addr = (uint32_t) strtoul(a_addr, NULL, 16);
+	physical = (a_phys && (a_phys[0] == 'p' || a_phys[0] == 'P'));
+
+	for (i = 0; i < len; i += 2) {
+		char pair[3];
+		char *end = NULL;
+		unsigned long b;
+
+		pair[0] = a_bytes[i];
+		pair[1] = a_bytes[i + 1];
+		pair[2] = '\0';
+		b = strtoul(pair, &end, 16);
+		if (end != pair + 2) {
+			dc_error("hex bytes contain a non-hex digit");
+			return;
+		}
+		if (!dc_write8(addr + (uint32_t) (i / 2), physical, (uint8_t) b)) {
+			break;
+		}
+		written++;
+	}
+
+	snprintf(r, DC_RESP_SZ,
+	    "{\"ok\":%s,\"addr\":\"%08x\",\"written\":%u,\"requested\":%u%s}",
+	    written == len / 2 ? "true" : "false", (unsigned) addr,
+	    (unsigned) written, (unsigned) (len / 2),
+	    written == len / 2 ? ""
+	        : ",\"error\":\"stopped at an address that is unmapped, ROM or I/O\"");
+}
+
+/**
+ * Write a byte for the debugger, translating unless asked for a physical address.
+ *
+ * @param addr     Virtual address, or physical if physical is non-zero
+ * @param physical Treat addr as already physical
+ * @return 1 if written; 0 if unmapped, or if the target refuses writes (ROM, I/O)
+ */
+static int
+dc_write8(uint32_t addr, int physical, uint8_t val)
+{
+	uint32_t phys = addr;
+
+	if (!physical) {
+		if (!dc_translate(addr, &phys)) {
+			return 0;
+		}
+	}
+	return mem_phys_write8_debug(phys, val);
+}
+
 static uint32_t
 dc_read32(uint32_t addr, int physical, int *mapped)
 {
@@ -276,8 +480,15 @@ dc_cmd_mem(char *r, char *args)
 	int physical;
 	size_t n;
 
+	/* "mem write <hexaddr> <hexbytes> [phys]" pokes; anything else reads. A
+	   debugger that can only look is half a debugger: testing a theory about a
+	   word in RAM meant rebuilding or driving the guest into writing it. */
+	if (a1 && strcmp(a1, "write") == 0) {
+		dc_mem_write(r, a2, a3, strtok(NULL, " \t"));
+		return;
+	}
 	if (!a1 || !a2) {
-		dc_error("usage: mem <hexaddr> <len> [phys]");
+		dc_error("usage: mem <hexaddr> <len> [phys] | mem write <hexaddr> <hexbytes> [phys]");
 		return;
 	}
 	addr = (uint32_t) strtoul(a1, NULL, 16);
@@ -590,6 +801,15 @@ dc_dispatch(char *line)
 		dc_cmd_bp(resp, args ? args : (char *) "");
 	} else if (strcmp(verb, "wp") == 0) {
 		dc_cmd_wp(resp, args ? args : (char *) "");
+	} else if (strcmp(verb, "reg") == 0) {
+		dc_cmd_reg(resp, args ? args : (char *) "");
+	} else if (strcmp(verb, "help") == 0) {
+		dc_cmd_help(resp);
+	} else if (strcmp(verb, "trace") == 0 && args != NULL &&
+	           strncmp(args, "config", 6) == 0) {
+		/* Checked before plain "trace", which would otherwise read "config" as a
+		   count and drain the ring instead of configuring it. */
+		dc_cmd_trace_config(resp, args + 6);
 	} else if (strcmp(verb, "trace") == 0) {
 		dc_cmd_trace(resp, args ? args : (char *) "");
 	} else if (strcmp(verb, "pause") == 0) {
