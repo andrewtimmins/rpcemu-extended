@@ -69,7 +69,18 @@ static void
 draw_glyph(TextScreen *s, int x, int y, unsigned char ch, uint32_t fg,
            uint32_t bg, int bg_used)
 {
-	const int scale = (s->scale > 1) ? s->scale : 1;
+	/*
+	 * Clamped, not merely defaulted. This is a caller-supplied field in a struct
+	 * callers fill in by hand, so a caller that forgets it hands over whatever was
+	 * on the stack. A large positive value used to mean CONSOLE_FONT_HEIGHT * scale
+	 * iterations per glyph, which is not a wrong picture but a hang - and one that
+	 * appears only on the platforms where the stack happens to hold something big,
+	 * which is how it reached CI on macOS while passing on Linux.
+	 *
+	 * Anything outside a sane range is treated as unscaled rather than believed.
+	 */
+	const int scale = (s->scale > 1 && s->scale <= TEXT_SCREEN_MAX_SCALE)
+	                  ? s->scale : 1;
 	const uint8_t *glyph;
 	int row;
 
@@ -117,7 +128,7 @@ draw_string(TextScreen *s, int x, int y, const char *text, uint32_t fg,
 	}
 	for (p = (const unsigned char *) text; *p != '\0'; p++) {
 		draw_glyph(s, x, y, *p, fg, bg, bg_used);
-		x += CONSOLE_FONT_WIDTH * ((s->scale > 1) ? s->scale : 1);
+		x += CONSOLE_FONT_WIDTH * text_screen_scale(s);
 	}
 	return x;
 }
@@ -143,13 +154,22 @@ text_screen_centre(TextScreen *s, int y, const char *text, uint32_t fg)
 	if (text == NULL) {
 		return;
 	}
-	w = (int) strlen(text) * CONSOLE_FONT_WIDTH * ((s->scale > 1) ? s->scale : 1);
+	w = (int) strlen(text) * CONSOLE_FONT_WIDTH * text_screen_scale(s);
 	text_screen_string(s, (s->width - w) / 2, y, text, fg);
+}
+
+int
+text_screen_scale(const TextScreen *s)
+{
+	return (s->scale > 1 && s->scale <= TEXT_SCREEN_MAX_SCALE) ? s->scale : 1;
 }
 
 void
 text_screen_set_scale(TextScreen *s, int scale)
 {
+	if (scale > TEXT_SCREEN_MAX_SCALE) {
+		scale = TEXT_SCREEN_MAX_SCALE;
+	}
 	s->scale = (scale > 1) ? scale : 1;
 }
 
@@ -172,11 +192,11 @@ text_screen_auto_scale(const TextScreen *s)
 int
 text_screen_columns(const TextScreen *s)
 {
-	return s->width / (CONSOLE_FONT_WIDTH * ((s->scale > 1) ? s->scale : 1));
+	return s->width / (CONSOLE_FONT_WIDTH * text_screen_scale(s));
 }
 
 int
 text_screen_rows(const TextScreen *s)
 {
-	return s->height / (CONSOLE_FONT_HEIGHT * ((s->scale > 1) ? s->scale : 1));
+	return s->height / (CONSOLE_FONT_HEIGHT * text_screen_scale(s));
 }

@@ -41,12 +41,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Largest magnification honoured. A cap is what stops a caller that leaves scale
+   uninitialised from turning a draw into an unbounded loop; see draw_glyph(). */
+#define TEXT_SCREEN_MAX_SCALE 8
+
 typedef struct {
 	uint32_t *pixels;
 	int width;
 	int height;
 	int stride;	/**< pixels per row, usually equal to width */
-	int scale;	/**< glyph magnification; 0 or 1 both mean unscaled */
+	int scale;	/**< glyph magnification; anything outside 1..TEXT_SCREEN_MAX_SCALE means unscaled */
 } TextScreen;
 
 #ifdef __cplusplus
@@ -89,6 +93,9 @@ extern void text_screen_centre(TextScreen *s, int y, const char *text,
  * like a mistake.
  */
 extern void text_screen_set_scale(TextScreen *s, int scale);
+
+/** The scale actually in force, clamped. Safe on a struct that was never set. */
+extern int text_screen_scale(const TextScreen *s);
 
 /** A sensible scale for a screen of this size. */
 extern int text_screen_auto_scale(const TextScreen *s);

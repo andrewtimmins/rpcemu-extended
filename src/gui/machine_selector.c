@@ -193,6 +193,11 @@ machine_selector_draw(MachineSelector *m, TextScreen *s)
 	}
 	scroll_to_selection(m, visible_rows);
 
+	/* Set explicitly rather than left to whatever the caller put there: a struct
+	   filled in field by field leaves this holding stack rubbish, and the list
+	   wants scaling on a large display for the same reason the control menu does. */
+	text_screen_set_scale(s, text_screen_auto_scale(s));
+
 	text_screen_clear(s, COLOUR_BG);
 	text_screen_centre(s, ROW_HEIGHT, "RPCEmu", COLOUR_TITLE);
 

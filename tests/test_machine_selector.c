@@ -82,7 +82,10 @@ int
 main(int argc, char *argv[])
 {
 	MachineSelector m;
-	TextScreen s;
+	/* Zeroed, not merely assigned field by field. TextScreen has grown a member
+	   since this was written and an uninitialised one made the whole test hang on
+	   macOS while passing on Linux, which is the worst way to find out. */
+	TextScreen s = { 0 };
 	const int w = 640, h = 480;
 	int i;
 
@@ -211,6 +214,32 @@ main(int argc, char *argv[])
 		if (argc > 2) {
 			write_ppm(argv[2], &wide);
 		}
+	}
+
+	/* The macOS CI hang: a caller that never set `scale` handed over stack rubbish,
+	   and a large positive value turned one draw into CONSOLE_FONT_HEIGHT * scale
+	   iterations per glyph. Nothing was wrong with the picture; the test simply
+	   never finished. Checked here because a hang is not something the rest of the
+	   suite would report as a failure. */
+	printf("\na daft scale is refused rather than believed\n");
+	{
+		TextScreen bad = { s.pixels, w, h, w, 200000000 };
+
+		check("an absurd scale reads back as unscaled", text_screen_scale(&bad) == 1);
+		bad.scale = -1;
+		check("a negative scale reads back as unscaled", text_screen_scale(&bad) == 1);
+		bad.scale = 0;
+		check("zero reads back as unscaled", text_screen_scale(&bad) == 1);
+		bad.scale = 3;
+		check("a sane scale is honoured", text_screen_scale(&bad) == 3);
+		text_screen_set_scale(&bad, 999);
+		check("setting an absurd scale clamps it",
+		    text_screen_scale(&bad) <= TEXT_SCREEN_MAX_SCALE);
+
+		/* Draws, and returns. If the clamp were gone this would not come back. */
+		bad.scale = 200000000;
+		machine_selector_draw(&m, &bad);
+		check("drawing with an absurd scale still returns", 1);
 	}
 
 	free(s.pixels);
