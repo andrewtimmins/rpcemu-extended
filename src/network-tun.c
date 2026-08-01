@@ -46,6 +46,7 @@
 #include "rpcemu.h"
 #include "mem.h"
 #include "network.h"
+#include "net_slot.h"
 #include "savestate.h"
 #include "podules.h"
 
@@ -187,13 +188,19 @@ tun_alloc(void)
 			return -1;
 		}
 
-		// Calculate the emulated hardware address
+		// Calculate the emulated hardware address. The last byte follows this
+		// emulator's slot: the rest is derived from the host's own interface, so
+		// every instance on one host would otherwise produce an identical address.
+		// That matters more here than under NAT, because bridged machines are
+		// duplicate MAC addresses on the real network rather than a private one.
+		// Slot 0 keeps the original value.
 		network_hwaddr[0] = 0x02;
 		network_hwaddr[1] = 0x00;
 		network_hwaddr[2] = 0xa4;
 		network_hwaddr[3] = ifr.ifr_hwaddr.sa_data[3];
 		network_hwaddr[4] = ifr.ifr_hwaddr.sa_data[4];
-		network_hwaddr[5] = ifr.ifr_hwaddr.sa_data[5];
+		network_hwaddr[5] = (unsigned char) (ifr.ifr_hwaddr.sa_data[5]
+		                                     + net_slot_acquire());
 	}
 
 	close(sd);
