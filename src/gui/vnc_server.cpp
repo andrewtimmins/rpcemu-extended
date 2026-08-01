@@ -224,6 +224,13 @@ void VncServer::updateFramebuffer(const uint32_t *buffer, int width, int height,
 		return;
 	}
 
+	/* An overlay owns the screen while it is up: the machine keeps running and
+	   keeps drawing, but the client sees the overlay rather than a guest frame
+	   painted over the top of it. */
+	if (overlay_active_.load()) {
+		return;
+	}
+
 	int start_y = std::max(0, yl);
 	int end_y = std::min(height, yh + 1);
 	if (force_full_update_.exchange(false)) {
@@ -259,6 +266,18 @@ void VncServer::primeFramebuffer(const uint32_t *buffer, int width, int height)
 	}
 	copyFrameLines(buffer, width, 0, height);
 	rfbMarkRectAsModified(rfb_screen_, 0, 0, width, height);
+}
+
+void VncServer::setOverlayActive(bool active)
+{
+	const bool was = overlay_active_.exchange(active);
+
+	if (was && !active) {
+		/* Coming back to the guest: ask for the whole screen, because the parts
+		   the overlay covered are unchanged as far as the guest is concerned and
+		   would otherwise not be resent until something happened to touch them. */
+		force_full_update_.store(true);
+	}
 }
 
 void VncServer::processEvents()
@@ -479,11 +498,12 @@ void vnc_kbd_callback(rfbBool down, rfbKeySym keysym, rfbClientPtr cl)
 		return;
 	}
 
-	/* Diverted: something the emulator is drawing itself wants the keys, and the
-	   guest must not also see them. Checked before the host, so this works with
-	   no emulator at all. */
-	if (server->keysym_hook_) {
-		server->keysym_hook_(static_cast<uint32_t>(keysym), down != FALSE);
+	/* Offered first to whatever the emulator is drawing itself. It returns true
+	   if it swallowed the key, which is how an overlay can watch for its own
+	   shortcut without stealing everything else from the guest. Checked before the
+	   host, so this works with no emulator at all. */
+	if (server->keysym_hook_ &&
+	    server->keysym_hook_(static_cast<uint32_t>(keysym), down != FALSE)) {
 		return;
 	}
 

@@ -36,7 +36,6 @@
 #include "config_paths.h"
 #include "gui_preferences.h"
 #include "config_selector_dialog.h"
-#include "vnc_selector_session.h"
 #include "main_frame.h"
 #include "headless_main.h"
 #include "http_transfer.h"	/* RPCEMU_HAVE_HTTP */
@@ -715,35 +714,23 @@ bool RpcemuApp::OnInit()
 		}
 
 		if (!used_default) {
-			ConfigSelectorDialog selector(nullptr);
-
 			/*
-			 * The same list goes to any VNC client for as long as this dialogue is
-			 * open, so a remote user is not stuck looking at nothing until somebody
-			 * at the keyboard picks a machine. Whichever chooses first wins: a
-			 * remote Enter ends this dialogue, and the session is torn down when
-			 * this scope exits either way.
-			 *
-			 * Only when VNC is already meant to be on. Opening a listening port
-			 * that decides which machine boots is not something to do because a
-			 * dialogue happened to appear.
+			 * Deliberately local only. The machine list is offered over VNC in
+			 * headless mode, where remote is the only user there is; doing it here
+			 * as well meant a local and a remote user could race for the same
+			 * dialogue, and a remote client could boot a machine on somebody's
+			 * desktop without them asking for it. What a remote user of a desktop
+			 * session actually wants is control of the machine that is running,
+			 * which is the overlay rather than this.
 			 */
-			const std::vector<std::string> machine_names = ConfigPathsMachineNames();
-			VncSelectorSession vnc_selector(machine_names, &selector);
-			const int result = selector.ShowModal();
-			const std::string remote = vnc_selector.chosen();
-
-			if (!remote.empty()) {
-				config_path = wxString::FromUTF8(remote.c_str()) + ".cfg";
-				resume_requested = false;
-				state_file = wxString();
-			} else if (result != wxID_OK) {
+			ConfigSelectorDialog selector(nullptr);
+			if (selector.ShowModal() != wxID_OK) {
 				return false;
-			} else {
-				config_path = selector.GetSelectedConfigPath();
-				resume_requested = selector.ShouldResume();
-				state_file = selector.GetStateFileToLoad();
 			}
+
+			config_path = selector.GetSelectedConfigPath();
+			resume_requested = selector.ShouldResume();
+			state_file = selector.GetStateFileToLoad();
 		}
 	}
 	// The machine's own snapshot is "consumed" (renamed to .bak) on resume;

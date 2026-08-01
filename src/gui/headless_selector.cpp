@@ -69,10 +69,11 @@ constexpr int kHeight = 480;
 std::mutex g_key_mutex;
 std::deque<uint32_t> g_keys;
 
-void queue_key(uint32_t keysym, bool down)
+bool queue_key(uint32_t keysym, bool down)
 {
+	/* Always swallowed: there is no machine to pass anything on to. */
 	if (!down) {
-		return;	/* act on press; a release would double every keystroke */
+		return true;	/* act on press; a release would double every keystroke */
 	}
 	std::lock_guard<std::mutex> lock(g_key_mutex);
 
@@ -81,6 +82,7 @@ void queue_key(uint32_t keysym, bool down)
 	if (g_keys.size() < 20) {
 		g_keys.push_back(keysym);
 	}
+	return true;
 }
 
 bool next_key(uint32_t *keysym)

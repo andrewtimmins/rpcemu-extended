@@ -9,7 +9,7 @@ set(GUI_SOURCES
     headless_main.cpp
     headless_selector.cpp
     vnc_app.cpp
-    vnc_selector_session.cpp
+    vnc_overlay.cpp
     machine_selector.c
     text_screen.c
     console_font.c

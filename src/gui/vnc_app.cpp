@@ -29,6 +29,7 @@ extern "C" {
 }
 
 #include "vnc_app.h"
+#include "vnc_overlay.h"
 #include "vnc_server.h"
 
 namespace {
@@ -101,15 +102,18 @@ void VncAppAttach(EmulatorHost *host)
 {
 	VncServer &server = VncAppServer();
 
-	/* Clearing the hook matters as much as attaching: while the selector was up
-	   its hook was swallowing every key, and a machine needs them. */
+	/* The selector's hook swallowed every key; a machine needs them, so it is
+	   replaced rather than merely cleared. The overlay's hook passes everything
+	   through until its own shortcut is pressed, so the guest is unaffected. */
 	server.setKeySymHook(nullptr);
 	server.setEmulatorHost(host);
+	VncOverlayAttach(host);
 }
 
 void VncAppDetach()
 {
 	if (g_server) {
+		VncOverlayAttach(nullptr);
 		g_server->setEmulatorHost(nullptr);
 	}
 }

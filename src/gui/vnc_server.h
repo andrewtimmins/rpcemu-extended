@@ -45,16 +45,18 @@ public:
 	/*
 	 * Divert keysyms away from the guest.
 	 *
-	 * With a hook set, keys go to it and never reach the emulator. It is how
-	 * something the emulator draws itself - the machine selector before any
-	 * machine exists, and any later overlay - receives input, and it is the
-	 * reason the server can usefully be constructed with no EmulatorHost at all.
+	 * The hook sees every key first and says whether it swallowed it: true means
+	 * the guest never hears about it, false means carry on as normal. That lets
+	 * something the emulator draws itself - the machine selector before a machine
+	 * exists, or an overlay over a running one - take input while a machine that
+	 * is not covered up keeps working. It is also why the server can usefully be
+	 * constructed with no EmulatorHost at all.
 	 *
 	 * The hook is called on the server's own event thread, so it must be cheap
 	 * and thread-safe; queue and return. Set it before start() to avoid racing
 	 * the first client.
 	 */
-	using KeySymHook = std::function<void(uint32_t keysym, bool down)>;
+	using KeySymHook = std::function<bool(uint32_t keysym, bool down)>;
 	void setKeySymHook(KeySymHook hook) { keysym_hook_ = std::move(hook); }
 	void stop();
 	bool isRunning() const { return running_; }
@@ -82,6 +84,23 @@ public:
 	 * able to look but not touch - which is what should happen between machines.
 	 */
 	void setEmulatorHost(EmulatorHost *host) { emulator_host_.store(host); }
+
+	/*
+	 * While an overlay is up, guest frames are not copied to the client: the
+	 * emulator carries on running and drawing, but what the client sees is
+	 * whatever the overlay primed. Clearing it forces a full update so the guest's
+	 * screen comes back in one go rather than a line at a time as it happens to
+	 * change.
+	 */
+	void setOverlayActive(bool active);
+	bool overlayActive() const { return overlay_active_.load(); }
+
+	/** Send the whole screen on the next update, not just the changed lines. */
+	void forceFullUpdate() { force_full_update_.store(true); }
+
+	/** The framebuffer's current size, so an overlay can match it. */
+	int width() const { return current_width_; }
+	int height() const { return current_height_; }
 	EmulatorHost *emulatorHost() const { return emulator_host_.load(); }
 	void processEvents();
 
@@ -116,6 +135,7 @@ private:
 	int listen_port_ = 5900;
 	std::atomic<int> client_count_{0};
 	std::atomic<bool> force_full_update_{false};
+	std::atomic<bool> overlay_active_{false};
 	bool running_ = false;
 	char *password_list_[2] = {nullptr, nullptr};
 	std::string current_password_;

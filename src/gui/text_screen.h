@@ -46,6 +46,7 @@ typedef struct {
 	int width;
 	int height;
 	int stride;	/**< pixels per row, usually equal to width */
+	int scale;	/**< glyph magnification; 0 or 1 both mean unscaled */
 } TextScreen;
 
 #ifdef __cplusplus
@@ -78,6 +79,19 @@ extern int text_screen_string_bg(TextScreen *s, int x, int y, const char *text,
 /** Draw a string horizontally centred on the screen. */
 extern void text_screen_centre(TextScreen *s, int y, const char *text,
                                uint32_t fg);
+
+/**
+ * Set the scale glyphs are drawn at, in whole pixels; 1 is the raw 8x16 cell.
+ *
+ * A fixed cell that reads well at 640x480 is lost on a 1920x1080 client, and the
+ * guest chooses the resolution, so anything the emulator draws over it has to
+ * cope with both. Whole numbers only: a bitmap font scaled by a fraction looks
+ * like a mistake.
+ */
+extern void text_screen_set_scale(TextScreen *s, int scale);
+
+/** A sensible scale for a screen of this size. */
+extern int text_screen_auto_scale(const TextScreen *s);
 
 /** Columns and rows the screen can hold, for a caller laying out a list. */
 extern int text_screen_columns(const TextScreen *s);

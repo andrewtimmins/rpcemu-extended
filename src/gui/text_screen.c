@@ -69,6 +69,7 @@ static void
 draw_glyph(TextScreen *s, int x, int y, unsigned char ch, uint32_t fg,
            uint32_t bg, int bg_used)
 {
+	const int scale = (s->scale > 1) ? s->scale : 1;
 	const uint8_t *glyph;
 	int row;
 
@@ -79,8 +80,9 @@ draw_glyph(TextScreen *s, int x, int y, unsigned char ch, uint32_t fg,
 	}
 	glyph = console_font_8x16[ch - CONSOLE_FONT_FIRST];
 
-	for (row = 0; row < CONSOLE_FONT_HEIGHT; row++) {
+	for (row = 0; row < CONSOLE_FONT_HEIGHT * scale; row++) {
 		const int py = y + row;
+		const uint8_t bits = glyph[row / scale];
 		uint32_t *line;
 		int col;
 
@@ -89,13 +91,13 @@ draw_glyph(TextScreen *s, int x, int y, unsigned char ch, uint32_t fg,
 		}
 		line = s->pixels + (size_t) py * (size_t) s->stride;
 
-		for (col = 0; col < CONSOLE_FONT_WIDTH; col++) {
+		for (col = 0; col < CONSOLE_FONT_WIDTH * scale; col++) {
 			const int px = x + col;
 
 			if (px < 0 || px >= s->width) {
 				continue;
 			}
-			if (glyph[row] & (0x80u >> col)) {
+			if (bits & (0x80u >> (col / scale))) {
 				line[px] = fg;
 			} else if (bg_used) {
 				line[px] = bg;
@@ -115,7 +117,7 @@ draw_string(TextScreen *s, int x, int y, const char *text, uint32_t fg,
 	}
 	for (p = (const unsigned char *) text; *p != '\0'; p++) {
 		draw_glyph(s, x, y, *p, fg, bg, bg_used);
-		x += CONSOLE_FONT_WIDTH;
+		x += CONSOLE_FONT_WIDTH * ((s->scale > 1) ? s->scale : 1);
 	}
 	return x;
 }
@@ -141,18 +143,40 @@ text_screen_centre(TextScreen *s, int y, const char *text, uint32_t fg)
 	if (text == NULL) {
 		return;
 	}
-	w = (int) strlen(text) * CONSOLE_FONT_WIDTH;
+	w = (int) strlen(text) * CONSOLE_FONT_WIDTH * ((s->scale > 1) ? s->scale : 1);
 	text_screen_string(s, (s->width - w) / 2, y, text, fg);
+}
+
+void
+text_screen_set_scale(TextScreen *s, int scale)
+{
+	s->scale = (scale > 1) ? scale : 1;
+}
+
+int
+text_screen_auto_scale(const TextScreen *s)
+{
+	/* One step per 640 pixels of width, capped: past three the text stops looking
+	   like text and starts looking like blocks. */
+	int scale = s->width / 640;
+
+	if (scale < 1) {
+		scale = 1;
+	}
+	if (scale > 3) {
+		scale = 3;
+	}
+	return scale;
 }
 
 int
 text_screen_columns(const TextScreen *s)
 {
-	return s->width / CONSOLE_FONT_WIDTH;
+	return s->width / (CONSOLE_FONT_WIDTH * ((s->scale > 1) ? s->scale : 1));
 }
 
 int
 text_screen_rows(const TextScreen *s)
 {
-	return s->height / CONSOLE_FONT_HEIGHT;
+	return s->height / (CONSOLE_FONT_HEIGHT * ((s->scale > 1) ? s->scale : 1));
 }
