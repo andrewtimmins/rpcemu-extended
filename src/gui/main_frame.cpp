@@ -1526,8 +1526,9 @@ void MainFrame::ProcessEmulatorKeyEvent(wxKeyEvent &event, bool key_down)
 		if (panel_ != nullptr && !config_copy_.mousehackon && mouse_captured) {
 			panel_->ReleaseMouseCapture();
 			UpdateMachineStatus();
+			return;
 		}
-		return;
+		/* Nothing to escape from, so the guest gets the key. */
 	}
 
 	if (key_code == WXK_MENU) {
