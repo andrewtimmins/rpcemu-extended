@@ -1,0 +1,108 @@
+# Running several machines at once
+
+People want what VirtualBox and VMware give them: a list of machines, and several of
+them running together. Developers want RISC OS 3.71 beside 5.30 beside a 5.31 beta
+to check software against each. Everyone else wants to potter about with more than
+one machine, and to have those machines see each other.
+
+This describes how that works today, where it is going, and one thing that has been
+ruled out, so that the parts already in the tree are not mistaken for the finished
+design.
+
+## One machine per process, and why that is not a workaround
+
+The emulator core is one machine per process, structurally. `arm`, `config`,
+`machine`, `ram00`, `vram`, `rom`, `iomd`, `vidc`, the cp15 translation tables and
+the recompiler's code cache are all file-scope globals. Two of those are decisive:
+
+- **The soft TLB is 32MB per machine.** `vraddrl_mode[2][0x100000]` and
+  `vwaddrl_mode[2][0x100000]`, 16MB each.
+- **The recompiler bakes the addresses of globals into generated code.** Generated
+  blocks load `&arm.reg[16]`, `&flaglookup[...]` and the fast-map bases as absolute
+  values, and the code cache is itself a static array. Two machines in one process
+  would need separate compilations of everything, with the cache rebased.
+
+Turning that into a per-machine context is a months-long refactor of a twenty-year-old
+core, and the recompiler is the hard half. **It is not planned.**
+
+Nor is it necessary. VirtualBox runs each VM as its own process with a manager front
+end; VMware Workstation runs one `vmware-vmx` per VM. What users are asking for is a
+manager, not a single address space. So the plan is a manager over processes, and
+the emulator's job is to be well behaved when several copies of it are running.
+
+## What exists now
+
+Several machines can be run side by side by hand. Each needs its own channels,
+because those settings belong to the installation rather than to a machine and three
+instances would otherwise fight over one port and one socket path:
+
+```bash
+./rpcemu-recompiler --machine os371 --vnc-port 5901 --hostcmd-socket /tmp/os371.sock &
+./rpcemu-recompiler --machine os530 --vnc-port 5902 --hostcmd-socket /tmp/os530.sock &
+```
+
+`--vnc-port`, `--no-vnc`, `--hostcmd-socket`, `--debug-socket` and `--no-relay`
+override the settings file for one instance. See [vnc.md](vnc.md).
+
+**Exchanging files between machines already works** and needs no networking: the
+`shared/` folder is exposed to every machine as `HostFS::Shared.$`. For the
+"does my software still run on 3.71" case that is most of the job.
+
+**One instance relays Access.** The relay bridges Access broadcasts to the real
+network, and Access uses fixed UDP ports, so it is a host-wide service. The first
+emulator to start claims it and the rest decline and say so. Without that claim they
+all bind the same ports successfully, because the sockets set `SO_REUSEADDR`, and
+every packet is relayed once per instance: the network sees duplicates and each
+instance sees the others' copies, with no error to notice. The claim is an exclusive
+loopback TCP bind, which is the smallest thing that makes ownership explicit.
+
+## What is planned
+
+### A manager window
+
+A list of machines with their state, and buttons to start and stop them. Machines
+run as child processes, as they do under VirtualBox, and the manager allocates each
+one a VNC port and socket paths so they do not collide.
+
+The first version gives each machine its own display window. Embedding the displays
+in tabs is a later step, and comes almost free through the VNC server that each
+instance already runs — which also means managing machines on another computer.
+
+### A virtual switch, so machines can see each other
+
+Today each machine sits behind its own NAT, so two emulated machines **cannot see
+each other at all**. That defeats ShareFS between them, which is one of the main
+reasons to run two RISC OS machines.
+
+The target is closer to VirtualBox's NAT Network than to a bare hub: one virtual LAN
+that the machines sit on, with a shared uplink outwards, since a Risc PC has one
+Ethernet card and expects both from it. The relay then belongs to that LAN, binding
+Access's ports once on behalf of every machine on the switch and bridging them to
+the real network, which is strictly better than the ownership claim described above.
+
+MAC addresses have to be allocated, since `macaddress` is a per-machine setting and
+cloned machines will collide.
+
+## Decisions still open
+
+- **Where the switch lives.** Inside the manager is convenient, since it is already
+  long-lived, but then machines started by hand cannot join. A separate small service
+  that the manager starts if it is not running follows how the relay behaves today.
+- **Transport.** A UNIX datagram socket is simplest and is not available on Windows,
+  which is a supported platform here. UDP on loopback works everywhere, provided it
+  is pinned to loopback with a zero TTL so a virtual LAN cannot leak onto the real
+  network.
+- **Whether the uplink is shared.** One SLiRP for the whole switch is the VirtualBox
+  model and means one NAT table, but it is more surgery. Leaving each machine its own
+  NAT for outbound traffic and using the switch only for machine-to-machine and
+  Access is much less work and probably indistinguishable in use.
+- **Whether emulated machines should appear to real hardware** on the network, or
+  whether a private LAN between them is enough. The first keeps the relay central
+  and the switch bridging; the second is considerably simpler.
+
+## What it costs
+
+Each instance carries its own guest RAM, 32MB of translation tables and a code
+cache, and its emulator thread will use a core. Three machines is roughly a gigabyte
+and three busy cores. That is unremarkable on a development machine, and worth
+knowing before starting six.
