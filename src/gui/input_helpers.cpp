@@ -218,13 +218,9 @@ unsigned InputNativeScancodeFromKeyEvent(const wxKeyEvent &event)
 
 bool InputIsReleaseMouseCaptureKey(const wxKeyEvent &event)
 {
-	/* Only Ctrl+End releases the mouse / exits full-screen, so that Esc itself
-	 * passes through to RISC OS as a normal key. */
+	/* Alt+Enter, as DOSBox uses. Alt and Option are the same physical key, so
+	   the shortcut is the same on every platform. */
 	const int key_code = event.GetKeyCode();
-	if ((key_code == WXK_END || key_code == WXK_NUMPAD_END) &&
-	    (event.GetModifiers() & wxMOD_CONTROL)) {
-		return true;
-	}
-
-	return false;
+	return (key_code == WXK_RETURN || key_code == WXK_NUMPAD_ENTER) &&
+	       (event.GetModifiers() & wxMOD_ALT) != 0;
 }

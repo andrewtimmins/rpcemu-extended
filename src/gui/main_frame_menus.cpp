@@ -347,7 +347,7 @@ void MainFrame::BuildToolBar()
 	                                        ToolbarIconMute(false, icon_size), wxNullBitmap,
 	                                        "Toggle sound mute");
 	tool_bar_->AddTool(ID_MENU_FULLSCREEN, wxEmptyString, ToolbarIconFullscreen(icon_size),
-	                   "Toggle full-screen mode (Ctrl+End to leave)");
+	                   "Toggle full-screen mode (Alt+Enter to leave)");
 	tool_bar_->AddTool(ID_MENU_MACHINE, wxEmptyString, ToolbarIconConfigure(icon_size),
 	                   "Edit machine settings");
 

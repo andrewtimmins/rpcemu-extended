@@ -307,7 +307,7 @@ void MainFrame::UpdateMachineStatus()
 	wxString status = wxString::Format("Machine: %s", wxString::FromUTF8(config_copy_.name));
 	if (!config_copy_.mousehackon) {
 		if (mouse_captured) {
-			status += " - Press Ctrl+End to release mouse";
+			status += " - Press Alt+Enter to release mouse";
 		} else {
 			status += " - Click to capture mouse";
 		}
@@ -778,7 +778,7 @@ void MainFrame::EnterFullScreen()
 		   means what it says. */
 		wxRichMessageDialog dlg(this,
 		                        "This window will now be switched to full-screen mode.\n\n"
-		                        "To leave full-screen mode press Ctrl+End.",
+		                        "To leave full-screen mode press Alt+Enter.",
 		                        "RPCEmu - Full-screen mode",
 		                        wxOK | wxCANCEL | wxICON_INFORMATION);
 		dlg.SetOKCancelLabels("OK", "Cancel");
@@ -1510,7 +1510,7 @@ void MainFrame::ProcessEmulatorKeyEvent(wxKeyEvent &event, bool key_down)
 	/* No keyboard shortcuts are intercepted here: menu/toolbar actions are
 	 * mouse-driven so that every key (function keys like F12, Ctrl combos, etc.)
 	 * passes straight through to RISC OS. The only exception is the mouse-capture
-	 * / full-screen release key (Ctrl+End), handled below. */
+	 * / full-screen release key (Alt+Enter), handled below. */
 
 	const int key_code = event.GetKeyCode();
 	if (key_code == WXK_NONE || key_code == 0) {
