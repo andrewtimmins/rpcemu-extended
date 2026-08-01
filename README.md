@@ -735,7 +735,7 @@ controls) are available from the menus and the toolbar instead.
 
 | Key | Action |
 | --- | --- |
-| **Ctrl+End** | Release the captured mouse, or exit full-screen |
+| **Alt+Enter** | Release the captured mouse, or exit full-screen |
 
 The toolbar provides one-click access to screenshot, floppy load, CD-ROM ISO load,
 reset, mute, full-screen, machine settings, and debugger controls.

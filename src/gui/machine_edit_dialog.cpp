@@ -220,7 +220,7 @@ wxWindow *MachineEditDialog::BuildSystemPage(wxWindow *parent)
 	fullscreen_check_ = new wxCheckBox(page, wxID_ANY, "Start this machine full screen");
 	fullscreen_check_->SetToolTip(
 	    "Go full screen as soon as this machine starts, rather than opening a "
-	    "window first. Press Ctrl+End or use Settings > Full Screen to leave it.");
+	    "window first. Press Alt+Enter or use Settings > Full Screen to leave it.");
 	default_machine_check_ = new wxCheckBox(page, wxID_ANY,
 	    "Open this machine automatically at startup");
 	default_machine_check_->SetToolTip(
