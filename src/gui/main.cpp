@@ -771,7 +771,7 @@ bool RpcemuApp::OnInit()
 	 * possible to do by hand; it becomes easy to do by accident once machines are
 	 * started from a list, and the damage does not show until ADFS complains later.
 	 */
-	if (!machine_lock_acquire(rpcemu_get_machine_datadir(), config.vnc_port)) {
+	if (!machine_lock_acquire(rpcemu_get_machine_datadir(), 0)) {
 		long pid = 0;
 		int port = 0;
 		wxString detail = wxString::Format(

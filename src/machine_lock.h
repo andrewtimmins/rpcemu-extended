@@ -61,6 +61,18 @@ extern "C" {
 extern int machine_lock_acquire(const char *machine_dir, int vnc_port);
 
 /**
+ * Record the port the VNC server actually ended up listening on.
+ *
+ * The port is not known to be real when the lock is taken: VNC may be switched
+ * off, or may fail to bind. Writing the configured port regardless would have the
+ * manager advertise a port nothing is listening on, so the lock is taken with 0 and
+ * corrected once the server is up.
+ *
+ * @param vnc_port The live port, or 0 if there is no server.
+ */
+extern void machine_lock_set_vnc_port(int vnc_port);
+
+/**
  * Release it. Safe to call when nothing was acquired.
  *
  * Called on an orderly exit for tidiness; the operating system would do it anyway.

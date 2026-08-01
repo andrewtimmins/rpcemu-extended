@@ -28,6 +28,9 @@
 
 #define LOCK_FILE "running.lock"
 
+/* Remembered so the port can be corrected later without re-deriving the path. */
+static int lock_vnc_port;
+
 /** Join a machine directory and the lock file name, tolerating a missing separator. */
 static void
 lock_path(char *out, size_t size, const char *machine_dir)
@@ -78,6 +81,24 @@ machine_lock_acquire(const char *machine_dir, int vnc_port)
 	WriteFile(lock_handle, text, (DWORD) strlen(text), &written, NULL);
 	FlushFileBuffers(lock_handle);
 	return 1;
+}
+
+void
+machine_lock_set_vnc_port(int vnc_port)
+{
+	char text[128];
+	DWORD written = 0;
+
+	lock_vnc_port = vnc_port;
+	if (lock_handle == INVALID_HANDLE_VALUE) {
+		return;
+	}
+	SetFilePointer(lock_handle, 0, NULL, FILE_BEGIN);
+	SetEndOfFile(lock_handle);
+	snprintf(text, sizeof(text), "pid=%lu\nvnc_port=%d\n",
+	    (unsigned long) GetCurrentProcessId(), vnc_port);
+	WriteFile(lock_handle, text, (DWORD) strlen(text), &written, NULL);
+	FlushFileBuffers(lock_handle);
 }
 
 void
@@ -135,6 +156,25 @@ machine_lock_acquire(const char *machine_dir, int vnc_port)
 
 	lock_fd = fd;	/* held for the life of the process */
 	return 1;
+}
+
+void
+machine_lock_set_vnc_port(int vnc_port)
+{
+	char text[128];
+
+	lock_vnc_port = vnc_port;
+	if (lock_fd < 0) {
+		return;
+	}
+	if (lseek(lock_fd, 0, SEEK_SET) < 0 || ftruncate(lock_fd, 0) != 0) {
+		return;
+	}
+	snprintf(text, sizeof(text), "pid=%ld\nvnc_port=%d\n", (long) getpid(),
+	    vnc_port);
+	if (write(lock_fd, text, strlen(text)) < 0) {
+		/* Informational only; the lock is what matters. */
+	}
 }
 
 void

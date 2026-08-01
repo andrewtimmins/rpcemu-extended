@@ -468,7 +468,7 @@ int RunHeadless(const char *machine_name, bool resume, const char *state_file)
 	 * way out, the later exit silently discarding the earlier one's changes, and
 	 * would interleave sector writes into the same hard disc image.
 	 */
-	if (!machine_lock_acquire(rpcemu_get_machine_datadir(), config.vnc_port)) {
+	if (!machine_lock_acquire(rpcemu_get_machine_datadir(), 0)) {
 		long pid = 0;
 		int port = 0;
 

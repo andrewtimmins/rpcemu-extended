@@ -26,6 +26,7 @@
 extern "C" {
 #include "rpcemu.h"
 #include "app_settings.h"
+#include "machine_lock.h"
 }
 
 #include "vnc_app.h"
@@ -90,11 +91,16 @@ bool VncAppStart(bool force)
 		return false;
 	}
 	g_port = app.vnc_port;
+
+	/* Now it is real: record it so anything reading the machine's lock file - the
+	   manager, or a person - is told a port that is actually listening. */
+	machine_lock_set_vnc_port(g_port);
 	return true;
 }
 
 void VncAppStop()
 {
+	machine_lock_set_vnc_port(0);
 	if (g_server) {
 		g_server->setEmulatorHost(nullptr);
 		g_server->setKeySymHook(nullptr);
