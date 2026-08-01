@@ -412,6 +412,11 @@ portable between them.
 | `--machine <name>` | Run this machine, skipping the selector. Also accepts `--machine=<name>`. |
 | `--resume` | Resume the machine's own snapshot, consuming it to `.bak`. Requires `--machine`. |
 | `--state <file>` | Load an explicit state file, leaving it in place. Requires `--machine`. |
+| `--vnc-port <n>` | VNC port for this instance, overriding the settings file. Needed when running more than one emulator on a host, since the setting is per installation. |
+| `--no-vnc` | Do not start the VNC server, whatever the settings say. Ignored with `--headless`, which has no other way in. |
+| `--hostcmd-socket <spec>` | HostCmd socket for this instance: a path, or a bare port for TCP on localhost. |
+| `--debug-socket <spec>` | DebugCmd socket for this instance, same forms. |
+| `--no-relay` | Do not relay Access broadcasts. Only one emulator per host can, and the others decline automatically; this says so deliberately. |
 | `--headless` | Run with no GUI window, over VNC. Without `--machine`, the machine list is offered over VNC and you choose one from a client. VNC is started for the run whether or not the settings enable it, since it is the only way in; the setting itself is left alone. |
 | `--list-machines` | List the available machine configs and exit. |
 | `--fetch-riscos[=which]` | Download RISC OS from RISC OS Open, unpack it, create a machine and exit. `which` is `stable` (default) or `nightly`. |

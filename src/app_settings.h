@@ -97,6 +97,30 @@ extern int app_settings_save(const char *datadir, const Config *cfg);
  */
 extern int app_settings_has(const char *datadir, const char *key);
 
+/*
+ * Command-line overrides, which sit above the settings file.
+ *
+ * These exist because the settings file is per installation and these values need
+ * to be per *instance*: several emulators sharing one data directory each need
+ * their own VNC port and their own control sockets, or the second one to start
+ * cannot bind and the third fights the second. Set them while parsing arguments,
+ * before any config is loaded.
+ *
+ * Deliberately no --vnc-password: a password on a command line is visible to
+ * anyone who can run ps. It stays in the settings file.
+ */
+extern void app_settings_override_vnc_port(int port);
+extern void app_settings_override_vnc_enabled(int enabled);
+extern void app_settings_override_hostcmd_socket(const char *spec);
+extern void app_settings_override_debug_socket(const char *spec);
+extern void app_settings_override_relay(int enabled);
+
+/** Apply whatever overrides were set. Call after app_settings_load(). */
+extern void app_settings_apply_overrides(Config *cfg);
+
+/** Has the relay been turned off for this instance? */
+extern int app_settings_relay_enabled(void);
+
 /** Path of the settings file, for messages. Returns a pointer to a static buffer. */
 extern const char *app_settings_path(const char *datadir);
 

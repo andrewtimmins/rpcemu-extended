@@ -47,6 +47,7 @@
 extern "C" {
 #include "rpcemu.h"
 #include "savestate.h"
+#include "app_settings.h"
 }
 
 class RpcemuApp : public wxApp {
@@ -910,6 +911,43 @@ int main(int argc, char **argv)
 		} else if (strcmp(arg, "--accept-licence") == 0 ||
 		           strcmp(arg, "--accept-license") == 0) {
 			g_fetch_accept_licence = true;
+		} else if (strcmp(arg, "--vnc-port") == 0 || strncmp(arg, "--vnc-port=", 11) == 0) {
+			const char *value = (arg[10] == '=') ? arg + 11
+			                                     : (i + 1 < argc ? argv[++i] : nullptr);
+			int port = value ? atoi(value) : 0;
+
+			if (port <= 0 || port > 65535) {
+				ConsoleMessage(true, "error: --vnc-port needs a port between 1 and 65535.\n");
+				ConsoleMessageFlush();
+				return 2;
+			}
+			app_settings_override_vnc_port(port);
+		} else if (strcmp(arg, "--no-vnc") == 0) {
+			app_settings_override_vnc_enabled(0);
+		} else if (strcmp(arg, "--hostcmd-socket") == 0 ||
+		           strncmp(arg, "--hostcmd-socket=", 17) == 0) {
+			const char *value = (arg[16] == '=') ? arg + 17
+			                                     : (i + 1 < argc ? argv[++i] : nullptr);
+
+			if (value == nullptr) {
+				ConsoleMessage(true, "error: --hostcmd-socket requires a path or port.\n");
+				ConsoleMessageFlush();
+				return 2;
+			}
+			app_settings_override_hostcmd_socket(value);
+		} else if (strcmp(arg, "--debug-socket") == 0 ||
+		           strncmp(arg, "--debug-socket=", 15) == 0) {
+			const char *value = (arg[14] == '=') ? arg + 15
+			                                     : (i + 1 < argc ? argv[++i] : nullptr);
+
+			if (value == nullptr) {
+				ConsoleMessage(true, "error: --debug-socket requires a path or port.\n");
+				ConsoleMessageFlush();
+				return 2;
+			}
+			app_settings_override_debug_socket(value);
+		} else if (strcmp(arg, "--no-relay") == 0) {
+			app_settings_override_relay(0);
 		} else if (strcmp(arg, "--machine") == 0) {
 			if (i + 1 < argc) {
 				machine_name = argv[++i];

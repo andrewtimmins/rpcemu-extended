@@ -79,6 +79,7 @@ bool VncAppStart(bool force)
 	app.vnc_port = (config.vnc_port > 0) ? config.vnc_port : 5900;
 	snprintf(app.vnc_password, sizeof(app.vnc_password), "%s", config.vnc_password);
 	app_settings_load(rpcemu_get_datadir(), &app);
+	app_settings_apply_overrides(&app);
 
 	if (!force && !app.vnc_enabled) {
 		return false;

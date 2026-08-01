@@ -755,6 +755,10 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 
 		const int applied = app_settings_load(rpcemu_get_datadir(), cfg);
 
+		/* Last word: several instances sharing a data directory each need their own
+		   port and sockets, which only the command line can say. */
+		app_settings_apply_overrides(cfg);
+
 		if (applied < 0) {
 			rpclog("config_load: cannot read %s, using per-machine values\n",
 			    app_settings_path(rpcemu_get_datadir()));

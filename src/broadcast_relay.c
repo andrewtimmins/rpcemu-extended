@@ -306,6 +306,61 @@ get_broadcast_address(struct in_addr *bcast, struct in_addr *host)
 }
 #endif /* _WIN32 */
 
+/*
+ * Host-wide ownership of the relay.
+ *
+ * The relay cannot simply be per-emulator. Access uses fixed UDP ports, and the
+ * data sockets set SO_REUSEADDR so that a restart is not blocked by the old
+ * socket - which also means a second emulator on the same host binds them quite
+ * happily and receives the same broadcasts. Both then relay every packet, so the
+ * network sees each one twice and each instance sees the other's relayed copies.
+ * Nothing fails, which is what makes it nasty: there is no error to notice.
+ *
+ * So ownership is claimed explicitly, with an exclusive TCP bind on loopback that
+ * no SO_REUSEADDR is set on. Exactly one process can hold it; the rest run without
+ * a relay and say so. TCP on the same number as one of the Access ports, because
+ * Access is UDP and the pair cannot collide.
+ *
+ * This is the small version of what a virtual switch would do properly: one relay
+ * for the host, shared, rather than one per machine.
+ */
+#define RELAY_OWNER_PORT 49171
+
+static relay_socket_t relay_owner_socket = RELAY_INVALID_SOCKET;
+
+static int
+claim_relay_ownership(void)
+{
+    struct sockaddr_in addr;
+
+    relay_owner_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (relay_owner_socket == RELAY_INVALID_SOCKET) {
+        return 1; /* cannot claim, so do not stand in the way of the relay */
+    }
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(RELAY_OWNER_PORT);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    if (bind(relay_owner_socket, (struct sockaddr *) &addr, sizeof(addr))
+        == RELAY_SOCKET_ERROR) {
+        relay_closesocket(relay_owner_socket);
+        relay_owner_socket = RELAY_INVALID_SOCKET;
+        return 0;
+    }
+    return 1;
+}
+
+static void
+release_relay_ownership(void)
+{
+    if (relay_owner_socket != RELAY_INVALID_SOCKET) {
+        relay_closesocket(relay_owner_socket);
+        relay_owner_socket = RELAY_INVALID_SOCKET;
+    }
+}
+
 /**
  * Initialize the broadcast relay.
  */
@@ -318,9 +373,18 @@ broadcast_relay_init(void)
     int i;
     int success_count = 0;
 
+    if (!claim_relay_ownership()) {
+        rpclog("broadcast_relay: another emulator on this host already relays "
+               "Access, so this one will not. Machines still reach the network "
+               "through NAT; only Access sharing goes through the other "
+               "instance.\n");
+        return -1;
+    }
+
     /* Find host's broadcast address */
     if (get_broadcast_address(&bcast, &host) < 0) {
         rpclog("broadcast_relay: no suitable network interface found\n");
+        release_relay_ownership();
         return -1;
     }
 
@@ -360,7 +424,7 @@ broadcast_relay_init(void)
         bind_addr.sin_addr.s_addr = INADDR_ANY;
 
         if (bind(relay.sockets[i], (struct sockaddr *)&bind_addr, sizeof(bind_addr)) == RELAY_SOCKET_ERROR) {
-            rpclog("broadcast_relay: bind() for port %d failed: %s\n",
+            rpclog("broadcast_relay: cannot bind port %d: %s\n",
                    access_ports[i], sock_strerror());
             relay_closesocket(relay.sockets[i]);
             relay.sockets[i] = RELAY_INVALID_SOCKET;
@@ -380,8 +444,17 @@ broadcast_relay_init(void)
     }
 
     if (success_count == 0) {
-        rpclog("broadcast_relay: failed to bind any ports\n");
+        rpclog("broadcast_relay: no ports could be bound, so Access sharing is off "
+               "for this machine\n");
+        release_relay_ownership();
         return -1;
+    }
+    if (success_count < NUM_ACCESS_SOCKETS) {
+        /* Worse than none: some traffic relays and some does not, so shares half
+           appear and nobody can tell why. */
+        rpclog("broadcast_relay: only %d of %d ports bound; Access sharing will "
+               "behave erratically in this instance\n",
+               success_count, NUM_ACCESS_SOCKETS);
     }
 
     /* Store addresses for later use */
@@ -415,6 +488,7 @@ broadcast_relay_init(void)
 void
 broadcast_relay_close(void)
 {
+    release_relay_ownership();
     int i;
     for (i = 0; i < NUM_ACCESS_SOCKETS; i++) {
         if (relay.sockets[i] != RELAY_INVALID_SOCKET) {

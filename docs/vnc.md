@@ -104,3 +104,45 @@ the menu instead of the guest until it closes.
   selector without stopping the process.
 - **`--headless` starts the server whatever the settings say**, since without a
   window there is no other way in. The setting itself is left alone.
+
+## Running more than one emulator at once
+
+Several machines can run side by side, each in its own process, which is how
+VirtualBox and VMware do it too. The emulator core is one machine per process, so
+this is the arrangement rather than a limitation to work around.
+
+The catch is that the settings above are per *installation*, and three instances
+sharing a data directory would all want port 5900 and the same control sockets. So
+give each one its own on the command line:
+
+```bash
+./rpcemu-recompiler --machine os371 --vnc-port 5901 --hostcmd-socket /tmp/os371.sock &
+./rpcemu-recompiler --machine os530 --vnc-port 5902 --hostcmd-socket /tmp/os530.sock &
+./rpcemu-recompiler --machine os531 --vnc-port 5903 --hostcmd-socket /tmp/os531.sock &
+```
+
+The command line beats the settings file, which beats a machine's own legacy value,
+which beats the built-in default.
+
+### Access sharing, and why only one instance relays
+
+The relay bridges Access broadcasts between the guests and your real network, and
+Access uses fixed UDP ports, so it is a **host-wide** service rather than a
+per-machine one. Only one emulator can sensibly do it: two would each relay every
+packet, so the network would see everything twice and each instance would see the
+other's copies. Nothing would fail, which is what makes it unpleasant to diagnose.
+
+So the first emulator to start claims it and the rest decline, saying so in the
+log. They still reach the network through NAT as usual; only Access sharing goes
+through the instance that holds the relay. If the holder exits, the next one to
+start takes it over. `--no-relay` declines deliberately.
+
+Emulated machines cannot yet see *each other* over Access, since each has its own
+NAT. That needs a virtual switch, which is a separate piece of work.
+
+### What it costs
+
+Each instance carries its own guest RAM, 32MB of address-translation tables and a
+recompiler code cache, and its emulator thread will use a core. Three machines is
+roughly a gigabyte and three busy cores, which is fine on a development machine and
+worth knowing before starting six.

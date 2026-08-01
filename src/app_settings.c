@@ -249,3 +249,87 @@ app_settings_save(const char *datadir, const Config *cfg)
 	}
 	return 0;
 }
+
+/* -------------------------------------------------------------------------
+ * Command-line overrides
+ * ------------------------------------------------------------------------- */
+
+/*
+ * Held separately from the Config so that "not given" is distinguishable from
+ * "given as the same value the file already had". Only what was actually asked
+ * for on the command line is applied.
+ */
+static struct {
+	int vnc_port;
+	int vnc_enabled;
+	int relay_enabled;
+	char hostcmd_socket[512];
+	char debug_socket[512];
+	unsigned have_vnc_port : 1;
+	unsigned have_vnc_enabled : 1;
+	unsigned have_hostcmd_socket : 1;
+	unsigned have_debug_socket : 1;
+	unsigned have_relay : 1;
+} overrides;
+
+void
+app_settings_override_vnc_port(int port)
+{
+	overrides.vnc_port = port;
+	overrides.have_vnc_port = 1;
+}
+
+void
+app_settings_override_vnc_enabled(int enabled)
+{
+	overrides.vnc_enabled = enabled ? 1 : 0;
+	overrides.have_vnc_enabled = 1;
+}
+
+void
+app_settings_override_hostcmd_socket(const char *spec)
+{
+	set_str(overrides.hostcmd_socket, sizeof(overrides.hostcmd_socket),
+	    spec ? spec : "");
+	overrides.have_hostcmd_socket = 1;
+}
+
+void
+app_settings_override_debug_socket(const char *spec)
+{
+	set_str(overrides.debug_socket, sizeof(overrides.debug_socket),
+	    spec ? spec : "");
+	overrides.have_debug_socket = 1;
+}
+
+void
+app_settings_override_relay(int enabled)
+{
+	overrides.relay_enabled = enabled ? 1 : 0;
+	overrides.have_relay = 1;
+}
+
+int
+app_settings_relay_enabled(void)
+{
+	return overrides.have_relay ? overrides.relay_enabled : 1;
+}
+
+void
+app_settings_apply_overrides(Config *cfg)
+{
+	if (overrides.have_vnc_port) {
+		cfg->vnc_port = overrides.vnc_port;
+	}
+	if (overrides.have_vnc_enabled) {
+		cfg->vnc_enabled = overrides.vnc_enabled;
+	}
+	if (overrides.have_hostcmd_socket) {
+		set_str(cfg->hostcmd_socket, sizeof(cfg->hostcmd_socket),
+		    overrides.hostcmd_socket);
+	}
+	if (overrides.have_debug_socket) {
+		set_str(cfg->debug_socket, sizeof(cfg->debug_socket),
+		    overrides.debug_socket);
+	}
+}

@@ -30,6 +30,7 @@
 #include <sys/time.h>
 
 #include "rpcemu.h"
+#include "app_settings.h"
 #include "mem.h"
 #include "network.h"
 #include "network-nat.h"
@@ -257,7 +258,15 @@ network_nat_init(void)
 	}
 
 	// Initialize broadcast relay for Access+ support
-	broadcast_relay_init();
+	/* One relay per host: the Access ports are fixed by the protocol, so a second
+	   emulator cannot have them. Turning it off deliberately is better than
+	   racing for them and losing quietly. */
+	if (app_settings_relay_enabled()) {
+		broadcast_relay_init();
+	} else {
+		rpclog("network: Access broadcast relay disabled for this instance "
+		       "(--no-relay)\n");
+	}
 
 	return 1;
 }
