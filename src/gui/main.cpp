@@ -48,6 +48,7 @@ extern "C" {
 #include "rpcemu.h"
 #include "savestate.h"
 #include "app_settings.h"
+#include "machine_lock.h"
 }
 
 class RpcemuApp : public wxApp {
@@ -762,6 +763,41 @@ bool RpcemuApp::OnInit()
 	}
 	config_set_path(ConfigPathsAbsoluteConfigPath(config_path).utf8_str().data());
 	rpcemu_prestart();
+
+	/*
+	 * One emulator per machine. Two write the same cmos.ram and configuration on
+	 * the way out, the later exit quietly discarding the earlier one's changes, and
+	 * interleave sector writes into the same hard disc image. It has always been
+	 * possible to do by hand; it becomes easy to do by accident once machines are
+	 * started from a list, and the damage does not show until ADFS complains later.
+	 */
+	if (!machine_lock_acquire(rpcemu_get_machine_datadir(), config.vnc_port)) {
+		long pid = 0;
+		int port = 0;
+		wxString detail = wxString::Format(
+		    "The machine '%s' is already running in another window or process.",
+		    wxString::FromUTF8(config.name));
+
+		if (machine_lock_read_owner(rpcemu_get_machine_datadir(), &pid, &port)) {
+			detail += wxString::Format("\n\nIt is process %ld", pid);
+			if (port > 0) {
+				detail += wxString::Format(", reachable over VNC on port %d", port);
+			}
+			detail += ".";
+		}
+		detail += "\n\nRunning it twice would corrupt its hard disc and lose its "
+		          "settings, so this copy will not start.";
+
+		/* The console message goes first, deliberately. A modal box waits for a
+		   click, and a machine started from a script or from a manager may have
+		   nobody to click it, so the reason has to reach stderr whether or not
+		   anyone is watching the screen. */
+		ConsoleMessage(true, "error: machine '%s' is already running.\n",
+		               config.name);
+		ConsoleMessageFlush();
+		wxMessageBox(detail, "Machine already running", wxOK | wxICON_ERROR);
+		return false;
+	}
 
 	auto *frame = new MainFrame();
 	frame->Show(true);

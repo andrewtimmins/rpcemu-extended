@@ -52,6 +52,7 @@
 extern "C" {
 #include "rpcemu.h"
 #include "app_settings.h"
+#include "machine_lock.h"
 #include "savestate.h"
 }
 
@@ -462,6 +463,30 @@ int RunHeadless(const char *machine_name, bool resume, const char *state_file)
 	config_set_path(config_path.c_str());
 	rpcemu_prestart(); /* loads the selected config into the global `config` */
 
+	/*
+	 * One emulator per machine. Two would write the same cmos.ram and config on the
+	 * way out, the later exit silently discarding the earlier one's changes, and
+	 * would interleave sector writes into the same hard disc image.
+	 */
+	if (!machine_lock_acquire(rpcemu_get_machine_datadir(), config.vnc_port)) {
+		long pid = 0;
+		int port = 0;
+
+		fprintf(stderr, "error: machine '%s' is already running.\n", config.name);
+		if (machine_lock_read_owner(rpcemu_get_machine_datadir(), &pid, &port)) {
+			fprintf(stderr, "       It is process %ld", pid);
+			if (port > 0) {
+				fprintf(stderr, ", reachable over VNC on port %d", port);
+			}
+			fprintf(stderr, ".\n");
+		}
+		fprintf(stderr,
+		        "       Running the same machine twice would corrupt its disc and\n"
+		        "       lose its settings, so this one will not start. Use a\n"
+		        "       different machine, or stop that one first.\n");
+		return 2;
+	}
+
 	/* Resolve the state to load, if any. config_load() has just pointed the
 	   machine data dir at this machine, so the machine's own snapshot sits
 	   beside its cmos.ram - the same file the GUI selector's Resume offers. */
@@ -609,6 +634,7 @@ int RunHeadless(const char *machine_name, bool resume, const char *state_file)
 	/* Stopped here rather than merely detached: headless has nothing else to show
 	   once the machine has gone, and the process is about to exit. */
 	VncAppStop();
+	machine_lock_release();
 	emulator.reset();
 
 	return 0;

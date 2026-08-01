@@ -48,6 +48,19 @@ override the settings file for one instance. See [vnc.md](vnc.md).
 `shared/` folder is exposed to every machine as `HostFS::Shared.$`. For the
 "does my software still run on 3.71" case that is most of the job.
 
+**A machine can only be run once at a time.** Two copies of the same machine write
+the same `cmos.ram` and the same configuration when they exit, so the later one
+silently discards the other's changes, and they interleave sector writes into the
+same hard disc image. Each write is flushed to the host, which makes the
+interleaving more thorough rather than less.
+
+Starting a machine therefore takes an exclusive lock on `running.lock` in the
+machine's own directory, and a second attempt refuses with a message naming the
+process that holds it and the VNC port it is on. The lock is an operating-system
+lock rather than a file whose existence means "locked", so the kernel releases it
+however the process dies: a crash or a `kill -9` cannot leave a machine
+permanently unstartable, and there is nothing to clean up.
+
 **One instance relays Access.** The relay bridges Access broadcasts to the real
 network, and Access uses fixed UDP ports, so it is a host-wide service. The first
 emulator to start claims it and the rest decline and say so. Without that claim they
