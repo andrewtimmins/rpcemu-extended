@@ -88,10 +88,13 @@ main(int argc, char *argv[])
 	check("password overridden", strcmp(cfg.vnc_password, "secret") == 0);
 	check("has() says yes", app_settings_has(dir, "vnc_port") == 1);
 
-	printf("\nkeys absent from the file do NOT clobber the legacy value\n");
-	/* The whole migration rests on this one. */
-	check("hostcmd_enabled kept from the machine", cfg.hostcmd_enabled == 1);
-	check("hostcmd_socket kept from the machine",
+	printf("\nkeys absent from the file do NOT clobber what was there\n");
+	/* This is what lets the file be a layer of defaults rather than the whole
+	   answer: config_load() puts the built-in values in, overlays this file, and
+	   then lets the machine's own configuration have the last word. A key this
+	   file does not mention has to leave the value under it standing. */
+	check("hostcmd_enabled left alone", cfg.hostcmd_enabled == 1);
+	check("hostcmd_socket left alone",
 	    strcmp(cfg.hostcmd_socket, "machine.sock") == 0);
 
 	printf("\nformat tolerance\n");

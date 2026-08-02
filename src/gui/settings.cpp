@@ -482,6 +482,16 @@ extern "C" void config_apply_machine_edit(Config *cfg, const char *name, const c
 	}
 }
 
+/* Set once a machine's configuration has been read, so whatever starts the VNC
+   server or the command socket can tell "this machine says nothing about it" from
+   "there is no machine yet". See config_machine_loaded() in rpcemu.h. */
+static bool machine_config_loaded = false;
+
+extern "C" int config_machine_loaded(void)
+{
+	return machine_config_loaded ? 1 : 0;
+}
+
 extern "C" void config_load_from_path(Config *cfg, const char *path)
 {
 	wxFileConfig settings(wxEmptyString, wxEmptyString,
@@ -669,26 +679,67 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	cfg->start_fullscreen = static_cast<int>(value);
 	settings.Read("suspend_on_exit", &value, 0L);
 	cfg->suspend_on_exit = static_cast<int>(value);
-	/* The five channel keys below are read for compatibility only. They belong to
-	   the emulator rather than to a machine and now live in the app settings file,
-	   which is overlaid at the end of this function and wins where it says
-	   anything. An existing machine file keeps working; nothing writes these keys
-	   back. See src/app_settings.c. */
-	settings.Read("vnc_enabled", &value, 0L);
-	cfg->vnc_enabled = static_cast<int>(value);
-	settings.Read("vnc_port", &value, 5900L);
-	cfg->vnc_port = static_cast<int>(value);
-	settings.Read("vnc_password", &sText, wxEmptyString);
-	strncpy(cfg->vnc_password, sText.utf8_str().data(), sizeof(cfg->vnc_password) - 1);
-	cfg->vnc_password[sizeof(cfg->vnc_password) - 1] = '\0';
+	/*
+	 * The ways in to a machine - its VNC server and its HostCmd socket - belong to
+	 * that machine, so this is where they are settled and this is what wins.
+	 *
+	 * Three layers, weakest first: the built-in defaults set here, then the app
+	 * settings file if it has anything to say, then this machine's own file. The
+	 * middle layer is what a headless run uses before any machine is chosen (the
+	 * selector has to be reachable before there is a machine to ask), and it
+	 * doubles as the default for a machine whose file predates these keys being
+	 * written again. The command line is applied after all three, at the end of
+	 * this function.
+	 */
+	cfg->vnc_enabled = 0;
+	cfg->vnc_port = 5900;
+	cfg->vnc_password[0] = '\0';
+	cfg->hostcmd_enabled = 1;
+	cfg->hostcmd_socket[0] = '\0';
 
-	settings.Read("hostcmd_enabled", &value, 1L);
-	cfg->hostcmd_enabled = static_cast<int>(value);
+	{
+		const int applied = app_settings_load(rpcemu_get_datadir(), cfg);
+
+		if (applied < 0) {
+			/* Reported rather than passed over: otherwise the user's settings are
+			   being ignored in silence. */
+			rpclog("config_load: cannot read %s, using this machine's values\n",
+			    app_settings_path(rpcemu_get_datadir()));
+		} else if (applied > 0) {
+			rpclog("config_load: %d default%s from %s\n", applied,
+			    applied == 1 ? "" : "s",
+			    app_settings_path(rpcemu_get_datadir()));
+		}
+	}
+
+	/* Only where the machine says so, hence HasEntry rather than a default: a key
+	   the machine's file does not mention must leave the layer below it standing,
+	   and Read() with a default cannot tell the two apart. */
+	if (settings.HasEntry("vnc_enabled")) {
+		settings.Read("vnc_enabled", &value, 0L);
+		cfg->vnc_enabled = static_cast<int>(value);
+	}
+	if (settings.HasEntry("vnc_port")) {
+		settings.Read("vnc_port", &value, 5900L);
+		cfg->vnc_port = static_cast<int>(value);
+	}
+	if (settings.HasEntry("vnc_password")) {
+		settings.Read("vnc_password", &sText, wxEmptyString);
+		strncpy(cfg->vnc_password, sText.utf8_str().data(), sizeof(cfg->vnc_password) - 1);
+		cfg->vnc_password[sizeof(cfg->vnc_password) - 1] = '\0';
+	}
+	if (settings.HasEntry("hostcmd_enabled")) {
+		settings.Read("hostcmd_enabled", &value, 1L);
+		cfg->hostcmd_enabled = static_cast<int>(value);
+	}
+	if (settings.HasEntry("hostcmd_socket")) {
+		settings.Read("hostcmd_socket", &sText, wxEmptyString);
+		strncpy(cfg->hostcmd_socket, sText.utf8_str().data(), sizeof(cfg->hostcmd_socket) - 1);
+		cfg->hostcmd_socket[sizeof(cfg->hostcmd_socket) - 1] = '\0';
+	}
+
 	settings.Read("clipboard_enabled", &value, 0L);
 	cfg->clipboard_enabled = static_cast<int>(value);
-	settings.Read("hostcmd_socket", &sText, wxEmptyString);
-	strncpy(cfg->hostcmd_socket, sText.utf8_str().data(), sizeof(cfg->hostcmd_socket) - 1);
-	cfg->hostcmd_socket[sizeof(cfg->hostcmd_socket) - 1] = '\0';
 
 	settings.Read("debug_enabled", &value, 1L);
 	cfg->debug_enabled = static_cast<int>(value);
@@ -703,71 +754,13 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	peripheral_config_load(settings);
 	podule_config_load(settings);
 
-	/*
-	 * Last, so it wins: the emulator's own settings, which are not this machine's
-	 * business. Only keys the file actually contains are applied, so a legacy
-	 * value read above survives until the user sets one app-wide - which is what
-	 * stops an existing installation behaving differently after an upgrade.
-	 *
-	 * A file that exists but cannot be read is reported rather than passed over,
-	 * because otherwise the user's settings are being ignored in silence.
-	 */
-	{
-		/*
-		 * Migrate before overlaying. config_save() no longer writes these keys, and
-		 * endrpcemu() saves the config on the way out, so a legacy value would be
-		 * stripped from the machine file the first time the machine ran and be
-		 * gone by the next start - the exact silent change the fallback was meant
-		 * to prevent. Copying it into the app settings the first time it is seen
-		 * makes the migration actually happen rather than merely being described.
-		 *
-		 * First machine loaded wins if two disagree, which is inherent in the
-		 * setting becoming app-wide, so say so rather than letting it be a
-		 * mystery.
-		 */
-		static const char *const legacy_keys[] = {
-			"vnc_enabled", "vnc_port", "vnc_password",
-			"hostcmd_enabled", "hostcmd_socket"
-		};
-		bool migrate = false;
+	/* Last word, after the machine's own values: several instances sharing a data
+	   directory each need their own port and sockets, which only the command line
+	   can say. Nothing migrates a machine's keys into the app settings file any
+	   more - config_save() writes them back where they came from. */
+	app_settings_apply_overrides(cfg);
 
-		/* These keys live in [General], and the loaders above leave the current
-		   group at /Podules or /nat_port_forward_rules, so say which group rather
-		   than trusting wherever the last one finished. Asking at the root is just
-		   as wrong as asking at /Podules: every HasEntry() comes back false and
-		   the migration silently never happens. */
-		ConfigFileUseGeneralGroup(settings);
-
-		for (const char *key : legacy_keys) {
-			if (settings.HasEntry(key) &&
-			    !app_settings_has(rpcemu_get_datadir(), key)) {
-				rpclog("config_load: moving %s out of the machine's config and "
-				       "into %s, where it belongs\n", key,
-				    app_settings_path(rpcemu_get_datadir()));
-				migrate = true;
-			}
-		}
-		if (migrate && app_settings_save(rpcemu_get_datadir(), cfg) != 0) {
-			rpclog("config_load: could not write %s; the machine's own values "
-			       "are still in use for this session\n",
-			    app_settings_path(rpcemu_get_datadir()));
-		}
-
-		const int applied = app_settings_load(rpcemu_get_datadir(), cfg);
-
-		/* Last word: several instances sharing a data directory each need their own
-		   port and sockets, which only the command line can say. */
-		app_settings_apply_overrides(cfg);
-
-		if (applied < 0) {
-			rpclog("config_load: cannot read %s, using per-machine values\n",
-			    app_settings_path(rpcemu_get_datadir()));
-		} else if (applied > 0) {
-			rpclog("config_load: %d setting%s from %s\n", applied,
-			    applied == 1 ? "" : "s",
-			    app_settings_path(rpcemu_get_datadir()));
-		}
-	}
+	machine_config_loaded = true;
 }
 
 extern "C" void config_save(Config *cfg)
@@ -837,10 +830,16 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	}
 	settings.Write("start_fullscreen", static_cast<long>(cfg->start_fullscreen));
 	settings.Write("suspend_on_exit", static_cast<long>(cfg->suspend_on_exit));
-	/* vnc_* and hostcmd_* are not written here any more: they are the emulator's
-	   settings, not this machine's, and live in the app settings file. Writing
-	   them per machine is what made "which machine did I enable VNC on?" a
-	   question. Existing keys in an older file are still read, above. */
+	/* The ways in to this machine, written with it: two machines can each have
+	   their own VNC port and password and their own HostCmd socket, and keep them
+	   without being told again on the command line every time. The app settings
+	   file supplies these before a machine is chosen, and as the default for a
+	   machine whose file has not got them yet. */
+	settings.Write("vnc_enabled", static_cast<long>(cfg->vnc_enabled));
+	settings.Write("vnc_port", static_cast<long>(cfg->vnc_port));
+	settings.Write("vnc_password", wxString(cfg->vnc_password, wxConvUTF8));
+	settings.Write("hostcmd_enabled", static_cast<long>(cfg->hostcmd_enabled));
+	settings.Write("hostcmd_socket", wxString(cfg->hostcmd_socket, wxConvUTF8));
 	settings.Write("clipboard_enabled", static_cast<long>(cfg->clipboard_enabled));
 
 	settings.Write("debug_enabled", static_cast<long>(cfg->debug_enabled));

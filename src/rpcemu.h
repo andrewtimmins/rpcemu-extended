@@ -503,6 +503,12 @@ extern void config_apply_machine_edit(Config *cfg, const char *name, const char 
                                       const char *ipaddress);
 extern void config_load(Config *config);
 extern void config_load_from_path(Config *config, const char *path);
+/* Has a machine's configuration been loaded yet? The ways in to a machine are its
+   own settings, so whatever opens them has to know whether there is a machine to
+   read them from: before one is chosen, the app settings file is all there is.
+   Headless with no --machine offers the machine list over VNC, so that case is
+   real rather than theoretical. */
+extern int config_machine_loaded(void);
 extern void config_save(Config *config);
 extern void config_save_to_path(Config *config, const char *path);
 extern void config_set_path(const char *path);

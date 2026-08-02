@@ -59,11 +59,14 @@ so it drops straight into Makefiles, scripts and agent tool-calls.
 
 ## Configuration
 
-These belong to the emulator rather than to a machine, and live in `rpcemu.cfg` in
-the data directory, as the VNC settings do. The channel is how a script reaches the
-running process, which is not a property of the emulated Risc PC. A key still found
-in a machine's own `.cfg` is honoured and moved into `rpcemu.cfg` the first time
-that machine is loaded; see [vnc.md](vnc.md) for the same story in more detail.
+These belong to the machine, and live in its own `.cfg`, as the VNC settings do.
+Each machine has its own socket, so several can run at once and a script can say
+which one it means. The machine editor's Options page has them under **Host
+access**.
+
+`rpcemu.cfg` in the data directory supplies the default for a machine whose
+configuration does not mention these keys, and `--hostcmd-socket` on the command
+line beats both. See [vnc.md](vnc.md#which-file-wins) for the layering in full.
 
 | Key | Default | Meaning |
 | --- | --- | --- |

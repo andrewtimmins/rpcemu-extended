@@ -121,14 +121,11 @@ bool VncDialog::ApplySettings()
 		config_copy_->vnc_enabled = 0;
 	}
 
-	/* Persist app-wide. These are the emulator's settings, not the running
-	   machine's, so they no longer travel in the machine file and saving the
-	   machine will not save them. Without this the dialogue would apply for the
-	   session and be forgotten on restart. */
-	if (app_settings_save(rpcemu_get_datadir(), config_copy_) != 0) {
-		wxMessageBox("The VNC settings are in use for this session, but could "
-		             "not be saved.", "VNC", wxOK | wxICON_WARNING, this);
-	}
+	/* Persist into the running machine's own configuration: these belong to the
+	   machine, so this dialogue changes that machine and leaves every other one
+	   alone. Without this the dialogue would apply for the session and be
+	   forgotten on restart. */
+	config_save(config_copy_);
 
 	return true;
 }

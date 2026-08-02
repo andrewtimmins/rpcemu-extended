@@ -32,17 +32,27 @@ the emulator's job is to be well behaved when several copies of it are running.
 
 ## What exists now
 
-Several machines can be run side by side by hand. Each needs its own channels,
-because those settings belong to the installation rather than to a machine and three
-instances would otherwise fight over one port and one socket path:
+Several machines can be run side by side by hand. Each needs its own channels, or
+they fight over one port and one socket path. Give each machine its own in the
+machine editor, under **Host access** on the Options page, and they can then simply
+be started:
+
+```bash
+./rpcemu-recompiler --machine os371 &
+./rpcemu-recompiler --machine os530 &
+```
+
+Or say so per instance, which overrides what the machine holds and is the way to run
+the same set of machines two different ways without editing them:
 
 ```bash
 ./rpcemu-recompiler --machine os371 --vnc-port 5901 --hostcmd-socket /tmp/os371.sock &
 ./rpcemu-recompiler --machine os530 --vnc-port 5902 --hostcmd-socket /tmp/os530.sock &
 ```
 
-`--vnc-port`, `--no-vnc`, `--hostcmd-socket`, `--debug-socket` and `--no-relay`
-override the settings file for one instance. See [vnc.md](vnc.md).
+`--vnc-port`, `--no-vnc`, `--hostcmd-socket`, `--debug-socket` and `--no-relay` are
+applied last of all, after both settings files. See
+[vnc.md](vnc.md#which-file-wins).
 
 **Exchanging files between machines already works** and needs no networking: the
 `shared/` folder is exposed to every machine as `HostFS::Shared.$`. For the

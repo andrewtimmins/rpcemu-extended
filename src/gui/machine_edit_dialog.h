@@ -22,6 +22,9 @@
 #define MACHINE_EDIT_DIALOG_H
 
 #include <wx/wx.h>
+#include <wx/spinctrl.h>
+
+#include <functional>
 
 #include <map>
 #include <vector>
@@ -149,6 +152,14 @@ private:
 	wxCheckBox *suspend_on_exit_check_ = nullptr;
 	wxCheckBox *default_machine_check_ = nullptr;
 	wxCheckBox *vnc_check_ = nullptr;
+	wxSpinCtrl *vnc_port_spin_ = nullptr;
+	wxTextCtrl *vnc_password_text_ = nullptr;
+	wxCheckBox *hostcmd_check_ = nullptr;
+	wxTextCtrl *hostcmd_socket_text_ = nullptr;
+	/* Called after the values are loaded, so the fields start greyed out to match
+	   their checkbox rather than only doing so once it is clicked. */
+	std::function<void()> vnc_fields_follow_;
+	std::function<void()> hostcmd_fields_follow_;
 	wxCheckBox *clipboard_check_ = nullptr;
 	wxComboBox *model_combo_ = nullptr;
 	wxComboBox *mem_combo_ = nullptr;

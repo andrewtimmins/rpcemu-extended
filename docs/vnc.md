@@ -15,13 +15,18 @@ Three things are worth knowing beyond "it shows the screen":
 
 ## Turning it on
 
-*Settings → VNC Server* while a machine is running, or the **VNC server** tick in
-the machine editor. Both write to the emulator's own settings file rather than to
-a machine's, so it is on or off for RPCEmu as a whole.
+*Settings → VNC Server* while a machine is running, or the **Host access** group on
+the machine editor's Options page, which has the port and password beside the tick.
+Both write to that machine's own configuration, so each machine has its own server,
+its own port and its own password, and several can run at once without being told
+on the command line every time.
 
-That file is `rpcemu.cfg` in the data directory, alongside `configs/` and
-`machines/`. It is plain `key=value` text, editable by hand, which matters when the
-only way in is ssh:
+There is a second file for what applies before any machine is chosen: `rpcemu.cfg`
+in the data directory, alongside `configs/` and `machines/`. Headless with no
+machine named has to be reachable before there is a machine to ask, so this is
+where that server gets its port and password. It also supplies the default for a
+machine whose own configuration does not mention these keys. Plain `key=value`
+text, editable by hand, which matters when the only way in is ssh:
 
 ```
 vnc_enabled=1
@@ -35,18 +40,23 @@ An empty password means no authentication. Anyone who can reach the port can use
 the machine and, with the control menu, reset it or shut the emulator down, so set
 one on anything reachable from a network you do not control.
 
-### Why these are not per-machine
+### Which file wins
 
-They used to be. The VNC server and the HostCmd socket are how a person or a script
-reaches the running process, no more a property of an emulated Risc PC than the
-window is, and keeping them per-machine had two consequences. "Which machine did I
-turn VNC on for?" became a real question. And nothing could listen before a machine
-was chosen, which makes a remote machine selector impossible.
+Three layers, weakest first:
 
-Settings from before this change are carried forward: the first time a machine with
-its own `vnc_port` or `hostcmd_socket` is loaded, the value is moved into
-`rpcemu.cfg` and a line is written to the log saying so. Where two machines
-disagree, the first one loaded wins.
+1. The built-in defaults: VNC off, port 5900, no password, HostCmd on.
+2. `rpcemu.cfg`, for anything it mentions. This is what the machine selector uses,
+   since no machine has been chosen yet, and the default for a machine that says
+   nothing about these keys.
+3. The machine's own `.cfg`, which wins. This is where the machine editor and
+   *Settings → VNC Server* write.
+
+`--vnc-port` and `--hostcmd-socket` on the command line are applied after all
+three, which is how several copies sharing one data directory each get their own.
+
+A machine created while these were emulator-wide settings has none of these keys in
+its configuration, so it keeps running with whatever `rpcemu.cfg` says until it is
+saved again. Nothing is moved between the files.
 
 ## Choosing a machine over VNC
 

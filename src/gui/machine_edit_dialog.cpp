@@ -342,9 +342,30 @@ wxWindow *MachineEditDialog::BuildOptionsPage(wxWindow *parent)
 
 	vnc_check_ = new wxCheckBox(page, wxID_ANY, "VNC server");
 	vnc_check_->SetToolTip(
-	    "Serve the display over VNC. This is an emulator setting rather than a "
-	    "machine one, so it applies whichever machine you load. The port and "
-	    "password are under Settings > VNC Server once the machine is running.");
+	    "Serve this machine's display over VNC. The port and password below "
+	    "belong to this machine, so several machines can each have their own and "
+	    "run at the same time.");
+	vnc_port_spin_ = new wxSpinCtrl(page, wxID_ANY, wxEmptyString,
+	    wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 1, 65535, 5900);
+	vnc_port_spin_->SetToolTip(
+	    "TCP port for this machine's VNC server. Give each machine a different "
+	    "one if you want to run more than one at once; 5900 is the usual first.");
+	vnc_password_text_ = new wxTextCtrl(page, wxID_ANY, wxEmptyString,
+	    wxDefaultPosition, wxDefaultSize, wxTE_PASSWORD);
+	vnc_password_text_->SetToolTip(
+	    "Password VNC clients must give. Empty means no password, which is only "
+	    "reasonable on a machine nobody else can reach.");
+
+	hostcmd_check_ = new wxCheckBox(page, wxID_ANY, "Command socket (HostCmd)");
+	hostcmd_check_->SetToolTip(
+	    "Let rpcemu-run and rpcemu-shell drive this machine's command line from "
+	    "the host.");
+	hostcmd_socket_text_ = new wxTextCtrl(page, wxID_ANY, wxEmptyString);
+	hostcmd_socket_text_->SetToolTip(
+	    "Where to listen: empty for the default socket in the data directory, a "
+	    "path for a socket of your own, or a plain number for a TCP port on "
+	    "loopback. Give each machine its own to run more than one at once.");
+
 	clipboard_check_ = new wxCheckBox(page, wxID_ANY, "Share the clipboard with RISC OS");
 	clipboard_check_->SetToolTip(
 	    "Copy and paste text and images between the host and RISC OS. Off by "
@@ -382,7 +403,61 @@ wxWindow *MachineEditDialog::BuildOptionsPage(wxWindow *parent)
 	add_group(sizer, "Hardware", { sound_check_, cdrom_check_,
 	                               mouse_twobutton_check_ });
 	add_group(sizer, "Behaviour", { cpu_idle_check_, suspend_on_exit_check_ });
-	add_group(sizer, "Host access", { vnc_check_, clipboard_check_ });
+
+	/* Host access has fields as well as switches, so it is built here rather than
+	   through add_group(), which takes checkboxes alone. The port and password are
+	   indented under the checkbox that turns them on, and greyed out with it. */
+	{
+		auto *box = new wxStaticBoxSizer(wxVERTICAL, page, "Host access");
+
+		box->Add(vnc_check_, 0, wxLEFT | wxRIGHT | wxTOP, 6);
+
+		auto *vnc_form = new wxFlexGridSizer(2, 6, 8);
+		vnc_form->AddGrowableCol(1, 1);
+		vnc_form->Add(new wxStaticText(page, wxID_ANY, "Port:"), 0,
+		    wxALIGN_CENTER_VERTICAL);
+		vnc_form->Add(vnc_port_spin_, 0);
+		vnc_form->Add(new wxStaticText(page, wxID_ANY, "Password:"), 0,
+		    wxALIGN_CENTER_VERTICAL);
+		vnc_form->Add(vnc_password_text_, 1, wxEXPAND);
+		box->Add(vnc_form, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 24);
+
+		box->Add(hostcmd_check_, 0, wxLEFT | wxRIGHT | wxTOP, 6);
+
+		auto *hc_form = new wxFlexGridSizer(2, 6, 8);
+		hc_form->AddGrowableCol(1, 1);
+		hc_form->Add(new wxStaticText(page, wxID_ANY, "Socket:"), 0,
+		    wxALIGN_CENTER_VERTICAL);
+		hc_form->Add(hostcmd_socket_text_, 1, wxEXPAND);
+		box->Add(hc_form, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 24);
+
+		box->Add(clipboard_check_, 0, wxLEFT | wxRIGHT | wxTOP, 6);
+		box->AddSpacer(6);
+		sizer->Add(box, 0, wxEXPAND | wxBOTTOM, 8);
+	}
+
+	/* A port and password mean nothing with the server off, and a socket path
+	   means nothing with the channel off, so they follow their checkbox. */
+	/* Takes the fields by value in a vector, and the stored lambda captures that
+	   vector. Not an initializer_list: it does not own its backing array, which
+	   dies with the full expression that made it, so a captured one leaves the
+	   lambda holding a dangling pointer to use later. */
+	auto follow_check = [](wxCheckBox *box, std::vector<wxWindow *> fields) {
+		auto apply = [box, fields]() {
+			for (wxWindow *field : fields) {
+				field->Enable(box->GetValue());
+			}
+		};
+
+		box->Bind(wxEVT_CHECKBOX, [apply](wxCommandEvent &event) {
+			apply();
+			event.Skip();
+		});
+		return apply;
+	};
+
+	vnc_fields_follow_ = follow_check(vnc_check_, { vnc_port_spin_, vnc_password_text_ });
+	hostcmd_fields_follow_ = follow_check(hostcmd_check_, { hostcmd_socket_text_ });
 
 	auto *outer = new wxBoxSizer(wxVERTICAL);
 	outer->Add(sizer, 1, wxEXPAND | wxALL, 10);
@@ -1296,7 +1371,37 @@ void MachineEditDialog::LoadSettings()
 	mouse_twobutton_check_->SetValue(read_flag("mouse_twobutton", 0));
 	cpu_idle_check_->SetValue(read_flag("cpu_idle", 0));
 	suspend_on_exit_check_->SetValue(read_flag("suspend_on_exit", 0));
-	vnc_check_->SetValue(read_flag("vnc_enabled", 0));
+	/* Same layering as config_load(): the app settings file supplies what this
+	   machine's file has not got, so a machine written while these keys were
+	   app-wide opens showing the values it has actually been running with rather
+	   than the built-in defaults. */
+	{
+		Config defaults;
+
+		memset(&defaults, 0, sizeof(defaults));
+		defaults.vnc_enabled = 0;
+		defaults.vnc_port = 5900;
+		defaults.hostcmd_enabled = 1;
+		app_settings_load(rpcemu_get_datadir(), &defaults);
+
+		vnc_check_->SetValue(read_flag("vnc_enabled", defaults.vnc_enabled ? 1 : 0));
+		hostcmd_check_->SetValue(
+		    read_flag("hostcmd_enabled", defaults.hostcmd_enabled ? 1 : 0));
+
+		long port = defaults.vnc_port;
+		settings.Read("vnc_port", &port, port);
+		vnc_port_spin_->SetValue(static_cast<int>(port));
+
+		wxString text;
+		settings.Read("vnc_password", &text,
+		    wxString::FromUTF8(defaults.vnc_password));
+		vnc_password_text_->SetValue(text);
+		settings.Read("hostcmd_socket", &text,
+		    wxString::FromUTF8(defaults.hostcmd_socket));
+		hostcmd_socket_text_->SetValue(text);
+	}
+	vnc_fields_follow_();
+	hostcmd_fields_follow_();
 	clipboard_check_->SetValue(read_flag("clipboard_enabled", 0));
 
 	/* Not a setting of this machine but of which machine to open, so it is
@@ -1428,18 +1533,13 @@ void MachineEditDialog::SaveSettings()
 	write_flag("mouse_twobutton", mouse_twobutton_check_->GetValue());
 	write_flag("cpu_idle", cpu_idle_check_->GetValue());
 	write_flag("suspend_on_exit", suspend_on_exit_check_->GetValue());
-	/* Not written into the machine file: VNC is how you reach the emulator, not a
-	   property of this Risc PC, so it lives in the app settings. Writing it here
-	   per machine is what made "which machine did I turn VNC on for?" a question
-	   somebody had to ask. */
-	{
-		Config app = config;
-
-		app.vnc_enabled = vnc_check_->GetValue() ? 1 : 0;
-		if (app_settings_save(rpcemu_get_datadir(), &app) != 0) {
-			rpclog("machine editor: could not save the VNC setting app-wide\n");
-		}
-	}
+	/* The ways in to this machine, written with it: this dialog edits one machine,
+	   so what it says here applies to that machine and not to every other one. */
+	write_flag("vnc_enabled", vnc_check_->GetValue());
+	settings.Write("vnc_port", static_cast<long>(vnc_port_spin_->GetValue()));
+	settings.Write("vnc_password", vnc_password_text_->GetValue());
+	write_flag("hostcmd_enabled", hostcmd_check_->GetValue());
+	settings.Write("hostcmd_socket", hostcmd_socket_text_->GetValue());
 	write_flag("clipboard_enabled", clipboard_check_->GetValue());
 
 	/* The default machine is a host preference keyed by name, so a rename has

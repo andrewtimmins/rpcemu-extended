@@ -66,20 +66,27 @@ bool VncAppStart(bool force)
 	}
 
 	/*
-	 * Start from whatever the loaded machine has, then let the app settings
-	 * override it.
+	 * A machine's VNC server is that machine's setting, so once one is loaded its
+	 * values are the answer: config_load() has already settled them, having put the
+	 * app settings file underneath as the default for anything the machine does not
+	 * mention. Overlaying that file again here would undo the machine's own port,
+	 * which is exactly what it used to do.
 	 *
-	 * Taking the built-in defaults instead would ignore a legacy per-machine
-	 * vnc_port entirely, so an existing installation with a non-default port would
-	 * quietly move to 5900 the moment it upgraded - which is precisely what
-	 * carrying the old values forward was supposed to prevent. config_load() has
-	 * already put the machine's values, legacy or migrated, into the global
-	 * config; with no machine loaded those are the defaults anyway.
+	 * With no machine loaded there is nothing to read, and the file is all there
+	 * is. That is the headless selector, which has to be reachable before there is
+	 * a machine to ask.
 	 */
-	app.vnc_enabled = config.vnc_enabled;
-	app.vnc_port = (config.vnc_port > 0) ? config.vnc_port : 5900;
-	snprintf(app.vnc_password, sizeof(app.vnc_password), "%s", config.vnc_password);
-	app_settings_load(rpcemu_get_datadir(), &app);
+	if (config_machine_loaded()) {
+		app.vnc_enabled = config.vnc_enabled;
+		app.vnc_port = (config.vnc_port > 0) ? config.vnc_port : 5900;
+		snprintf(app.vnc_password, sizeof(app.vnc_password), "%s",
+		    config.vnc_password);
+	} else {
+		app.vnc_enabled = 0;
+		app.vnc_port = 5900;
+		app.vnc_password[0] = '\0';
+		app_settings_load(rpcemu_get_datadir(), &app);
+	}
 	app_settings_apply_overrides(&app);
 
 	if (!force && !app.vnc_enabled) {
