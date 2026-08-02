@@ -103,7 +103,12 @@ std::string HeadlessChooseMachine(const std::vector<std::string> &names)
 {
 	MachineSelector selector;
 	std::vector<uint32_t> pixels(static_cast<size_t>(kWidth) * kHeight, 0);
-	TextScreen screen{ pixels.data(), kWidth, kHeight, kWidth };
+	/* Trailing 0 is the scale: outside 1..TEXT_SCREEN_MAX_SCALE, which
+	   text_screen.h defines as unscaled. machine_selector_draw() sets a real
+	   one from text_screen_auto_scale() before it draws, so the value here only
+	   has to be a defined one. Written out rather than left off so that is a
+	   choice rather than whatever the language supplies. */
+	TextScreen screen{ pixels.data(), kWidth, kHeight, kWidth, 0 };
 	Config app{};
 	std::string chosen;
 

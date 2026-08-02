@@ -175,7 +175,14 @@ initpodulerom(void)
 			char filepath[512];
 			struct stat buf;
 
-			snprintf(filepath, sizeof(filepath), "%s%s", romdirectory, d->d_name);
+			/* Truncation would stat a different path and quietly skip a
+			   ROM the user had put there. */
+			if (snprintf(filepath, sizeof(filepath), "%s%s", romdirectory,
+			             d->d_name) >= (int) sizeof(filepath)) {
+				rpclog("podulerom: path too long, ignoring %s%s\n",
+				       romdirectory, d->d_name);
+				continue;
+			}
 
 			if (stat(filepath, &buf) == 0) {
 				/* Skip directories or files with a .txt extension or starting with '.' */
@@ -220,7 +227,11 @@ initpodulerom(void)
 		char filepath[512];
 		long len;
 
-		snprintf(filepath, sizeof(filepath), "%s%s", romdirectory, romfns[i]);
+		if (snprintf(filepath, sizeof(filepath), "%s%s", romdirectory,
+		             romfns[i]) >= (int) sizeof(filepath)) {
+			fatal("initpodulerom: path too long: %s%s", romdirectory,
+			      romfns[i]);
+		}
 
 		f = fopen(filepath, "rb");
 		if (f == NULL) {

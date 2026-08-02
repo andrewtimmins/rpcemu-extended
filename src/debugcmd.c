@@ -873,7 +873,12 @@ dc_listen_unix(const char *path)
 	}
 	memset(&addr, 0, sizeof(addr));
 	addr.sun_family = AF_UNIX;
-	strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+	/* The length was checked above, so this fits with room for the
+	   terminator the memset already put there. memcpy rather than strncpy
+	   because the bound strncpy is given is the destination's size, which
+	   GCC cannot relate to the check and so warns about truncating a path
+	   that has already been refused. */
+	memcpy(addr.sun_path, path, strlen(path));
 	unlink(path);
 	if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
 		rpclog("DebugCmd: bind(%s) failed: %s\n", path, strerror(errno));

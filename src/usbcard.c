@@ -135,8 +135,15 @@ usbcard_init(void)
 			char filepath[512];
 			struct stat buf;
 
-			snprintf(filepath, sizeof(filepath), "%s%s", romdirectory,
-			         d->d_name);
+			/* Truncation would stat a different path and quietly skip a
+			   ROM the user had put there, so it is reported and skipped
+			   deliberately instead. */
+			if (snprintf(filepath, sizeof(filepath), "%s%s", romdirectory,
+			             d->d_name) >= (int) sizeof(filepath)) {
+				rpclog("usbcard: path too long, ignoring %s%s\n",
+				       romdirectory, d->d_name);
+				continue;
+			}
 
 			if (stat(filepath, &buf) == 0 && S_ISREG(buf.st_mode) &&
 			    strcasecmp(ext, "txt") != 0 && d->d_name[0] != '.') {
@@ -191,7 +198,11 @@ usbcard_init(void)
 		FILE *f;
 		long len;
 
-		snprintf(filepath, sizeof(filepath), "%s%s", romdirectory, romfns[i]);
+		if (snprintf(filepath, sizeof(filepath), "%s%s", romdirectory,
+		             romfns[i]) >= (int) sizeof(filepath)) {
+			fatal("usbcard_init: path too long: %s%s", romdirectory,
+			      romfns[i]);
+		}
 
 		f = fopen(filepath, "rb");
 		if (f == NULL) {

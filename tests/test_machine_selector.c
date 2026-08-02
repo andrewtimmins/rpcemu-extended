@@ -199,8 +199,11 @@ main(int argc, char *argv[])
 
 	/* A client can be any size, including absurd. Neither must fault. */
 	{
-		TextScreen tiny = { s.pixels, 64, 32, w };
-		TextScreen wide = { s.pixels, 640, 480, w };
+		/* scale 0: outside 1..TEXT_SCREEN_MAX_SCALE, which text_screen.h
+		   defines as unscaled. Written out rather than left off, so the
+		   default is a choice and the compiler stops warning about it. */
+		TextScreen tiny = { s.pixels, 64, 32, w, 0 };
+		TextScreen wide = { s.pixels, 640, 480, w, 0 };
 
 		machine_selector_draw(&m, &tiny);
 		check("drawing into a tiny screen does not fault", 1);
