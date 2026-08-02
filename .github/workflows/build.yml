@@ -45,6 +45,30 @@ jobs:
           fi
           echo "tag v$tag matches VERSION"
 
+      # The release notes have to exist before the release does.
+      #
+      # This used to be generate_release_notes: true, which lists merged pull
+      # requests and nothing else. Almost all the work here lands as direct
+      # commits to main, so every release so far has published notes that
+      # described a fraction of what shipped - 1.1.9 announced itself as one
+      # unrelated pull request, and 1.1.11 read as though it were nothing but CI
+      # changes - and each was rewritten by hand afterwards, once somebody
+      # noticed. Requiring the file turns that into something the tag cannot get
+      # past.
+      - name: The release notes must exist
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          notes="docs/release-notes/${tag}.md"
+          if [ ! -s "$notes" ]; then
+            echo "::error::$notes is missing or empty"
+            echo "Write the notes before tagging. Group them as New features /"
+            echo "Fixes / Under the hood, say honestly what is verified and what"
+            echo "is not, and end with a compare link to the previous release."
+            echo "See docs/release-notes/README.md."
+            exit 1
+          fi
+          echo "found $notes ($(wc -l < "$notes") lines)"
+
   linux-amd64:
     runs-on: ubuntu-latest
     steps:
@@ -55,15 +79,28 @@ jobs:
       - name: Install dependencies
         run: bash setup-build-env.sh
 
+      # Piped through tee so the compiler's output can be examined afterwards.
+      # pipefail so a failed build still fails the step rather than being masked
+      # by tee's exit status.
       - name: Build and package (amd64, dynarec)
         timeout-minutes: 5
         run: |
+          set -o pipefail
           chmod +x build.sh setup-build-env.sh
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            ./build.sh --deb --zip
+            ./build.sh --deb --zip 2>&1 | tee build.log
           else
-            ./build.sh --zip
+            ./build.sh --zip 2>&1 | tee build.log
           fi
+
+      # A warning in code this project maintains fails the build. Done here
+      # rather than with -Werror in CMake, so that a new compiler release cannot
+      # stop a user building from source - see the comment in the script.
+      # Only this job: it is the same C everywhere, and a full clean build is
+      # needed for the compiler to say anything at all about a file it would
+      # otherwise skip.
+      - name: No new compiler warnings
+        run: bash tests/check-warnings.sh build.log
 
       - name: Smoke test binary
         run: |
@@ -388,6 +425,123 @@ jobs:
             releases/windows/*.zip
           if-no-files-found: error
 
+  # Everything else asks whether the emulator does the right thing. This asks
+  # whether it does it legitimately - whether the C it is written in is doing
+  # what its author believed. An emulator is mostly arithmetic on addresses the
+  # guest chose, so the two questions have different answers more often here than
+  # in ordinary software: the first time this was run it found a shift by 32 on
+  # every word-aligned load and a signed overflow on every palette update, both
+  # of which had produced the right answer on every compiler the project has ever
+  # been built with, and neither of which any test could have caught.
+  #
+  # Linux only, and that is a real limit rather than an oversight: it is the same
+  # C on all three platforms, so a fault found here is a fault everywhere, but a
+  # platform's own code (the Win32 and Cocoa paths) is not covered. Noted in
+  # docs/testing.md rather than left to be discovered.
+  sanitisers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-tags: true
+
+      - name: Install dependencies
+        run: bash setup-build-env.sh
+
+      # The interpreter, not the recompiler. AddressSanitizer instruments memory
+      # accesses in code the compiler generated; the recompiler's output is
+      # written at run time into a page it maps itself, so it is invisible to the
+      # instrumentation and its code cache looks like a stranger writing over
+      # executable memory. The interpreter runs the same CPU semantics through
+      # code the sanitisers can see, which is what is wanted here. The JIT has its
+      # own answer to this: eight differential tests that check it against the
+      # interpreter instruction by instruction.
+      #
+      # -fno-sanitize-recover=all makes the first report fatal. Without it a
+      # fault in the emulation loop prints thousands of times and the run still
+      # succeeds.
+      #
+      # GhostPDL is off: it is a large third-party library reached only by
+      # printing, and instrumenting it would spend the runner's time on somebody
+      # else's code.
+      - name: Configure with ASan and UBSan
+        run: |
+          cmake -S . -B build-san \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DRPCEMU_DYNAREC=OFF \
+            -DRPCEMU_ENABLE_GHOSTPDL=OFF \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build
+        timeout-minutes: 15
+        run: cmake --build build-san -j"$(nproc)"
+
+      - name: Unit tests under the sanitisers
+        timeout-minutes: 10
+        env:
+          # Leak checking is off. The emulator holds its guest RAM, ROM and
+          # framestore for the life of the process and frees none of it on the
+          # way out, which is deliberate and which LeakSanitizer would report as
+          # hundreds of megabytes of leaks. Turning it on wants those exits
+          # tidied first; it is not a reason to have no sanitiser job at all.
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: bash tests/run-ctest.sh build-san sanitisers
+
+      - name: Cache the RISC OS ROM
+        uses: actions/cache@v6
+        with:
+          path: ci-rom
+          key: rpcemu-rom-stable-v1
+
+      # The unit tests reach a codec, a parser and a register file. A boot reaches
+      # the CPU core, the MMU, IOMD, VIDC, the IDE and floppy controllers, HostFS
+      # and the video path, with a real operating system driving them - which is
+      # where the interesting undefined behaviour has actually been.
+      - name: Fetch a ROM for the boot
+        run: |
+          set -eu
+          export RPCEMU_DATADIR="$RUNNER_TEMP/rpcemu-san-data"
+          export RPCEMU_NO_GUI_MESSAGES=1
+          export ASAN_OPTIONS=detect_leaks=0
+          mkdir -p "$RPCEMU_DATADIR" ci-rom
+          cp -r default configs "$RPCEMU_DATADIR/"
+          if ! ls ci-rom/ROM* >/dev/null 2>&1; then
+            build-san/bin/rpcemu-interpreter --fetch-riscos --no-disc --accept-licence
+            cp "$RPCEMU_DATADIR"/roms/ROM* ci-rom/
+          fi
+          mkdir -p "$RPCEMU_DATADIR/roms"
+          cp ci-rom/ROM* "$RPCEMU_DATADIR/roms/"
+
+      # --screen-check advisory: an instrumented interpreter is tens of times
+      # slower than the recompiler a user runs, so how far RISC OS gets in a fixed
+      # time measures the runner rather than the code. The verdict here is what
+      # the sanitisers said; whether the desktop is reached is judged by the four
+      # ordinary boot tests, on every platform, on real builds.
+      - name: Boot under the sanitisers
+        timeout-minutes: 15
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: |
+          python3 tests/boot_smoke.py \
+            --binary build-san/bin/rpcemu-interpreter \
+            --datadir "$RUNNER_TEMP/rpcemu-san-data" \
+            --boot-timeout 300 --settle 60 \
+            --screen-check advisory \
+            --save sanitiser-boot.png
+
+      - name: Upload the boot screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sanitiser-boot
+          path: sanitiser-boot.png
+          archive: false
+          if-no-files-found: ignore
+
   macos-x86_64:
     # Free Intel (macos-13) runners are effectively unavailable, so build the
     # x86_64 slice (WITH the dynarec) on an Apple Silicon runner: Apple clang
@@ -640,11 +794,20 @@ jobs:
 
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [version-matches-tag, linux-amd64, linux-arm64, windows-amd64, macos-universal]
+    # The sanitiser job gates a release too. It is the only thing that looks at
+    # whether the emulator's C is well defined rather than merely producing the
+    # expected answer, and shipping past a report from it would mean shipping
+    # something known to be relying on the compiler's goodwill.
+    needs: [version-matches-tag, linux-amd64, linux-arm64, windows-amd64, macos-universal, sanitisers]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      # The notes are published from the file version-matches-tag insisted on, so
+      # the release reads correctly the moment it appears rather than being
+      # rewritten by hand afterwards.
+      - uses: actions/checkout@v7
+
       - name: Download all build artifacts
         uses: actions/download-artifact@v8
         with:
@@ -653,7 +816,7 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          generate_release_notes: true
+          body_path: docs/release-notes/${{ github.ref_name }}.md
           files: |
             upload/**/*.deb
             upload/**/*.dmg

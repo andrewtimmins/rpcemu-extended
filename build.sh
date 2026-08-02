@@ -444,11 +444,11 @@ build_linux() {
 	cmake --build build -j"$NPROC"
 
 	if [ "$LINUX_CROSS" = false ]; then
-		if [ -f build/CTestTestfile.cmake ]; then
-			echo ""
-			echo "Running tests..."
-			(cd build && ctest --output-on-failure)
-		fi
+		echo ""
+		# Whether the tests can run here is decided above; whether they passed is
+		# decided by the script, which treats a suite that is absent or the wrong
+		# size as a failure rather than as nothing to do. See docs/testing.md.
+		bash "$SCRIPT_DIR/tests/run-ctest.sh" build
 	else
 		echo "Note: skipping tests (cross-compiled binaries cannot run on this host)."
 	fi

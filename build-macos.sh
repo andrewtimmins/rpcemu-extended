@@ -192,8 +192,7 @@ build_slice() {
 		fi
 
 		if [ "$can_run" = true ]; then
-			echo "==> [$arch] ctest"
-			( cd "$build_dir" && ctest --output-on-failure )
+			bash "$SCRIPT_DIR/tests/run-ctest.sh" "$build_dir" "$arch"
 		else
 			echo "Note: [$arch] skipping tests - cannot execute $arch binaries on $(uname -m) (Rosetta 2 not available)."
 		fi

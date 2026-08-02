@@ -1,9 +1,36 @@
-# Unit tests. The JIT differential testers use the recompiler's test hooks
+# Unit tests.
+#
+# Every test is registered through rpcemu_add_test() rather than add_test()
+# directly, so the suite can be counted. A test that stops being registered -
+# because a file it is guarded on was renamed, or a condition stopped matching -
+# takes its coverage away without failing anything, and a build that quietly
+# tests less than it did reads exactly like one that passed. The count is
+# declared at the bottom of this file and checked at configure time, and it is
+# written out for tests/run-ctest.sh to check again after the run.
+#
+# Adding a test therefore means raising RPCEMU_EXPECTED_TESTS. That is the point:
+# the number has to be changed deliberately, so it cannot drift downwards on its
+# own.
+set(RPCEMU_REGISTERED_TESTS "")
+
+# A macro, not a function: it appends to a list in the caller's scope.
+macro(rpcemu_add_test name)
+    add_test(NAME ${name} COMMAND ${name} ${ARGN})
+    list(APPEND RPCEMU_REGISTERED_TESTS ${name})
+endmacro()
+
+# The JIT differential testers use the recompiler's test hooks
 # (compiled into rpcemu_core when RPCEMU_JIT_TEST is set, see src/CMakeLists.txt).
 # They compare each recompiled instruction class against the interpreter and are
 # architecture-generic: they validate whichever native backend is built
 # (amd64/x86 or arm64).
+#
+# The condition has to stay identical to the one guarding RPCEMU_JIT_TEST in
+# src/CMakeLists.txt: these tests call hooks that only exist when that is defined,
+# so the two disagreeing is a link error rather than a skip. Note that i386/i686
+# has a backend (codegen_x86.c) but is excluded from both - see docs/testing.md.
 if(RPCEMU_DYNAREC AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|aarch64|arm64|ARM64")
+    set(RPCEMU_JIT_TESTS TRUE)
     foreach(jit_test
             test_jit_flags   # data-processing NZCV flags
             test_jit_mem     # LDR/STR/LDRB/STRB addressing modes
@@ -13,22 +40,30 @@ if(RPCEMU_DYNAREC AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|aarch64|arm64
             test_jit_e2e)    # block linking + full-program integration
         add_executable(${jit_test} ${jit_test}.c test_stubs.c)
         target_link_libraries(${jit_test} PRIVATE rpcemu_core m)
-        add_test(NAME ${jit_test} COMMAND ${jit_test})
+        rpcemu_add_test(${jit_test})
     endforeach()
 
     # Randomised differential fuzzer (interpreter vs recompiler). Run a modest
     # count under ctest; run more by hand, e.g. `test_jit_fuzz <seed> <iters>`.
     add_executable(test_jit_fuzz test_jit_fuzz.c test_stubs.c)
     target_link_libraries(test_jit_fuzz PRIVATE rpcemu_core m)
-    add_test(NAME test_jit_fuzz COMMAND test_jit_fuzz 1 200000)
+    rpcemu_add_test(test_jit_fuzz 1 200000)
 
     # Sequence fuzzer: random programs through arm_exec (branches + block
     # linking), interpreter vs recompiler. Also runnable at scale by hand.
     add_executable(test_jit_seqfuzz test_jit_seqfuzz.c test_stubs.c)
     target_link_libraries(test_jit_seqfuzz PRIVATE rpcemu_core m)
-    add_test(NAME test_jit_seqfuzz COMMAND test_jit_seqfuzz 1 50000)
+    rpcemu_add_test(test_jit_seqfuzz 1 50000)
 else()
-    message(STATUS "Skipping JIT differential tests (requires a native dynarec backend)")
+    set(RPCEMU_JIT_TESTS FALSE)
+    # An interpreter build has no recompiler to differentially test, which is
+    # ordinary - the arm64 releases are built that way. Said at every configure
+    # rather than only in the log, because eight of the tests are the ones being
+    # given up.
+    message(STATUS
+        "RPCEmu: no dynarec backend here, so the 8 JIT differential tests are "
+        "not built (RPCEMU_DYNAREC=${RPCEMU_DYNAREC}, "
+        "processor ${CMAKE_SYSTEM_PROCESSOR})")
 endif()
 
 # boot_trace: boots a real machine with no GUI and reports how far it got. Not a
@@ -48,7 +83,7 @@ add_executable(test_vdu_filter test_vdu_filter.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/tools/vdu_filter.c)
 target_include_directories(test_vdu_filter PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src/tools)
-add_test(NAME test_vdu_filter COMMAND test_vdu_filter)
+rpcemu_add_test(test_vdu_filter)
 
 # The VNC machine selector: navigation as a state machine, plus the drawing.
 # Compiles the units directly; they deliberately depend on nothing but the font,
@@ -60,7 +95,7 @@ add_executable(test_machine_selector test_machine_selector.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui/console_font.c)
 target_include_directories(test_machine_selector PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui)
-add_test(NAME test_machine_selector COMMAND test_machine_selector)
+rpcemu_add_test(test_machine_selector)
 
 # App-level settings: the ways in to the process (VNC, HostCmd), which are not
 # properties of an emulated machine. The migration is the part worth testing - a
@@ -69,7 +104,7 @@ add_test(NAME test_machine_selector COMMAND test_machine_selector)
 add_executable(test_app_settings test_app_settings.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/app_settings.c test_stubs.c)
 target_link_libraries(test_app_settings PRIVATE rpcemu_core m)
-add_test(NAME test_app_settings COMMAND test_app_settings
+rpcemu_add_test(test_app_settings
          ${CMAKE_CURRENT_BINARY_DIR})
 
 # MMU access permissions. Builds real page tables in emulated RAM and checks the
@@ -84,7 +119,7 @@ add_test(NAME test_app_settings COMMAND test_app_settings
 # docs/mmu-permissions.md.
 add_executable(test_mmu_perms test_mmu_perms.c test_stubs.c)
 target_link_libraries(test_mmu_perms PRIVATE rpcemu_core m)
-add_test(NAME test_mmu_perms COMMAND test_mmu_perms)
+rpcemu_add_test(test_mmu_perms)
 
 # Display mode selection against a VRAM budget. Architecture-neutral and needs
 # no dynarec, so unlike the JIT tests it builds everywhere.
@@ -99,7 +134,7 @@ add_executable(test_mode_fit test_mode_fit.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/display_mode.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/edid.c)
 target_include_directories(test_mode_fit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
-add_test(NAME test_mode_fit COMMAND test_mode_fit)
+rpcemu_add_test(test_mode_fit)
 
 # Networking tests for the Access+/ShareFS path, where large copies drive IP
 # fragment reassembly. These compile the code under test directly rather than
@@ -134,7 +169,7 @@ target_include_directories(test_ip_reass PRIVATE
 )
 target_compile_definitions(test_ip_reass PRIVATE CONFIG_SLIRP _DEFAULT_SOURCE)
 target_link_libraries(test_ip_reass PRIVATE ${NET_TEST_LIBS})
-add_test(NAME test_ip_reass COMMAND test_ip_reass)
+rpcemu_add_test(test_ip_reass)
 
 # Relay-side reassembly of guest-originated Access+ datagrams
 add_executable(test_relay_reasm test_relay_reasm.c)
@@ -144,7 +179,7 @@ target_include_directories(test_relay_reasm PRIVATE
 )
 target_compile_definitions(test_relay_reasm PRIVATE CONFIG_SLIRP _DEFAULT_SOURCE)
 target_link_libraries(test_relay_reasm PRIVATE ${NET_TEST_LIBS})
-add_test(NAME test_relay_reasm COMMAND test_relay_reasm)
+rpcemu_add_test(test_relay_reasm)
 
 # The emulated graphics card: its register file, and the checks that stop a
 # guest-supplied mode from making the video code read outside the card's own
@@ -157,26 +192,34 @@ add_test(NAME test_relay_reasm COMMAND test_relay_reasm)
 add_executable(test_gfxcard test_gfxcard.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/edid.c)
 target_include_directories(test_gfxcard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
-add_test(NAME test_gfxcard COMMAND test_gfxcard)
+rpcemu_add_test(test_gfxcard)
 
 # The shared clipboard's text conversion. hostclipboard.c is included by the test
 # and the emulated memory stubbed, so this links nothing.
 add_executable(test_clipboard test_clipboard.c)
 target_include_directories(test_clipboard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
-add_test(NAME test_clipboard COMMAND test_clipboard)
+rpcemu_add_test(test_clipboard)
 
 # The graphics card's driver module, as RISC OS will read it. The image is
 # assembled by hand and committed (build.sh --podules), so nothing in an ordinary
 # build would notice it going stale or truncated; this reads it the way the module
-# system does. Guarded on the file existing so a tree without it still configures.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../gfxroms/RPCEmuGfx,ffa")
-    add_executable(test_gfxrom test_gfxrom.c)
-    target_include_directories(test_gfxrom PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
-    add_test(NAME test_gfxrom COMMAND test_gfxrom
-             "${CMAKE_CURRENT_SOURCE_DIR}/../gfxroms/RPCEmuGfx,ffa")
-else()
-    message(STATUS "Skipping test_gfxrom (gfxroms/RPCEmuGfx,ffa not built)")
+# system does.
+#
+# The file is in the repository, so a tree without it is a broken checkout rather
+# than a configuration to accommodate. This used to skip quietly if it was
+# missing, which meant renaming the ROM would have taken the test with it and said
+# nothing.
+set(RPCEMU_GFXROM "${CMAKE_CURRENT_SOURCE_DIR}/../gfxroms/RPCEmuGfx,ffa")
+if(NOT EXISTS "${RPCEMU_GFXROM}")
+    message(FATAL_ERROR
+        "gfxroms/RPCEmuGfx,ffa is missing, so the graphics card's ROM cannot be "
+        "tested. It is committed to the repository - restore it with "
+        "'git checkout -- gfxroms', or rebuild it with './build.sh --podules'. "
+        "Configure with -DRPCEMU_BUILD_TESTS=OFF to build without any tests.")
 endif()
+add_executable(test_gfxrom test_gfxrom.c)
+target_include_directories(test_gfxrom PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_gfxrom "${RPCEMU_GFXROM}")
 
 # The OHCI controller's isochronous transfer descriptors: the one place the
 # emulator writes a length back that a driver reads, so a mistake there is a
@@ -186,7 +229,50 @@ endif()
 add_executable(test_ohci_iso test_ohci_iso.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/usb_ohci.c)
 target_include_directories(test_ohci_iso PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
-add_test(NAME test_ohci_iso COMMAND test_ohci_iso)
+rpcemu_add_test(test_ohci_iso)
+
+# The lock that stops one machine being run twice, and the owner file that says
+# which process has it. Compiles machine_lock.c directly and supplies rpclog(),
+# its only dependency; the test uses the platform's own locking calls to stand in
+# for a second emulator, so it needs no second process and behaves the same on all
+# three platforms. Runs in the build directory, since it creates machine
+# directories and locks them.
+add_executable(test_machine_lock test_machine_lock.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/machine_lock.c
+               test_log_stub.c)
+target_include_directories(test_machine_lock PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_machine_lock ${CMAKE_CURRENT_BINARY_DIR})
+
+# The per-instance network slot. net_slot.c is #included by the test rather than
+# linked, so the test can bind the same loopback ports the unit does and check the
+# claim is really exclusive. Needs the socket libraries on Windows, which
+# rpcemu_core would otherwise have supplied.
+add_executable(test_net_slot test_net_slot.c)
+target_include_directories(test_net_slot PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+if(WIN32)
+    target_link_libraries(test_net_slot PRIVATE ws2_32)
+endif()
+rpcemu_add_test(test_net_slot)
+
+# The serialisation primitives snapshots are built from, and the run-length codec
+# that carries RAM and VRAM. Links rpcemu_core: savestate.c calls into every
+# module's own save/load function, so unlike most of the tests here it cannot be
+# compiled in isolation. Runs in the build directory, since it writes files.
+add_executable(test_savestate test_savestate.c test_stubs.c)
+target_link_libraries(test_savestate PRIVATE rpcemu_core m)
+rpcemu_add_test(test_savestate ${CMAKE_CURRENT_BINARY_DIR})
+
+# MD5, which decides whether a downloaded package is the file its index promised.
+# Known-answer tests against RFC 1321, because a subtly wrong MD5 produces
+# sixteen plausible bytes and nothing else would notice. Compiles md5.c directly;
+# it depends on nothing. Runs in the build directory, since it hashes a file it
+# writes.
+add_executable(test_md5 test_md5.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/md5.c)
+target_include_directories(test_md5 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_md5 ${CMAKE_CURRENT_BINARY_DIR})
 
 # The zip reader used to unpack downloaded RISC OS archives. Compiles unzip.c
 # directly rather than linking rpcemu_core, for the same reason as the tests
@@ -196,4 +282,41 @@ add_test(NAME test_ohci_iso COMMAND test_ohci_iso)
 add_executable(test_unzip test_unzip.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/unzip.c)
 target_include_directories(test_unzip PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
-add_test(NAME test_unzip COMMAND test_unzip)
+rpcemu_add_test(test_unzip)
+
+# ---------------------------------------------------------------------------
+# How big the suite is meant to be.
+#
+# Everything above registers through rpcemu_add_test(), so the tests can be
+# counted and the count compared against what this file says it should be. The
+# reason for doing it at all: every other outcome here is loud - a test that fails
+# fails the build - but a test that is never registered is silent, and a run that
+# tested twelve things looks exactly like the run that tested twenty. This turns
+# that one silent failure into a configure error.
+#
+# Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
+# is the only line in the file that cannot go stale without being noticed.
+set(RPCEMU_EXPECTED_TESTS 16)	# tests that build on every platform
+if(RPCEMU_JIT_TESTS)
+    math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
+endif()
+
+list(LENGTH RPCEMU_REGISTERED_TESTS RPCEMU_ACTUAL_TESTS)
+if(NOT RPCEMU_ACTUAL_TESTS EQUAL RPCEMU_EXPECTED_TESTS)
+    string(REPLACE ";" "\n  " RPCEMU_TEST_LIST "${RPCEMU_REGISTERED_TESTS}")
+    message(FATAL_ERROR
+        "The test suite is the wrong size: ${RPCEMU_ACTUAL_TESTS} tests were "
+        "registered, ${RPCEMU_EXPECTED_TESTS} expected.\n"
+        "If a test was added, raise RPCEMU_EXPECTED_TESTS in "
+        "tests/CMakeLists.txt. If one has gone missing, find out why before "
+        "lowering it - the number exists to make that impossible to do by "
+        "accident.\nRegistered:\n  ${RPCEMU_TEST_LIST}")
+endif()
+
+# Left for tests/run-ctest.sh, which checks the same number again after the run.
+# The check above cannot fire when the tests are never configured at all, which is
+# the case the shell side catches.
+file(WRITE "${CMAKE_BINARY_DIR}/rpcemu-expected-tests.txt"
+     "${RPCEMU_EXPECTED_TESTS}\n")
+
+message(STATUS "RPCEmu: ${RPCEMU_ACTUAL_TESTS} tests registered")

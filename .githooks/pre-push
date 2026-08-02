@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+#
+# Build and test before anything leaves this machine.
+#
+# CI catches a broken commit in about ten minutes, on somebody's push, and by
+# then it is on main where the next person picks it up. This catches it in two,
+# before it exists anywhere else. The two are not alternatives: this covers one
+# platform and CI covers three, so this is the fast half of the same idea.
+#
+# Install it once, for this clone:
+#
+#     git config core.hooksPath .githooks
+#
+# It lives in the repository rather than in .git/hooks so it is version
+# controlled and so a new clone gets it with one command rather than a copy that
+# then goes stale.
+#
+# Skipping it, when you know what you are doing and why:
+#
+#     git push --no-verify
+#     RPCEMU_SKIP_PRE_PUSH=1 git push
+#
+# Deleting a branch, and pushing nothing at all, skip it automatically: there is
+# nothing to test.
+#
+# See docs/testing.md.
+
+set -uo pipefail
+
+if [ "${RPCEMU_SKIP_PRE_PUSH:-}" = "1" ]; then
+	echo "pre-push: skipped (RPCEMU_SKIP_PRE_PUSH=1)"
+	exit 0
+fi
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root" || exit 1
+
+# stdin gives one line per ref: <local ref> <local sha> <remote ref> <remote sha>.
+# An all-zero local sha is a deletion, which builds nothing.
+zero="0000000000000000000000000000000000000000"
+have_work=0
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+	if [ -n "${local_sha:-}" ] && [ "$local_sha" != "$zero" ]; then
+		have_work=1
+	fi
+done
+
+if [ "$have_work" = 0 ]; then
+	exit 0
+fi
+
+echo "pre-push: building and testing before this leaves the machine"
+echo "          (git push --no-verify to skip, if you have a reason)"
+
+# A build directory of its own. Using build/ would fight with whatever is being
+# worked on - a half-finished configure, an interpreter build, a sanitiser
+# build - and a hook that quietly reconfigures somebody's working tree is worse
+# than no hook. Kept between runs, so this is usually incremental and quick.
+BUILD_DIR="${RPCEMU_PRE_PUSH_BUILD:-build-prepush}"
+
+if ! cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release >/dev/null; then
+	echo
+	echo "pre-push: cmake failed. Nothing pushed."
+	echo "          Re-run it yourself to see why:"
+	echo "          cmake -S . -B $BUILD_DIR -DCMAKE_BUILD_TYPE=Release"
+	exit 1
+fi
+
+jobs="$( (nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) )"
+log="$(mktemp)"
+if ! cmake --build "$BUILD_DIR" -j"$jobs" >"$log" 2>&1; then
+	echo
+	echo "pre-push: the build failed. Nothing pushed."
+	grep -E "error:" "$log" | head -20
+	echo "          full output: $log"
+	exit 1
+fi
+
+# Warnings in code we maintain. Only meaningful after a build that actually
+# compiled something, so an incremental build that touched nothing is reported
+# as the non-answer it is rather than as a pass.
+if grep -qE ": (warning|error):" "$log" || grep -q "Building" "$log"; then
+	if ! bash tests/check-warnings.sh "$log"; then
+		echo
+		echo "pre-push: warnings in code this project maintains. Nothing pushed."
+		rm -f "$log"
+		exit 1
+	fi
+fi
+rm -f "$log"
+
+if ! bash tests/run-ctest.sh "$BUILD_DIR" pre-push; then
+	echo
+	echo "pre-push: tests failed. Nothing pushed."
+	echo "          Run them yourself with: bash tests/run-ctest.sh $BUILD_DIR"
+	exit 1
+fi
+
+echo "pre-push: build and tests passed"
+exit 0

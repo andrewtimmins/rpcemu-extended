@@ -157,6 +157,50 @@ def encode_png(w: int, h: int, fb: bytearray) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# Sanitiser output
+# ---------------------------------------------------------------------------
+
+
+# The shapes AddressSanitizer and UndefinedBehaviorSanitizer report in. The
+# summary lines are matched as well as the first lines because a build with
+# halt_on_error off prints one without the other.
+SANITISER_PATTERNS = (
+    "runtime error:",
+    "ERROR: AddressSanitizer",
+    "ERROR: LeakSanitizer",
+    "ERROR: ThreadSanitizer",
+    "SUMMARY: AddressSanitizer",
+    "SUMMARY: UndefinedBehaviorSanitizer",
+    "SUMMARY: ThreadSanitizer",
+)
+
+
+def sanitiser_reports(output: str) -> list[str]:
+    """
+    Pick the sanitiser complaints out of an emulator's output.
+
+    A boot is by far the widest net this project has for undefined behaviour:
+    the unit tests reach a codec and a register file, while a boot runs a real
+    operating system through the CPU core, the MMU, IOMD, VIDC and the disc and
+    network controllers. The first time this was pointed at one it found two
+    genuine cases within seconds of each other - a shift by 32 on every aligned
+    load, and a signed overflow on every palette update.
+
+    Deduplicated, keeping the order they appeared in: a single fault inside the
+    emulation loop repeats thousands of times, and a screenful of the same line
+    hides whatever else there was to see.
+
+    @return the distinct report lines, empty when the run was clean.
+    """
+    seen = []
+    for line in output.splitlines():
+        line = line.strip()
+        if any(p in line for p in SANITISER_PATTERNS) and line not in seen:
+            seen.append(line)
+    return seen
+
+
+# ---------------------------------------------------------------------------
 # Screen plausibility
 # ---------------------------------------------------------------------------
 
@@ -510,6 +554,14 @@ def main() -> int:
                          "when the data directory holds more than one, since the "
                          "clock check only applies to RISC OS 5")
     ap.add_argument("--save", help="write the captured screen here as a PNG")
+    ap.add_argument("--screen-check", choices=("require", "advisory"),
+                    default="require",
+                    help="'advisory' reports what the screen looks like but "
+                         "does not fail on it, and skips the HostCmd questions "
+                         "that follow. For the sanitiser build, which is far too "
+                         "slow to reach the desktop in any sensible time - there "
+                         "the point of booting is what the sanitisers say, not "
+                         "how far RISC OS got")
     args = ap.parse_args()
 
     binary = os.path.abspath(args.binary)
@@ -622,7 +674,14 @@ def main() -> int:
             print(f"==> wrote {args.save}", flush=True)
 
         ok, summary = describe_screen(w, h, fb)
-        if not ok:
+        if args.screen_check == "advisory":
+            # A sanitised build runs tens of times slower than the one a user
+            # has, so where RISC OS gets to in a fixed time measures the runner.
+            # The verdict for such a run is made below, from what the sanitisers
+            # said; this is reported so the screen can still be looked at.
+            print(f"{'PASS' if ok else 'NOTE'}: {summary}", flush=True)
+            rc = 0
+        elif not ok:
             print(f"FAIL: {summary}", file=sys.stderr, flush=True)
         else:
             print(f"PASS: {summary}", flush=True)
@@ -671,6 +730,22 @@ def main() -> int:
             print("--- emulator output ---", flush=True)
             print(output, flush=True)
         os.unlink(log.name)
+
+        # Whatever else happened, anything the sanitisers said fails the run.
+        # Checked on every platform and every build, not only the sanitiser job:
+        # an ordinary build cannot produce these lines, so the check is free, and
+        # if one ever appears in a release build it is the most important thing
+        # in the log rather than something to scroll past.
+        reports = sanitiser_reports(output)
+        if reports:
+            print("FAIL: the sanitisers reported problems during the boot",
+                  file=sys.stderr, flush=True)
+            for line in reports:
+                print(f"  {line}", file=sys.stderr, flush=True)
+            rc = 1
+        elif args.screen_check == "advisory" and rc == 0:
+            print("PASS: the machine ran with nothing reported by the "
+                  "sanitisers", flush=True)
 
     return rc
 

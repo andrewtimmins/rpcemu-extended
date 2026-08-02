@@ -86,6 +86,9 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `riscos-progs/` | RISC OS module source (HostFS, HostFSFiler, ScrollWheel, EtherRPCEm, RPCEmuSupport, RPCEmuGfx, SyncClock, RPCEmuUSBSupport, RPCEmuPCIEmulator) |
 | `riscos-patches/` | Our changes to RISC OS components that are not ours, as patches against a named upstream revision (currently OHCIDriver) |
 | `packaging/` | Desktop entry and other packaging files |
+| `tests/` | Unit tests, the boot and command-line smoke tests, and the scripts CI and the pre-push hook both call |
+| `.githooks/` | The pre-push hook that builds and tests before anything leaves your machine |
+| `docs/release-notes/` | One file per release, published as that release's notes |
 | `build.sh` | Unified build and release script |
 | `docs/dynarec.md` | ARM dynamic recompiler (build, behaviour, limitations) |
 | `docs/arm64-dynarec.md` | AArch64 (arm64) dynarec backend |
@@ -103,6 +106,7 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `tools/mcp/README.md` | MCP server: drive a RISC OS machine from Claude / an agent (commands, files, screen, debugger). Setup + tool reference. |
 | `docs/debugcmd.md` | DebugCmd: control the emulated CPU over a socket (registers, memory, disassembly, breakpoints, single-step) |
 | `docs/debugger-tracing.md` | Debugger: exception trapping, SWI tracing, logging watchpoints |
+| `docs/testing.md` | Testing: running the suite, the pre-push hook, writing a test, the sanitiser build, and the known gaps |
 | `docs/windows-build.md` | Building for Windows (MinGW-w64) |
 | `docs/macos-build.md` | Building for macOS (universal binary) |
 | `setup-build-env.sh` | Install build dependencies (Debian/Ubuntu) |
@@ -817,6 +821,20 @@ how the JIT is built and when it falls back to interpretation.
 
 Issues and pull requests are welcome, especially around debugger, inspector, and
 networking features.
+
+The build scripts run the unit tests, so an ordinary `./build.sh` is also a test
+run. Before you push, turn on the hook that builds and tests first:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Anything new wants a test in `tests/`, and one that has been shown to fail when
+the code it covers is broken — a test that has only ever passed has not been
+tested itself. CI runs the same suite on Linux, Windows and macOS, plus a real
+boot on each and a build under AddressSanitizer and UndefinedBehaviorSanitizer.
+[docs/testing.md](docs/testing.md) covers all of it, including what is *not*
+covered.
 
 ---
 

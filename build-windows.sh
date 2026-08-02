@@ -106,10 +106,7 @@ cmake --build "$BUILD_DIR" -j"$(njobs)"
 # produces .exe files this host cannot execute. A failure is fatal: Windows spent
 # a long time as the one platform that built without ever being tested.
 if [ "$NATIVE" = true ]; then
-	if [ -f "$BUILD_DIR/CTestTestfile.cmake" ]; then
-		echo "==> ctest"
-		( cd "$BUILD_DIR" && ctest --output-on-failure )
-	fi
+	bash "$SCRIPT_DIR/tests/run-ctest.sh" "$BUILD_DIR"
 else
 	echo "Note: skipping tests (cross-compiled binaries cannot run on this host)."
 fi

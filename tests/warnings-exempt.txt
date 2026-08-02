@@ -1,0 +1,46 @@
+# Files allowed to produce compiler warnings, and why.
+#
+# tests/check-warnings.sh fails the build for a warning in any file NOT listed
+# here. The list is therefore a debt register, not a place to put things to stop
+# them complaining: every line is work somebody could do, and the list should get
+# shorter.
+#
+# The rule for adding a line: it is inherited code we have not audited, or a fix
+# would change behaviour we cannot test on all three platforms. Anything else
+# gets fixed instead. Give the reason - a bare path here is not enough for the
+# next person to judge whether it can come off.
+#
+# One path prefix per line, relative to the repository root. A line ending in /
+# matches a directory. Blank lines and # comments ignored.
+
+# --- Upstream SLiRP -------------------------------------------------------
+# The bundled network stack, pre-libslirp QEMU-era code (see docs and
+# project history). Around a hundred sign-compare and unused-parameter
+# warnings. Not ours to tidy, and a migration to libslirp 4.x has been
+# assessed and deferred; churning it now would make that harder, not easier.
+src/slirp/
+
+# --- Podule subsystem, derived from Arculator by Sarah Walker -------------
+# Kept close to its original so fixes can still be compared against it.
+src/podules/
+src/podules.c
+
+# --- Inherited RPCEmu ------------------------------------------------------
+# Upstream RPCEmu code we have not rewritten. All -Wunused-result on fread()
+# and read(): worth fixing, but each one needs a decision about what a short
+# read should do to a floppy or CD image, which is a change in behaviour rather
+# than a change in spelling.
+src/disc_adf.c
+src/disc_hfe.c
+src/hostfs.c
+src/cdrom-iso.c
+src/cdrom-ioctl.c
+src/rpc-machdep.c
+
+# --- wxWidgets deprecation -------------------------------------------------
+# wxPATH_NORM_ALL is deprecated in wx 3.2 in favour of naming the flags wanted.
+# Left alone deliberately: this is the function that finds the data directory,
+# and the replacement set changes how paths with environment variables, Windows
+# short names and shortcuts resolve. That is a behaviour change on all three
+# platforms, and this machine can only test one of them.
+src/gui/data_paths.cpp
