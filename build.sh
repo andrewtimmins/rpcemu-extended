@@ -27,11 +27,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 get_version() {
+	# The number always comes from VERSION; git only says which commit this is,
+	# so a build from anywhere but a release tag cannot be mistaken for the
+	# release. Matches the logic in CMakeLists.txt.
+	local release
 	if [ -f VERSION ]; then
-		tr -d ' \t\r\n' < VERSION
+		release="$(tr -d ' \t\r\n' < VERSION)"
+	else
+		echo "0.0.0"
 		return
 	fi
-	echo "0.0.0"
+	if command -v git >/dev/null 2>&1 && [ -d .git ] \
+	   && ! git describe --tags --exact-match --match 'v[0-9]*' >/dev/null 2>&1; then
+		local commit
+		commit="$(git rev-parse --short HEAD 2>/dev/null)"
+		if [ -n "$commit" ]; then
+			if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+				printf '%s-g%s-dirty\n' "$release" "$commit"
+			else
+				printf '%s-g%s\n' "$release" "$commit"
+			fi
+			return
+		fi
+	fi
+	printf '%s\n' "$release"
 }
 
 normalize_linux_arch() {

@@ -47,7 +47,21 @@ else
 	BIN=rpcemu-recompiler.exe
 fi
 
-get_version() { [ -f VERSION ] && tr -d ' \t\r\n' < VERSION || echo "0.0.0"; }
+get_version() {
+	# See build.sh: number from VERSION, commit from git unless on a tag.
+	release="$([ -f VERSION ] && tr -d ' \t\r\n' < VERSION || echo 0.0.0)"
+	if command -v git >/dev/null 2>&1 && [ -d .git ] \
+	   && ! git describe --tags --exact-match --match 'v[0-9]*' >/dev/null 2>&1; then
+		commit="$(git rev-parse --short HEAD 2>/dev/null)"
+		if [ -n "$commit" ]; then
+			if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+				printf '%s-g%s-dirty\n' "$release" "$commit"; return
+			fi
+			printf '%s-g%s\n' "$release" "$commit"; return
+		fi
+	fi
+	printf '%s\n' "$release"
+}
 VERSION=$(get_version)
 
 njobs() { nproc 2>/dev/null || echo 4; }

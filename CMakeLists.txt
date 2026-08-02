@@ -1,9 +1,50 @@
 cmake_minimum_required(VERSION 3.16)
 
-file(READ "${CMAKE_SOURCE_DIR}/VERSION" RPCEMU_VERSION)
-string(STRIP "${RPCEMU_VERSION}" RPCEMU_VERSION)
+# The release number. project() and the Debian package need a bare x.y.z, so
+# this stays exactly what the file says.
+file(READ "${CMAKE_SOURCE_DIR}/VERSION" RPCEMU_RELEASE)
+string(STRIP "${RPCEMU_RELEASE}" RPCEMU_RELEASE)
 
-project(rpcemu VERSION ${RPCEMU_VERSION} LANGUAGES C)
+project(rpcemu VERSION ${RPCEMU_RELEASE} LANGUAGES C)
+
+# What the emulator reports and what the archives are named. The number is
+# always the one in VERSION; git only says which commit this is, so that a build
+# from anywhere but a release tag cannot be mistaken for the release itself.
+# Nothing is inferred from the tags, so a clone that is missing some cannot
+# quietly report an older release than the source says it is.
+#
+# Released builds are the exception: on a release tag the number stands alone,
+# and the workflow refuses to publish a tag that disagrees with VERSION.
+set(RPCEMU_VERSION "${RPCEMU_RELEASE}")
+find_package(Git QUIET)
+if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" rev-parse --short HEAD
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        OUTPUT_VARIABLE _rpcemu_commit
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE _rpcemu_commit_result)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" describe --tags --exact-match --match "v[0-9]*"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        OUTPUT_QUIET ERROR_QUIET
+        RESULT_VARIABLE _rpcemu_on_tag)
+    if(_rpcemu_commit_result EQUAL 0 AND _rpcemu_commit AND NOT _rpcemu_on_tag EQUAL 0)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" status --porcelain --untracked-files=no
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            OUTPUT_VARIABLE _rpcemu_dirty
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET)
+        if(_rpcemu_dirty)
+            set(RPCEMU_VERSION "${RPCEMU_RELEASE}-g${_rpcemu_commit}-dirty")
+        else()
+            set(RPCEMU_VERSION "${RPCEMU_RELEASE}-g${_rpcemu_commit}")
+        endif()
+    endif()
+endif()
+message(STATUS "RPCEmu version: ${RPCEMU_VERSION} (release ${RPCEMU_RELEASE})")
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
