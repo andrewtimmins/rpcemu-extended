@@ -438,8 +438,26 @@ void ConfigSelectorDialog::OnDelete(wxCommandEvent &)
 
 	wxRemoveFile(path);
 	const wxString machine_dir = ConfigPathsMachinesDir() + wxFileName::GetPathSeparator() + name;
-	wxString cmd = wxString::Format("rm -rf '%s'", machine_dir);
-	system(cmd.utf8_str().data());
+
+	/*
+	 * wx's own recursive remove, not a shell command. This was
+	 * system("rm -rf '<dir>'"), which had three problems: Windows has no rm, so
+	 * deleting a machine there removed its configuration and silently left every
+	 * byte of its data behind; a machine name is typed by the user and went into
+	 * a shell command inside single quotes, so a name containing one would have
+	 * been able to run whatever followed it; and the result was not looked at, so
+	 * a failure to delete reported success.
+	 */
+	if (wxFileName::DirExists(machine_dir)) {
+		if (!wxFileName::Rmdir(machine_dir, wxPATH_RMDIR_RECURSIVE)) {
+			wxMessageBox(wxString::Format(
+			                 "'%s' has been removed from the list, but its data "
+			                 "could not be deleted from\n\n%s\n\nYou may want to "
+			                 "remove that folder yourself.",
+			                 name, machine_dir),
+			             "Delete Machine", wxOK | wxICON_WARNING, this);
+		}
+	}
 	RefreshConfigList();
 }
 
