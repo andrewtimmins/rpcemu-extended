@@ -19,22 +19,22 @@
  */
 
 /*
- * app_settings - settings that belong to the emulator, not to a machine.
+ * app_settings - the settings that apply before a machine has been chosen.
  *
- * Everything configurable used to live in a machine's own file, which was fine
- * while every setting described an emulated Risc PC. The ways *into* the running
- * process are not that: the VNC server and the HostCmd socket are how a person
- * or a script reaches the emulator, no more a property of the guest than the
- * window is. Two things make that concrete:
+ * The ways in to a machine, its VNC server and its HostCmd socket, belong to that
+ * machine and live in its own file in configs/. Two machines wanting different
+ * ports is the ordinary case rather than an odd one, so the answer has to be able
+ * to differ per machine without being given on the command line every time.
  *
- *   - Headless mode already ignores the machine's vnc_enabled and starts the
- *     server anyway, which is a workaround for a setting in the wrong place.
- *   - A machine selector shown over VNC has to be listening *before* any machine
- *     is chosen, so it cannot read a machine's configuration at all.
+ * Something still has to answer before there is a machine to ask. Started headless
+ * with no machine named, RPCEmu offers the machine list over VNC, and that server
+ * has to be listening before anything has been chosen. That is what this file is
+ * for. It doubles as the default for a machine whose own configuration does not
+ * mention these keys, which is every machine written while they were emulator-wide.
  *
- * So these five keys move here, to $DATADIR/rpcemu.cfg. Deliberately not into
- * configs/, because everything there is enumerated as a machine and an app
- * settings file would appear in the selector as a machine called "rpcemu".
+ * $DATADIR/rpcemu.cfg. Deliberately not in configs/, because everything there is
+ * enumerated as a machine and an app settings file would appear in the selector as
+ * a machine called "rpcemu".
  *
  * Written in plain C with a small key=value parser rather than through wx, so
  * that the emulator core can read it, a unit test can exercise it without a
@@ -42,14 +42,16 @@
  *
  * Precedence, highest first:
  *
- *   1. the command line             at present only --headless, which forces the
- *                                   VNC server on for the session; per-setting
- *                                   flags such as --vnc-port are not implemented
- *   2. $DATADIR/rpcemu.cfg          this file
- *   3. configs/<machine>.cfg        legacy; read, reported, never written back
+ *   1. the command line             --vnc-port, --no-vnc, --hostcmd-socket, and
+ *                                   --headless, which forces the VNC server on
+ *                                   for the session
+ *   2. configs/<machine>.cfg        the machine's own, once one is loaded
+ *   3. $DATADIR/rpcemu.cfg          this file
  *   4. the built-in default
  *
- * Step 3 is what stops an existing installation changing behaviour on upgrade.
+ * Nothing moves between the two files in either direction. config_machine_loaded()
+ * is how anything opening a channel tells "this machine says nothing about it"
+ * from "there is no machine yet".
  */
 
 #ifndef APP_SETTINGS_H

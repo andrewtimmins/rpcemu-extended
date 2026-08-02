@@ -212,13 +212,18 @@ app_settings_save(const char *datadir, const Config *cfg)
 	}
 
 	fprintf(f,
-	    "# RPCEmu settings that belong to the emulator rather than to a machine.\n"
+	    "# RPCEmu settings for before a machine has been chosen.\n"
 	    "#\n"
-	    "# These are the ways in to the running process, so they are the same\n"
-	    "# whichever machine is loaded, and they apply before one is chosen. Edit\n"
-	    "# by hand if you like; the format is key=value and # starts a comment.\n"
+	    "# Started headless with no machine named, RPCEmu offers the machine list\n"
+	    "# over VNC, and that has to be reachable before there is a machine whose\n"
+	    "# settings could be read. This is where it gets its port and password.\n"
 	    "#\n"
-	    "# The command line overrides anything here.\n"
+	    "# These are also the defaults for a machine that does not say. A machine\n"
+	    "# that does say wins: its own .cfg in configs/ is the setting, which is\n"
+	    "# what the machine editor and Settings > VNC Server write to. The command\n"
+	    "# line beats both.\n"
+	    "#\n"
+	    "# Edit by hand if you like; the format is key=value and # starts a comment.\n"
 	    "\n"
 	    "vnc_enabled=%d\n"
 	    "vnc_port=%d\n"
