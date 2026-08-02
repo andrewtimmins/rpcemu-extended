@@ -88,7 +88,7 @@ target_include_directories(${RPCEMU_GUI_TARGET} PRIVATE
 )
 
 target_compile_definitions(${RPCEMU_GUI_TARGET} PRIVATE
-    RPCEMU_VERSION="${PROJECT_VERSION}"
+    RPCEMU_VERSION="${RPCEMU_VERSION}"
     RPCEMU_INSTALL_DATADIR="${CMAKE_INSTALL_PREFIX}/share/rpcemu"
 )
 

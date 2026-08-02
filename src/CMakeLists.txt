@@ -125,7 +125,7 @@ target_include_directories(rpcemu_core PRIVATE
 
 target_compile_definitions(rpcemu_core PUBLIC
     CONFIG_SLIRP
-    RPCEMU_VERSION="${PROJECT_VERSION}"
+    RPCEMU_VERSION="${RPCEMU_VERSION}"
 )
 
 target_compile_definitions(rpcemu_core PRIVATE _DEFAULT_SOURCE)
