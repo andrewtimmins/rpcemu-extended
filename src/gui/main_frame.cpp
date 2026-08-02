@@ -808,6 +808,14 @@ void MainFrame::EnterFullScreen()
 	if (tool_bar_ != nullptr) {
 		tool_bar_->Show(false);
 	}
+	/* Removed rather than hidden. Hiding it leaves the space it occupied
+	   reserved - measurably so: the frame's client height does not change -
+	   and on macOS that shows as an empty strip along the bottom of the
+	   screen. BuildStatusBar() puts it back on the way out. */
+	if (wxStatusBar *bar = GetStatusBar()) {
+		SetStatusBar(nullptr);
+		bar->Destroy();
+	}
 	ShowFullScreen(true, wxFULLSCREEN_ALL);
 	full_screen_ = true;
 
@@ -848,6 +856,9 @@ void MainFrame::ExitFullScreen()
 	}
 	if (tool_bar_ != nullptr) {
 		tool_bar_->Show(true);
+	}
+	if (GetStatusBar() == nullptr) {
+		BuildStatusBar();
 	}
 	/* No Fit(): ShowFullScreen(false) has already restored the size, and
 	   fitting would shrink-wrap the frame to a panel that has no minimum. */
@@ -1451,6 +1462,14 @@ void MainFrame::OnMipsTimer(wxTimerEvent &)
 	}
 
 	UpdateMachineStatus();
+}
+
+void MainFrame::SetStatusText(const wxString &text, int number)
+{
+	if (GetStatusBar() == nullptr) {
+		return;
+	}
+	wxFrame::SetStatusText(text, number);
 }
 
 void MainFrame::OnFdcLedTimer(wxTimerEvent &) { SetStatusText(wxString(L'\u25cb'), STATUS_FDC_LED); }
