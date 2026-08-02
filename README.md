@@ -870,9 +870,10 @@ networking features.
   which is what puts the clock right after a machine has been suspended or a state
   is resumed later. Theirs is the design and the code: it is supplied here
   translated from their BBC BASIC assembler source into the GNU as syntax the other
-  guest modules use, so it builds with them, and the assembled code is
-  byte-identical to the module built from their original. See
-  `riscos-progs/SyncClock/`.
+  guest modules use, so it builds with them. Version 0.11 assembled byte-identical
+  to the module built from their original; 0.12 is that with one change of ours, a
+  time zone correction without which RISC OS 5 is left an hour slow whenever
+  daylight saving is in force. See `riscos-progs/SyncClock/`.
 - **USB** uses **RISC OS Open Limited's** own USB stack, not one of ours: the modules
   in `usbroms/` are their **USBDriver** and **OHCIDriver**, carried in the USB card's
   ROM and run by the emulated CPU. They are not GPL and `COPYING` does not cover

@@ -15,13 +15,17 @@
 @ and can be carried in the expansion ROM instead of having to be assembled
 @ inside the guest.
 @
-@ Behaviour is deliberately unchanged, and it was checked rather than assumed:
-@ assembled from this file, all 420 bytes of code and the module header are
-@ byte-identical to the module built from their BASIC source. The only
-@ differences in the whole 748-byte module are the date in the help string,
+@ Version 0.11 kept their behaviour exactly, and that was checked rather than
+@ assumed: assembled from this file, all 420 bytes of code and the module header
+@ were byte-identical to the module built from their BASIC source. The only
+@ differences in the whole 748-byte module were the date in the help string,
 @ their uninitialised ALIGN padding, and one message string that they left
 @ unaligned. Their originals are in git history from the initial commit,
 @ 2032532.
+@
+@ Version 0.12 departs from theirs deliberately, in one place: the time zone
+@ correction at the end of the ticker. Without it the clock is set an hour slow
+@ under RISC OS 5 whenever daylight saving is in force, which is issue #69.
 @
 @ Wanted for saving and restoring machine state: a state resumed later comes back
 @ with the clock it was saved with. Nick Brown raised it as an outstanding item on
@@ -47,6 +51,7 @@
 	XOS_RemoveTickerEvent		= 0x2003d
 	XIIC_Control			= 0x20240
 	XTerritory_SetTime		= 0x63047
+	XTerritory_ReadCurrentTimeZone	= 0x63048
 	XTerritory_ConvertTimeToUTCOrdinals = 0x63049
 	XTerritory_ConvertOrdinalsToTime = 0x63051
 
@@ -218,6 +223,10 @@ command_syncclock:
 @ The chip only stores the year modulo four, so the year is taken from the soft
 @ clock and only its low two bits are replaced from the chip. That is the
 @ original's trick and it is why this cannot correct a clock that is years out.
+@
+@ Everything here is in UTC: the chip reads UTC, and so do the ordinals, because
+@ ConvertTimeToUTCOrdinals is the UTC-based half of the pair. Setting the clock
+@ from them needs the correction at the end; see the comment there.
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 sync:
@@ -297,6 +306,27 @@ sync:
 	swi	XTerritory_ConvertOrdinalsToTime
 	addvs	sp, sp, #BLOCK_SIZE
 	ldmvsfd	sp!, {r0-r2, pc}
+
+	@ ConvertOrdinalsToTime reads its ordinals as LOCAL time, so it takes the
+	@ time zone off them on the way to a UTC result. These ordinals came from
+	@ the chip and were UTC already, so put back what it took, or the clock is
+	@ set an hour slow every summer. The offset has DST folded into it and is
+	@ zero in winter, which is why the original looked correct half the year.
+	@
+	@ Not a new risk at ticker time: ConvertOrdinalsToTime has just called this
+	@ same SWI itself to work out the offset it removed.
+	swi	XTerritory_ReadCurrentTimeZone
+	addvs	sp, sp, #BLOCK_SIZE
+	ldmvsfd	sp!, {r0-r2, pc}
+
+	@ Five-byte time, so a word and a byte. R1 is signed centiseconds: add it
+	@ with its sign extended into the top byte, and keep only that byte back.
+	ldr	r0, [sp, #OBLOCK]
+	ldrb	r2, [sp, #OBLOCK + 4]
+	adds	r0, r0, r1
+	adc	r2, r2, r1, asr #31
+	str	r0, [sp, #OBLOCK]
+	strb	r2, [sp, #OBLOCK + 4]
 
 	add	r0, sp, #OBLOCK
 	swi	XTerritory_SetTime

@@ -3,14 +3,15 @@
 # The Makefile turns this into version.inc, which supplies the module's help
 # string. Bump both fields together when the module changes.
 #
-# 0.11 is DEEJ Technology's own version number, kept because this is their
-# module: the translation to GNU as changed how it is built, not what it does.
-# Raise it only if the behaviour changes.
+# 0.11 was DEEJ Technology's own version number, kept while this was purely
+# their module: the translation to GNU as changed how it was built, not what it
+# did. 0.12 is ours, and fixes the time zone bug in issue #69, so the number had
+# to move rather than claim to be theirs.
 #
 # The date is deliberate rather than a true build stamp, as with the other
 # modules here: the assembled module is committed as poduleroms/syncclock,ffa
 # and only rebuilt when someone runs build.sh --podules, so a real build date
 # would record when that last happened. Override with `make MODULE_DATE="..."`.
 
-Module_MajorVersion	0.11
-Module_Date		28 Jul 2026
+Module_MajorVersion	0.12
+Module_Date		02 Aug 2026
