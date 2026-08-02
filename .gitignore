@@ -46,6 +46,9 @@
 /cmos.ram
 /rpc.cfg
 
+# Emulator configuration settings
+/rpcemu.cfg
+
 # Local tool / editor settings
 /.claude/
 
