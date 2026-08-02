@@ -12,6 +12,10 @@ This drives a real boot instead, and asks the guest two questions:
     the reply. That exercises the command socket and the RPCEmuSupport module
     the emulator loads from poduleroms/, neither of which the screen check
     touches, and puts the ROM the machine booted in the log.
+  - over HostCmd again: check the guest's clock against the host's, on a machine
+    deliberately configured some way from UTC. That is issue #69, where the
+    clock came out an hour slow whenever local time differed from UTC. See
+    hostcmd_clock() for what it does and does not prove.
 
 Both run against one machine on whichever platform the job runs.
 
@@ -32,6 +36,7 @@ HostCmd, and 1 otherwise, with the reason on stderr.
 """
 
 import argparse
+import calendar
 import os
 import re
 import shutil
@@ -221,7 +226,7 @@ def describe_screen(w: int, h: int, fb: bytearray) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 
-def make_test_config(dst_cfg: str, name: str, port: int) -> None:
+def make_test_config(dst_cfg: str, name: str, rom_dir: str | None) -> None:
     """
     Write the test machine's configuration.
 
@@ -230,26 +235,130 @@ def make_test_config(dst_cfg: str, name: str, port: int) -> None:
     install. Stating the settings here also means the test says what it is
     testing against instead of inheriting whatever a default happened to be.
 
-    VNC is set explicitly rather than relied on: --headless would start the
-    server anyway, but this test connects to a known port with no password, so
-    it states all three. The "name" field matters as much as the filename,
-    because config_load() derives the machine data directory from it.
+    No VNC settings: they stopped being machine settings in 4238518 and live in
+    the process-wide rpcemu.cfg now. A value here is not ignored - it is the
+    legacy fallback, and config_load() migrates it into the app file the first
+    time it sees one - but only when the app file does not already have that key.
+    So it works on a fresh data directory and is silently overridden on any real
+    one, which is a bad thing for a test to depend on. The port goes on the
+    command line instead, which is applied last of all and needs nobody's
+    rpcemu.cfg written over to say so.
+
+    The "name" field matters as much as the filename, because config_load()
+    derives the machine data directory from it.
     """
     with open(dst_cfg, "w", encoding="utf-8") as f:
         f.write(
             "[General]\n"
             f"name={name}\n"
-            "model=RPCSA\n"
-            "mem_size=256\n"
-            "vram_size=8\n"
-            "sound_enabled=0\n"
-            "refresh_rate=60\n"
-            "cdrom_enabled=0\n"
-            "network_type=off\n"
-            "vnc_enabled=1\n"
-            f"vnc_port={port}\n"
-            "vnc_password=\n"
+            + (f"rom_dir={rom_dir}\n" if rom_dir else "")
+            + "model=RPCSA\n"
+            + "mem_size=256\n"
+            + "vram_size=8\n"
+            + "sound_enabled=0\n"
+            + "refresh_rate=60\n"
+            + "cdrom_enabled=0\n"
+            + "network_type=off\n"
         )
+
+
+# --------------------------------------------------------------------------
+# Clock check (issue #69)
+# --------------------------------------------------------------------------
+#
+# RISC OS CMOS location 0x8b holds the time zone as a signed count of quarter
+# hours, which Territory's which_timezone sign-extends and scales to
+# centiseconds. The emulator's cmos.ram file puts RISC OS location N at file
+# offset N+0x40, wrapping above 255 - the rule cmos_update_checksum() walks, and
+# the reason cmos.c writes the DST bit for location 220 at offset 0x2c. No
+# checksum fixing is needed here because cmos_reset() recalculates it on load.
+TZ_CMOS_OFFSET = 0x8b + 0x40
+
+# Deliberately not a whole number of hours and not any zone the UK territory
+# lists, so a pass cannot come from a zone lookup landing somewhere plausible by
+# chance, and the quarter-hour path is exercised too. +2h15m.
+TZ_QUARTERS = 9
+
+# An hour is the error this guards against and a quarter of an hour is the
+# smallest interesting one, so the slack can be generous without weakening the
+# check. It only has to cover the seconds between asking the guest and reading
+# the host clock.
+CLOCK_TOLERANCE = 120
+
+
+def seed_timezone(cmos_path: str, quarters: int) -> None:
+    """Configure the test machine's time zone, so UTC and local time differ."""
+    with open(cmos_path, "r+b") as f:
+        f.seek(TZ_CMOS_OFFSET)
+        f.write(bytes([quarters & 0xff]))
+
+
+def hostcmd_clock(binary: str, datadir: str, env: dict) -> str:
+    """Check the guest's clock against the host's, and return what it said.
+
+    Issue #69: SyncClock set the clock an hour slow whenever the guest's local
+    time differed from UTC, because it built UTC ordinals and then handed them to
+    Territory_ConvertOrdinalsToTime, which reads its input as local time and
+    takes the zone off. Nothing in CI would have noticed: the fault is
+    proportional to the guest's offset from UTC, and a machine configured at UTC
+    on a runner at UTC has none. So the machine is given a time zone of its own
+    (seed_timezone) and TZ is pinned for the emulator, which makes the expected
+    answer exact rather than a property of where the runner happens to be.
+
+    *SyncClock is asked for a two-second interval first. That is worth as much as
+    the clock comparison: the command only exists while the module is loaded, so
+    an answer without an error proves the module arrived from poduleroms/, and it
+    guarantees the ticker has run several times before the clock is read rather
+    than leaving that to timing.
+
+    What this does NOT prove: that the ticker reaches Territory_SetTime. A
+    SyncClock that silently gave up would leave the clock as the kernel set it at
+    boot, which is correct, and this would pass. To check the ticker really sets
+    the clock, build the module with a deliberate shift (add a constant to the
+    five-byte time before SetTime) and see whether the guest moves by it.
+
+    That is not hypothetical, which is why the caller only runs this on RISC OS 5:
+    on 3.71 this ticker never reaches SetTime at all, so the clock is whatever the
+    kernel set at boot and the check passes while testing nothing. The five-minute
+    shift is how that was established. Skipping loudly beats passing quietly.
+    """
+    run = os.path.join(os.path.dirname(binary), "rpcemu-run")
+    if sys.platform == "win32":
+        run += ".exe"
+
+    def guest(cmd: str) -> str:
+        try:
+            p = subprocess.run([run, "--", cmd], cwd=datadir, env=env,
+                               timeout=40, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE)
+        except subprocess.TimeoutExpired:
+            raise SmokeError(f"the guest did not answer *{cmd} within 40s") from None
+        return p.stdout.decode("latin-1").replace("\r", "").strip()
+
+    # Two seconds rather than the default ten, so the wait below is short.
+    reply = guest("SyncClock 2")
+    if reply:
+        raise SmokeError(
+            f"*SyncClock was not accepted, so the module is not loaded: {reply!r}")
+
+    time.sleep(8)
+
+    out = guest("Time")
+    m = re.search(r"(\d\d):(\d\d):(\d\d)", out)
+    if not m:
+        raise SmokeError(f"the guest did not report a time: got {out!r}")
+
+    guest_secs = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
+    expect = (calendar.timegm(time.gmtime()) + TZ_QUARTERS * 900) % 86400
+    delta = (guest_secs - expect + 43200) % 86400 - 43200
+
+    want = time.strftime("%H:%M:%S", time.gmtime(expect))
+    if abs(delta) > CLOCK_TOLERANCE:
+        raise SmokeError(
+            f"the guest clock is {delta:+d}s out ({delta / 3600:+.2f}h): it says "
+            f"{m.group(0)} and a machine {TZ_QUARTERS / 4:+.2f}h from UTC should "
+            f"say {want}")
+    return f"{m.group(0)}, {delta:+d}s from the expected {want}"
 
 
 def seed_boot_file(hostfs: str) -> None:
@@ -395,6 +504,11 @@ def main() -> int:
                     help="directory holding configs/, roms/ and machines/; "
                          "found automatically when it is beside the binary or "
                          "in a .app's Contents/Resources")
+    ap.add_argument("--rom-dir",
+                    help="ROM directory under roms/ for the test machine to use "
+                         "(default: whatever the emulator picks). Worth naming "
+                         "when the data directory holds more than one, since the "
+                         "clock check only applies to RISC OS 5")
     ap.add_argument("--save", help="write the captured screen here as a PNG")
     args = ap.parse_args()
 
@@ -444,7 +558,7 @@ def main() -> int:
 
     test_name = "vncsmoke"
     test_cfg = os.path.join(configs, f"{test_name}.cfg")
-    make_test_config(test_cfg, test_name, port)
+    make_test_config(test_cfg, test_name, args.rom_dir)
 
     # The machine directory is keyed by the config's "name" field, which
     # make_test_config() has just set to test_name, so the test gets a directory
@@ -458,8 +572,14 @@ def main() -> int:
         shutil.rmtree(dst_machine)  # start from a known state on a re-run
     os.makedirs(dst_machine, exist_ok=True)
     seed_cmos = os.path.join(datadir, "default", "cmos.ram")
+    machine_cmos = os.path.join(dst_machine, "cmos.ram")
+    clock_check = False
     if os.path.isfile(seed_cmos):
-        shutil.copy2(seed_cmos, os.path.join(dst_machine, "cmos.ram"))
+        shutil.copy2(seed_cmos, machine_cmos)
+        # Only worth checking the clock when the machine has a time zone to be
+        # wrong about; without the seed CMOS there is nothing to put one in.
+        seed_timezone(machine_cmos, TZ_QUARTERS)
+        clock_check = True
 
     seed_boot_file(os.path.join(dst_machine, "hostfs"))
 
@@ -469,11 +589,20 @@ def main() -> int:
     # rather than re-deriving it (a bundle would otherwise seed and use
     # ~/RPCEmu, where our test config does not exist).
     env["RPCEMU_DATADIR"] = datadir
+    # Pin the emulator's own idea of the host time zone. cmos_update_settings()
+    # sets the guest's DST bit from the host's, so an unpinned runner would move
+    # the expected time by an hour twice a year. "UTC0" rather than "UTC" because
+    # it is the POSIX spelling and Windows understands it too.
+    env["TZ"] = "UTC0"
 
     log = tempfile.NamedTemporaryFile(prefix="vnc-smoke-", suffix=".log", delete=False)
-    print(f"==> starting {binary} --headless --machine {test_name}", flush=True)
+    print(f"==> starting {binary} --headless --machine {test_name} "
+          f"--vnc-port {port}", flush=True)
     proc = subprocess.Popen(
-        [binary, "--headless", "--machine", test_name],
+        # --vnc-port overrides both the config files, so the port the client
+        # below connects to is the port the server uses, whatever a developer's
+        # own rpcemu.cfg happens to say.
+        [binary, "--headless", "--machine", test_name, "--vnc-port", str(port)],
         cwd=datadir, env=env, stdout=log, stderr=subprocess.STDOUT,
     )
 
@@ -501,11 +630,32 @@ def main() -> int:
             print("==> asking the guest its version over HostCmd", flush=True)
             version = hostcmd_version(binary, datadir, env)
             print(f"PASS: the guest reports {version}", flush=True)
+
+            # Only RISC OS 5 runs SyncClock's ticker to completion, so only there
+            # does the clock say anything about it. Said out loud, because a
+            # check that quietly tested nothing is worse than no check.
+            m = re.match(r"RISC OS (\d+)", version)
+            os_major = int(m.group(1)) if m else 0
+            if clock_check and os_major < 5:
+                print(f"SKIP: the clock check needs RISC OS 5; this machine "
+                      f"booted {version}, where SyncClock's ticker does not "
+                      f"reach Territory_SetTime and the clock would be right "
+                      f"whether the module worked or not", flush=True)
+            elif clock_check:
+                print(f"==> checking the clock on a machine "
+                      f"{TZ_QUARTERS / 4:+.2f}h from UTC", flush=True)
+                clock = hostcmd_clock(binary, datadir, env)
+                print(f"PASS: the guest clock reads {clock}", flush=True)
+
+            # Last thing in the block, so every check above has to have passed.
+            # Set any earlier and a later failure prints FAIL and still exits 0.
             rc = 0
     except SmokeError as e:
         print(f"FAIL: {e}", file=sys.stderr, flush=True)
+        rc = 1
     except OSError as e:
         print(f"FAIL: {e}", file=sys.stderr, flush=True)
+        rc = 1
     finally:
         if proc.poll() is None:
             proc.terminate()  # SIGTERM: headless saves CMOS and discs on this
