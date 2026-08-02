@@ -64,12 +64,24 @@ machine_lock_acquire(const char *machine_dir, int vnc_port)
 	lock_path(path, sizeof(path), machine_dir);
 
 	/*
-	 * Exclusive by share mode rather than by a separate locking call: opening with
-	 * dwShareMode 0 means no other process can open it at all, and Windows closes
-	 * the handle when the process ends however it ends.
+	 * Exclusive by share mode rather than by a separate locking call, and Windows
+	 * closes the handle when the process ends however it ends.
+	 *
+	 * FILE_SHARE_READ, not 0. Sharing nothing does lock the machine, but it also
+	 * stops anyone reading the file - including machine_lock_read_owner() in the
+	 * very process that has just been refused, which is the only time anybody
+	 * wants to read it. The "already running" message is meant to say which
+	 * process holds the machine and on which VNC port it can be reached, and on
+	 * Windows it never could: the read failed with a sharing violation and the
+	 * message came out bare. Found by test_machine_lock on the first CI run it
+	 * ever had.
+	 *
+	 * The lock is unaffected. A second machine_lock_acquire() asks for
+	 * GENERIC_WRITE, which FILE_SHARE_READ refuses, so the second instance is
+	 * still turned away; only readers get in.
 	 */
-	lock_handle = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, 0, NULL,
-	                          OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	lock_handle = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ,
+	                          NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (lock_handle == INVALID_HANDLE_VALUE) {
 		return 0;
 	}
