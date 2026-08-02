@@ -32,6 +32,7 @@ jobs:
         run: bash setup-build-env.sh
 
       - name: Build and package (amd64, dynarec)
+        timeout-minutes: 5
         run: |
           chmod +x build.sh setup-build-env.sh
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
@@ -131,6 +132,7 @@ jobs:
         run: bash setup-build-env.sh
 
       - name: Build and package (arm64, interpreter)
+        timeout-minutes: 5
         run: |
           chmod +x build.sh setup-build-env.sh
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
@@ -242,6 +244,7 @@ jobs:
             mingw-w64-x86_64-libusb
 
       - name: Build and stage release (native MSYS2)
+        timeout-minutes: 7
         run: |
           chmod +x build-windows.sh
           ./build-windows.sh --zip
@@ -393,6 +396,7 @@ jobs:
           arch -x86_64 /usr/local/bin/brew list --versions sdl2-compat sdl3 wxwidgets libvncserver libusb || true
 
       - name: Build x86_64 slice + test (Rosetta)
+        timeout-minutes: 12
         run: |
           chmod +x build-macos.sh
           # Resolve wx-config / pkg-config / cmake from the x86_64 Homebrew
@@ -436,6 +440,7 @@ jobs:
           brew list --versions sdl2-compat sdl3 wxwidgets libvncserver libusb || true
 
       - name: Build arm64 slice (interpreter) + test
+        timeout-minutes: 5
         run: |
           chmod +x build-macos.sh
           ./build-macos.sh --arch arm64
