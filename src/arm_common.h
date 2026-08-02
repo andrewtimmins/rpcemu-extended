@@ -62,6 +62,19 @@ static const uint32_t msrlookup[16] = {
 /**
  * Perform a rotate-right operation on a 32-bit integer.
  *
+ * A rotate by zero has to be handled, and it is the common case rather than an
+ * edge one: arm_ldr_rotate() asks for zero on every word-aligned load, and
+ * arm_imm() asks for zero for every immediate whose rotate field is empty. The
+ * obvious spelling, (x >> n) | (x << (32 - n)), then shifts left by 32, which C
+ * leaves undefined for a 32-bit type - the compiler may emit anything it likes.
+ * On x86 and ARM the shift instruction happens to use only the low five bits of
+ * its count, so it produced the right answer for years and nothing noticed until
+ * UndefinedBehaviorSanitizer was pointed at a boot.
+ *
+ * Masking both counts with 31 makes the zero case defined and leaves 1 to 31
+ * exactly as they were. Compilers recognise this form as a rotate and emit the
+ * single instruction for it, so the masks cost nothing.
+ *
  * @param x Value to rotate
  * @param n Number of bit positions to rotate by
  * @return Rotated value
@@ -69,7 +82,7 @@ static const uint32_t msrlookup[16] = {
 static inline uint32_t
 rotate_right32(uint32_t x, uint32_t n)
 {
-	return (x >> n) | (x << (32 - n));
+	return (x >> (n & 31)) | (x << ((32 - n) & 31));
 }
 
 /**

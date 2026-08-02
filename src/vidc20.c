@@ -302,7 +302,13 @@ closevideo(void)
 static uint32_t
 makecol(uint32_t r, uint32_t g, uint32_t b)
 {
-	return (0xff << 24) | (r << 16) | (g << 8) | b;
+	/* 0xffu, not 0xff: the plain constant is an int, and shifting it into the
+	   top bit overflows a signed type, which C leaves undefined. It gave the
+	   intended answer on every compiler this has been built with, but it is the
+	   compiler's choice rather than ours - and while it stood, it was reported on
+	   every single palette update, which buries anything else the sanitiser has
+	   to say. */
+	return (0xffu << 24) | (r << 16) | (g << 8) | b;
 }
 
 static void
