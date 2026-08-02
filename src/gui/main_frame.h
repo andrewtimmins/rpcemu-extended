@@ -257,6 +257,10 @@ private:
 	void BuildMenus();
 	void BuildToolBar();
 	void BuildStatusBar();
+
+	/* The timers keep running in full-screen, where there is no status bar to
+	   write to - wx asserts on that rather than ignoring it. */
+	void SetStatusText(const wxString &text, int number = 0) override;
 	void BindMenuOpenClose(wxMenu *menu);
 	void BindAllMenuOpenCloseHandlers();
 
