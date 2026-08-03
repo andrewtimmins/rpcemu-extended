@@ -240,7 +240,7 @@ void MainFrame::BuildMenus()
 	   moves to the application menu, where that platform expects it. */
 	help_menu->Append(ID_MENU_ABOUT_RISCOS, "About RISC OS...")
 	    ->SetHelp("Visit RISC OS Open, who publish RISC OS.");
-	help_menu->Append(wxID_ABOUT, "About RPCEmu...");
+	help_menu->Append(wxID_ABOUT, "About RPCEmu Extended...");
 
 	auto *menu_bar = new wxMenuBar;
 	menu_bar->Append(file_menu, "&File");
