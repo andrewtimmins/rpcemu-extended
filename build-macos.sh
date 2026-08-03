@@ -97,8 +97,8 @@ write_info_plist() {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleName</key><string>RPCEmu</string>
-	<key>CFBundleDisplayName</key><string>RPCEmu</string>
+	<key>CFBundleName</key><string>RPCEmu Extended</string>
+	<key>CFBundleDisplayName</key><string>RPCEmu Extended</string>
 	<key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
 	<key>CFBundleExecutable</key><string>rpcemu</string>
 	<key>CFBundleIconFile</key><string>rpcemu</string>

@@ -655,6 +655,8 @@ wxIMPLEMENT_APP_NO_MAIN(RpcemuApp);
 
 bool RpcemuApp::OnInit()
 {
+	SetAppName("RPCEmu Extended");
+
 	if (!wxApp::OnInit()) {
 		return false;
 	}

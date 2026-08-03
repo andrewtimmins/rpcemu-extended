@@ -39,7 +39,7 @@ extern "C" {
 }
 
 ConfigSelectorDialog::ConfigSelectorDialog(wxWindow *parent)
-	: wxDialog(parent, wxID_ANY, "RPCEmu - Select Machine",
+	: wxDialog(parent, wxID_ANY, "RPCEmu Extended - Select Machine",
 	           wxDefaultPosition, wxSize(520, 420),
 	           wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
 {
