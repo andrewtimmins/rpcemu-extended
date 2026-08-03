@@ -389,6 +389,24 @@ extern "C" void fatal(const char *format, ...)
 	rpclog("FATAL: %s\n", buf);
 	fprintf(stderr, "RPCEmu fatal error: %s\n", buf);
 
+	/* Only once the CPU has run: before that the registers are sixteen
+	   zeroes, and most of these calls are a failed allocation or a ROM that
+	   would not load. Reads only scalars and fixed-size arrays, with the one
+	   variable index bounds-checked, so it cannot fail however corrupt
+	   things are. */
+	if (inscount != 0) {
+		rpclog("FATAL: PC=%08x mode=%u model=%s mem=%uMB event=%08x\n",
+		       arm.reg[15], (unsigned) arm.mode,
+		       machine.model < Model_MAX ? models[machine.model].name_config : "?",
+		       config.mem_size, (unsigned) arm.event);
+		rpclog("  regs r0-r7:  %08x %08x %08x %08x %08x %08x %08x %08x\n",
+		       arm.reg[0], arm.reg[1], arm.reg[2], arm.reg[3],
+		       arm.reg[4], arm.reg[5], arm.reg[6], arm.reg[7]);
+		rpclog("  regs r8-r15: %08x %08x %08x %08x %08x %08x %08x %08x\n",
+		       arm.reg[8], arm.reg[9], arm.reg[10], arm.reg[11],
+		       arm.reg[12], arm.reg[13], arm.reg[14], arm.reg[15]);
+	}
+
 	/* Record the fatal before anything else so any GUI-thread wait/join can
 	   observe it and stop blocking on this (about to spin) thread. A cv.wait
 	   only re-evaluates its predicate when notified, so also wake every request
