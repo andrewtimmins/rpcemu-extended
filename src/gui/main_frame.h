@@ -113,6 +113,7 @@ enum MainFrameMenuId {
 	ID_MENU_ONLINE_MANUAL,
 	ID_MENU_VISIT_WEBSITE,
 	ID_MENU_REPORT_ISSUE,
+	ID_MENU_CHECK_UPDATE,
 };
 
 enum TimerId {
@@ -223,6 +224,7 @@ private:
 	void OnOnlineManual(wxCommandEvent &event);
 	void OnVisitWebsite(wxCommandEvent &event);
 	void OnReportIssue(wxCommandEvent &event);
+	void OnCheckUpdate(wxCommandEvent &event);
 	void OnAbout(wxCommandEvent &event);
 #ifdef RPCEMU_VNC
 	void OnVnc(wxCommandEvent &event);
