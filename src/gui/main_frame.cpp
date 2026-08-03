@@ -96,8 +96,8 @@ const DiscTypeFileMap kDiscTypeFileMaps[] = {
 bool HostResetQuestion(wxWindow *parent)
 {
 	return wxMessageBox(
-	           "This will reset RPCEmu!\n\nOkay to continue?",
-	           "RPCEmu",
+	           "This will reset RPCEmu Extended!\n\nOkay to continue?",
+	           "RPCEmu Extended",
 	           wxOK | wxCANCEL | wxICON_WARNING,
 	           parent) == wxOK;
 }
@@ -378,7 +378,7 @@ void MainFrame::OnScreenshot(wxCommandEvent &)
 	}
 
 	if (panel_ == nullptr || !panel_->SaveScreenshot(dlg.GetPath())) {
-		wxMessageBox("Error saving screenshot", "RPCEmu", wxOK | wxICON_WARNING, this);
+		wxMessageBox("Error saving screenshot", "RPCEmu Extended", wxOK | wxICON_WARNING, this);
 	}
 }
 
@@ -418,7 +418,7 @@ void MainFrame::OnSaveState(wxCommandEvent &)
 
 	if (emulator_) {
 		if (!emulator_->SaveState(dlg.GetPath().utf8_str().data())) {
-			wxMessageBox("Failed to save the machine state.", "RPCEmu",
+			wxMessageBox("Failed to save the machine state.", "RPCEmu Extended",
 			             wxOK | wxICON_WARNING, this);
 		}
 	}
@@ -441,7 +441,7 @@ void MainFrame::OnLoadState(wxCommandEvent &)
 		if (!emulator_->LoadState(dlg.GetPath().utf8_str().data(), &error)) {
 			wxMessageBox(error.empty() ? wxString("Failed to load the machine state.")
 			                           : wxString::FromUTF8(error.c_str()),
-			             "RPCEmu", wxOK | wxICON_WARNING, this);
+			             "RPCEmu Extended", wxOK | wxICON_WARNING, this);
 		}
 	}
 }
@@ -1871,13 +1871,13 @@ void MainFrame::PostFatal(const std::string &message)
 
 void MainFrame::ShowError(const std::string &message)
 {
-	wxMessageBox(wxString::FromUTF8(message), "RPCEmu Error", wxOK | wxICON_WARNING, this);
+	wxMessageBox(wxString::FromUTF8(message), "RPCEmu Extended Error", wxOK | wxICON_WARNING, this);
 }
 
 void MainFrame::ShowFatal(const std::string &message)
 {
 	fatal_occurred_ = true;
-	wxMessageBox(wxString::FromUTF8(message), "RPCEmu Fatal Error", wxOK | wxICON_ERROR, this);
+	wxMessageBox(wxString::FromUTF8(message), "RPCEmu Extended Fatal Error", wxOK | wxICON_ERROR, this);
 
 	// The machine has failed unrecoverably, so terminate the process rather
 	// than attempting a clean shutdown. A normal shutdown joins the emulator

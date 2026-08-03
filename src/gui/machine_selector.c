@@ -199,7 +199,7 @@ machine_selector_draw(MachineSelector *m, TextScreen *s)
 	text_screen_set_scale(s, text_screen_auto_scale(s));
 
 	text_screen_clear(s, COLOUR_BG);
-	text_screen_centre(s, ROW_HEIGHT, "RPCEmu", COLOUR_TITLE);
+	text_screen_centre(s, ROW_HEIGHT, "RPCEmu Extended", COLOUR_TITLE);
 
 	if (m->count == 0) {
 		text_screen_centre(s, list_top, "No machines found.", COLOUR_TEXT);
