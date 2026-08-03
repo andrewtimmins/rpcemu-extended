@@ -1,0 +1,99 @@
+name: Bug report
+description: Something in RPCEmu Extended does not work as it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this.
+
+        Only the starred fields are needed. They are the ones that otherwise
+        have to be asked for before anything can start: almost every
+        difference in behaviour comes down to the host or to which build it is.
+
+        Everything else is optional - fill in what you know and leave the rest.
+
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+      description: What you did, what you expected, and what you got instead.
+      placeholder: |
+        Downloading a file with !Netsurf runs at about 70KB/s.
+        I expected something closer to the host's own speed.
+    validations:
+      required: true
+
+  - type: input
+    id: host
+    attributes:
+      label: Host operating system
+      description: Which system RPCEmu Extended itself is running on, and its version.
+      placeholder: Windows 11 24H2 / macOS 15.3 Apple Silicon / Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: input
+    id: build
+    attributes:
+      label: RPCEmu Extended version
+      description: >
+        Help > About RPCEmu Extended, which gives the whole version string.
+        If it came from a CI build rather than a release, please say so.
+      placeholder: v1.1.12, 1.1.12-gde8ae58, or "CI build from 2 August"
+    validations:
+      required: true
+
+  - type: input
+    id: riscos
+    attributes:
+      label: RISC OS version
+      description: >
+        The version running inside the emulator. Leave this empty if the
+        problem is in building or packaging RPCEmu and no machine is involved.
+      placeholder: RISC OS 5.30
+    validations:
+      required: false
+
+  - type: dropdown
+    id: reproducible
+    attributes:
+      label: Does it happen every time?
+      options:
+        - Every time
+        - Most times
+        - Occasionally
+        - Only happened once
+    validations:
+      required: false
+
+  - type: textarea
+    id: log
+    attributes:
+      label: rpclog.txt
+      description: >
+        Anything relevant from rpclog.txt, next to the executable. It often
+        records the reason for a failure directly. Leave this empty if there
+        is nothing that looks related.
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: worked-before
+    attributes:
+      label: Did an earlier version work?
+      description: >
+        If you know a version where this was fine - including RPCEmu itself
+        rather than this fork - saying so narrows it down quickly.
+      placeholder: Works in RPCEmu 0.9.5, or "never tried an older one"
+    validations:
+      required: false
+
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else
+      description: Screenshots, or anything else you think matters.
+    validations:
+      required: false
