@@ -1,0 +1,19 @@
+blank_issues_enabled: true
+contact_links:
+  - name: An idea or a feature you would like
+    url: https://github.com/andrewtimmins/rpcemu-extended/discussions/categories/ideas
+    about: >
+      Suggestions are easier to talk over as a discussion, where other people
+      can say whether they want the same thing
+
+  - name: A question about using RPCEmu Extended
+    url: https://github.com/andrewtimmins/rpcemu-extended/discussions/categories/q-a
+    about: >
+      If you are not sure whether something is a bug, ask here first - it is
+      not a wasted question either way
+
+  - name: RISC OS itself, rather than the emulator
+    url: https://www.riscosopen.org/forum/
+    about: >
+      Questions about RISC OS, its applications or its licensing are for
+      RISC OS Open, who publish the operating system this emulator runs
