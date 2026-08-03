@@ -48,8 +48,14 @@ struct SupportBundleResult {
  * The configuration is redacted on the way in - see the implementation - so
  * this can be attached to a public issue without handing over a password or
  * the reporter's home directory.
+ *
+ * @param screenshot_path A PNG of the guest's screen to include, or empty for
+ *                        none. Asked for rather than taken: it is whatever the
+ *                        machine happens to be showing, which is the one thing
+ *                        here that cannot be redacted.
  */
-SupportBundleResult SupportBundleWrite(const wxString &dest_path);
+SupportBundleResult SupportBundleWrite(const wxString &dest_path,
+                                       const wxString &screenshot_path = wxString());
 
 /** Suggested leafname, e.g. "rpcemu-support-Test1-20260803.zip". */
 wxString SupportBundleSuggestedName();

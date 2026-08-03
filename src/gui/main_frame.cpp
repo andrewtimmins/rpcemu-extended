@@ -1282,15 +1282,44 @@ void MainFrame::OnReportIssue(wxCommandEvent &)
 
 void MainFrame::OnSupportBundle(wxCommandEvent &)
 {
+	wxString screenshot;
+
+	if (panel_ != nullptr) {
+		const wxString temp = wxFileName::CreateTempFileName("rpcemu-screen");
+
+		if (!temp.empty() && panel_->SaveScreenshot(temp)) {
+			screenshot = temp;
+		} else if (!temp.empty()) {
+			wxRemoveFile(temp);
+		}
+	}
+
+	if (!screenshot.empty() &&
+	    wxMessageBox("Include a screenshot of the RISC OS screen?\n\n"
+	                 "It shows what the machine was displaying just now, and "
+	                 "anyone reading the report will see it.",
+	                 "RPCEmu Extended - Support Files",
+	                 wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION, this) != wxYES) {
+		wxRemoveFile(screenshot);
+		screenshot.clear();
+	}
+
 	wxFileDialog dlg(this, "Save Support Files",
 	    wxStandardPaths::Get().GetDocumentsDir(), SupportBundleSuggestedName(),
 	    "Zip archives (*.zip)|*.zip", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
 
 	if (dlg.ShowModal() != wxID_OK) {
+		if (!screenshot.empty()) {
+			wxRemoveFile(screenshot);
+		}
 		return;
 	}
 
-	const SupportBundleResult result = SupportBundleWrite(dlg.GetPath());
+	const SupportBundleResult result = SupportBundleWrite(dlg.GetPath(), screenshot);
+
+	if (!screenshot.empty()) {
+		wxRemoveFile(screenshot);
+	}
 
 	if (!result.ok) {
 		wxMessageBox(result.message, "RPCEmu Extended - Support Files",
