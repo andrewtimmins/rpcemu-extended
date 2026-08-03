@@ -40,12 +40,14 @@
 #include <wx/image.h>
 #include <wx/mstream.h>
 #include <wx/richmsgdlg.h>
+#include <wx/stdpaths.h>
 
 #include "about_dialog.h"
 #include "config_paths.h"
 #include "gui_preferences.h"
 #include "input_helpers.h"
 #include "machine_edit_dialog.h"
+#include "support_bundle.h"
 #include "machine_inspector_window.h"
 #include "nat_list_dialog.h"
 #include "guest_command.h"
@@ -1276,6 +1278,40 @@ void MainFrame::OnVisitWebsite(wxCommandEvent &)
 void MainFrame::OnReportIssue(wxCommandEvent &)
 {
 	wxLaunchDefaultBrowser(URL_ISSUES);
+}
+
+void MainFrame::OnSupportBundle(wxCommandEvent &)
+{
+	wxFileDialog dlg(this, "Save Support Files",
+	    wxStandardPaths::Get().GetDocumentsDir(), SupportBundleSuggestedName(),
+	    "Zip archives (*.zip)|*.zip", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+
+	if (dlg.ShowModal() != wxID_OK) {
+		return;
+	}
+
+	const SupportBundleResult result = SupportBundleWrite(dlg.GetPath());
+
+	if (!result.ok) {
+		wxMessageBox(result.message, "RPCEmu Extended - Support Files",
+		             wxOK | wxICON_ERROR, this);
+		return;
+	}
+
+	/* Listed rather than summarised: this is going to be attached to a public
+	   issue, and what was put in it should not have to be taken on trust. */
+	wxString detail;
+
+	for (const SupportBundleMember &member : result.members) {
+		detail += wxString::Format("    %s\n", member.name);
+	}
+
+	wxMessageBox(
+	    wxString::Format("Saved to:\n%s\n\nIt contains:\n%s\n"
+	                     "The password and any home folder paths have been "
+	                     "taken out of the log and the settings.",
+	        dlg.GetPath(), detail),
+	    "RPCEmu Extended - Support Files", wxOK | wxICON_INFORMATION, this);
 }
 
 namespace {

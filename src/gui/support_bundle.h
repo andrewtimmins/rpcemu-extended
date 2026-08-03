@@ -1,0 +1,57 @@
+/*
+  RPCEmu - An Acorn system emulator
+
+  Copyright (C) 2026 Andy Timmins
+
+  This program is free software; you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation; either version 2 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program; if not, write to the Free Software
+  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+#ifndef SUPPORT_BUNDLE_H
+#define SUPPORT_BUNDLE_H
+
+#include <vector>
+
+#include <wx/filefn.h>
+#include <wx/string.h>
+
+/** One file that went into the bundle, for telling the user what was sent. */
+struct SupportBundleMember {
+	wxString name;		/**< Path as stored in the archive */
+	wxFileOffset size;	/**< Bytes, as written */
+};
+
+struct SupportBundleResult {
+	bool ok = false;
+	wxString message;	/**< Why it failed, when it did */
+	std::vector<SupportBundleMember> members;
+};
+
+/**
+ * Collect what a bug report needs into a zip at @dest_path.
+ *
+ * The log, the machine's configuration, its CMOS and the emulator metadata:
+ * small files that describe how the machine is set up and what it last did.
+ * The hard disc is not among them, and neither is anything else large.
+ *
+ * The configuration is redacted on the way in - see the implementation - so
+ * this can be attached to a public issue without handing over a password or
+ * the reporter's home directory.
+ */
+SupportBundleResult SupportBundleWrite(const wxString &dest_path);
+
+/** Suggested leafname, e.g. "rpcemu-support-Test1-20260803.zip". */
+wxString SupportBundleSuggestedName();
+
+#endif /* SUPPORT_BUNDLE_H */

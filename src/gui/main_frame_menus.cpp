@@ -233,6 +233,8 @@ void MainFrame::BuildMenus()
 	help_menu->Append(ID_MENU_ONLINE_MANUAL, "Online Manual...");
 	help_menu->Append(ID_MENU_VISIT_WEBSITE, "Visit Website...");
 	help_menu->Append(ID_MENU_REPORT_ISSUE, "Report an Issue...");
+	help_menu->Append(ID_MENU_SUPPORT_BUNDLE, "Save Support Files...")
+	    ->SetHelp("Collect the log and this machine's settings into a zip to attach to a report.");
 	help_menu->Append(ID_MENU_CHECK_UPDATE, "Check for Update...");
 	help_menu->AppendSeparator();
 	/* RISC OS itself is somebody else's work and has its own home; the two
@@ -315,6 +317,7 @@ void MainFrame::BuildMenus()
 	BindMenuItem(help_menu, ID_MENU_ONLINE_MANUAL, this, &MainFrame::OnOnlineManual);
 	BindMenuItem(help_menu, ID_MENU_VISIT_WEBSITE, this, &MainFrame::OnVisitWebsite);
 	BindMenuItem(help_menu, ID_MENU_REPORT_ISSUE, this, &MainFrame::OnReportIssue);
+	BindMenuItem(help_menu, ID_MENU_SUPPORT_BUNDLE, this, &MainFrame::OnSupportBundle);
 	BindMenuItem(help_menu, ID_MENU_CHECK_UPDATE, this, &MainFrame::OnCheckUpdate);
 	BindMenuItem(help_menu, wxID_ABOUT, this, &MainFrame::OnAbout);
 
