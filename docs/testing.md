@@ -181,12 +181,21 @@ the check costs nothing and means a report can never be scrolled past.
 compiles with a warning:
 
 ```
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build 2>&1 | tee build.log
 bash tests/check-warnings.sh build.log
 ```
 
-It has to be a full build - an incremental one only recompiles what changed, and
-will happily report a clean tree that is nothing of the sort.
+Both parts of that matter. It has to be a **full** build, because an incremental
+one only recompiles what changed and will happily report a clean tree that is
+nothing of the sort. And it has to be a **Release** build, because which warnings
+exist depends on the optimisation level: `-Wformat-truncation` and
+`-Wmaybe-uninitialized` come out of analysis the optimiser performs, so `-O0`
+gives a different set rather than a smaller one. This tree is clean at `-O2` and
+shows three format-truncation warnings at `-O0` - two in `debugcmd.c`, one in
+`machine_selector.c`, all safe truncations of a JSON error string or a display
+line. Release is the calibration because it is what CI and the pre-push hook
+build.
 
 There is deliberately no `-Werror` in the build system. `-Werror` turns a new
 compiler release into a tree that will not build at all, on somebody else's

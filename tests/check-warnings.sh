@@ -16,9 +16,26 @@
 # Usage: tests/check-warnings.sh <build-log> [exempt-file]
 #
 # The build log is whatever the compiler printed - capture it with
+#
+#   cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 #   cmake --build build 2>&1 | tee build.log
-# and note that a full build is needed, since an incremental one only recompiles
-# what changed and will report a clean tree that is nothing of the sort.
+#   tests/check-warnings.sh build.log
+#
+# Two things about that recipe are load-bearing.
+#
+# It must be a FULL build. An incremental one only recompiles what changed, so it
+# reports a clean tree that is nothing of the sort.
+#
+# And it must be a RELEASE build, because which warnings exist depends on the
+# optimisation level: -Wformat-truncation and -Wmaybe-uninitialized come from
+# analysis the optimiser performs, so a -O0 build produces a different set - not a
+# smaller one, a different one. This tree is clean at -O2 and has three
+# format-truncation warnings at -O0 (two in debugcmd.c, one in machine_selector.c,
+# all of them safe truncations of a JSON error string or a display line). Release
+# is the calibration because it is what CI builds and what the pre-push hook
+# builds, and therefore what "clean" is measured against. If you are checking a
+# Debug build, expect those three and do not add them to the exemption list on
+# that account.
 #
 # See docs/testing.md.
 
