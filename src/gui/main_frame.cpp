@@ -1267,6 +1267,11 @@ void MainFrame::OnVisitWebsite(wxCommandEvent &)
 	wxLaunchDefaultBrowser(URL_WEBSITE);
 }
 
+void MainFrame::OnReportIssue(wxCommandEvent &)
+{
+	wxLaunchDefaultBrowser(URL_ISSUES);
+}
+
 /* RISC OS is not ours, and this is where it comes from. */
 void MainFrame::OnAboutRiscos(wxCommandEvent &)
 {

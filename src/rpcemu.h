@@ -61,6 +61,7 @@ extern "C" {
 /* URLs used for the help menu weblinks */
 #define URL_MANUAL  "https://github.com/andrewtimmins/rpcemu-extended/tree/main/docs"
 #define URL_WEBSITE "https://github.com/andrewtimmins/rpcemu-extended"
+#define URL_ISSUES  "https://github.com/andrewtimmins/rpcemu-extended/issues"
 /* RISC OS Open, who publish the operating system this emulator runs. */
 #define URL_RISCOSOPEN "https://www.riscosopen.org/"
 /* Their licensing terms, and their donations page: both are acknowledged before
