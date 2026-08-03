@@ -22,6 +22,7 @@
 
 #include <algorithm>
 
+#include <wx/arrstr.h>
 #include <wx/artprov.h>
 #include <wx/filefn.h>
 #include <wx/filename.h>
@@ -147,35 +148,34 @@ const CreditGroup kCredits[] = {
 	{ "Extended Edition fork",
 	  "Andy Timmins" },
 	{ "Contributed to this fork",
-	  "Nick Brown: saving and restoring machine state, and the idea\n"
-	  "  of putting the clock right afterwards\n"
+	  "Nick Brown: saving and restoring machine state, and the idea of "
+	  "putting the clock right afterwards\n"
 	  "David Ramsden: command-line options, macOS application bundle" },
 	{ "Code this build carries, with thanks",
 	  "Arculator, Sarah Walker: the expansion card subsystem\n"
-	  "SLiRP, Danny Gasparovski and the Regents of the\n"
-	  "  University of California\n"
-	  "libslirp, Samuel Thibault and Marc-Andre Lureau:\n"
-	  "  fragment reassembly fixes\n"
+	  "SLiRP, Danny Gasparovski and the Regents of the University of "
+	  "California\n"
+	  "libslirp, Samuel Thibault and Marc-Andre Lureau: fragment "
+	  "reassembly fixes\n"
 	  "RiscOS Cloverleaf: the shared clipboard, its design and guest module\n"
 	  "SyncClock, DEEJ Technology PLC: the clock synchronisation module\n"
 	  "NetSurf, John M Bell: the Latin-1 conversion table" },
 	{ "With acknowledgement to",
 	  "ViewFinder, John Kortink: the idea behind the graphics card\n"
-	  "The RISC OS Packaging Project: the package and database format\n"
-	  "  the package manager implements, designed by Graham Shaw,\n"
-	  "  its policy manual maintained by Alan Buckley\n"
-	  "RISC OS Open and riscoscommunity.org: hosting the package\n"
-	  "  indexes and the packages themselves\n"
-	  "The Archimedes Software Preservation Project (JASPP),\n"
-	  "  Jonathan Abbott and its contributors: preserving the games\n"
-	  "  of the period and packaging them to run on a machine\n"
-	  "  like this one" },
+	  "The RISC OS Packaging Project: the package and database format the "
+	  "package manager implements, designed by Graham Shaw, its policy "
+	  "manual maintained by Alan Buckley\n"
+	  "RISC OS Open and riscoscommunity.org: hosting the package indexes "
+	  "and the packages themselves\n"
+	  "The Archimedes Software Preservation Project (JASPP), Jonathan "
+	  "Abbott and its contributors: preserving the games of the period "
+	  "and packaging them to run on a machine like this one" },
 };
 
 } // namespace
 
 AboutDialog::AboutDialog(wxWindow *parent)
-	: wxDialog(parent, wxID_ANY, "About RPCEmu", wxDefaultPosition, wxDefaultSize,
+	: wxDialog(parent, wxID_ANY, "About RPCEmu Extended", wxDefaultPosition, wxDefaultSize,
 	           wxDEFAULT_DIALOG_STYLE | wxCLOSE_BOX)
 {
 	BuildUi();
@@ -255,12 +255,22 @@ void AboutDialog::BuildUi()
 
 	for (const CreditGroup &group : kCredits) {
 		auto *heading = new wxStaticText(credits, wxID_ANY, group.heading);
-		auto *entries = new wxStaticText(credits, wxID_ANY, group.entries);
 
 		heading->SetFont(heading_font);
-		credits_sizer->Add(heading, 0, wxLEFT | wxRIGHT | wxTOP,
-		                   first ? 10 : 14);
-		credits_sizer->Add(entries, 0, wxLEFT | wxRIGHT | wxTOP, 10);
+		credits_sizer->AddSpacer(first ? 10 : 14);
+		credits_sizer->Add(heading, 0, wxLEFT | wxRIGHT, 10);
+
+		for (const wxString &entry :
+		     wxSplit(wxString::FromUTF8(group.entries), '\n')) {
+			auto *text = new wxStaticText(credits, wxID_ANY, entry);
+
+			auto *row = new wxBoxSizer(wxHORIZONTAL);
+
+			text->Wrap(380);
+			row->AddSpacer(16);
+			row->Add(text, 1);
+			credits_sizer->Add(row, 0, wxRIGHT | wxTOP, 10);
+		}
 		first = false;
 	}
 	credits_sizer->AddSpacer(10);
