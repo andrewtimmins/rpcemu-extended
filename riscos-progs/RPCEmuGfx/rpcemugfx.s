@@ -62,6 +62,10 @@
 	XOS_ReadVarVal		= 0x20023
 	XOS_ReadSysInfo		= 0x20058
 	XOS_SetVarVal		= 0x20024
+
+	@ OS_SetVarVal / OS_ReadVarVal variable types (Kernel hdr/Variables)
+	VarType_String		= 0
+	VarType_Code		= 16
 	XResourceFS_RegisterFiles	= 0x61b40
 	XResourceFS_DeregisterFiles	= 0x61b41
 
@@ -242,7 +246,14 @@
 	WS_SAVE_H	= 88
 	WS_SAVE_L2BPP	= 92
 	WS_CMD		= 120	@ CMD_SIZE bytes: *WimpMode command builder
-	WORKSPACE_SIZE	= WS_CMD + CMD_SIZE
+	@ The trampoline the GfxCard$Display code variable is entered through. It
+	@ has to live somewhere writable that stays put for the module's lifetime,
+	@ and it has to hand the read code its workspace, which the kernel does not
+	@ pass. See make_display_var.
+	WS_VARTHUNK	= WS_CMD + CMD_SIZE	@ VARTHUNK_SIZE bytes
+	WORKSPACE_SIZE	= WS_VARTHUNK + VARTHUNK_SIZE
+
+	VARTHUNK_SIZE	= 16
 
 	CMD_SIZE	= 64	@ "WimpMode X2560 Y1440 C16M" and room
 
@@ -261,6 +272,7 @@
 	FLAG_STARTED	= 1 << 2	@ driver started
 	FLAG_DEVICE	= 1 << 3	@ device vector claimed
 	FLAG_RESOURCES	= 1 << 4	@ app registered with ResourceFS
+	FLAG_DISPLAYVAR	= 1 << 5	@ GfxCard$Display code variable created
 
 
 	.global	_start
@@ -1086,8 +1098,18 @@ init_start:
 	add	r1, r5, #WS_CMD
 	mov	r2, #8
 	mov	r3, #0
-	mov	r4, #0			@ a plain string
+	mov	r4, #VarType_String
 	swi	XOS_SetVarVal
+
+	@ GfxCard$Display, which reads "Card" or "VIDC20" and answers from the kernel
+	@ every time it is read. Created here rather than by *GfxCardVars so it exists
+	@ from the moment the driver does, and so nothing has to run a command before
+	@ asking. Failing to create it is not worth refusing to initialise over - the
+	@ card still works - so the error is discarded and the flag simply not set.
+	bl	make_display_var
+	ldrvc	r0, [r5, #WS_FLAGS]
+	orrvc	r0, r0, #FLAG_DISPLAYVAR
+	strvc	r0, [r5, #WS_FLAGS]
 
 	@ Take the display now, if that is how the card is configured. Doing it here
 	@ rather than leaving it to *GfxCardOn means the machine boots onto the card -
@@ -1255,10 +1277,37 @@ teardown:
 	mov	r1, #0			@ unset the variable
 	mov	r2, #-1
 	mov	r3, #0
-	mov	r4, #0
+	mov	r4, #VarType_String
 	swi	XOS_SetVarVal
 	ldr	r4, [r5, #WS_FLAGS]
 35:
+	@ GfxCard$Display must go, and this is not tidiness: its value is a pair of
+	@ jumps into this module's code, and the kernel would keep calling them after
+	@ the module and its workspace had been freed. Deleting a code variable needs
+	@ the type as well - the kernel refuses to delete a code node when told any
+	@ other type (Kernel s/Arthur2, SetVarVal_DeleteIt) - which is why the base
+	@ variable above passes VarType_String and this one does not.
+	tst	r4, #FLAG_DISPLAYVAR
+	beq	36f
+	adrl	r0, var_display
+	mov	r1, #0
+	mov	r2, #-1
+	mov	r3, #0
+	mov	r4, #VarType_Code
+	swi	XOS_SetVarVal
+	ldr	r4, [r5, #WS_FLAGS]
+36:
+	@ The other three are plain strings written by *GfxCardVars. Left behind they
+	@ would describe a card that is no longer there, which is what anything
+	@ reading them would believe. Unset whether or not they were ever written;
+	@ "not found" is not an error worth acting on here.
+	adrl	r0, var_mode
+	bl	unset_var
+	adrl	r0, var_store
+	bl	unset_var
+	adrl	r0, var_frames
+	bl	unset_var
+	ldr	r4, [r5, #WS_FLAGS]
 	tst	r4, #FLAG_VECTOR
 	beq	4f
 	mov	r0, #GraphicsV
@@ -1665,30 +1714,11 @@ command_vars:
 	adrl	r0, var_frames
 	bl	set_var
 
-	@ GfxCard$Display - which display the machine is going through, so that a
-	@ menu can show where it is rather than leaving the user to guess.
-	@
-	@ Asked of the OS, not read off the card's own enable bit: what decides
-	@ what you are looking at is which driver the kernel is using, and only the
-	@ kernel can say. Anything that is not this driver is the machine's built-in
-	@ display, which on a Risc PC is VIDC20 - as is an OS too old or too broken
-	@ to answer, which cannot be using this card either way.
-	add	r4, r5, #WS_CMD
-	mov	r0, #ScreenMode_SelectDevice
-	mvn	r1, #0			@ read the current device, do not change it
-	swi	XOS_ScreenMode
-	bvs	4f
-	ldr	r0, [r5, #WS_DRIVER]
-	teq	r0, r1
-	bne	4f
-	adrl	r6, vtext_card
-	b	5f
-4:
-	adrl	r6, vtext_vidc
-5:
-	bl	copy_string
-	adrl	r0, var_display
-	bl	set_var
+	@ GfxCard$Display is not written here. It is a code variable, created at
+	@ initialisation, and reading it asks the kernel which driver is in use at
+	@ that moment - so there is nothing for this command to keep up to date, and
+	@ writing a string over it would replace a live answer with a stale one.
+	@ See make_display_var.
 
 	cmp	pc, #0			@ clear V
 	ldmfd	sp!, {r4, r5, r6, pc}
@@ -1717,6 +1747,137 @@ append_decimal:
 	ldmfd	sp!, {r0, r1, r2, pc}
 
 @ Set the variable named at r0 to the string built at WS_CMD.
+@ GfxCard$Display as a code variable, so reading it asks the kernel rather than
+@ repeating whatever *GfxCardVars last wrote.
+@
+@ Why a code variable at all: the value is "which driver is the display", which
+@ changes whenever anything switches it - *GfxCardOn, *GfxCardOff, the desktop
+@ utility, or another driver entirely. A plain string would be a snapshot, correct
+@ only until the next switch, and a stale one is worse than none: ADFFS asked for
+@ a way to tell whether this card is driving the screen, and would act on the
+@ answer. Reading a code variable calls us, so the answer cannot be out of date.
+@
+@ The kernel copies the value into its own heap, so the value cannot contain
+@ PC-relative references to anything of ours. It is four words - two "LDR PC,
+@ [PC, #0]" instructions and two absolute addresses - exactly as the kernel's own
+@ Sys$Time and Sys$ReturnCode are built (Kernel s/Arthur2, SystemVarList).
+@
+@ The read entry needs our workspace and the kernel passes none, so it goes
+@ through a trampoline in the workspace which loads r12 and jumps. r12 is one of
+@ the registers the kernel documents as corruptible by the read code, so using it
+@ is legitimate.
+@
+@ in: r5 = workspace
+@ out: V set on failure, r0 = error
+make_display_var:
+	stmfd	sp!, {r1, r2, r3, r4, r6, lr}
+
+	@ The trampoline, in workspace:
+	@   LDR r12, [PC, #0]   -> the word at +8, our workspace
+	@   LDR pc,  [PC, #0]   -> the word at +12, read_display_var
+	add	r6, r5, #WS_VARTHUNK
+	ldr	r0, thunk_ldr_r12
+	str	r0, [r6, #0]
+	ldr	r0, thunk_ldr_pc
+	str	r0, [r6, #4]
+	str	r5, [r6, #8]
+	adrl	r0, read_display_var
+	str	r0, [r6, #12]
+
+	@ The value handed to the kernel, built in the command buffer: two jumps,
+	@ then the addresses they load. Set goes straight to module code, which
+	@ needs no workspace; read goes through the trampoline above.
+	add	r4, r5, #WS_CMD
+	ldr	r0, thunk_ldr_pc
+	str	r0, [r4, #0]
+	str	r0, [r4, #4]
+	adrl	r0, set_display_var
+	str	r0, [r4, #8]
+	str	r6, [r4, #12]
+
+	adrl	r0, var_display
+	mov	r1, r4
+	mov	r2, #16			@ length of the code, including alignment
+	mov	r3, #0
+	mov	r4, #VarType_Code
+	swi	XOS_SetVarVal
+	ldmfd	sp!, {r1, r2, r3, r4, r6, pc}
+
+thunk_ldr_r12:
+	ldr	r12, [pc, #0]
+thunk_ldr_pc:
+	ldr	pc, [pc, #0]
+
+@ Read entry for GfxCard$Display.
+@
+@ out: r0 -> the value, r2 = its length. Anything else must come back unchanged.
+@
+@ Entered from the kernel with "MOV lr, pc", so lr is the only way back and any
+@ SWI would overwrite it - hence lr is pushed before XOS_ScreenMode is called.
+@ r12 = workspace, from the trampoline.
+read_display_var:
+	stmfd	sp!, {r1, r3, r4, r12, lr}
+
+	@ Our driver number is read before the SWI, so nothing after it depends on
+	@ r12 still holding the workspace.
+	ldr	r4, [r12, #WS_DRIVER]
+
+	@ Which driver the kernel is using, not the card's own enable bit: what
+	@ decides what you are looking at is the kernel's choice of driver, and only
+	@ the kernel can say. This is the same question *GfxCardStatus asks, so the
+	@ two cannot disagree.
+	mov	r0, #ScreenMode_SelectDevice
+	mvn	r1, #0			@ read it, do not change it
+	swi	XOS_ScreenMode
+	@ An OS that cannot answer is not using this card either way, so it reads
+	@ as the built-in display rather than failing. A variable read that returned
+	@ an error would break *Show for every other variable too.
+	movvs	r1, #0
+
+	teq	r1, r4
+	bne	1f
+	adrl	r0, vtext_card
+	mov	r2, #4			@ "Card"
+	b	2f
+1:
+	adrl	r0, vtext_vidc
+	mov	r2, #6			@ "VIDC20"
+2:
+	cmp	pc, #0			@ clear V: we always have an answer
+	ldmfd	sp!, {r1, r3, r4, r12, lr}
+	mov	pc, lr
+
+@ Set entry for GfxCard$Display.
+@
+@ in: r1 -> value, r2 = length
+@
+@ There is nothing sensible to do with a write. The value is a fact about which
+@ driver the kernel is using, and assigning to it cannot make that fact different
+@ - *GfxCardOn and *GfxCardOff are how it is changed. Refused rather than
+@ silently ignored, so a script that tries gets told instead of believing it
+@ worked.
+set_display_var:
+	adrl	r0, err_display_readonly
+	cmp	r0, #NBIT		@ set V
+	cmnvc	r0, #NBIT
+	mov	pc, lr
+
+err_display_readonly:
+	.int	0
+	.string	"GfxCard$Display says which display the machine is using and cannot be set. Use *GfxCardOn or *GfxCardOff."
+	.align
+
+@ Remove a plain string variable, ignoring "not found".
+@ in: r0 -> name
+unset_var:
+	stmfd	sp!, {r0, r1, r2, r3, r4, lr}
+	mov	r1, #0
+	mov	r2, #-1
+	mov	r3, #0
+	mov	r4, #VarType_String
+	swi	XOS_SetVarVal
+	ldmfd	sp!, {r0, r1, r2, r3, r4, pc}
+
 set_var:
 	stmfd	sp!, {r0, r1, r2, r3, r4, lr}
 	mov	r1, #0

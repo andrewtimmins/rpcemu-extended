@@ -178,8 +178,34 @@ environment, and BASIC would have to be tokenised at every launch.
 
 ### Reading the card's state from a program
 
-`*GfxCardVars` puts the card's state into four system variables, ready for
-anything that wants to display it:
+Two variables answer the questions a program actually asks - is the card here,
+and is it the display - and neither needs a command run first:
+
+| Variable | Exists when | Reads |
+| --- | --- | --- |
+| `RPCEmuGfx$Base` | The driver is loaded and initialised | The card's register base, 8 hex digits |
+| `GfxCard$Display` | Likewise | `Card` or `VIDC20` |
+
+So the three states are distinguishable:
+
+| `RPCEmuGfx$Base` | `GfxCard$Display` | Meaning |
+| --- | --- | --- |
+| unset | - | No card, or an OS older than RISC OS 5 - nothing to switch |
+| set | `VIDC20` | Card fitted, display going through VIDC20 |
+| set | `Card` | Card fitted and driving the display |
+
+**`GfxCard$Display` is a code variable.** Reading it calls the driver, which asks
+the kernel which display driver is in use at that moment, so the answer cannot be
+out of date however the display was last switched - by `*GfxCardOn`, by the
+desktop utility, or by something else entirely. It cannot be written: assigning to
+it returns an error, because it is a fact about the kernel's state rather than a
+setting, and `*GfxCardOn` / `*GfxCardOff` are how that fact is changed.
+
+Both variables are removed when the driver goes, so a stale value cannot outlive
+the card.
+
+`*GfxCardVars` fills in three more, for anything that wants to *display* the
+card's state rather than branch on it:
 
 ```
 *GfxCardVars
@@ -191,12 +217,9 @@ GfxCard$Store   : 8100K of 15360K
 ```
 
 The values are bare, with no words around them, so whatever displays them can
-label them itself - which is what the application's window does.
-
-`GfxCard$Display` reads `Card` or `VIDC20`, and is how the menu knows which of
-its two display entries to tick. It is asked of the kernel - which driver is
-currently in use - rather than read off the card's enable bit, so it agrees with
-`*GfxCardStatus` by construction.
+label them itself - which is what the application's window does. These three are
+a snapshot taken when the command ran; `GfxCard$Display` is not, and the command
+does not touch it.
 
 That indirection is necessary rather than decorative. The card's registers are in
 expansion card space, which RISC OS maps for **privileged access only**: a desktop

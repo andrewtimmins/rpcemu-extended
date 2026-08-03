@@ -9,5 +9,5 @@
 # last happened rather than anything a user could act on. Override at build time
 # with `make MODULE_DATE="..."` if you do want a stamp.
 
-Module_MajorVersion	0.01
-Module_Date		26 Jul 2026
+Module_MajorVersion	0.02
+Module_Date		03 Aug 2026
