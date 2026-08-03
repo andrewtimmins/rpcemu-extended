@@ -204,7 +204,7 @@ SupportBundleSuggestedName()
 }
 
 SupportBundleResult
-SupportBundleWrite(const wxString &dest_path)
+SupportBundleWrite(const wxString &dest_path, const wxString &screenshot_path)
 {
 	SupportBundleResult result;
 	wxFFileOutputStream out(dest_path);
@@ -240,6 +240,10 @@ SupportBundleWrite(const wxString &dest_path)
 		    wxFileName(dir.GetPath(), "cmos.ram").GetFullPath(), &result.members);
 		ok = ok && AddFile(zip, "emulator.meta",
 		    wxFileName(dir.GetPath(), "emulator.meta").GetFullPath(), &result.members);
+	}
+
+	if (!screenshot_path.empty()) {
+		ok = ok && AddFile(zip, "screen.png", screenshot_path, &result.members);
 	}
 
 	if (!ok || !zip.Close() || !out.Close()) {
