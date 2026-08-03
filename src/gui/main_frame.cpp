@@ -1550,7 +1550,7 @@ void MainFrame::ProcessEmulatorKeyEvent(wxKeyEvent &event, bool key_down)
 		/* Nothing to escape from, so the guest gets the key. */
 	}
 
-	if (key_code == WXK_MENU) {
+	if (key_code == WXK_MENU || key_code == WXK_WINDOWS_MENU) {
 		if (emulator_) {
 			if (key_down) {
 				emulator_->MousePress(4);
