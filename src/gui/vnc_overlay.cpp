@@ -135,7 +135,7 @@ void draw(VncServer &server)
 		const int indent = CONSOLE_FONT_WIDTH * screen.scale * 3;
 
 		text_screen_clear(&screen, COLOUR_BG);
-		text_screen_centre(&screen, row * 2, "RPCEmu", COLOUR_TITLE);
+		text_screen_centre(&screen, row * 2, "RPCEmu Extended", COLOUR_TITLE);
 		text_screen_centre(&screen, row * 3,
 		    config.name[0] != '\0' ? config.name : "(unnamed machine)", COLOUR_TEXT);
 

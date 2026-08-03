@@ -241,7 +241,7 @@ static void ConsoleMessageFlush(void)
 		fputs(g_msg_text.c_str(), g_msg_is_error ? stderr : stdout);
 		fflush(g_msg_is_error ? stderr : stdout);
 	} else {
-		MessageBoxA(nullptr, g_msg_text.c_str(), "RPCEmu",
+		MessageBoxA(nullptr, g_msg_text.c_str(), "RPCEmu Extended",
 		            MB_OK | (g_msg_is_error ? MB_ICONERROR : MB_ICONINFORMATION));
 	}
 
@@ -865,7 +865,7 @@ bool RpcemuApp::OnInit()
 			    wxString::Format("Could not load the machine state:\n%s\n\n"
 			                     "Performing a normal boot instead.",
 			                     wxString::FromUTF8(errbuf)),
-			    "RPCEmu", wxOK | wxICON_WARNING, frame);
+			    "RPCEmu Extended", wxOK | wxICON_WARNING, frame);
 		}
 	}
 

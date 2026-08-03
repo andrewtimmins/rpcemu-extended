@@ -188,7 +188,7 @@ void NatListDialog::OnDeleteRule(wxCommandEvent &)
 	    rule.emu_port,
 	    rule.host_port);
 
-	if (wxMessageBox(message, "RPCEmu", wxYES_NO | wxICON_QUESTION | wxNO_DEFAULT, this) != wxYES) {
+	if (wxMessageBox(message, "RPCEmu Extended", wxYES_NO | wxICON_QUESTION | wxNO_DEFAULT, this) != wxYES) {
 		return;
 	}
 

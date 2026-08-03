@@ -283,7 +283,7 @@ void ConfigSelectorDialog::OnStart(wxCommandEvent &)
 {
 	selected_config_path_ = SelectedConfigPath();
 	if (selected_config_path_.empty()) {
-		wxMessageBox("Select a machine configuration to start.", "RPCEmu", wxOK | wxICON_INFORMATION, this);
+		wxMessageBox("Select a machine configuration to start.", "RPCEmu Extended", wxOK | wxICON_INFORMATION, this);
 		return;
 	}
 	resume_selected_ = false;
@@ -317,7 +317,7 @@ void ConfigSelectorDialog::OnLoadStateFile(wxCommandEvent &)
 	if (state_get_machine_name(file.utf8_str().data(), name, sizeof(name)) != 0) {
 		wxMessageBox("This is not a valid RPCEmu state file, or it was made by a "
 		             "different version of RPCEmu.",
-		             "RPCEmu", wxOK | wxICON_WARNING, this);
+		             "RPCEmu Extended", wxOK | wxICON_WARNING, this);
 		return;
 	}
 	const wxString machine_name = wxString::FromUTF8(name);
@@ -335,7 +335,7 @@ void ConfigSelectorDialog::OnLoadStateFile(wxCommandEvent &)
 		                 "with that name exists.\n\nCreate or rename a machine to "
 		                 "'%s' and try again.",
 		                 machine_name, machine_name),
-		             "RPCEmu", wxOK | wxICON_WARNING, this);
+		             "RPCEmu Extended", wxOK | wxICON_WARNING, this);
 		return;
 	}
 
