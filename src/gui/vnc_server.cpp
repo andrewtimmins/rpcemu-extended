@@ -126,7 +126,11 @@ bool VncServer::start(int port, const std::string &password)
 		return false;
 	}
 
-	rfb_screen_->desktopName = const_cast<char *>("RPCEmu - RISC OS");
+	/* libvncserver keeps the pointer rather than copying, so this outlives it. */
+	desktop_name_ = config.name[0] != '\0'
+	    ? std::string("RPCEmu Extended - ") + config.name
+	    : std::string("RPCEmu Extended");
+	rfb_screen_->desktopName = const_cast<char *>(desktop_name_.c_str());
 	rfb_screen_->alwaysShared = TRUE;
 	rfb_screen_->deferUpdateTime = 0;
 	rfb_screen_->port = port;

@@ -156,6 +156,7 @@ private:
 	bool running_ = false;
 	char *password_list_[2] = {nullptr, nullptr};
 	std::string current_password_;
+	std::string desktop_name_;
 };
 
 extern VncServer *g_vnc_server;
