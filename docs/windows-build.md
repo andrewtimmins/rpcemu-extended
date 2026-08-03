@@ -1,4 +1,4 @@
-# Building RPCEmu (Spork Edition) for Windows
+# Building RPCEmu (Extended Edition) for Windows
 
 Windows builds are produced with **MinGW-w64** (not MSVC) and ship the full-speed
 recompiler (`rpcemu-recompiler.exe`). The wxWidgets GUI is cross-platform, so the

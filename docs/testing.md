@@ -1,6 +1,6 @@
 # Testing
 
-RPCEmu Spork Edition is built for Linux, Windows and macOS from one source tree,
+RPCEmu Extended Edition is built for Linux, Windows and macOS from one source tree,
 and the three are tested the same way: the same unit tests, the same
 command-line checks and the same real boot, run by the same scripts on each
 platform's CI job. Where a platform genuinely cannot run something, it is said
