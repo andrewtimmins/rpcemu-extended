@@ -179,6 +179,32 @@ ucs_to_guest(uint32_t ucs)
 }
 
 /**
+ * How many bytes the guest will get for the text currently held.
+ *
+ * Not the same as clip_ucs_len. That counts characters, and a character the
+ * guest's alphabet has no equivalent for is dropped rather than substituted, so
+ * the byte count can be lower. The guest asks for this figure, allocates a buffer
+ * of that size and then tells other applications the clipboard is that long, so
+ * it has to be what it will actually receive - counted the same way the transfer
+ * counts it, by asking ucs_to_guest() about every character.
+ *
+ * @return bytes, excluding the terminator.
+ */
+static unsigned int
+clip_guest_text_len(void)
+{
+	unsigned int i;
+	unsigned int len = 0;
+
+	for (i = 0; i < clip_ucs_len; i++) {
+		if (ucs_to_guest(clip_ucs[i]) != 0) {
+			len++;
+		}
+	}
+	return len;
+}
+
+/**
  * Convert one character in the guest's alphabet to UCS-4, or 0xffffffff if the
  * guest's table says there is no equivalent.
  */
@@ -352,17 +378,25 @@ clipboard_swi(uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3,
 		break;
 
 	case ARCEM_SWI_CLIPBOARD_HOST_CHECK:
-		/* How much is there to fetch, and of what type? Text is counted
-		   as the guest will see it: one byte per character, plus a
-		   terminator, as Cloverleaf's module expects. */
+		/* How much is there to fetch, and of what type?
+		 *
+		 * Exactly what the guest will receive, with no terminator counted, for
+		 * both text and images. The guest saves this figure as the clipboard's
+		 * length and hands it to whatever asks for the clipboard, so anything
+		 * added here is delivered to the application as data.
+		 *
+		 * This used to report one more than the text's length, to leave room for
+		 * the terminator. The guest does need that room - and it has it, since it
+		 * allocates four bytes beyond what it asks for - but it was also using
+		 * the same number as the length, so every paste into RISC OS arrived with
+		 * a trailing zero byte. StrongEd and Edit both showed it as [00] at the
+		 * end of the text. Reported as issue #81.
+		 */
 		if (clip_image != NULL && clip_image_len > 0) {
-			/* Exactly the file's length: an image is not a string, and
-			   the guest saves the byte count we give it. Its buffer has
-			   room beyond this for the terminator it writes anyway. */
 			*retr0 = clip_image_len;
 			*retr1 = (uint32_t) clip_file_type;
 		} else if (clip_ucs != NULL && clip_ucs_len > 0) {
-			*retr0 = clip_ucs_len + 1;
+			*retr0 = clip_guest_text_len();
 			*retr1 = (uint32_t) clip_file_type;
 		}
 		break;
@@ -390,12 +424,20 @@ clipboard_swi(uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3,
 		if (clip_ucs == NULL) {
 			break;
 		}
-		out = malloc(room);
+		/* room + 1: the caller's figure is the text, and the terminator goes
+		   after it. HOST_CHECK reports the same number, and the guest allocates
+		   four bytes beyond it, so writing that one extra byte is within the
+		   buffer at both ends. Getting this wrong is a heap overflow rather than
+		   a wrong answer, which is why the sanitiser build runs the tests. */
+		out = malloc(room + 1);
 		if (out == NULL) {
-			rpclog("Clipboard: out of memory for %u bytes\n", room);
+			rpclog("Clipboard: out of memory for %u bytes\n", room + 1);
 			break;
 		}
-		for (i = 0; i < clip_ucs_len && len + 1 < room; i++) {
+		/* len < room, not len + 1 < room: room is the length of the text, so all
+		   of it is allowed to fit. Reserving a byte of it for the terminator
+		   would drop the last character of every paste. */
+		for (i = 0; i < clip_ucs_len && len < room; i++) {
 			const unsigned char c = ucs_to_guest(clip_ucs[i]);
 
 			if (c != 0) {

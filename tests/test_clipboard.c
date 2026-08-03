@@ -194,7 +194,11 @@ main(void)
 	printf("\nhost to guest\n");
 	clipboard_host_changed(CLIPBOARD_TYPE_TEXT, "Hello", 5);
 	host_check(&len, &type);
-	check(len == 6, "five characters are offered as five plus a terminator");
+	/* Five, not six. The guest saves this figure as the clipboard's length and
+	   gives it to whatever asks, so a terminator counted here is delivered to the
+	   application as data - issue #81, where every paste into RISC OS arrived with
+	   a trailing zero byte that StrongEd and Edit both showed as [00]. */
+	check(len == 5, "five characters are offered as five");
 	check(type == CLIPBOARD_TYPE_TEXT, "offered as text");
 	check(last_pollword_addr == pollword_addr &&
 	      last_pollword_value == CLIPBOARD_POLLWORD_HOST_CHANGED,
@@ -212,8 +216,71 @@ main(void)
 
 	printf("\nhost to guest, into a buffer that is too small\n");
 	clipboard_host_changed(CLIPBOARD_TYPE_TEXT, "0123456789", 10);
-	check(strcmp(host_get(buf_addr, 5), "0123") == 0,
-	      "truncated to fit, still terminated");
+	/* r2 is the length of the text, not the size of the buffer: the guest asks
+	   HOST_CHECK how long the text is, allocates that with a little over, and
+	   passes the length back. So all five bytes are used for text and the
+	   terminator goes after them. Reserving one of the five would drop the last
+	   character of every paste. */
+	check(strcmp(host_get(buf_addr, 5), "01234") == 0,
+	      "as much as was asked for, still terminated");
+
+	printf("\nwhat is offered is exactly what is delivered (issue #81)\n");
+	/* The invariant the bug broke. Whatever HOST_CHECK reports, fetching that many
+	   has to produce a string of exactly that length - the guest has no way to
+	   find out otherwise, since it does not read HOST_GET's returned count. */
+	{
+		static const char *const cases[] = {
+			"Hello",
+			"",                       /* nothing at all */
+			"a",                      /* one character */
+			"a\xe2\x80\xa6z",         /* an ellipsis, which RISC OS does have */
+			"a\xe4\xb8\xadz",         /* and one it has not, so it is dropped */
+			"\xe4\xb8\xad\xe4\xb8\xad", /* nothing mappable at all */
+			"line one\nline two",     /* a newline is ordinary text */
+		};
+		size_t c;
+
+		for (c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+			char label[96];
+
+			clipboard_host_changed(CLIPBOARD_TYPE_TEXT, cases[c],
+			                       (unsigned int) strlen(cases[c]));
+			len = 0;
+			type = 0;
+			host_check(&len, &type);
+
+			/* Wiped before every fetch. Without this the check reads whatever
+			   the last case left in the buffer, and a case that transfers
+			   nothing looks like one that transferred the previous answer -
+			   which is exactly what it did on the first run of this test. */
+			memset(fake_mem + buf_addr, 0xff, 64);
+
+			if (len == 0) {
+				/* Nothing the guest can represent. It is offered nothing and
+				   fetches nothing: the module tests the length before it
+				   allocates, so a paste simply does not happen. */
+				(void) host_get(buf_addr, len);
+				snprintf(label, sizeof(label),
+				         "nothing mappable is offered as 0 (\"%s\")",
+				         cases[c]);
+				check(fake_mem[buf_addr] == 0xff, label);
+				continue;
+			}
+
+			{
+				const char *got = host_get(buf_addr, len);
+
+				snprintf(label, sizeof(label),
+				         "offered %u, delivered %u", (unsigned) len,
+				         (unsigned) strlen(got));
+				check(strlen(got) == len, label);
+			}
+			/* And no stray byte beyond the terminator, which is what the
+			   application would have shown as [00]. */
+			check(fake_mem[buf_addr + len] == 0,
+			      "  terminated exactly at the length offered");
+		}
+	}
 
 	printf("\nguest to host\n");
 	host_setter_calls = 0;
@@ -328,7 +395,7 @@ main(void)
 	clipboard_host_changed(CLIPBOARD_TYPE_TEXT, "Kept", 4);
 	clipboard_reset();
 	host_check(&len, &type);
-	check(len == 5, "what is on the clipboard is kept, for the next machine");
+	check(len == 4, "what is on the clipboard is kept, for the next machine");
 	last_pollword_addr = 0;
 	clipboard_host_changed(CLIPBOARD_TYPE_TEXT, "Hello again", 11);
 	check(last_pollword_addr == 0,
