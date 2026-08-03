@@ -72,6 +72,12 @@ extern "C" {
 
 namespace {
 
+wxString WindowTitleFor(const wxString &machine_name)
+{
+	return wxString::Format("RPCEmu Extended - %s",
+	    machine_name.empty() ? wxString("(unnamed machine)") : machine_name);
+}
+
 struct DiscTypeFileMap {
 	const char *display_name;
 	const char *extension;
@@ -209,7 +215,7 @@ wxEND_EVENT_TABLE()
 
 MainFrame::MainFrame()
 	: wxFrame(nullptr, wxID_ANY,
-	          wxString::Format("RPCEmu v%s", wxString(VERSION)),
+	          WindowTitleFor(wxString::FromUTF8(config.name)),
 	          wxDefaultPosition, wxSize(800, 600)),
 	  mips_timer_(this, ID_TIMER_MIPS),
 	  video_timer_(this, ID_TIMER_VIDEO),
@@ -492,7 +498,7 @@ void MainFrame::OnRecentMachine(wxCommandEvent &event)
 
 	AddRecentMachine(machine_name.utf8_str().data());
 	UpdateRecentMachinesMenu();
-	SetTitle(wxString::Format("RPCEmu - %s", machine_name));
+	SetTitle(WindowTitleFor(machine_name));
 
 	if (emulator_) {
 		emulator_->SwitchMachine(config_path.utf8_str().data());
@@ -779,7 +785,7 @@ void MainFrame::EnterFullScreen()
 		wxRichMessageDialog dlg(this,
 		                        "This window will now be switched to full-screen mode.\n\n"
 		                        "To leave full-screen mode press Alt+Enter.",
-		                        "RPCEmu - Full-screen mode",
+		                        "RPCEmu Extended - Full-screen mode",
 		                        wxOK | wxCANCEL | wxICON_INFORMATION);
 		dlg.SetOKCancelLabels("OK", "Cancel");
 		dlg.ShowCheckBox("Do not show this message again");
@@ -1340,7 +1346,7 @@ void MainFrame::OnCheckUpdate(wxCommandEvent &)
 		        wxString::Format(
 		            "This is a development build (%s), not a release.\n\n"
 		            "Open the releases page?", current),
-		        "RPCEmu - Check for Update",
+		        "RPCEmu Extended - Check for Update",
 		        wxOK | wxCANCEL | wxICON_INFORMATION, this) == wxOK) {
 			wxLaunchDefaultBrowser(URL_RELEASES);
 		}
@@ -1348,7 +1354,7 @@ void MainFrame::OnCheckUpdate(wxCommandEvent &)
 	}
 
 	if (!RPCEMU_HAVE_HTTP) {
-		wxMessageBox(HttpUnavailableMessage(), "RPCEmu - Check for Update",
+		wxMessageBox(HttpUnavailableMessage(), "RPCEmu Extended - Check for Update",
 		             wxOK | wxICON_INFORMATION, this);
 		return;
 	}
@@ -1370,29 +1376,29 @@ void MainFrame::OnCheckUpdate(wxCommandEvent &)
 
 	if (!error.empty()) {
 		wxMessageBox(wxString::Format("Could not check for an update:\n\n%s", error),
-		             "RPCEmu - Check for Update", wxOK | wxICON_ERROR, this);
+		             "RPCEmu Extended - Check for Update", wxOK | wxICON_ERROR, this);
 		return;
 	}
 
 	const wxString tag = TagNameFromReleaseJson(body);
 	if (tag.empty()) {
 		wxMessageBox("The reply from GitHub did not name a release.",
-		             "RPCEmu - Check for Update", wxOK | wxICON_ERROR, this);
+		             "RPCEmu Extended - Check for Update", wxOK | wxICON_ERROR, this);
 		return;
 	}
 
 	if (!IsNewerVersion(tag, current)) {
 		wxMessageBox(wxString::Format("You are running the latest version (%s).", current),
-		             "RPCEmu - Check for Update", wxOK | wxICON_INFORMATION, this);
+		             "RPCEmu Extended - Check for Update", wxOK | wxICON_INFORMATION, this);
 		return;
 	}
 
 	if (wxMessageBox(
 	        wxString::Format(
-	            "RPCEmu %s is available. You are running %s.\n\n"
+	            "RPCEmu Extended %s is available. You are running %s.\n\n"
 	            "Open the release page to read the notes and download it?",
 	            tag, current),
-	        "RPCEmu - Check for Update",
+	        "RPCEmu Extended - Check for Update",
 	        wxOK | wxCANCEL | wxICON_INFORMATION, this) == wxOK) {
 		wxLaunchDefaultBrowser(wxString(URL_RELEASE_TAG) + tag);
 	}
@@ -1908,7 +1914,7 @@ void MainFrame::PostGuestCommandResult(unsigned token, unsigned rc,
 void MainFrame::PostMachineSwitched(const std::string &machine_name)
 {
 	CallAfter([this, machine_name]() {
-		SetTitle(wxString::Format("RPCEmu - %s", wxString::FromUTF8(machine_name.c_str())));
+		SetTitle(WindowTitleFor(wxString::FromUTF8(machine_name.c_str())));
 		config_deep_copy(&config_copy_, &config);
 		model_copy_ = machine.model;
 		if (panel_ != nullptr) {
