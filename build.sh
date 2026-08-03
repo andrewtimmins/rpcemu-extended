@@ -1,5 +1,5 @@
 #!/bin/bash
-# RPCEmu (Spork Edition) - Linux build script
+# RPCEmu (Extended Edition) - Linux build script
 #
 # Usage:
 #   ./build.sh                         # Linux release build (dynarec) for host arch
@@ -279,7 +279,7 @@ stage_linux_release() {
 	fi
 
 	cat > "$LINUX_RELEASE/BUILDINFO.txt" <<EOF
-RPCEmu (Spork Edition) $VERSION
+RPCEmu (Extended Edition) $VERSION
 Built: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 Host:  $(uname -s) $(uname -m)
 Binary: $binary_name

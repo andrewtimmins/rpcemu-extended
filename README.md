@@ -915,7 +915,7 @@ covered.
   implementation of a published specification, and it keeps to that specification so a
   machine it installs onto stays usable by the project's own tools, PackMan and RiscPkg.
   See `docs/packages.md`.
-- Spork Edition enhancements by Andy Timmins and contributors.
+- Extended Edition enhancements by Andy Timmins and contributors.
 - Machine save/load state (suspend & resume) contributed by **Nick Brown**, whose
   outstanding item on that work, putting the clock right on resume, is why
   SyncClock is here.

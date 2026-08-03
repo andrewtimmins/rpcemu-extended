@@ -1,6 +1,6 @@
 # Podules (expansion cards)
 
-RPCEmu (Spork Edition) emulates the Risc PC expansion-card ("podule") bus and ships a
+RPCEmu (Extended Edition) emulates the Risc PC expansion-card ("podule") bus and ships a
 small library of emulated podules. You choose which podules a machine has from its
 configuration; RISC OS then sees them as ordinary expansion cards.
 

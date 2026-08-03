@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build RPCEmu (Spork Edition) for Windows (x86-64) with MinGW-w64 and stage a
+# Build RPCEmu (Extended) Edition) for Windows (x86-64) with MinGW-w64 and stage a
 # runnable release into releases/windows/amd64/ - parity with build.sh's
 # releases/linux/<arch>/ layout.
 #
@@ -163,7 +163,7 @@ for key in "${!DLL_SEEN[@]}"; do
 done
 
 cat > "$WIN_RELEASE/BUILDINFO.txt" <<EOF
-RPCEmu (Spork Edition) $VERSION
+RPCEmu (Extended Edition) $VERSION
 Built: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 Host:  $(uname -s) $(uname -m) (cross to $TARGET)
 Binary: $BIN

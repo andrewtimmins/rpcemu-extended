@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build RPCEmu (Spork Edition) for macOS as a UNIVERSAL binary and stage a
+# Build RPCEmu (Extended Edition) for macOS as a UNIVERSAL binary and stage a
 # runnable release into releases/macos/ as RPCEmu.app - parity with build.sh's
 # releases/linux/<arch>/ and build-windows.sh's releases/windows/amd64/ layout.
 #
@@ -715,7 +715,7 @@ if [ "$DO_FUSE" = true ]; then
 	fi
 
 	cat > "$RESD/BUILDINFO.txt" <<EOF
-RPCEmu (Spork Edition) $VERSION
+RPCEmu (Extended Edition) $VERSION
 Built: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 Host:  $(uname -s) $(uname -m) ($MODE)
 Binary: rpcemu (universal: x86_64 recompiler + arm64 interpreter)

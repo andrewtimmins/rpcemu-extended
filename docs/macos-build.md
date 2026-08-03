@@ -1,4 +1,4 @@
-# Building RPCEmu (Spork Edition) for macOS
+# Building RPCEmu (Extended Edition) for macOS
 
 macOS builds produce a universal **`RPCEmu.app`** bundle whose `rpcemu` binary
 contains two slices:

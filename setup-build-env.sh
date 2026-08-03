@@ -1,5 +1,5 @@
 #!/bin/bash
-# RPCEmu (Spork Edition) - Linux build environment setup
+# RPCEmu (Extended Edition) - Linux build environment setup
 #
 # Usage:
 #   ./setup-build-env.sh              # Native Linux build dependencies

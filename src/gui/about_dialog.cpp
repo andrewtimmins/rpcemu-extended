@@ -144,7 +144,7 @@ const CreditGroup kCredits[] = {
 	  "Sarah Walker\n"
 	  "Peter Howkins\n"
 	  "Matthew Howkins" },
-	{ "Spork Edition fork",
+	{ "Extended Edition fork",
 	  "Andy Timmins" },
 	{ "Contributed to this fork",
 	  "Nick Brown: saving and restoring machine state, and the idea\n"
@@ -204,7 +204,7 @@ void AboutDialog::BuildUi()
 	auto *title = new wxStaticText(this, wxID_ANY, "RPCEmu");
 	title->SetFont(title_font);
 
-	auto *edition = new wxStaticText(this, wxID_ANY, "Spork Edition");
+	auto *edition = new wxStaticText(this, wxID_ANY, "Extended Edition");
 	edition->SetFont(edition_font);
 	edition->SetForegroundColour(muted);
 

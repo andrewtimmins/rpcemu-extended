@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# One-time setup for cross-compiling RPCEmu (Spork Edition) for macOS FROM LINUX
+# One-time setup for cross-compiling RPCEmu (Extended Edition) for macOS FROM LINUX
 # via osxcross. This builds the osxcross toolchain and cross-builds the two
 # dependencies the emulator links (wxWidgets + SDL2) for BOTH macOS arches
 # (x86_64 + arm64) into per-arch prefixes.
