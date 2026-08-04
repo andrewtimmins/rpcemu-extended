@@ -32,6 +32,7 @@
 #include <wx/fileconf.h>
 #include <wx/filedlg.h>
 #include <wx/filename.h>
+#include <wx/progdlg.h>
 #include <wx/textdlg.h>
 
 extern "C" {
@@ -455,15 +456,37 @@ void ConfigSelectorDialog::OnDelete(wxCommandEvent &)
 	const wxString machine_dir = ConfigPathsMachinesDir() + wxFileName::GetPathSeparator() + name;
 
 	/*
-	 * wx's own recursive remove, not a shell command. This was
-	 * system("rm -rf '<dir>'"), which had three problems: Windows has no rm, so
-	 * deleting a machine there removed its configuration and silently left every
-	 * byte of its data behind; a machine name is typed by the user and went into
-	 * a shell command inside single quotes, so a name containing one would have
-	 * been able to run whatever followed it; and the result was not looked at, so
-	 * a failure to delete reported success.
+	 * The files go one at a time rather than through a single recursive
+	 * remove, because a machine's hard disc is thousands of them and Rmdir()
+	 * offers nothing to report progress with: the window simply stopped
+	 * answering until it finished. What is left afterwards is empty
+	 * directories, which the recursive remove clears in one quick pass.
+	 *
+	 * wx rather than a shell command throughout: Windows has no rm, and the
+	 * name is the user's to type.
 	 */
 	if (wxFileName::DirExists(machine_dir)) {
+		wxArrayString files;
+
+		wxDir::GetAllFiles(machine_dir, &files);
+
+		{
+			wxProgressDialog progress("Delete Machine",
+			    wxString::Format("Deleting '%s'...", name),
+			    static_cast<int>(files.GetCount()), this,
+			    wxPD_APP_MODAL | wxPD_AUTO_HIDE | wxPD_ELAPSED_TIME);
+
+			for (size_t i = 0; i < files.GetCount(); i++) {
+				wxRemoveFile(files[i]);
+				/* Every so often rather than every file: the update costs
+				   more than the unlink, and a bar moving in steps of one is
+				   no more informative. */
+				if ((i & 0x1f) == 0) {
+					progress.Update(static_cast<int>(i));
+				}
+			}
+		}
+
 		if (!wxFileName::Rmdir(machine_dir, wxPATH_RMDIR_RECURSIVE)) {
 			wxMessageBox(wxString::Format(
 			                 "'%s' has been removed from the list, but its data "
@@ -507,12 +530,25 @@ void ConfigSelectorDialog::OnClone(wxCommandEvent &)
 
 	const wxString src_machine = ConfigPathsMachinesDir() + wxFileName::GetPathSeparator() + source_name;
 	const wxString dst_machine = ConfigPathsMachinesDir() + wxFileName::GetPathSeparator() + sanitized;
-	/* Copy the machine's own files (CMOS, HostFS, hard discs). This used to shell
-	   out to "cp -a", which does not exist on Windows: the clone was listed but
-	   its directory was never created, and nothing said so. */
+	/* The machine's own files: CMOS, HostFS, hard discs. wx rather than a shell
+	   command, which is what Windows has none of.
+
+	   Pulsed rather than counted: the copy walks the tree as it goes, and
+	   counting it first would mean walking the whole thing twice to tell
+	   somebody a number they are not waiting on. */
 	bool copied;
 	if (wxDirExists(src_machine)) {
-		copied = ConfigPathsCopyDirectory(src_machine, dst_machine);
+		wxProgressDialog progress("Clone Machine",
+		    wxString::Format("Copying '%s'...", source_name), 100, this,
+		    wxPD_APP_MODAL | wxPD_AUTO_HIDE | wxPD_ELAPSED_TIME);
+		int seen = 0;
+
+		copied = ConfigPathsCopyDirectory(src_machine, dst_machine,
+		    [&progress, &seen](const wxString &) {
+			    if ((++seen & 0x1f) == 0) {
+				    progress.Pulse();
+			    }
+		    });
 	} else {
 		copied = ConfigPathsCreateMachineDirectory(sanitized);
 	}
