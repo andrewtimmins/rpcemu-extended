@@ -115,6 +115,7 @@ enum MainFrameMenuId {
 	ID_MENU_VISIT_WEBSITE,
 	ID_MENU_REPORT_ISSUE,
 	ID_MENU_SUPPORT_BUNDLE,
+	ID_MENU_DATA_DIR,
 	ID_MENU_CHECK_UPDATE,
 };
 
@@ -227,6 +228,7 @@ private:
 	void OnVisitWebsite(wxCommandEvent &event);
 	void OnReportIssue(wxCommandEvent &event);
 	void OnSupportBundle(wxCommandEvent &event);
+	void OnChooseDataDir(wxCommandEvent &event);
 	void OnCheckUpdate(wxCommandEvent &event);
 	void OnAbout(wxCommandEvent &event);
 #ifdef RPCEMU_VNC

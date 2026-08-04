@@ -42,6 +42,11 @@
 #include <unistd.h>
 #endif
 
+extern "C" {
+#include "data_dir_store.h"
+}
+
+#include "data_dir_choice.h"
 #include "headless_bridge.h"
 #include "emulator_host.h"
 #ifdef RPCEMU_VNC
@@ -159,6 +164,40 @@ std::string HomeRpcemu()
  * install prefix -> /usr/share), but with no wxWidgets dependency. Returns
  * false if no directory containing a configs/ subdirectory can be found.
  */
+/*
+ * The data directory the user chose, from the platform's preference store.
+ *
+ * Read here as well as in the GUI so that a headless run honours a choice made
+ * in the window, which is the whole point of sharing the decision below.
+ */
+/*
+ * The chosen data directory, read with plain C file I/O.
+ *
+ * Emphatically not through wxConfig. Every entry point in this file runs before
+ * wxEntry(), because a headless run initialises no GUI toolkit at all, and
+ * wxConfig there either asserts ("create wxApp before calling this") or, if
+ * wxWidgets is started just for the read, initialises GTK and prints "Unable to
+ * initialize GTK+, is DISPLAY set properly?" on precisely the headless server
+ * this has to work on. Both were measured. See data_dir_store.h.
+ */
+std::string HeadlessStoredDataDir()
+{
+	char buf[1024];
+
+	return data_dir_store_read(buf, sizeof(buf)) ? std::string(buf)
+	                                             : std::string();
+}
+
+/*
+ * --datadir, for this process.
+ *
+ * A file static rather than a parameter threaded through every entry point:
+ * there are several ways into this file (list machines, run a machine, the
+ * selector) and one of them quietly not honouring the option is exactly the bug
+ * this is fixing. Set once from main() before anything here runs.
+ */
+const char *g_cli_datadir = nullptr;
+
 bool InitHeadlessPaths()
 {
 	const char *env_data = getenv("RPCEMU_DATADIR");
@@ -167,8 +206,78 @@ bool InitHeadlessPaths()
 	const std::string exe = ExeDir();
 	const std::string cwd = CwdDir();
 	const std::string install = RPCEMU_INSTALL_DATADIR;
+	const std::string home = HomeRpcemu();
 
-	/* Shared, read-only resources (ROM/config/podule seed data). */
+	/*
+	 * Writable per-user data, decided by the SAME rules the GUI uses.
+	 *
+	 * This file used to carry its own copy of the precedence chain, which was
+	 * fine while there were only environment variables to consider and became a
+	 * real problem the moment the location could be chosen: --datadir was
+	 * ignored here, and so was the choice made on first run, so one install
+	 * resolved two different ways depending on whether you started it with a
+	 * window or without one. Sharing data_dir_decide() is what stops the two
+	 * drifting apart again.
+	 *
+	 * can_ask is always 0: there is by definition no GUI on this path, so the
+	 * decision can never come back as "ask".
+	 */
+	const std::string stored = HeadlessStoredDataDir();
+
+	DataDirInputs inputs;
+	memset(&inputs, 0, sizeof(inputs));
+	inputs.cli_datadir = g_cli_datadir;
+	inputs.env_datadir = env_data;
+	inputs.env_resource_dir = env_res;
+	inputs.stored_datadir = stored.empty() ? nullptr : stored.c_str();
+	inputs.configs_beside_binary = HasConfigs(exe) ? 1 : 0;
+	inputs.configs_in_cwd = HasConfigs(cwd) ? 1 : 0;
+	inputs.configs_in_install_dir =
+	    (HasConfigs(install) || DirExists("/usr/share/rpcemu/configs")) ? 1 : 0;
+	inputs.configs_in_bundle = 0;
+	inputs.default_location_ready =
+	    (!home.empty() && HasConfigs(home)) ? 1 : 0;
+	inputs.can_ask = 0;
+
+	const DataDirDecision decision = data_dir_decide(&inputs);
+	std::string datadir;
+
+	switch (decision.source) {
+	case DATA_DIR_FROM_CLI:
+		datadir = g_cli_datadir;
+		break;
+	case DATA_DIR_FROM_ENV:
+		datadir = env_data;
+		break;
+	case DATA_DIR_FROM_STORED:
+		datadir = stored;
+		break;
+	case DATA_DIR_FROM_PORTABLE:
+		datadir = HasConfigs(exe) ? exe : (HasConfigs(cwd) ? cwd : home);
+		break;
+	case DATA_DIR_FROM_EXISTING_DEFAULT:
+		datadir = home;
+		break;
+	case DATA_DIR_FROM_ENV_RESOURCE:
+	case DATA_DIR_FROM_BUNDLE:
+	case DATA_DIR_ASK:
+	case DATA_DIR_DEFAULT_UNASKED:
+		datadir = home;
+		break;
+	}
+
+	/*
+	 * Shared, read-only resources (ROM and podule seed data), found AFTER the
+	 * data directory rather than before it, and falling back to it.
+	 *
+	 * The order used to be the other way round, and that stopped working the
+	 * moment the data directory could be somewhere of the user's choosing: an
+	 * existing installation with everything in ~/RPCEmu, or a --datadir pointing
+	 * at a perfectly good tree, was answered with "could not locate RPCEmu data"
+	 * whenever the current directory happened not to contain a configs/ of its
+	 * own. The data directory is a place with configs/ in it, so it is a
+	 * legitimate last resort here.
+	 */
 	std::string resourcedir;
 	if (env_res != nullptr && env_res[0] != '\0') {
 		resourcedir = env_res;
@@ -180,30 +289,31 @@ bool InitHeadlessPaths()
 		resourcedir = install;
 	} else if (DirExists("/usr/share/rpcemu/configs")) {
 		resourcedir = "/usr/share/rpcemu";
+	} else if (HasConfigs(datadir)) {
+		resourcedir = datadir;
 	} else {
 		return false;
 	}
 
-	/* Writable per-user data. Portable/dev builds keep everything beside the
-	   binary (configs found in exe/cwd); an installed build uses ~/RPCEmu, which
-	   the GUI seeds on first run (or override with RPCEMU_DATADIR). */
-	std::string datadir;
-	if (env_data != nullptr && env_data[0] != '\0') {
-		datadir = env_data;
-	} else if (HasConfigs(exe)) {
-		datadir = exe;
-	} else if (HasConfigs(cwd)) {
-		datadir = cwd;
-	} else {
-		datadir = HomeRpcemu();
-		if (datadir.empty()) {
-			datadir = resourcedir;
-		}
+	if (datadir.empty()) {
+		datadir = resourcedir;
 	}
+
+	/* Deliberately NOT written back here, even when the decision says it could
+	   be. A headless first run must leave the question open so the first
+	   interactive run still gets to ask, rather than inheriting a location
+	   nobody chose. */
 
 	/* The core appends a trailing separator itself, so pass the paths as-is. */
 	rpcemu_set_datadir(datadir.c_str());
 	rpcemu_set_resourcedir(resourcedir.c_str());
+
+	/* Same line the GUI path logs, and after the paths are set so it lands in
+	   the log of the directory it is talking about. Present on both paths because
+	   "RPCEmu is using the wrong folder" is answerable from it, and which entry
+	   point somebody used is not something they will think to mention. */
+	rpclog("Paths: data directory from %s: %s\n",
+	       data_dir_source_name(decision.source), datadir.c_str());
 	return true;
 }
 
@@ -244,6 +354,12 @@ std::string HeadlessResolveMachineConfig(const char *machine_name)
 		return std::string();
 	}
 	return ResolveMachineConfig(machine_name);
+}
+
+void HeadlessSetDataDir(const char *cli_datadir)
+{
+	g_cli_datadir = (cli_datadir != nullptr && cli_datadir[0] != '\0')
+	    ? cli_datadir : nullptr;
 }
 
 bool HeadlessInitPaths(void)
@@ -307,6 +423,9 @@ void HeadlessPrintUsage(const char *argv0)
 	    "                        Needs no display or desktop session on any\n"
 	    "                        platform.\n"
 	    "  --list-machines       List available machine configs and exit.\n"
+	    "  --datadir <dir>       Where machines, ROMs and settings live, for this\n"
+	    "                        run only. Outranks RPCEMU_DATADIR and the location\n"
+	    "                        chosen on first run, and is not remembered.\n"
 	    "  --fetch-riscos[=which]\n"
 	    "                        Download RISC OS from RISC OS Open, unpack it and\n"
 	    "                        create a machine ready to run, then exit. 'which' is\n"

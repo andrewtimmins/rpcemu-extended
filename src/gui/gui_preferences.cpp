@@ -24,6 +24,10 @@
 #include <sstream>
 
 #include <wx/config.h>
+
+extern "C" {
+#include "data_dir_store.h"
+}
 #include <wx/tokenzr.h>
 
 namespace {
@@ -93,6 +97,34 @@ AddRecentEntry(const char *key, const std::string &value, int max_entries)
 }
 
 } // namespace
+
+/*
+ * The data directory is the one preference NOT kept in wxConfig, and
+ * data_dir_store.h explains why at length: it has to be readable from the
+ * no-GUI entry points, which run before wxWidgets is started, and wxConfig
+ * there either asserts or drags GTK in and complains about DISPLAY. These are
+ * thin wrappers so callers need not care which store is which.
+ */
+std::string
+GetDataDir()
+{
+	char buf[1024];
+
+	return data_dir_store_read(buf, sizeof(buf)) ? std::string(buf)
+	                                             : std::string();
+}
+
+void
+SetDataDir(const std::string &path)
+{
+	(void) data_dir_store_write(path.c_str());
+}
+
+void
+ClearDataDir()
+{
+	(void) data_dir_store_clear();
+}
 
 std::string
 GetDefaultMachine()

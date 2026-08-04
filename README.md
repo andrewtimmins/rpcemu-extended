@@ -99,6 +99,7 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `docs/kinetic.md` | Kinetic StrongARM: how the card is detected, its 512MB memory map, and the three paths a new memory region needs |
 | `docs/usb.md` | USB: the emulated OHCI host controller, passing real devices through to the guest, streaming from a camera, USB drives, and why it is OHCI |
 | `docs/mmu-permissions.md` | MMU access permissions: the defect that made ADFFS unusable, how it was fixed, and the regression test that holds it |
+| `docs/paths.md` | Where RPCEmu keeps machines, ROMs and settings: the first-run question, the precedence rules, and who is never asked |
 | `docs/keyboard.md` | Keyboard: how a host key reaches RISC OS, why it is mapped by physical position rather than by character, non-UK layouts, and diagnosing it with `RPCEMU_KEYBOARD_DEBUG` |
 | `docs/clipboard.md` | Shared clipboard: copying text and images between the host and RISC OS |
 | `docs/vnc.md` | VNC: using a machine remotely, choosing one over VNC in headless mode, and the control menu for a running machine |
@@ -121,11 +122,22 @@ seeded from the shared templates on first run. An existing `~/.local/share/rpcem
 an earlier version is migrated automatically. The **portable** `.tar.gz` instead keeps
 everything self-contained in its own folder.
 
-These environment variables override the defaults:
+**On first run RPCEmu asks where that folder should be**, with the location above
+already filled in, so pressing Return puts it exactly where earlier versions did.
+Change it later with *Settings → Data Folder…*, which points RPCEmu at a different
+folder and moves nothing, or per-run with `--datadir`.
+
+You are only asked when there is genuinely nothing to go on. An existing
+installation, a portable or in-tree layout, `RPCEMU_DATADIR`, `--datadir` and every
+run without a GUI all carry on silently as before. The full precedence, and which
+situations do and do not ask, is in [docs/paths.md](docs/paths.md).
+
+These environment variables override the defaults, and both outrank the folder
+chosen on first run so that scripts and CI stay predictable:
 
 | Variable | Meaning |
 | --- | --- |
-| `RPCEMU_DATADIR` | Writable data directory (machines, configs, logs). Otherwise the executable's directory or the current directory if it contains `configs/`, else the install prefix. |
+| `RPCEMU_DATADIR` | Writable data directory (machines, configs, logs). Otherwise the folder chosen on first run, then the executable's directory or the current directory if it contains `configs/`, else the install prefix. |
 | `RPCEMU_RESOURCE_DIR` | Read-only support files (ROM/config/podule templates). |
 | `RPCEMU_NO_GUI_MESSAGES` | **Windows only.** Set to `1` to send `--help`, `--list-machines` and startup errors to stdout/stderr instead of a message box. See [Windows: messages appear in a dialog](#windows-messages-appear-in-a-dialog). |
 
