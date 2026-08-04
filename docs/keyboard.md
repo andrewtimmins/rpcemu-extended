@@ -80,10 +80,26 @@ faults came from that one decision.
   physical Control key as `WXK_RAW_CONTROL`, so at the character level Command and
   Control are one key and neither could be spared for the menu button. By
   position they are four distinct keys.
-- **[#70](https://github.com/andrewtimmins/rpcemu-extended/issues/70), partly.**
-  Left and right Shift, and left and right Ctrl, were reported to the guest as
-  the left-hand key in both cases. See the caveat below for the part of #70 this
-  does not explain.
+- **[#70](https://github.com/andrewtimmins/rpcemu-extended/issues/70), shifted
+  characters on macOS.** wxWidgets has only one `WXK_SHIFT` and no code for the
+  right-hand key, so **both Shift keys became the same scancode**. Combined with
+  `NativeKeyPress()` ignoring a press for a scancode it already holds, changing
+  hands mid-typing silently released Shift in the guest: the second Shift's press
+  was swallowed as a duplicate, and the first Shift's release then cancelled a
+  modifier that was still physically held. Every letter after that arrived
+  unshifted, which is the reported `QWERTYUIOPASD` followed by `fghjklzxcvbnm`.
+  The reporter's observation that toggling Caps Lock fixed it needs no more
+  explanation than the obvious one: with caps on, letters are uppercase without
+  Shift, so the broken path is bypassed. Left and right Shift are now distinct,
+  as are left and right Ctrl.
+
+  Worth recording how this was nearly missed. The letter table folded lowercase
+  onto uppercase before lookup, so it was provably case-independent, and that was
+  taken as showing the mapping could not cause a case error. True as far as it
+  went, and it stopped one step short: the *modifier* collapsing is a different
+  mechanism in the same function, and it produces exactly the reported symptom.
+  An elaborate Caps Lock desynchronisation theory got invented to fill the gap
+  that better reasoning would have closed.
 
 Also fixed along the way: **AltGr reached nothing at all, on every platform.**
 Windows and macOS reported it as left Alt, and X11 reported keycode `0x6c` which
@@ -151,16 +167,21 @@ make it fail.
   except by timestamp, so the guest sees Ctrl+AltGr. Whether this stops German
   AltGr characters working in RISC OS is unconfirmed; the debug log above will
   show the extra Ctrl if it does.
-- **The rest of [#70](https://github.com/andrewtimmins/rpcemu-extended/issues/70)
-  is not explained by any of this.** The report is that with Shift held, the
-  first thirteen letters came out uppercase and the rest lowercase, and that
-  toggling Caps Lock fixed it. Upper and lower case letters map to the *same*
-  position, so the mapping cannot produce a case error: something is
-  desynchronising the guest's Shift or Caps Lock state. The leading theory is
-  that macOS reports Caps Lock as a toggle through `flagsChanged` rather than as
-  a press and release, and `NativeKeyPress()` drops a press for a key already
-  held, so the guest's caps state can end up inverted relative to the host. That
-  is a theory, not a diagnosis, and it needs a Mac.
+- **★ The same lost-modifier bug is still live on macOS, for Ctrl.** The class of
+  fault behind #70 is *two physical keys collapsing onto one scancode*, and
+  `NativeKeyPress()` dropping the second press while the first release cancels
+  both. The position tables are one-to-one and `test_keymap.c` checks them for
+  collisions specifically to prevent it, but the macOS policy in
+  `input_helpers.cpp` reintroduces one deliberately: physical left Control gives
+  `0x25`, and left Command is mapped onto `0x25` as well so that Cmd+C copies. So
+  holding Control, pressing Command and releasing Control releases the guest's
+  Ctrl while Command is still down.
+
+  There is no third Ctrl scancode to spend, so the fix belongs at the other end:
+  `held_keys_` should COUNT presses per scancode, keeping the guest's key down
+  while any physical key mapping to it is held. That fixes the class rather than
+  the instance and makes deliberate collisions safe, instead of leaving
+  "no collisions" as a rule policy can quietly break. Not done yet.
 - Print Screen has no X11 keycode entry and is not passed through.
 - The GUI keyboard path is only tested at the mapping layer. Nothing exercises
   wxWidgets event delivery itself.

@@ -18,8 +18,12 @@
  *   #91  The third mouse button on macOS, because Command and Control are
  *        different POSITIONS producing the same character, and a character
  *        cannot tell them apart.
- *   #70  Partly. Left and right Shift were reported to the guest as the same
- *        key for the same reason.
+ *   #70  Left and right Shift were reported to the guest as the same key, so
+ *        changing hands mid-typing released Shift in the guest: the second
+ *        Shift's press was swallowed as a duplicate of a key already held, and
+ *        the first Shift's release then cancelled a modifier still physically
+ *        down. Hence the distinctness checks below being load-bearing rather
+ *        than tidiness.
  *
  * So the cases below are not decoration. They assert the properties that were
  * actually violated: that a position maps to the same RISC OS key whatever the
