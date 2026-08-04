@@ -173,7 +173,7 @@ make it fail.
 
 ### Which keys are held
 
-`tests/test_held_keys.c`, 42 checks, covering `src/gui/held_keys.c`.
+`tests/test_held_keys.c`, 41 checks, covering `src/gui/held_keys.c`.
 
 A scancode is not a key. Several physical keys can map to one RISC OS key, and on
 macOS that is **deliberate and permanent**, since both Command and Control are

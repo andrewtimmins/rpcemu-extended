@@ -148,7 +148,8 @@ being used says which rule chose it.
 
 ## Testing
 
-`tests/test_data_dir.c`, 41 checks, on every platform. The decision is a pure
+`tests/test_data_dir.c` (50 checks) and `tests/test_data_dir_store.c` (28 checks),
+on every platform. The decision is a pure
 function over stated inputs, so the whole table can be walked without a filesystem
 or a window, including all 512 input combinations for the invariants that must
 hold regardless: no dialogue without a GUI, no dialogue when there was anything to

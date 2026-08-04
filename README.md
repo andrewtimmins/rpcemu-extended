@@ -438,6 +438,7 @@ portable between them.
 | `--no-relay` | Do not relay Access broadcasts. Only one emulator per host can, and the others decline automatically; this says so deliberately. |
 | `--headless` | Run with no GUI window, over VNC. Without `--machine`, the machine list is offered over VNC and you choose one from a client. VNC is started for the run whether or not the settings enable it, since it is the only way in; the setting itself is left alone. |
 | `--list-machines` | List the available machine configs and exit. |
+| `--datadir <dir>` | Where machines, ROMs and settings live, for this run only. Also accepts `--datadir=<dir>`. Outranks `RPCEMU_DATADIR` and the folder chosen on first run, and is deliberately not remembered, so a scripted run cannot become the default for later interactive ones. |
 | `--fetch-riscos[=which]` | Download RISC OS from RISC OS Open, unpack it, create a machine and exit. `which` is `stable` (default) or `nightly`. |
 | `--no-disc` | With `--fetch-riscos`, fetch the ROM only. |
 | `--accept-licence` | Required by `--fetch-riscos`: agrees to the licensing terms of what is downloaded, which are printed first. |
@@ -564,11 +565,28 @@ Two filing system icons appear on the RISC OS icon bar:
 
 | Icon | RISC OS path | Host path | Scope |
 | --- | --- | --- | --- |
-| **HostFS** | `HostFS::HostFS.$` | `machines/<name>/hostfs/` | Per-machine |
-| **Shared** | `HostFS::Shared.$` | `shared/` | All machines |
+| **HostFS** | `HostFS::HostFS.$` | `machines/<name>/hostfs/` by default, configurable | Per-machine, or shared if you point machines at one folder |
+| **Shared** | `HostFS::Shared.$` | `shared/` | All machines, always |
 
 Use HostFS for machine-specific files and Shared for utilities or files you want
 available across configurations.
+
+### Pointing HostFS somewhere else
+
+*Settings → Machine → System → **HostFS folder***, or the `hostfs_path` key in the
+machine's `.cfg`. Three forms, the same convention `hd4_path` and `rom_dir` use:
+
+| Setting | Means |
+| --- | --- |
+| *empty* | `machines/<name>/hostfs`, as it has always been. **Nothing is stored**, so there is nothing to go stale if you move your data folder. |
+| `discs/work` | Relative, under the machine's own folder, so it moves with the machine. |
+| `/srv/riscos/shared` | Absolute, used as given. This is how several machines share one folder. |
+
+Sharing one folder between machines is supported and is what the setting is for,
+but **do not run two machines on one folder at the same time**: HostFS holds open
+file handles and RISC OS caches directory contents, so two guests writing the same
+tree together can lose work. The machine editor tells you which other machine
+already uses a folder. See [docs/hostfs.md](docs/hostfs.md).
 
 ---
 
@@ -795,7 +813,8 @@ how the JIT is built and when it falls back to interpretation.
 - wxWidgets front-end with machine selector, toolbar, and integrated debugger
 - Multi-machine configuration with isolated per-machine storage
 - Quick machine switching and recent-machines menu
-- Dual HostFS drives (per-machine + shared)
+- Dual HostFS drives (per-machine + shared), with the per-machine folder configurable so several machines can share one (see [docs/hostfs.md](docs/hostfs.md))
+- The data folder is asked for on first run rather than created silently in your home directory, and can be moved afterwards (see [docs/paths.md](docs/paths.md))
 - Access/ShareFS broadcast relay for NAT networking
 - Full FPA10 emulation with cycle timing
 - MMU access permissions enforced on cached translations, which upstream does not do — the defect that made ADFFS and most of the games needing it unusable (see [docs/mmu-permissions.md](docs/mmu-permissions.md))
