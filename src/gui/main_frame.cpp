@@ -1734,7 +1734,18 @@ void MainFrame::ProcessEmulatorKeyEvent(wxKeyEvent &event, bool key_down)
 	 * / full-screen release key (Alt+Enter), handled below. */
 
 	const int key_code = event.GetKeyCode();
-	if (key_code == WXK_NONE || key_code == 0) {
+	const unsigned scan_code = InputNativeScancodeFromKeyEvent(event);
+
+	InputLogKeyEvent(event, scan_code, key_down);
+
+	/*
+	 * Both have to be unusable before the key is given up on. Testing the wx
+	 * keycode alone used to be enough, and was wrong: a key the host layout puts
+	 * somewhere wxWidgets has no name for reports WXK_NONE, so the keys that most
+	 * needed the physical-position lookup were thrown away before reaching it.
+	 * That is the German umlauts in issue #88.
+	 */
+	if (scan_code == 0 && (key_code == WXK_NONE || key_code == 0)) {
 		event.Skip();
 		return;
 	}
@@ -1752,7 +1763,7 @@ void MainFrame::ProcessEmulatorKeyEvent(wxKeyEvent &event, bool key_down)
 		/* Nothing to escape from, so the guest gets the key. */
 	}
 
-	if (key_code == WXK_MENU || key_code == WXK_WINDOWS_MENU) {
+	if (InputIsThirdMouseButtonKey(event)) {
 		if (emulator_) {
 			if (key_down) {
 				emulator_->MousePress(4);
@@ -1767,7 +1778,6 @@ void MainFrame::ProcessEmulatorKeyEvent(wxKeyEvent &event, bool key_down)
 		return;
 	}
 
-	const unsigned scan_code = InputNativeScancodeFromKeyEvent(event);
 	if (scan_code == 0) {
 		event.Skip();
 		return;

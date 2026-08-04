@@ -43,6 +43,7 @@ set(GUI_SOURCES
     plt_sound.cpp
     toolbar_icons.cpp
     keyboard_x.c
+    keymap_platform.c
 )
 
 if(RPCEMU_ENABLE_VNC)

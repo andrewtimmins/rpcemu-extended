@@ -20,9 +20,25 @@
 
 #include "input_helpers.h"
 
+#include <stdlib.h>
+
+#include "keymap_platform.h"
+
 extern "C" {
 #include "keyboard.h"
+#include "rpcemu.h"
 }
+
+/*
+ * X11 keycodes this file needs by name. The full set lives in keymap_platform.c;
+ * these are the few the macOS policy below has to reason about.
+ */
+enum {
+	X11_LEFTCTRL = 0x25,
+	X11_LEFTWIN = 0x85,
+	X11_RIGHTWIN = 0x86,
+	X11_MENU = 0x87
+};
 
 static unsigned scancode_from_wx_key_code(int key_code)
 {
@@ -180,14 +196,16 @@ static unsigned scancode_from_wx_key_code(int key_code)
 	return 0;
 }
 
-unsigned InputNativeScancodeFromKeyEvent(const wxKeyEvent &event)
+/*
+ * The key's physical position as an X11 keycode, or 0 if this platform will not
+ * say. Every platform has some way of reporting position; what differs is where
+ * wxWidgets puts it.
+ */
+static unsigned scancode_from_physical_key(const wxKeyEvent &event)
 {
-	// keyboard_map_key() is keyed by X11 hardware keycodes, so the raw-keycode
-	// paths are only meaningful under wxGTK/X11. On wxMSW the raw values are
-	// Windows scancodes/VK codes that the X11 table can't map (and GetRawKeyFlags
-	// is non-zero, which would wrongly short-circuit the portable fallback), so
-	// fall straight through to the wx-keycode mapping there.
 #if defined(__WXGTK__)
+	/* X11 hands us a hardware keycode already, which is what the rest of
+	   RPCEmu is keyed by, so there is nothing to translate. */
 	const unsigned hardware = static_cast<unsigned>(event.GetRawKeyFlags());
 	if (hardware != 0) {
 		return hardware;
@@ -197,8 +215,66 @@ unsigned InputNativeScancodeFromKeyEvent(const wxKeyEvent &event)
 	if (raw != 0 && keyboard_map_key(raw) != nullptr) {
 		return raw;
 	}
+	return 0;
+#elif defined(__WXMSW__)
+	/* GetRawKeyFlags() is the WM_KEY* lParam (wxWidgets src/msw/window.cpp),
+	   which carries the OEM scancode and so describes a position. The unpacking
+	   lives in keymap_platform.c so that tests/test_keymap.c can check it. */
+	return keymap_x11_from_windows_lparam(
+	    static_cast<unsigned>(event.GetRawKeyFlags()));
+#elif defined(__WXOSX__)
+	/* GetRawKeyCode() is [NSEvent keyCode] (wxWidgets src/osx/cocoa/window.mm),
+	   an ADB keycode, which is a position. */
+	return keymap_x11_from_macos_keycode(
+	    static_cast<unsigned>(event.GetRawKeyCode()));
+#else
+	(void) event;
+	return 0;
 #endif
+}
 
+/*
+ * What RPCEmu does with the two keys a Mac has and a RiscPC does not.
+ *
+ * Left Command becomes Ctrl. That is long-standing deliberate behaviour, not an
+ * accident of the old character mapping: RISC OS uses Ctrl for what macOS uses
+ * Command for, so Cmd+C copying is what a Mac user expects and issue #35 was
+ * about making those combinations work.
+ *
+ * Right Command becomes the menu key, which RPCEmu already offers as the third
+ * mouse button. A Mac keyboard has no menu key, so before this there was no way
+ * to reach a RISC OS menu button from the keyboard at all (issue #91). Left and
+ * right Command are only distinguishable now that positions are being read.
+ */
+static unsigned apply_macos_key_policy(unsigned scan_code)
+{
+#if defined(__WXOSX__)
+	if (scan_code == X11_LEFTWIN) {
+		return X11_LEFTCTRL;
+	}
+	if (scan_code == X11_RIGHTWIN) {
+		return X11_MENU;
+	}
+#endif
+	return scan_code;
+}
+
+unsigned InputNativeScancodeFromKeyEvent(const wxKeyEvent &event)
+{
+	const unsigned physical = scancode_from_physical_key(event);
+
+	if (physical != 0) {
+		return apply_macos_key_policy(physical);
+	}
+
+	/*
+	 * Nothing said where the key was, so fall back to mapping the character it
+	 * produced. This is the path that cannot cope with a non-UK layout (see
+	 * keymap_platform.h), kept only because a key we failed to place is better
+	 * sent to the guest approximately than dropped on the floor. Anything
+	 * arriving here on Windows or macOS is a gap in the position tables and
+	 * shows up in the RPCEMU_KEYBOARD_DEBUG log as such.
+	 */
 	int keycode = event.GetKeyCode();
 
 	/* A letter typed with Control held arrives as a control character (1-26)
@@ -223,4 +299,48 @@ bool InputIsReleaseMouseCaptureKey(const wxKeyEvent &event)
 	const int key_code = event.GetKeyCode();
 	return (key_code == WXK_RETURN || key_code == WXK_NUMPAD_ENTER) &&
 	       (event.GetModifiers() & wxMOD_ALT) != 0;
+}
+
+bool InputIsThirdMouseButtonKey(const wxKeyEvent &event)
+{
+	const int key_code = event.GetKeyCode();
+
+	if (key_code == WXK_MENU || key_code == WXK_WINDOWS_MENU) {
+		return true;
+	}
+
+	/* On macOS the test above can never pass - wxWidgets does not report
+	   WXK_MENU, because the keyboard has no such key - so right Command stands
+	   in for it. Asked of the position, since Command is indistinguishable from
+	   Control at the character level on that platform (issue #91). */
+	return apply_macos_key_policy(scancode_from_physical_key(event)) == X11_MENU;
+}
+
+void InputLogKeyEvent(const wxKeyEvent &event, unsigned scan_code, bool key_down)
+{
+	static int enabled = -1;
+
+	if (enabled < 0) {
+		enabled = getenv("RPCEMU_KEYBOARD_DEBUG") != nullptr;
+	}
+	if (!enabled) {
+		return;
+	}
+
+	const unsigned physical = scancode_from_physical_key(event);
+	const uint8_t *mapped = scan_code != 0 ? keyboard_map_key(scan_code) : nullptr;
+
+	/* "position" is what the platform said, "scancode" is what RPCEmu will send
+	   after any policy is applied, and "ps2" is what the guest actually receives.
+	   A position of 0 means the physical tables did not place the key and the
+	   character fallback was used, which is the shape of issues #88 and #91. */
+	rpclog("Keyboard: %s raw=0x%08x flags=0x%08x wxkey=%d position=0x%02x "
+	       "scancode=0x%02x ps2=%s\n",
+	       key_down ? "down" : "up  ",
+	       (unsigned) event.GetRawKeyCode(),
+	       (unsigned) event.GetRawKeyFlags(),
+	       event.GetKeyCode(),
+	       physical,
+	       scan_code,
+	       mapped != nullptr ? "yes" : "DROPPED");
 }
