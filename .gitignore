@@ -39,8 +39,12 @@
 /roms/*
 !/roms/roms.txt
 
-# Package Manager cache
+# Package Manager cache, and the repository list it writes beside it. Both are
+# created in whatever the emulator takes as its data directory, so running
+# something like --pkg-list from a source tree without RPCEMU_DATADIR set leaves
+# them here rather than in an installation.
 /pkgcache/
+/pkgsources
 
 # Legacy single-machine state (CMOS now lives under machines/<name>/)
 /cmos.ram
