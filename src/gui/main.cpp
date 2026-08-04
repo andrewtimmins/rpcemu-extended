@@ -34,6 +34,7 @@
 
 #include "data_paths.h"
 #include "config_paths.h"
+#include "data_dir_dialog.h"
 #include "gui_preferences.h"
 #include "config_selector_dialog.h"
 #include "main_frame.h"
@@ -194,6 +195,20 @@ static bool g_fetch_riscos = false;
 static bool g_fetch_nightly = false;
 static bool g_fetch_disc = true;
 static bool g_fetch_accept_licence = false;
+/*
+ * --datadir: where machines, ROMs and settings live, for this run only. Outranks
+ * both RPCEMU_DATADIR and whatever was chosen on a first run, and is deliberately
+ * NOT remembered, so a scripted run with an unusual directory cannot quietly
+ * become the default for every later interactive one. See data_dir_choice.h.
+ */
+static const char *g_datadir = nullptr;
+
+/** --datadir as a wxString, empty when not given. */
+static wxString DataDirFromCommandLine()
+{
+	return g_datadir != nullptr ? wxString::FromUTF8(g_datadir) : wxString();
+}
+
 static bool g_pkg_list = false;
 static bool g_pkg_sources = false;
 static const char *g_pkg_filter = NULL;
@@ -350,7 +365,9 @@ public:
 		CommandLineFetchReporter reporter;
 		PackageIndexResult result;
 
-		InitRpcemuPaths();
+		/* No prompt argument: a console entry point must never raise a
+		   dialogue, whatever else is true. --datadir still applies. */
+		InitRpcemuPaths(DataDirFromCommandLine());
 
 		/* Listing the sources touches no network, so it happens before the
 		   catalogue is fetched rather than after: somebody checking why a
@@ -582,7 +599,8 @@ public:
 		CommandLineFetchReporter reporter;
 		RiscosFetchOutcome outcome;
 
-		InitRpcemuPaths();
+		/* As above: no prompt, because there is no GUI here. */
+		InitRpcemuPaths(DataDirFromCommandLine());
 
 		/* The graphical routes put this in a dialogue with an Agree button.
 		   A script cannot click one, so the acknowledgement is the option:
@@ -671,7 +689,17 @@ bool RpcemuApp::OnInit()
 	// to load.
 	wxInitAllImageHandlers();
 
-	InitRpcemuPaths();
+	/*
+	 * The only call that passes a prompt, so the first-run question can only
+	 * ever appear here - in a real GUI application with an event loop. Whether
+	 * it actually appears is data_dir_decide()'s business, and it says no for
+	 * an existing user, a portable layout, an explicit --datadir or variable,
+	 * and anything headless.
+	 */
+	InitRpcemuPaths(DataDirFromCommandLine(),
+	    [](const wxString &suggested, wxString *chosen) {
+		    return AskForDataDir(nullptr, suggested, chosen);
+	    });
 
 	wxString config_path;
 	bool resume_requested = false;
@@ -944,6 +972,16 @@ int main(int argc, char **argv)
 		} else if (strncmp(arg, "--pkg-list=", 11) == 0) {
 			g_pkg_list = true;
 			g_pkg_filter = arg + 11;
+		} else if (strcmp(arg, "--datadir") == 0 || strncmp(arg, "--datadir=", 10) == 0) {
+			const char *value = (arg[9] == '=') ? arg + 10
+			                                    : (i + 1 < argc ? argv[++i] : nullptr);
+
+			if (value == nullptr || value[0] == '\0') {
+				ConsoleMessage(true, "error: --datadir needs a directory.\n");
+				ConsoleMessageFlush();
+				return 2;
+			}
+			g_datadir = value;
 		} else if (strcmp(arg, "--no-disc") == 0) {
 			g_fetch_disc = false;
 		} else if (strcmp(arg, "--accept-licence") == 0 ||
@@ -1034,6 +1072,12 @@ int main(int argc, char **argv)
 			return 2;
 		}
 	}
+
+	/* Before any path resolution, so that every entry point below - listing
+	   machines, headless, the package tools, the GUI - honours --datadir. The
+	   pointer is into argv, which outlives all of them. */
+	HeadlessSetDataDir(g_datadir);
+
 	/* wx sees only the program name: NULL-terminated, as argv must be. */
 	char *wx_argv[] = { argv[0], nullptr };
 	int wx_argc = 1;

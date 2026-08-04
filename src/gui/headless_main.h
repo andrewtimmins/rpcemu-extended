@@ -72,7 +72,30 @@ std::string HeadlessResolveMachineConfig(const char *machine_name);
  * directory containing a 'configs/' folder could be found; call
  * HeadlessPrintNoDataError() to report that.
  */
+/**
+ * Set up the data paths for a run with no GUI.
+ *
+ * Uses the same precedence as the graphical path (see data_dir_choice.h), so a
+ * location chosen on first run and a --datadir on the command line are both
+ * honoured here too. Never asks, there being nothing to ask with.
+ *
+ * @param cli_datadir --datadir, or nullptr.
+ * @return false when no data could be located at all.
+ */
 bool HeadlessInitPaths(void);
+
+/**
+ * Record --datadir for every path-resolving entry point in this file.
+ *
+ * Call once from main() before anything else here. Separate from
+ * HeadlessInitPaths() because there are several ways in - listing machines,
+ * running one, the VNC selector - and one of them quietly not honouring the
+ * option is the bug this exists to prevent.
+ *
+ * @param cli_datadir --datadir, or nullptr. The pointer is into argv, which
+ *                    outlives the process's use of it.
+ */
+void HeadlessSetDataDir(const char *cli_datadir);
 void HeadlessPrintNoDataError(void);
 
 #endif

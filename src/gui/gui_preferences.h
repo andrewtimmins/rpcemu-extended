@@ -32,6 +32,23 @@ static const int MaxRecentCDROMs = 10;
    case the machine selector is shown as usual. Kept in the host's own
    preferences rather than in a machine's configuration file, because it is a
    statement about which machine to pick, not a setting of any one of them. */
+/*
+ * Where the user's data directory is.
+ *
+ * This one preference cannot live with the others in rpcemu.cfg, for the obvious
+ * reason: rpcemu.cfg is IN the data directory. So it goes to the platform's own
+ * preference store, which is where wxConfig already puts the entries below - the
+ * registry on Windows, ~/Library/Preferences on macOS, a dotfile on Linux. That
+ * is also what issue #67's reporter does in their own port, using Apple's
+ * defaults system.
+ *
+ * Empty means never chosen, which is what makes a first run recognisable. See
+ * data_dir_choice.h for what is then done about it.
+ */
+std::string GetDataDir();
+void SetDataDir(const std::string &path);
+void ClearDataDir();
+
 std::string GetDefaultMachine();
 void SetDefaultMachine(const std::string &machine_name);
 void ClearDefaultMachine();

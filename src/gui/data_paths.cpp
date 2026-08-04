@@ -21,6 +21,10 @@
 #include "data_paths.h"
 
 #include "config_paths.h"
+#include "data_dir_choice.h"
+#include "gui_preferences.h"
+
+#include <cstring>
 
 #include <cstdlib>
 #include <string>
@@ -223,50 +227,150 @@ static wxString EnvVar(const char *name)
 	return wxString::FromUTF8(value);
 }
 
-void InitRpcemuPaths()
+wxString RpcemuDefaultDataDir()
+{
+	return UserDataRoot();
+}
+
+#ifdef __WXOSX__
+wxString RpcemuMacApplicationSupportDataDir()
+{
+	/* What a Mac expects for data of this kind, and what issue #67 asked for.
+	   Offered in the first-run dialogue rather than made the default, so that
+	   nobody's existing ~/RPCEmu moves under them. */
+	return NormalizeDirPath(wxStandardPaths::Get().GetUserLocalDataDir());
+}
+#endif
+
+void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 {
 	wxString resource_dir;
 	wxString user_dir;
 
 	const wxString env_datadir = EnvVar("RPCEMU_DATADIR");
-	if (!env_datadir.empty()) {
+	const wxString env_resource = EnvVar("RPCEMU_RESOURCE_DIR");
+	const wxString exe_dir = NormalizeDirPath(wxPathOnly(wxStandardPaths::Get().GetExecutablePath()));
+	const wxString cwd = NormalizeDirPath(wxGetCwd());
+	const wxString install_dir = NormalizeDirPath(wxString(RPCEMU_INSTALL_DATADIR, wxConvUTF8));
+	const wxString stored = wxString::FromUTF8(GetDataDir());
+#ifdef __WXOSX__
+	const wxString bundle_dir = NormalizeDirPath(wxStandardPaths::Get().GetResourcesDir());
+#else
+	const wxString bundle_dir = wxEmptyString;
+#endif
+
+	/*
+	 * The decision is made from stated inputs by data_dir_decide(), so that the
+	 * precedence rules - and in particular which situations do and do not put a
+	 * dialogue in somebody's way - can be tested without a filesystem. All this
+	 * function does is gather the facts and carry out the answer.
+	 */
+	/* Named, not temporaries. DataDirInputs holds borrowed pointers, so a
+	   `foo.utf8_str().data()` would dangle the moment the full expression ended
+	   and the decision would be made from freed memory. */
+	const std::string cli_utf8 = cli_datadir.utf8_string();
+	const std::string env_utf8 = env_datadir.utf8_string();
+	const std::string env_res_utf8 = env_resource.utf8_string();
+	const std::string stored_utf8 = stored.utf8_string();
+
+	DataDirInputs inputs;
+	memset(&inputs, 0, sizeof(inputs));
+	inputs.cli_datadir = cli_utf8.c_str();
+	inputs.env_datadir = env_utf8.c_str();
+	inputs.env_resource_dir = env_res_utf8.c_str();
+	inputs.stored_datadir = stored_utf8.empty() ? nullptr : stored_utf8.c_str();
+	inputs.configs_beside_binary = HasConfigsDir(exe_dir) ? 1 : 0;
+	inputs.configs_in_cwd = HasConfigsDir(cwd) ? 1 : 0;
+	inputs.configs_in_install_dir =
+	    (HasConfigsDir(install_dir) || wxDirExists("/usr/share/rpcemu/configs")) ? 1 : 0;
+	inputs.configs_in_bundle = (!bundle_dir.empty() && HasConfigsDir(bundle_dir)) ? 1 : 0;
+	inputs.default_location_ready = HasConfigsDir(UserDataRoot()) ? 1 : 0;
+	inputs.can_ask = prompt != nullptr ? 1 : 0;
+
+	const DataDirDecision decision = data_dir_decide(&inputs);
+
+	switch (decision.source) {
+	case DATA_DIR_FROM_CLI:
+		user_dir = NormalizeDirPath(cli_datadir);
+		resource_dir = user_dir;
+		break;
+
+	case DATA_DIR_FROM_ENV:
 		user_dir = NormalizeDirPath(env_datadir);
 		resource_dir = user_dir;
-	} else {
-		const wxString env_resource = EnvVar("RPCEMU_RESOURCE_DIR");
-		const wxString exe_dir = NormalizeDirPath(wxPathOnly(wxStandardPaths::Get().GetExecutablePath()));
-		const wxString cwd = NormalizeDirPath(wxGetCwd());
-		const wxString install_dir = NormalizeDirPath(wxString(RPCEMU_INSTALL_DATADIR, wxConvUTF8));
+		break;
 
-		if (!env_resource.empty()) {
-			resource_dir = NormalizeDirPath(env_resource);
-			user_dir = UserDataRoot();
-#ifdef __WXOSX__
-		} else if (HasConfigsDir(NormalizeDirPath(wxStandardPaths::Get().GetResourcesDir()))) {
-			/* Inside a .app bundle the read-only payload lives in
-			   Contents/Resources and writable data is seeded into ~/RPCEmu
-			   on first run. GetResourcesDir() falls back to the executable's
-			   own directory for an unbundled binary, so the HasConfigsDir()
-			   guard keeps the plain-folder layout working too. */
-			resource_dir = NormalizeDirPath(wxStandardPaths::Get().GetResourcesDir());
-			user_dir = UserDataRoot();
-#endif
-		} else if (HasConfigsDir(exe_dir)) {
+	case DATA_DIR_FROM_STORED:
+		/* The payload still has to be found by looking, since only the user
+		   data was ever chosen. An installed or bundled copy keeps its own
+		   read-only files where they are. */
+		user_dir = NormalizeDirPath(stored);
+		if (inputs.configs_in_bundle) {
+			resource_dir = bundle_dir;
+		} else if (inputs.configs_in_install_dir) {
+			resource_dir = HasConfigsDir(install_dir) ? install_dir : "/usr/share/rpcemu/";
+		} else {
+			resource_dir = user_dir;
+		}
+		break;
+
+	case DATA_DIR_FROM_ENV_RESOURCE:
+		resource_dir = NormalizeDirPath(env_resource);
+		user_dir = UserDataRoot();
+		break;
+
+	case DATA_DIR_FROM_BUNDLE:
+		/* Inside a .app the read-only payload lives in Contents/Resources and
+		   writable data goes outside it. GetResourcesDir() falls back to the
+		   executable's own directory for an unbundled binary, which is why the
+		   input was guarded by HasConfigsDir(). */
+		resource_dir = bundle_dir;
+		user_dir = UserDataRoot();
+		break;
+
+	case DATA_DIR_FROM_PORTABLE:
+		if (inputs.configs_beside_binary) {
 			resource_dir = exe_dir;
 			user_dir = exe_dir;
-		} else if (HasConfigsDir(cwd)) {
+		} else if (inputs.configs_in_cwd) {
 			resource_dir = cwd;
 			user_dir = cwd;
 		} else if (HasConfigsDir(install_dir)) {
 			resource_dir = install_dir;
 			user_dir = UserDataRoot();
-		} else if (wxDirExists("/usr/share/rpcemu/configs")) {
+		} else {
 			resource_dir = "/usr/share/rpcemu/";
 			user_dir = UserDataRoot();
-		} else {
-			resource_dir = cwd.empty() ? "./" : cwd;
-			user_dir = resource_dir;
 		}
+		break;
+
+	case DATA_DIR_FROM_EXISTING_DEFAULT:
+		user_dir = UserDataRoot();
+		resource_dir = user_dir;
+		break;
+
+	case DATA_DIR_ASK: {
+		/* First run with a GUI. The suggestion is where it would have gone
+		   anyway, so agreeing costs one click and behaves exactly as before. */
+		wxString chosen;
+
+		if (prompt(UserDataRoot(), &chosen) && !chosen.empty()) {
+			user_dir = NormalizeDirPath(chosen);
+		} else {
+			user_dir = UserDataRoot();
+		}
+		resource_dir = user_dir;
+		break;
+	}
+
+	case DATA_DIR_DEFAULT_UNASKED:
+		user_dir = UserDataRoot();
+		resource_dir = cwd.empty() ? "./" : cwd;
+		break;
+	}
+
+	if (decision.should_remember && !user_dir.empty()) {
+		SetDataDir(user_dir.utf8_string());
 	}
 
 	if (user_dir.empty()) {
@@ -284,6 +388,13 @@ void InitRpcemuPaths()
 
 	rpcemu_set_datadir(DirPathForCore(user_dir).c_str());
 	rpcemu_set_resourcedir(DirPathForCore(resource_dir).c_str());
+
+	/* After the paths are set, not before: rpclog() writes to a file under the
+	   data directory, so logging the decision any earlier put the one line that
+	   says WHICH directory was chosen into the log of a different one. */
+	rpclog("Paths: data directory from %s: %s\n",
+	       data_dir_source_name(decision.source),
+	       user_dir.utf8_str().data());
 
 	if (!SeedUserDataDir(resource_dir, user_dir)) {
 		wxLogWarning("RPCEmu could not fully prepare the user data directory:\n%s",

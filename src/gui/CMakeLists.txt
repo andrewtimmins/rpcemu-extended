@@ -45,6 +45,9 @@ set(GUI_SOURCES
     keyboard_x.c
     keymap_platform.c
     held_keys.c
+    data_dir_choice.c
+    data_dir_store.c
+    data_dir_dialog.cpp
 )
 
 if(RPCEMU_ENABLE_VNC)

@@ -163,6 +163,32 @@ target_include_directories(test_held_keys PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui)
 rpcemu_add_test(test_held_keys)
 
+# Where the data directory comes from, and above all when the user is asked for
+# it. Issue #67 was that RPCEmu made a folder in the user's home directory
+# without asking; asking on first run fixes that and introduces a worse bug if
+# the conditions are wrong, because the ways to get it wrong are all real people
+# being interrupted - an existing user upgrading, a developer with configs/ beside
+# the binary, a headless container blocked on a dialogue nobody can see. The
+# precedence chain is a pure function so those cases can be enumerated rather
+# than hoped about, all 512 combinations included. See docs/paths.md.
+add_executable(test_data_dir test_data_dir.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui/data_dir_choice.c)
+target_include_directories(test_data_dir PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui)
+rpcemu_add_test(test_data_dir)
+
+# The file that records the chosen data directory. Separate from test_data_dir
+# because that one is the pure decision and this one is the storage: a plain file
+# rather than wxConfig, because it has to be readable from the entry points that
+# run before wxWidgets is started. The path rules are pure over their environment
+# inputs, so all three platforms' conventions are checked from whichever is
+# running; the read and write cases use a real file, hence the directory argument.
+add_executable(test_data_dir_store test_data_dir_store.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui/data_dir_store.c)
+target_include_directories(test_data_dir_store PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui)
+rpcemu_add_test(test_data_dir_store ${CMAKE_CURRENT_BINARY_DIR}/datadir-store-test)
+
 # Networking tests for the Access+/ShareFS path, where large copies drive IP
 # fragment reassembly. These compile the code under test directly rather than
 # linking rpcemu_core, because each replaces a symbol the core also defines: the
@@ -323,7 +349,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 18)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 20)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()
