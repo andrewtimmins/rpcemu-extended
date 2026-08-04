@@ -21,6 +21,7 @@
 #ifndef CONFIG_PATHS_H
 #define CONFIG_PATHS_H
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -46,7 +47,15 @@ wxString ConfigPathsSnapshotForConfig(const wxString &config_path);
 wxString ConfigPathsSanitizeName(const wxString &name);
 bool ConfigPathsIsNameUnique(const wxString &name);
 bool ConfigPathsCreateMachineDirectory(const wxString &machine_name);
-bool ConfigPathsCopyDirectory(const wxString &src, const wxString &dst);
+/*
+ * Called as each file is copied, for a caller that wants to say so. A machine's
+ * hard disc is thousands of files, and the window answers nothing while they
+ * are copied. Optional: the callers with no window to update pass nothing.
+ */
+using ConfigPathsCopyProgress = std::function<void(const wxString &file)>;
+
+bool ConfigPathsCopyDirectory(const wxString &src, const wxString &dst,
+                              const ConfigPathsCopyProgress &progress = nullptr);
 wxString ConfigPathsRenameMachine(const wxString &old_name, const wxString &new_name, const wxString &config_path);
 
 // QSettings-style machine configs store keys under [General]; wxFileConfig needs an explicit group.

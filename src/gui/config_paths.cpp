@@ -163,7 +163,8 @@ bool ConfigPathsCreateMachineDirectory(const wxString &machine_name)
  * Subdirectories are walked explicitly rather than asking for a recursive file
  * list, so an empty directory in the source is a directory in the copy.
  */
-static bool CopyTreeInto(const wxString &src, const wxString &dst)
+static bool CopyTreeInto(const wxString &src, const wxString &dst,
+                         const ConfigPathsCopyProgress &progress)
 {
 	const wxChar sep = wxFileName::GetPathSeparator();
 
@@ -183,6 +184,9 @@ static bool CopyTreeInto(const wxString &src, const wxString &dst)
 			if (!wxCopyFile(src + sep + name, dst + sep + name, true)) {
 				return false;
 			}
+			if (progress) {
+				progress(name);
+			}
 			more = dir.GetNext(&name);
 		}
 	}
@@ -194,7 +198,8 @@ static bool CopyTreeInto(const wxString &src, const wxString &dst)
 		}
 		bool more = dir.GetFirst(&name, wxEmptyString, wxDIR_DIRS | wxDIR_HIDDEN);
 		while (more) {
-			if (!CopyTreeInto(src + sep + name, dst + sep + name)) {
+			if (!CopyTreeInto(src + sep + name, dst + sep + name,
+			                  progress)) {
 				return false;
 			}
 			more = dir.GetNext(&name);
@@ -204,12 +209,13 @@ static bool CopyTreeInto(const wxString &src, const wxString &dst)
 	return true;
 }
 
-bool ConfigPathsCopyDirectory(const wxString &src, const wxString &dst)
+bool ConfigPathsCopyDirectory(const wxString &src, const wxString &dst,
+                              const ConfigPathsCopyProgress &progress)
 {
 	if (!wxDirExists(src)) {
 		return false;
 	}
-	return CopyTreeInto(src, dst);
+	return CopyTreeInto(src, dst, progress);
 }
 
 wxString ConfigPathsRenameMachine(const wxString &old_name, const wxString &new_name, const wxString &config_path)
