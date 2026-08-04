@@ -99,6 +99,7 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `docs/kinetic.md` | Kinetic StrongARM: how the card is detected, its 512MB memory map, and the three paths a new memory region needs |
 | `docs/usb.md` | USB: the emulated OHCI host controller, passing real devices through to the guest, streaming from a camera, USB drives, and why it is OHCI |
 | `docs/mmu-permissions.md` | MMU access permissions: the defect that made ADFFS unusable, how it was fixed, and the regression test that holds it |
+| `docs/keyboard.md` | Keyboard: how a host key reaches RISC OS, why it is mapped by physical position rather than by character, non-UK layouts, and diagnosing it with `RPCEMU_KEYBOARD_DEBUG` |
 | `docs/clipboard.md` | Shared clipboard: copying text and images between the host and RISC OS |
 | `docs/vnc.md` | VNC: using a machine remotely, choosing one over VNC in headless mode, and the control menu for a running machine |
 | `docs/multi-machine.md` | Running several machines at once: how it works today, the virtual switch planned, and why the core is one machine per process |
