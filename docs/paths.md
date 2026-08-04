@@ -35,7 +35,7 @@ Linux, reached through `wxConfig`.
 | --- | --- | --- |
 | 1 | `--datadir` on the command line | No |
 | 2 | `RPCEMU_DATADIR` | No |
-| 3 | The folder chosen on first run, or via *Settings → Data Folder…* | Already stored |
+| 3 | The folder chosen on first run, or via *Options ▾ → Data Folder…* | Already stored |
 | 4 | `configs/` beside the binary | No |
 | 5 | `configs/` in the current directory | No |
 | 6 | A macOS `.app` bundle: payload inside, data outside | No |
@@ -87,7 +87,12 @@ Exactly one of the 512 possible input combinations produces a dialogue, and
 
 ## Changing it afterwards
 
-*Settings → Data Folder…*, then restart.
+On the machine selector, *Options ▾ → **Data Folder…***, then restart.
+
+It lives there and not on a running machine's Settings menu on purpose: the data
+folder is where *every* machine lives, so it is not a property of whichever one
+happens to be loaded, and the moment you want to change it is before choosing a
+machine rather than after.
 
 **Nothing is copied or moved.** Only the pointer changes. Relocating machines,
 discs and ROMs that may be gigabytes and may be open is how data gets lost, so the

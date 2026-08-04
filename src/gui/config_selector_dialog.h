@@ -72,6 +72,11 @@ private:
 	wxButton *resume_button_ = nullptr;
 	wxButton *load_state_button_ = nullptr;
 	wxButton *default_button_ = nullptr;
+	/* Application-level settings, not machine-level. See the constructor. */
+	wxButton *options_button_ = nullptr;
+
+	void OnOptions(wxCommandEvent &event);
+	void OnChooseDataDir();
 	wxString selected_config_path_;
 	wxString state_file_to_load_;
 	bool resume_selected_ = false;

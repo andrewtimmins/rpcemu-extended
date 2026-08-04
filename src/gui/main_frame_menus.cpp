@@ -172,8 +172,6 @@ void MainFrame::BuildMenus()
 	   menu stays predictable rather than growing by accretion. */
 	auto *settings_menu = new wxMenu;
 	settings_menu->Append(ID_MENU_MACHINE, "&Machine...");
-	settings_menu->Append(ID_MENU_DATA_DIR, "Data Folder...")
-	    ->SetHelp("Where RPCEmu keeps machines, ROMs and settings. Takes effect when RPCEmu is restarted.");
 #ifdef RPCEMU_NETWORKING
 	nat_list_item_ = settings_menu->Append(ID_MENU_NAT_LIST, "NAT Port Forwarding Rules...");
 #endif
@@ -320,7 +318,6 @@ void MainFrame::BuildMenus()
 	BindMenuItem(help_menu, ID_MENU_VISIT_WEBSITE, this, &MainFrame::OnVisitWebsite);
 	BindMenuItem(help_menu, ID_MENU_REPORT_ISSUE, this, &MainFrame::OnReportIssue);
 	BindMenuItem(help_menu, ID_MENU_SUPPORT_BUNDLE, this, &MainFrame::OnSupportBundle);
-	BindMenuItem(settings_menu, ID_MENU_DATA_DIR, this, &MainFrame::OnChooseDataDir);
 	BindMenuItem(help_menu, ID_MENU_CHECK_UPDATE, this, &MainFrame::OnCheckUpdate);
 	BindMenuItem(help_menu, wxID_ABOUT, this, &MainFrame::OnAbout);
 

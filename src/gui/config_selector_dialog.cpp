@@ -21,6 +21,7 @@
 #include "config_selector_dialog.h"
 
 #include "config_paths.h"
+#include <wx/dirdlg.h>
 #include "gui_preferences.h"
 #include "machine_edit_dialog.h"
 #include "new_machine_dialog.h"
@@ -59,6 +60,18 @@ ConfigSelectorDialog::ConfigSelectorDialog(wxWindow *parent)
 	start_button_ = new wxButton(this, wxID_OK, "Start");
 	auto *cancel_button = new wxButton(this, wxID_CANCEL, "Cancel");
 	default_button_ = new wxButton(this, wxID_ANY, "Set as Default");
+	/*
+	 * Application-level settings, which belong here rather than on a machine's
+	 * Settings menu: the data folder is where ALL the machines live, so it is
+	 * not a property of whichever one happens to be running, and it wants
+	 * changing before a machine is chosen rather than after.
+	 *
+	 * A plain button that pops a menu, not a native split button: wxWidgets has
+	 * no portable one, and this behaves the same on all three platforms.
+	 */
+	options_button_ = new wxButton(this, wxID_ANY, "Options " + wxString(L'\u25be'));
+	options_button_->SetToolTip("Settings that apply to RPCEmu itself rather than "
+	                            "to one machine");
 	default_button_->SetToolTip(
 	    "Open this machine on startup without showing this list.\n"
 	    "Hold Shift while starting RPCEmu to get the list back, or turn it off "
@@ -116,6 +129,7 @@ ConfigSelectorDialog::ConfigSelectorDialog(wxWindow *parent)
 
 	auto *bottom = new wxBoxSizer(wxHORIZONTAL);
 	bottom->Add(default_button_, 0);
+	bottom->Add(options_button_, 0, wxLEFT, 8);
 	bottom->AddStretchSpacer();
 	bottom->Add(cancel_button, 0);	/* no inset: its edges match the column above */
 
@@ -139,6 +153,7 @@ ConfigSelectorDialog::ConfigSelectorDialog(wxWindow *parent)
 	delete_button_->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnDelete, this);
 	start_button_->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnStart, this);
 	resume_button_->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnResume, this);
+	options_button_->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnOptions, this);
 	load_state_button_->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnLoadStateFile, this);
 	cancel_button->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnCancel, this);
 	default_button_->Bind(wxEVT_BUTTON, &ConfigSelectorDialog::OnToggleDefault, this);
@@ -509,4 +524,80 @@ void ConfigSelectorDialog::OnClone(wxCommandEvent &)
 	}
 
 	RefreshConfigList();
+}
+
+/*
+ * The Options menu: settings that belong to RPCEmu rather than to a machine.
+ *
+ * Popped from a button rather than sitting on a menu bar, because the selector
+ * has no menu bar, and kept off the running machine's Settings menu because the
+ * data folder is where every machine lives - it is not a property of whichever
+ * one is loaded, and changing it after one is running is the wrong moment.
+ */
+void ConfigSelectorDialog::OnOptions(wxCommandEvent &)
+{
+	enum { ID_DATA_FOLDER = wxID_HIGHEST + 1 };
+
+	wxMenu menu;
+
+	menu.Append(ID_DATA_FOLDER, "Data Folder...");
+	menu.SetHelpString(ID_DATA_FOLDER,
+	    "Where RPCEmu keeps machines, ROMs and settings");
+
+	menu.Bind(wxEVT_MENU, [this](wxCommandEvent &) { OnChooseDataDir(); },
+	    ID_DATA_FOLDER);
+
+	/* Under the button, so it reads as belonging to it. */
+	const wxRect rect = options_button_->GetRect();
+	PopupMenu(&menu, rect.GetLeft(), rect.GetBottom());
+}
+
+/*
+ * Point RPCEmu at a different data folder.
+ *
+ * Only the pointer changes: nothing is copied or moved. Relocating machines,
+ * discs and ROMs that may be gigabytes and may be open is how data gets lost, so
+ * the honest offer is "look somewhere else", and the dialogue says what that
+ * means before doing it. An empty folder means an empty machine list, which to
+ * somebody expecting their machines to follow is indistinguishable from having
+ * lost them, so it is spelled out.
+ */
+void ConfigSelectorDialog::OnChooseDataDir()
+{
+	const wxString current = wxString::FromUTF8(rpcemu_get_datadir());
+
+	wxDirDialog dlg(this,
+	    "Where should RPCEmu keep its machines, ROMs and settings?",
+	    current, wxDD_DEFAULT_STYLE | wxDD_NEW_DIR_BUTTON);
+
+	if (dlg.ShowModal() != wxID_OK) {
+		return;
+	}
+
+	const wxString chosen = dlg.GetPath();
+
+	if (chosen.empty() ||
+	    wxFileName(chosen, "").SameAs(wxFileName(current, ""))) {
+		return;
+	}
+
+	const wxString message = wxString::Format(
+	    "RPCEmu will use:\n%s\n\n"
+	    "Your existing machines, discs and ROMs are NOT moved. They stay in:\n%s\n\n"
+	    "If the new folder is empty, RPCEmu will start with no machines and set up "
+	    "a fresh folder. You can point it back at any time, and nothing is deleted "
+	    "either way.\n\n"
+	    "This takes effect when RPCEmu is restarted. Change the data folder?",
+	    chosen, current);
+
+	if (wxMessageBox(message, "RPCEmu Extended - Data Folder",
+	                 wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION, this) != wxYES) {
+		return;
+	}
+
+	SetDataDir(chosen.utf8_string());
+
+	wxMessageBox("The data folder has been changed.\n\n"
+	             "Restart RPCEmu for it to take effect.",
+	             "RPCEmu Extended - Data Folder", wxOK | wxICON_INFORMATION, this);
 }

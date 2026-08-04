@@ -125,7 +125,7 @@ everything self-contained in its own folder.
 
 **On first run RPCEmu asks where that folder should be**, with the location above
 already filled in, so pressing Return puts it exactly where earlier versions did.
-Change it later with *Settings → Data Folder…*, which points RPCEmu at a different
+Change it later from the machine selector's *Options ▾ → Data Folder…*, which points RPCEmu at a different
 folder and moves nothing, or per-run with `--datadir`.
 
 You are only asked when there is genuinely nothing to go on. An existing
