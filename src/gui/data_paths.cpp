@@ -61,6 +61,59 @@ static bool HasConfigsDir(const wxString &base)
 	return wxDirExists(NormalizeDirPath(base) + "configs");
 }
 
+/*
+ * Does this directory carry the read-only payload?
+ *
+ * poduleroms/ as well as configs/, because those come apart. Somebody who moves
+ * their machines out of a portable folder into one of their own takes configs/
+ * with them and leaves the payload behind - so the folder still has poduleroms,
+ * and testing only for configs/ declared it empty and sent the resource
+ * directory to the new folder, where hostfs,ffa is not. That is how a machine
+ * ends up with no HostFS.
+ */
+static bool HasPayloadDir(const wxString &base)
+{
+	const wxString dir = NormalizeDirPath(base);
+
+	return wxDirExists(dir + "poduleroms") || wxDirExists(dir + "configs");
+}
+
+/* Where the payload is, independently of where the user keeps their data. */
+static ResourceDirSource g_resource_source = RESOURCE_DIR_SAME_AS_DATA;
+
+static wxString FindResourceDir(const wxString &bundle_dir, const wxString &exe_dir,
+                                const wxString &cwd, const wxString &install_dir,
+                                const wxString &user_dir)
+{
+	ResourceDirInputs inputs;
+
+	memset(&inputs, 0, sizeof(inputs));
+	inputs.payload_in_bundle = (!bundle_dir.empty() && HasPayloadDir(bundle_dir)) ? 1 : 0;
+	inputs.payload_beside_binary = HasPayloadDir(exe_dir) ? 1 : 0;
+	inputs.payload_in_cwd = HasPayloadDir(cwd) ? 1 : 0;
+	inputs.payload_in_install = HasPayloadDir(install_dir) ? 1 : 0;
+	inputs.payload_in_usr_share = wxDirExists("/usr/share/rpcemu/poduleroms") ? 1 : 0;
+
+	const ResourceDirSource source = data_dir_resource_decide(&inputs);
+
+	/* Recorded rather than logged here. This runs before rpcemu_set_datadir(),
+	   and the FIRST rpclog() call decides where the log file lives for the whole
+	   run - so logging now would put the entire log in whatever directory
+	   happened to be current, which is how it ended up beside the binary instead
+	   of in the data directory. */
+	g_resource_source = source;
+
+	switch (source) {
+	case RESOURCE_DIR_BUNDLE:		return bundle_dir;
+	case RESOURCE_DIR_BESIDE_BINARY:	return exe_dir;
+	case RESOURCE_DIR_CWD:			return cwd;
+	case RESOURCE_DIR_INSTALL:		return install_dir;
+	case RESOURCE_DIR_USR_SHARE:		return "/usr/share/rpcemu/";
+	case RESOURCE_DIR_SAME_AS_DATA:		break;
+	}
+	return user_dir;
+}
+
 /* Writable per-user data lives in a visible ~/RPCEmu folder (machines, configs,
    ROMs, hostfs, logs). */
 static wxString UserDataRoot()
@@ -301,17 +354,10 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 		break;
 
 	case DATA_DIR_FROM_STORED:
-		/* The payload still has to be found by looking, since only the user
-		   data was ever chosen. An installed or bundled copy keeps its own
-		   read-only files where they are. */
+		/* Only the user's data was ever chosen, so the payload still has to be
+		   found by looking - and looked for as PAYLOAD, not as configs/. */
 		user_dir = NormalizeDirPath(stored);
-		if (inputs.configs_in_bundle) {
-			resource_dir = bundle_dir;
-		} else if (inputs.configs_in_install_dir) {
-			resource_dir = HasConfigsDir(install_dir) ? install_dir : "/usr/share/rpcemu/";
-		} else {
-			resource_dir = user_dir;
-		}
+		resource_dir = FindResourceDir(bundle_dir, exe_dir, cwd, install_dir, user_dir);
 		break;
 
 	case DATA_DIR_FROM_ENV_RESOURCE:
@@ -346,7 +392,7 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 
 	case DATA_DIR_FROM_EXISTING_DEFAULT:
 		user_dir = UserDataRoot();
-		resource_dir = user_dir;
+		resource_dir = FindResourceDir(bundle_dir, exe_dir, cwd, install_dir, user_dir);
 		break;
 
 	case DATA_DIR_ASK: {
@@ -359,7 +405,7 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 		} else {
 			user_dir = UserDataRoot();
 		}
-		resource_dir = user_dir;
+		resource_dir = FindResourceDir(bundle_dir, exe_dir, cwd, install_dir, user_dir);
 		break;
 	}
 
@@ -395,6 +441,9 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 	rpclog("Paths: data directory from %s: %s\n",
 	       data_dir_source_name(decision.source),
 	       user_dir.utf8_str().data());
+	rpclog("Paths: resource directory from %s: %s\n",
+	       data_dir_resource_source_name(g_resource_source),
+	       resource_dir.utf8_str().data());
 
 	if (!SeedUserDataDir(resource_dir, user_dir)) {
 		wxLogWarning("RPCEmu could not fully prepare the user data directory:\n%s",

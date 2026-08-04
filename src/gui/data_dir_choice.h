@@ -110,6 +110,54 @@ typedef struct {
 	int should_remember;
 } DataDirDecision;
 
+/*
+ * WHERE THE READ-ONLY PAYLOAD IS, which is a separate question and was got wrong.
+ *
+ * gfxroms, poduleroms, usbroms and netroms are all loaded from the RESOURCE
+ * directory, not the data directory - see gfxcard.c, podulerom.c, usbcard.c and
+ * network.c. Once the data directory became something the user could choose, the
+ * resource directory was pointed at it as well, and none of that payload is
+ * there: the graphics card lost its driver, networking lost EtherRPCEm, and
+ * poduleroms lost hostfs,ffa, which is HostFS itself. The machine came up with
+ * no HostFS at all.
+ *
+ * So the payload is looked for where payload actually lives, independently of
+ * wherever the user keeps their machines, and only falls back to the data
+ * directory when nothing can be found. Decided here, as a pure function, for the
+ * same reason as the rules above: it is a precedence chain, and the way it fails
+ * is silent.
+ */
+typedef enum {
+	RESOURCE_DIR_BUNDLE,		/**< macOS .app Contents/Resources */
+	RESOURCE_DIR_BESIDE_BINARY,	/**< Next to the executable */
+	RESOURCE_DIR_CWD,		/**< The current directory */
+	RESOURCE_DIR_INSTALL,		/**< The compiled-in install prefix */
+	RESOURCE_DIR_USR_SHARE,		/**< /usr/share/rpcemu */
+	RESOURCE_DIR_SAME_AS_DATA	/**< Nothing found: last resort */
+} ResourceDirSource;
+
+typedef struct {
+	int payload_in_bundle;
+	int payload_beside_binary;
+	int payload_in_cwd;
+	int payload_in_install;
+	int payload_in_usr_share;
+} ResourceDirInputs;
+
+/**
+ * Decide where the read-only payload is.
+ *
+ * "Payload" means a directory carrying the files the emulator loads rather than
+ * the user's own data: `poduleroms/` or `configs/`. Checking for `configs/`
+ * alone is not enough, and that is exactly how this was missed - a user who
+ * moves their machines out of a portable folder leaves the payload behind, so
+ * the folder still has poduleroms but no longer has configs.
+ */
+ResourceDirSource data_dir_resource_decide(const ResourceDirInputs *inputs);
+
+/** Human-readable name, for the log. Never NULL. */
+const char *data_dir_resource_source_name(ResourceDirSource source);
+
 /**
  * Decide where the data directory comes from.
  *

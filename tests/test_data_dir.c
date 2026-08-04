@@ -244,7 +244,7 @@ test_empty_is_not_set(void)
 /* RPCEMU_RESOURCE_DIR is the read-only-payload case: it says where the payload
    is, not where user data goes, so it sits below anything that settles both. */
 static void
-test_resource_dir(void)
+test_payload_resource_dir(void)
 {
 	DataDirInputs in;
 
@@ -368,6 +368,88 @@ test_source_names(void)
 	check("all nine sources are named", unnamed == 0);
 }
 
+/*
+ * ★ WHERE THE READ-ONLY PAYLOAD IS. A separate question from the data directory,
+ * and getting it wrong broke a real machine: gfxroms, poduleroms, usbroms and
+ * netroms are all loaded from the RESOURCE directory, and once the data
+ * directory became choosable the resource directory was pointed at it too.
+ * poduleroms holds hostfs,ffa, so the machine came up with NO HOSTFS AT ALL,
+ * along with no graphics card driver and no networking module.
+ *
+ * The case that caused it is the last one here: somebody moves their machines
+ * out of a portable folder into one of their own, which takes configs/ with it
+ * and leaves the payload behind. Probing for configs/ alone then finds nothing
+ * beside the binary and falls back to the data directory, where the payload is
+ * not. Probing for poduleroms/ as well is the fix.
+ */
+static void
+test_resource_dir(void)
+{
+	ResourceDirInputs in;
+
+	puts("Where the read-only payload is:");
+
+	memset(&in, 0, sizeof(in));
+	in.payload_in_bundle = 1;
+	in.payload_beside_binary = 1;
+	in.payload_in_cwd = 1;
+	in.payload_in_install = 1;
+	in.payload_in_usr_share = 1;
+	check("a bundle wins, its payload cannot be elsewhere",
+	    data_dir_resource_decide(&in) == RESOURCE_DIR_BUNDLE);
+
+	in.payload_in_bundle = 0;
+	check("then beside the binary",
+	    data_dir_resource_decide(&in) == RESOURCE_DIR_BESIDE_BINARY);
+
+	in.payload_beside_binary = 0;
+	check("then the current directory",
+	    data_dir_resource_decide(&in) == RESOURCE_DIR_CWD);
+
+	in.payload_in_cwd = 0;
+	check("then the install prefix",
+	    data_dir_resource_decide(&in) == RESOURCE_DIR_INSTALL);
+
+	in.payload_in_install = 0;
+	check("then /usr/share/rpcemu",
+	    data_dir_resource_decide(&in) == RESOURCE_DIR_USR_SHARE);
+
+	in.payload_in_usr_share = 0;
+	check("and only then the data directory, as a last resort",
+	    data_dir_resource_decide(&in) == RESOURCE_DIR_SAME_AS_DATA);
+
+	/* ★ The regression. Machines moved to a folder of the user's own, payload
+	   still beside the binary. The resource directory MUST follow the payload
+	   and not the data, or there is no HostFS. */
+	memset(&in, 0, sizeof(in));
+	in.payload_beside_binary = 1;
+	check("machines moved away, payload beside the binary: follows the PAYLOAD",
+	    data_dir_resource_decide(&in) == RESOURCE_DIR_BESIDE_BINARY);
+	check("and specifically NOT the data directory",
+	    data_dir_resource_decide(&in) != RESOURCE_DIR_SAME_AS_DATA);
+
+	/* Every source is named, since the log prints it. */
+	{
+		static const ResourceDirSource all[] = {
+			RESOURCE_DIR_BUNDLE, RESOURCE_DIR_BESIDE_BINARY,
+			RESOURCE_DIR_CWD, RESOURCE_DIR_INSTALL,
+			RESOURCE_DIR_USR_SHARE, RESOURCE_DIR_SAME_AS_DATA
+		};
+		size_t i;
+		int unnamed = 0;
+
+		for (i = 0; i < sizeof(all) / sizeof(all[0]); i++) {
+			const char *name = data_dir_resource_source_name(all[i]);
+
+			if (name == NULL || name[0] == '\0' ||
+			    strcmp(name, "unknown") == 0) {
+				unnamed++;
+			}
+		}
+		check("all six resource sources are named", unnamed == 0);
+	}
+}
+
 int
 main(void)
 {
@@ -378,6 +460,7 @@ main(void)
 	test_resource_dir();
 	test_exhaustive_invariants();
 	test_source_names();
+	test_payload_resource_dir();
 
 	if (failures != 0) {
 		printf("\n%d check%s failed\n", failures, failures == 1 ? "" : "s");
