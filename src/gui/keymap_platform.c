@@ -37,17 +37,29 @@
  * Apple's own constants, used to check the numbers below rather than to build
  * them. The table has to hold literals so that it compiles and can be tested
  * everywhere, which leaves the risk that a literal is simply wrong; asserting
- * each one against <Carbon/HIToolbox/Events.h> turns that into a macOS build
- * failure instead of a key that does the wrong thing on somebody's Mac.
+ * each one against Apple's kVK_ values turns that into a macOS build failure
+ * instead of a key that does the wrong thing on somebody's Mac.
  *
- * __has_include keeps it optional: where the header is absent the table is
- * still built, merely unchecked, so this can never be the reason a port fails
- * to compile.
+ * ★ INCLUDE THE UMBRELLA HEADER. The constants live in
+ * Carbon/HIToolbox/Events.h, but HIToolbox is a SUBFRAMEWORK and that path does
+ * not resolve on its own - asking for it directly fails with "file not found",
+ * which is what the first version of this did. Wrapped in __has_include and
+ * saying nothing, that meant the assertions were skipped on every macOS build
+ * and the table was completely unverified while looking as though it had been
+ * checked. A check that quietly does not run is worse than no check at all,
+ * because it gets mistaken for one.
+ *
+ * So the outcome is ANNOUNCED either way, and appears in the macOS build log.
+ * It stays conditional rather than a hard error so that a missing SDK header can
+ * never be the reason a port fails to build.
  */
-#if defined(__APPLE__) && defined(__has_include)
-#  if __has_include(<Carbon/HIToolbox/Events.h>)
-#    include <Carbon/HIToolbox/Events.h>
+#if defined(__APPLE__) && !defined(KEYMAP_SKIP_APPLE_HEADER_CHECK)
+#  if defined(__has_include) && __has_include(<Carbon/Carbon.h>)
+#    include <Carbon/Carbon.h>
 #    define KEYMAP_CHECK_AGAINST_APPLE_HEADERS 1
+#    pragma message("keymap_platform.c: macOS keycodes ARE being checked against Apple's kVK_ constants")
+#  else
+#    pragma message("keymap_platform.c: WARNING - Carbon headers not found, so the macOS keycodes here are UNVERIFIED")
 #  endif
 #endif
 
