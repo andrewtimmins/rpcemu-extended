@@ -27,7 +27,42 @@ extern "C" {
 #include "keyboard.h"
 }
 
+/**
+ * The X11 keycode ("native scancode") for the key this event came from.
+ *
+ * Derived from the key's PHYSICAL POSITION wherever the platform will say what
+ * that was, so that the host's keyboard layout is not applied on top of the one
+ * RISC OS is already applying. See keymap_platform.h for why that matters and
+ * which issues it fixes.
+ *
+ * @return X11 keycode, or 0 when the key has no RISC OS equivalent.
+ */
 unsigned InputNativeScancodeFromKeyEvent(const wxKeyEvent &event);
+
 bool InputIsReleaseMouseCaptureKey(const wxKeyEvent &event);
+
+/**
+ * Is this the key that stands in for the third (menu) mouse button?
+ *
+ * The menu key everywhere it exists, and additionally right Command on macOS,
+ * where there is no menu key at all and wxWidgets never reports WXK_MENU
+ * (issue #91).
+ */
+bool InputIsThirdMouseButtonKey(const wxKeyEvent &event);
+
+/**
+ * Log one key event to rpclog.txt when RPCEMU_KEYBOARD_DEBUG is set in the
+ * environment.
+ *
+ * Off by default and free when off. This is how a keyboard fault on a platform
+ * the developer cannot run gets diagnosed: it prints what the host reported
+ * (raw code, raw flags, wx keycode) beside what RPCEmu made of it, so a reporter
+ * can be asked for a log rather than for adjectives.
+ *
+ * @param event     The key event as it arrived.
+ * @param scan_code What InputNativeScancodeFromKeyEvent() returned for it.
+ * @param key_down  True for a press, false for a release.
+ */
+void InputLogKeyEvent(const wxKeyEvent &event, unsigned scan_code, bool key_down);
 
 #endif
