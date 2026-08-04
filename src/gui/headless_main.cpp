@@ -148,6 +148,19 @@ bool HasConfigs(const std::string &dir)
 	return DirExists(WithSep(dir) + "configs");
 }
 
+/*
+ * Does this directory carry the read-only payload (poduleroms, gfxroms, usbroms,
+ * netroms)? poduleroms as well as configs, because the two come apart: moving
+ * your machines into a folder of your own takes configs with it and leaves the
+ * payload beside the binary. Testing only for configs sent the resource
+ * directory to the new folder, where hostfs,ffa is not, and the machine came up
+ * with no HostFS.
+ */
+bool HasPayload(const std::string &dir)
+{
+	return DirExists(WithSep(dir) + "poduleroms") || HasConfigs(dir);
+}
+
 /* Writable per-user data folder, matching the GUI (~/RPCEmu). */
 std::string HomeRpcemu()
 {
@@ -279,20 +292,39 @@ bool InitHeadlessPaths()
 	 * legitimate last resort here.
 	 */
 	std::string resourcedir;
+	/* Logged after the paths are set, not here: the first rpclog() call fixes
+	   where the log file lives for the whole run. */
+	ResourceDirSource res_source = RESOURCE_DIR_SAME_AS_DATA;
+
 	if (env_res != nullptr && env_res[0] != '\0') {
 		resourcedir = env_res;
-	} else if (HasConfigs(exe)) {
-		resourcedir = exe;
-	} else if (HasConfigs(cwd)) {
-		resourcedir = cwd;
-	} else if (HasConfigs(install)) {
-		resourcedir = install;
-	} else if (DirExists("/usr/share/rpcemu/configs")) {
-		resourcedir = "/usr/share/rpcemu";
-	} else if (HasConfigs(datadir)) {
-		resourcedir = datadir;
 	} else {
-		return false;
+		ResourceDirInputs res_inputs;
+
+		memset(&res_inputs, 0, sizeof(res_inputs));
+		res_inputs.payload_in_bundle = 0;
+		res_inputs.payload_beside_binary = HasPayload(exe) ? 1 : 0;
+		res_inputs.payload_in_cwd = HasPayload(cwd) ? 1 : 0;
+		res_inputs.payload_in_install = HasPayload(install) ? 1 : 0;
+		res_inputs.payload_in_usr_share =
+		    DirExists("/usr/share/rpcemu/poduleroms") ? 1 : 0;
+
+		res_source = data_dir_resource_decide(&res_inputs);
+
+		switch (res_source) {
+		case RESOURCE_DIR_BESIDE_BINARY:	resourcedir = exe; break;
+		case RESOURCE_DIR_CWD:			resourcedir = cwd; break;
+		case RESOURCE_DIR_INSTALL:		resourcedir = install; break;
+		case RESOURCE_DIR_USR_SHARE:		resourcedir = "/usr/share/rpcemu"; break;
+		case RESOURCE_DIR_BUNDLE:
+		case RESOURCE_DIR_SAME_AS_DATA:
+			/* Last resort, and only if the payload really is in there. */
+			resourcedir = HasPayload(datadir) ? datadir : std::string();
+			break;
+		}
+		if (resourcedir.empty()) {
+			return false;
+		}
 	}
 
 	if (datadir.empty()) {
@@ -314,6 +346,11 @@ bool InitHeadlessPaths()
 	   point somebody used is not something they will think to mention. */
 	rpclog("Paths: data directory from %s: %s\n",
 	       data_dir_source_name(decision.source), datadir.c_str());
+	rpclog("Paths: resource directory from %s: %s\n",
+	       (env_res != nullptr && env_res[0] != '\0')
+	           ? "RPCEMU_RESOURCE_DIR"
+	           : data_dir_resource_source_name(res_source),
+	       resourcedir.c_str());
 	return true;
 }
 

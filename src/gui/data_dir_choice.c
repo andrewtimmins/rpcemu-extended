@@ -142,6 +142,55 @@ data_dir_decide(const DataDirInputs *in)
 	return d;
 }
 
+ResourceDirSource
+data_dir_resource_decide(const ResourceDirInputs *in)
+{
+	/*
+	 * A bundle first: its payload is inside it and cannot be anywhere else.
+	 * Then next to the binary, which covers both the portable download and a
+	 * development tree, and is the case that matters most here - somebody who
+	 * moves their machines to a folder of their own leaves the payload sitting
+	 * beside the executable, and it has to still be found.
+	 */
+	if (in->payload_in_bundle) {
+		return RESOURCE_DIR_BUNDLE;
+	}
+	if (in->payload_beside_binary) {
+		return RESOURCE_DIR_BESIDE_BINARY;
+	}
+	if (in->payload_in_cwd) {
+		return RESOURCE_DIR_CWD;
+	}
+	if (in->payload_in_install) {
+		return RESOURCE_DIR_INSTALL;
+	}
+	if (in->payload_in_usr_share) {
+		return RESOURCE_DIR_USR_SHARE;
+	}
+
+	/*
+	 * Nothing found. Falling back to the data directory is what the caller used
+	 * to do unconditionally, and it is right only as a last resort: the payload
+	 * may genuinely have been copied in there, and an emulator that starts
+	 * without a graphics card ROM is better than one that refuses to start.
+	 */
+	return RESOURCE_DIR_SAME_AS_DATA;
+}
+
+const char *
+data_dir_resource_source_name(ResourceDirSource source)
+{
+	switch (source) {
+	case RESOURCE_DIR_BUNDLE:		return "application bundle";
+	case RESOURCE_DIR_BESIDE_BINARY:	return "beside the binary";
+	case RESOURCE_DIR_CWD:			return "current directory";
+	case RESOURCE_DIR_INSTALL:		return "install prefix";
+	case RESOURCE_DIR_USR_SHARE:		return "/usr/share/rpcemu";
+	case RESOURCE_DIR_SAME_AS_DATA:		return "the data directory (nothing else found)";
+	}
+	return "unknown";
+}
+
 const char *
 data_dir_source_name(DataDirSource source)
 {
