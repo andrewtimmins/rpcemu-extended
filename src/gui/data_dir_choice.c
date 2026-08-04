@@ -79,8 +79,12 @@ data_dir_decide(const DataDirInputs *in)
 	 * would break the next copy someone unpacked elsewhere. Never asked about
 	 * either, because it is already an answer.
 	 */
-	if (in->configs_beside_binary || in->configs_in_cwd) {
+	if (in->configs_beside_binary) {
 		d.source = DATA_DIR_FROM_PORTABLE;
+		return d;
+	}
+	if (in->configs_in_cwd) {
+		d.source = DATA_DIR_FROM_CWD;
 		return d;
 	}
 
@@ -99,7 +103,7 @@ data_dir_decide(const DataDirInputs *in)
 	 * place. Distinguished from portable because the prefix is not writable.
 	 */
 	if (in->configs_in_install_dir) {
-		d.source = DATA_DIR_FROM_PORTABLE;
+		d.source = DATA_DIR_FROM_INSTALL;
 		return d;
 	}
 
@@ -112,12 +116,18 @@ data_dir_decide(const DataDirInputs *in)
 	 * ★ Already set up in the default place, so this is an existing user and
 	 * the question has effectively been answered by a year of use. Asking now
 	 * would be a worse bug than #67: an upgrade that interrupts to ask about
-	 * data you already have. The location is recorded so that later runs take
-	 * the branch above and nothing has to be inferred again.
+	 * data you already have.
+	 *
+	 * ★★ AND IT IS NOT REMEMBERED, which it was at first and which was wrong.
+	 * A STORED PREFERENCE MUST ONLY EVER EXIST BECAUSE A HUMAN CHOSE ONE. It
+	 * outranks a self-contained folder beside the binary, so recording a
+	 * location that was merely inferred pins it globally: unpack a portable copy
+	 * afterwards and it ignores its own machines in favour of somewhere the user
+	 * never picked. Re-deriving costs nothing, because the condition that got us
+	 * here is still true next time.
 	 */
 	if (in->default_location_ready) {
 		d.source = DATA_DIR_FROM_EXISTING_DEFAULT;
-		d.should_remember = 1;
 		return d;
 	}
 
@@ -200,6 +210,8 @@ data_dir_source_name(DataDirSource source)
 	case DATA_DIR_FROM_ENV_RESOURCE:	return "RPCEMU_RESOURCE_DIR";
 	case DATA_DIR_FROM_STORED:		return "remembered choice";
 	case DATA_DIR_FROM_PORTABLE:		return "layout beside the binary";
+	case DATA_DIR_FROM_CWD:			return "layout in the current directory";
+	case DATA_DIR_FROM_INSTALL:		return "install prefix";
 	case DATA_DIR_FROM_BUNDLE:		return "application bundle";
 	case DATA_DIR_FROM_EXISTING_DEFAULT:	return "existing default location";
 	case DATA_DIR_ASK:			return "asked the user";

@@ -92,7 +92,7 @@ test_precedence(void)
 
 	in.configs_in_bundle = 0;
 	check("the install prefix beats the existing default",
-	    decide(&in).source == DATA_DIR_FROM_PORTABLE);
+	    decide(&in).source == DATA_DIR_FROM_INSTALL);
 
 	in.configs_in_install_dir = 0;
 	check("an existing default location is used rather than asked about",
@@ -118,8 +118,6 @@ test_who_is_never_asked(void)
 	in = blank();
 	in.default_location_ready = 1;
 	check("an existing user upgrading is NOT asked", decide(&in).should_ask == 0);
-	check("and their location is remembered, so it is not inferred again",
-	    decide(&in).should_remember == 1);
 
 	in = blank();
 	in.configs_beside_binary = 1;
@@ -130,6 +128,8 @@ test_who_is_never_asked(void)
 	in.configs_in_cwd = 1;
 	check("running from a source tree is NOT asked",
 	    decide(&in).should_ask == 0);
+	check("and is reported as the current directory, not as beside the binary",
+	    decide(&in).source == DATA_DIR_FROM_CWD);
 
 	in = blank();
 	in.configs_in_install_dir = 1;
@@ -180,9 +180,14 @@ test_what_is_remembered(void)
 	in = blank();
 	check("a first-run answer is remembered", decide(&in).should_remember == 1);
 
+	/* ★ Not remembered, deliberately. A stored preference outranks a
+	   self-contained folder beside the binary, so recording a location that was
+	   only INFERRED pins it globally and a portable copy unpacked later ignores
+	   its own machines. A preference must mean "a human chose this". */
 	in = blank();
 	in.default_location_ready = 1;
-	check("an existing default is recorded once", decide(&in).should_remember == 1);
+	check("an inferred default location is NOT remembered",
+	    decide(&in).should_remember == 0);
 
 	/* Supplied every run, so recording them would let one odd scripted run
 	   become the default for every interactive one afterwards. */
@@ -282,6 +287,7 @@ test_exhaustive_invariants(void)
 	int remembered_an_explicit_input = 0;
 	int no_source = 0;
 	int ask_count = 0;
+	int remembered_without_being_asked = 0;
 
 	puts("Every combination of inputs (512), for the invariants:");
 
@@ -324,6 +330,11 @@ test_exhaustive_invariants(void)
 		    (in.cli_datadir != NULL || in.env_datadir != NULL)) {
 			remembered_an_explicit_input++;
 		}
+		/* Nothing that was merely worked out by looking may be remembered:
+		   only an answer a person gave. */
+		if (d.should_remember && d.source != DATA_DIR_ASK) {
+			remembered_without_being_asked++;
+		}
 
 		/* Now the same inputs with no GUI. */
 		in.can_ask = 0;
@@ -340,6 +351,8 @@ test_exhaustive_invariants(void)
 	check("exactly one of the 512 combinations asks", ask_count == 1);
 	check("the command line and environment are never remembered",
 	    remembered_an_explicit_input == 0);
+	check("only an answer the user gave is ever remembered",
+	    remembered_without_being_asked == 0);
 }
 
 /* Names are logged, so a missing one would read as a bug report saying
@@ -365,7 +378,7 @@ test_source_names(void)
 			unnamed++;
 		}
 	}
-	check("all nine sources are named", unnamed == 0);
+	check("all eleven sources are named", unnamed == 0);
 }
 
 /*

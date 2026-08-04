@@ -56,10 +56,15 @@ typedef enum {
 	DATA_DIR_FROM_ENV_RESOURCE,
 	/** What the user chose last time, from the platform's preference store. */
 	DATA_DIR_FROM_STORED,
-	/** configs/ sits beside the binary, or in the current directory, or in
-	 *  the install prefix. A deliberate portable or in-tree layout, and the
-	 *  one a developer runs, so it is never second-guessed with a dialogue. */
+	/** configs/ sits beside the binary: the portable download, and a
+	 *  developer's build tree. Self-contained, so never second-guessed. */
 	DATA_DIR_FROM_PORTABLE,
+	/** configs/ sits in the current directory. Reported separately from the
+	 *  one above only so the log says which, since telling them apart is the
+	 *  first thing anyone asks about a wrong-folder report. */
+	DATA_DIR_FROM_CWD,
+	/** configs/ is in the install prefix: payload there, user data elsewhere. */
+	DATA_DIR_FROM_INSTALL,
 	/** A macOS .app bundle: payload in Contents/Resources, user data outside. */
 	DATA_DIR_FROM_BUNDLE,
 	/** The default location already exists and is set up. Somebody who has
