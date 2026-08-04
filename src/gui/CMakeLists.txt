@@ -44,6 +44,7 @@ set(GUI_SOURCES
     toolbar_icons.cpp
     keyboard_x.c
     keymap_platform.c
+    held_keys.c
 )
 
 if(RPCEMU_ENABLE_VNC)

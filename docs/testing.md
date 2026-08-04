@@ -55,7 +55,7 @@ configured for, and it is incremental after the first run. Push with
 
 ## What the suite covers
 
-Twenty-four tests, sixteen of which build on every platform and eight of which
+Twenty-six tests, eighteen of which build on every platform and eight of which
 need a native recompiler backend.
 
 | Test | Covers |
@@ -81,6 +81,8 @@ need a native recompiler backend.
 | `test_ohci_iso` | OHCI isochronous transfer descriptors |
 | `test_clipboard` | shared clipboard text conversion |
 | `test_mode_fit` | display mode selection against a VRAM budget |
+| `test_keymap` | host keys to RISC OS keys, for **all three platforms from any one of them** |
+| `test_held_keys` | which keys the guest believes are held, when several map to one |
 | `test_machine_selector` | the VNC machine selector's navigation and drawing |
 | `test_app_settings` | emulator settings, and the migration from per-machine ones |
 | `test_vdu_filter` | turning guest VDU output into host text |

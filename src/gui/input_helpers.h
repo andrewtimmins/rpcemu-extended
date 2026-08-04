@@ -39,6 +39,21 @@ extern "C" {
  */
 unsigned InputNativeScancodeFromKeyEvent(const wxKeyEvent &event);
 
+/**
+ * An identifier for the PHYSICAL key this event came from, distinct for every
+ * key on the keyboard.
+ *
+ * Needed because a scancode is not a key: several physical keys can map to one
+ * RISC OS key, deliberately so on macOS, and tracking what is held by scancode
+ * alone means a hand-over releases a modifier that is still down (issue #70).
+ * See held_keys.h.
+ *
+ * Not a scancode and not comparable with one. It is only ever used to tell one
+ * held key from another, so its numeric value carries no meaning beyond being
+ * stable for a given key and unique between keys.
+ */
+unsigned InputKeyIdentityFromKeyEvent(const wxKeyEvent &event);
+
 bool InputIsReleaseMouseCaptureKey(const wxKeyEvent &event);
 
 /**
