@@ -231,6 +231,17 @@ typedef enum {
 typedef struct {
 	char name[256];		/**< User-defined name for this configuration */
 	char hd4_path[512];	/**< Path to the hard disk image file (optional override) */
+	/**
+	 * Where this machine's HostFS drive is, or empty for the default.
+	 *
+	 * Empty means <machine directory>/hostfs, a relative value resolves under
+	 * the machine directory, and an absolute one is taken as given - the same
+	 * convention as hd4_path. Several machines can therefore be pointed at one
+	 * folder, which is discussion #77. Nothing is stored for the default case,
+	 * so a configuration does not go stale when its data folder moves. See
+	 * hostfs_path.h.
+	 */
+	char hostfs_path[512];
 	char rom_dir[256];	/**< ROM directory name within roms/ folder */
 	unsigned mem_size;	/**< Amount of RAM in megabytes */
 	unsigned vram_size;	/**< Amount of VRAM in megabytes */
@@ -364,6 +375,16 @@ extern void rpcemu_set_resourcedir(const char *path);
 extern const char *rpcemu_get_machine_datadir(void);
 extern void rpcemu_set_machine_datadir(const char *machine_name);
 extern const char *rpcemu_get_log_path(void);
+
+/**
+ * Create @path and any missing parents, ignoring one that already exists.
+ *
+ * Exported so hostfs_init() can create a HostFS folder the configuration points
+ * at. ensure_machine_dirs() only ever makes <machine dir>/hostfs, so a
+ * configured folder elsewhere would not exist and the guest would have no
+ * HostFS at all.
+ */
+extern void rpcemu_ensure_dir(const char *path);
 
 /* rpc.c */
 typedef struct {

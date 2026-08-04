@@ -189,6 +189,19 @@ target_include_directories(test_data_dir_store PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui)
 rpcemu_add_test(test_data_dir_store ${CMAKE_CURRENT_BINARY_DIR}/datadir-store-test)
 
+# Where a machine's HostFS drive lives. Discussion #77 made this configurable so
+# several machines can share one folder; the convention is the part that needs
+# holding down, because it decides whether a configuration survives its data
+# folder being moved - empty means the default and stores nothing, relative moves
+# with the machine, absolute is the only form that can go stale. debug_socket
+# stored a resolved absolute path and broke exactly that way. Dependency-free, so
+# the Windows and UNC forms are checked from any platform. See docs/hostfs.md.
+add_executable(test_hostfs_path test_hostfs_path.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/hostfs_path.c)
+target_include_directories(test_hostfs_path PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_hostfs_path)
+
 # Networking tests for the Access+/ShareFS path, where large copies drive IP
 # fragment reassembly. These compile the code under test directly rather than
 # linking rpcemu_core, because each replaces a symbol the core also defines: the
@@ -349,7 +362,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 20)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 21)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()

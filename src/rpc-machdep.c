@@ -88,6 +88,14 @@ mkdir_recursive(const char *path)
 	rpcemu_mkdir_one(tmp);
 }
 
+void
+rpcemu_ensure_dir(const char *path)
+{
+	if (path != NULL && path[0] != '\0') {
+		mkdir_recursive(path);
+	}
+}
+
 static void
 ensure_machine_dirs(void)
 {
