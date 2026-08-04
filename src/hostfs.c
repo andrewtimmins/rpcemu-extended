@@ -35,6 +35,7 @@
 #include "arm.h"
 #include "mem.h"
 #include "hostfs.h"
+#include "hostfs_path.h"
 #include "hostfs_internal.h"
 #include "savestate.h"
 #include "rpcemu-win.h"
@@ -2435,12 +2436,37 @@ hostfs_init(void)
 {
   int c;
 
-  /* Use machine-specific hostfs directory */
-  snprintf(HOSTFS_ROOT, sizeof(HOSTFS_ROOT), "%shostfs", rpcemu_get_machine_datadir());
-  for (c = 0; c < 511; c++) {
-    if (HOSTFS_ROOT[c] == '\\') {
-      HOSTFS_ROOT[c] = '/';
-    }
+  /*
+   * The machine's HostFS folder: <machine dir>/hostfs unless the configuration
+   * says otherwise. Several machines can be pointed at one folder, which is
+   * discussion #77 - see hostfs_path.h for the convention and the hazard of
+   * two machines using one folder at the same time.
+   */
+  if (!hostfs_path_resolve(config.hostfs_path, rpcemu_get_machine_datadir(),
+                           HOSTFS_ROOT, sizeof(HOSTFS_ROOT))) {
+    /* Only reachable with a configured path too long to resolve, which
+       config_load already refuses; belt and braces, since the alternative is a
+       truncated path that HostFS would happily create. */
+    rpclog("HostFS: could not resolve hostfs_path '%s', using the default\n",
+           config.hostfs_path);
+    (void) hostfs_path_resolve("", rpcemu_get_machine_datadir(),
+                               HOSTFS_ROOT, sizeof(HOSTFS_ROOT));
+  }
+  /*
+   * Make sure it exists. ensure_machine_dirs() only ever creates
+   * <machine dir>/hostfs, so a folder named by the configuration would not be
+   * there and the guest would come up with no HostFS at all.
+   *
+   * Created rather than refused even when it is somewhere unexpected: refusing
+   * leaves the machine with no HostFS, which is worse than an empty drive. A
+   * mistyped path is caught where it is typed, in the machine editor, which
+   * says so before saving.
+   */
+  rpcemu_ensure_dir(HOSTFS_ROOT);
+
+  if (config.hostfs_path[0] != '\0') {
+    rpclog("HostFS: root is '%s' (from hostfs_path '%s')\n",
+           HOSTFS_ROOT, config.hostfs_path);
   }
 
   /* Use common shared directory in main data folder */

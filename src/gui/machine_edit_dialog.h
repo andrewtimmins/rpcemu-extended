@@ -123,6 +123,14 @@ private:
 	wxString original_name_;
 	wxString new_name_;
 	wxString hd4_path_;
+	/* HostFS folder (discussion #77). Empty means this machine's own folder,
+	   which is what everything before this used. See hostfs_path.h. */
+	wxTextCtrl *hostfs_edit_ = nullptr;
+	wxButton *hostfs_browse_ = nullptr;
+	wxStaticText *hostfs_note_ = nullptr;
+
+	wxString ResolvedHostfsRoot() const;
+	void UpdateHostfsNote();
 	bool renamed_ = false;
 	bool allow_rename_ = true;
 	bool loading_settings_ = false;

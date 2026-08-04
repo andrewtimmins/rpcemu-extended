@@ -528,6 +528,15 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 		cfg->hd4_path[0] = '\0';
 	}
 
+	settings.Read("hostfs_path", &sText, wxEmptyString);
+	if (snprintf(cfg->hostfs_path, sizeof(cfg->hostfs_path), "%s", sText.utf8_str().data()) >= (int) sizeof(cfg->hostfs_path)) {
+		/* Emptied rather than truncated: a truncated path is a different
+		   directory, and HostFS would create it and write the guest's files
+		   there. Falling back to the default is the safe answer. */
+		rpclog("config_load: hostfs_path too long - using the default\n");
+		cfg->hostfs_path[0] = '\0';
+	}
+
 	settings.Read("rom_dir", &sText, wxEmptyString);
 	if (snprintf(cfg->rom_dir, sizeof(cfg->rom_dir), "%s", sText.utf8_str().data()) >= (int) sizeof(cfg->rom_dir)) {
 		rpclog("config_load: rom_dir too long - truncated\n");
@@ -778,6 +787,9 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 
 	settings.Write("name", wxString(cfg->name, wxConvUTF8));
 	settings.Write("hd4_path", wxString(cfg->hd4_path, wxConvUTF8));
+	/* Empty when it is the default, which is what keeps a machine's
+	   configuration valid after its data folder moves. */
+	settings.Write("hostfs_path", wxString(cfg->hostfs_path, wxConvUTF8));
 	settings.Write("rom_dir", wxString(cfg->rom_dir, wxConvUTF8));
 
 	const wxString mem_size_str = wxString::Format("%u", cfg->mem_size);

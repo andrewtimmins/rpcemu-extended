@@ -25,6 +25,10 @@
 #include "riscos_fetch.h"
 
 #include "config_paths.h"
+
+extern "C" {
+#include "hostfs_path.h"
+}
 #include "gui_preferences.h"
 #include "podule_config_dialog.h"
 #include "toolbar_icons.h"
@@ -169,6 +173,121 @@ void MachineEditDialog::BuildHardDiscPanel(wxWindow *parent, wxSizer *parent_siz
  * Everything here is fixed at the point the machine starts, which is what
  * separates it from the other pages.
  */
+/*
+ * Which other machine already uses @root as its HostFS folder, or empty.
+ *
+ * Two machines sharing one folder is the point of discussion #77, so this does
+ * not forbid it - it says so, because the failure mode is not obvious: HostFS
+ * holds open handles and RISC OS caches directory contents, so two guests
+ * writing the same tree at the same time can lose files. Resolved through the
+ * same rules the emulator uses rather than compared as raw strings, so a machine
+ * that reaches the folder by a relative path is still recognised.
+ */
+static wxString MachineSharingHostfs(const wxString &root, const wxString &self)
+{
+	wxArrayString files;
+	const wxString dir = ConfigPathsConfigsDir();
+
+	if (!wxDirExists(dir)) {
+		return wxEmptyString;
+	}
+	wxDir::GetAllFiles(dir, &files, "*.cfg", wxDIR_FILES);
+
+	for (const wxString &file : files) {
+		const wxString name = wxFileName(file).GetName();
+
+		if (name.IsSameAs(self, false)) {
+			continue;
+		}
+
+		wxFileConfig cfg(wxEmptyString, wxEmptyString, file, wxEmptyString,
+		    wxCONFIG_USE_RELATIVE_PATH);
+		ConfigFileUseGeneralGroup(cfg);
+
+		wxString configured;
+		cfg.Read("hostfs_path", &configured, wxEmptyString);
+
+		const wxString other_dir =
+		    ConfigPathsMachinesDir() + wxFileName::GetPathSeparator() +
+		    ConfigPathsSanitizeName(name) + wxFileName::GetPathSeparator();
+		char resolved[1024];
+
+		if (!hostfs_path_resolve(configured.utf8_str().data(),
+		        other_dir.utf8_str().data(), resolved, sizeof(resolved))) {
+			continue;
+		}
+		if (hostfs_path_same_root(root.utf8_str().data(), resolved)) {
+			return name;
+		}
+	}
+	return wxEmptyString;
+}
+
+/*
+ * The folder the current setting resolves to.
+ *
+ * Uses the same rules the emulator will, rather than a second copy of them, so
+ * the dialogue cannot disagree with what actually happens at startup.
+ */
+wxString MachineEditDialog::ResolvedHostfsRoot() const
+{
+	const wxString configured = hostfs_edit_ != nullptr
+	    ? hostfs_edit_->GetValue().Trim().Trim(false) : wxString();
+	const wxString name = new_name_.empty() ? original_name_ : new_name_;
+	const wxString machine_dir =
+	    ConfigPathsMachinesDir() + wxFileName::GetPathSeparator() +
+	    ConfigPathsSanitizeName(name) + wxFileName::GetPathSeparator();
+	char out[1024];
+
+	if (!hostfs_path_resolve(configured.utf8_str().data(),
+	        machine_dir.utf8_str().data(), out, sizeof(out))) {
+		return machine_dir;
+	}
+	return wxString::FromUTF8(out);
+}
+
+/*
+ * Say what the setting will actually mean, and warn about the two things worth
+ * warning about: a folder that does not exist yet, and a folder another machine
+ * is already using.
+ *
+ * Said here rather than left to be discovered because a mistyped absolute path
+ * is created on startup and then looks like an empty drive, which is
+ * indistinguishable from lost files.
+ */
+void MachineEditDialog::UpdateHostfsNote()
+{
+	if (hostfs_note_ == nullptr) {
+		return;
+	}
+
+	const wxString configured = hostfs_edit_->GetValue().Trim().Trim(false);
+	const wxString resolved = ResolvedHostfsRoot();
+	wxString note;
+
+	if (configured.empty()) {
+		note = "This machine's own folder: " + resolved;
+	} else {
+		note = resolved;
+		if (!wxDirExists(resolved)) {
+			note += "  (does not exist yet, it will be created)";
+		}
+
+		const wxString other = MachineSharingHostfs(resolved,
+		    new_name_.empty() ? original_name_ : new_name_);
+		if (!other.empty()) {
+			note += "\nAlso used by '" + other +
+			    "'. Do not run both machines at once: RISC OS caches "
+			    "directory contents, so two guests writing here together "
+			    "can lose files.";
+		}
+	}
+
+	hostfs_note_->SetLabel(note);
+	hostfs_note_->Wrap(460);
+	Layout();
+}
+
 wxWindow *MachineEditDialog::BuildSystemPage(wxWindow *parent)
 {
 	auto *page = new wxPanel(parent);
@@ -184,6 +303,18 @@ wxWindow *MachineEditDialog::BuildSystemPage(wxWindow *parent)
 	    "uses (about 13 MB).\n\n"
 	    "Only offered while this machine's hard disc is empty. An existing "
 	    "disc is never overwritten.");
+	hostfs_edit_ = new wxTextCtrl(page, wxID_ANY);
+	hostfs_edit_->SetToolTip(
+	    "Where this machine's HostFS drive is on the host.\n\n"
+	    "Leave it empty for this machine's own folder, which is what every "
+	    "machine has used until now. A relative path is taken from the machine's "
+	    "folder and moves with it. An absolute path is used as given, and is how "
+	    "several machines can share one folder.");
+	hostfs_browse_ = new wxButton(page, wxID_ANY, "Browse...");
+	hostfs_note_ = new wxStaticText(page, wxID_ANY, wxEmptyString);
+	hostfs_note_->SetForegroundColour(kHdColourMuted);
+	hostfs_note_->SetFont(hostfs_note_->GetFont().Smaller());
+
 	get_disc_note_ = new wxStaticText(page, wxID_ANY, wxEmptyString);
 	get_disc_note_->SetForegroundColour(kHdColourMuted);
 	get_disc_note_->SetFont(get_disc_note_->GetFont().Smaller());
@@ -199,6 +330,17 @@ wxWindow *MachineEditDialog::BuildSystemPage(wxWindow *parent)
 	   greyed controls look like a fault rather than the shape of the machine
 	   (reported as issue #37). */
 	mem_note_ = new wxStaticText(page, wxID_ANY, wxEmptyString);
+
+	hostfs_browse_->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) {
+		wxDirDialog dlg(this, "Where should this machine's HostFS drive be?",
+		    ResolvedHostfsRoot(), wxDD_DEFAULT_STYLE | wxDD_NEW_DIR_BUTTON);
+
+		if (dlg.ShowModal() == wxID_OK) {
+			hostfs_edit_->SetValue(dlg.GetPath());
+			UpdateHostfsNote();
+		}
+	});
+	hostfs_edit_->Bind(wxEVT_TEXT, [this](wxCommandEvent &) { UpdateHostfsNote(); });
 
 	PopulateRomList();
 	PopulateModelList(Model_MAX);
@@ -262,6 +404,17 @@ wxWindow *MachineEditDialog::BuildSystemPage(wxWindow *parent)
 		disc_col->Add(get_disc_button_, 0);
 		disc_col->Add(get_disc_note_, 0, wxTOP, 2);
 		form->Add(disc_col, 1, wxEXPAND);
+	}
+	form->Add(new wxStaticText(page, wxID_ANY, "HostFS folder:"), 0, wxALIGN_CENTER_VERTICAL);
+	{
+		auto *hostfs_col = new wxBoxSizer(wxVERTICAL);
+		auto *hostfs_row = new wxBoxSizer(wxHORIZONTAL);
+
+		hostfs_row->Add(hostfs_edit_, 1, wxEXPAND | wxRIGHT, 8);
+		hostfs_row->Add(hostfs_browse_, 0);
+		hostfs_col->Add(hostfs_row, 0, wxEXPAND);
+		hostfs_col->Add(hostfs_note_, 0, wxTOP, 2);
+		form->Add(hostfs_col, 1, wxEXPAND);
 	}
 	form->Add(new wxStaticText(page, wxID_ANY, "Model:"), 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(model_combo_, 1, wxEXPAND);
@@ -1435,6 +1588,14 @@ void MachineEditDialog::LoadSettings()
 
 	settings.Read("hd4_path", &hd4_path_, wxEmptyString);
 
+	{
+		wxString hostfs;
+
+		settings.Read("hostfs_path", &hostfs, wxEmptyString);
+		hostfs_edit_->SetValue(hostfs);
+		UpdateHostfsNote();
+	}
+
 	long cdrom_enabled = 0;
 	settings.Read("cdrom_enabled", &cdrom_enabled, 0L);
 	cdrom_enabled_ = cdrom_enabled != 0;
@@ -1509,6 +1670,7 @@ void MachineEditDialog::SaveSettings()
 		network_type = "iptunnelling";
 	}
 
+	settings.Write("hostfs_path", hostfs_edit_->GetValue().Trim().Trim(false));
 	settings.Write("name", new_name_);
 	settings.Write("rom_dir", rom_dir);
 	settings.Write("model", wxString::FromUTF8(models[model_sel].name_config));
