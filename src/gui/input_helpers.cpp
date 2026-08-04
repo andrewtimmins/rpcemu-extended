@@ -301,6 +301,23 @@ bool InputIsReleaseMouseCaptureKey(const wxKeyEvent &event)
 	       (event.GetModifiers() & wxMOD_ALT) != 0;
 }
 
+unsigned InputKeyIdentityFromKeyEvent(const wxKeyEvent &event)
+{
+	/* The position, where the platform gave one, since that is exactly "which
+	   key" and is taken before any policy folds two keys onto one scancode. */
+	const unsigned physical = scancode_from_physical_key(event);
+
+	if (physical != 0) {
+		return physical;
+	}
+
+	/* No position available, so the character path is in use and the wx keycode
+	   is the best identity going. Tagged above the range of any X11 keycode so a
+	   fallback key can never be mistaken for a physical one, which would let a
+	   release cancel the wrong key. */
+	return 0x10000u | static_cast<unsigned>(event.GetKeyCode() & 0xffff);
+}
+
 bool InputIsThirdMouseButtonKey(const wxKeyEvent &event)
 {
 	const int key_code = event.GetKeyCode();

@@ -151,6 +151,18 @@ target_include_directories(test_keymap PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui)
 rpcemu_add_test(test_keymap)
 
+# Which keys the guest believes are held. The regression test for issue #70,
+# where letting go of one Shift released the modifier while the other was still
+# down, because held keys were tracked as a set of scancodes and several physical
+# keys can map to one scancode. That is not a tidied-away accident either: macOS
+# maps both Command and Control onto the guest's Ctrl on purpose, so the rule
+# needs holding down by something. Dependency-free, like the unit itself.
+add_executable(test_held_keys test_held_keys.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui/held_keys.c)
+target_include_directories(test_held_keys PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui)
+rpcemu_add_test(test_held_keys)
+
 # Networking tests for the Access+/ShareFS path, where large copies drive IP
 # fragment reassembly. These compile the code under test directly rather than
 # linking rpcemu_core, because each replaces a symbol the core also defines: the
@@ -311,7 +323,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 17)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 18)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()

@@ -34,6 +34,7 @@
 #include "emulator_panel.h"
 #include "gui_bridge.h"
 #include "gui_preferences.h"
+#include "held_keys.h"
 
 class MachineInspectorWindow;
 class NatListDialog;
@@ -283,8 +284,8 @@ private:
 	void EditMachineConfiguration();
 	void ShutdownEmulator();
 	void ReleaseHeldKeys();
-	void NativeKeyPress(unsigned scan_code);
-	void NativeKeyRelease(unsigned scan_code);
+	void NativeKeyPress(unsigned key_id, unsigned scan_code);
+	void NativeKeyRelease(unsigned key_id);
 
 	wxString BlankDiscResourcePath(const wxString &filename) const;
 	wxString ConfigPathForMachine(const wxString &machine_name) const;
@@ -346,7 +347,8 @@ private:
 	bool window_active_ = false;
 	bool full_screen_ = false;
 	bool reenable_mousehack_ = false;
-	std::list<unsigned> held_keys_;
+	/* Keyed by physical key, not by scancode - see held_keys.h and issue #70. */
+	HeldKeys held_keys_ = {};
 
 	wxTimer mips_timer_;
 	wxTimer video_timer_;

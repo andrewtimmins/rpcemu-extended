@@ -56,11 +56,22 @@ numbered keys by the 1984 keyboard's matrix.
 
 `keymap_platform.c` must hold literal numbers so it compiles and can be tested
 everywhere, which leaves the risk that a literal is simply wrong. So when built
-on macOS it asserts every one of them against Apple's own `kVK_` constants from
-`<Carbon/HIToolbox/Events.h>`. A mistyped number is a **macOS build failure**
-rather than a key that quietly does the wrong thing on someone else's Mac. The
-include is optional (`__has_include`), so it can never be the reason a build
-fails to configure.
+on macOS it asserts every one of them against Apple's own `kVK_` constants. A
+mistyped number is a **macOS build failure** rather than a key that quietly does
+the wrong thing on someone else's Mac.
+
+The include is the umbrella header, **`<Carbon/Carbon.h>`**. The constants live in
+`Carbon/HIToolbox/Events.h`, but HIToolbox is a subframework and that path does
+not resolve on its own. Asking for it directly is what the first version did, and
+because the whole block was wrapped in `__has_include` and said nothing either
+way, **every assertion was silently skipped on every macOS build** while the table
+looked as though it had been checked. A check that quietly does not run is worse
+than no check, because it gets mistaken for one.
+
+So the outcome is now announced with `#pragma message` and appears in the macOS
+build log, either `macOS keycodes ARE being checked` or a warning that they are
+`UNVERIFIED`. It stays conditional rather than a hard error, since a missing SDK
+header should never be why a port fails to build.
 
 ## What this fixed
 
@@ -160,6 +171,28 @@ The test was checked by breaking the code on purpose: reintroducing the #88 Y/Z
 swap, deleting the AltGr entry, and collapsing right Command onto Control each
 make it fail.
 
+### Which keys are held
+
+`tests/test_held_keys.c`, 42 checks, covering `src/gui/held_keys.c`.
+
+A scancode is not a key. Several physical keys can map to one RISC OS key, and on
+macOS that is **deliberate and permanent**, since both Command and Control are
+sent as Ctrl so that Cmd+C copies. Track what is held as a set of scancodes and
+letting go of one of them releases a key the user is still holding, which is the
+mechanism behind #70.
+
+So held keys are keyed by the **physical** key, and the guest is told when the
+first key mapping to a scancode goes down and again when the last one comes up.
+The cases cover the Shift hand-over, two physical keys sharing one scancode in
+both release orders, a repeated press of one key counting once (which a plain
+reference count would get wrong, leaving the key stuck down), a release taking the
+scancode recorded at press time rather than from the release event, releasing
+everything on focus loss with each scancode released exactly once, and running out
+of capacity without press and release losing symmetry.
+
+Also checked by breaking it: reverting `held_keys.c` to the old
+scancode-set behaviour fails 6 checks.
+
 ## Known gaps
 
 - **AltGr on Windows also generates a phantom left Ctrl.** Windows sends a
@@ -167,21 +200,6 @@ make it fail.
   except by timestamp, so the guest sees Ctrl+AltGr. Whether this stops German
   AltGr characters working in RISC OS is unconfirmed; the debug log above will
   show the extra Ctrl if it does.
-- **★ The same lost-modifier bug is still live on macOS, for Ctrl.** The class of
-  fault behind #70 is *two physical keys collapsing onto one scancode*, and
-  `NativeKeyPress()` dropping the second press while the first release cancels
-  both. The position tables are one-to-one and `test_keymap.c` checks them for
-  collisions specifically to prevent it, but the macOS policy in
-  `input_helpers.cpp` reintroduces one deliberately: physical left Control gives
-  `0x25`, and left Command is mapped onto `0x25` as well so that Cmd+C copies. So
-  holding Control, pressing Command and releasing Control releases the guest's
-  Ctrl while Command is still down.
-
-  There is no third Ctrl scancode to spend, so the fix belongs at the other end:
-  `held_keys_` should COUNT presses per scancode, keeping the guest's key down
-  while any physical key mapping to it is held. That fixes the class rather than
-  the instance and makes deliberate collisions safe, instead of leaving
-  "no collisions" as a rule policy can quietly break. Not done yet.
 - Print Screen has no X11 keycode entry and is not passed through.
 - The GUI keyboard path is only tested at the mapping layer. Nothing exercises
   wxWidgets event delivery itself.

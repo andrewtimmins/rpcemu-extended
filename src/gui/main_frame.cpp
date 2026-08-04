@@ -1681,36 +1681,40 @@ void MainFrame::OnNetworkLedTimer(wxTimerEvent &) { SetStatusText(wxString(L'\u2
 
 void MainFrame::ReleaseHeldKeys()
 {
-	for (auto it = held_keys_.rbegin(); it != held_keys_.rend(); ++it) {
+	unsigned scan_codes[HELD_KEYS_MAX];
+	const size_t n = held_keys_release_all(&held_keys_, scan_codes,
+	    sizeof(scan_codes) / sizeof(scan_codes[0]));
+
+	for (size_t i = 0; i < n; i++) {
 		if (emulator_) {
-			emulator_->KeyRelease(*it);
+			emulator_->KeyRelease(scan_codes[i]);
 		}
 	}
-	held_keys_.clear();
 }
 
-void MainFrame::NativeKeyPress(unsigned scan_code)
+/*
+ * Held keys are tracked per PHYSICAL key rather than per scancode, so the guest
+ * hears about a key when the first physical key mapping to it goes down and
+ * again when the last one comes up. Tracking scancodes alone meant that letting
+ * go of one Shift released the modifier while the other was still held, which is
+ * issue #70. See held_keys.h.
+ */
+void MainFrame::NativeKeyPress(unsigned key_id, unsigned scan_code)
 {
-	const auto found = std::find(held_keys_.begin(), held_keys_.end(), scan_code);
-	if (found != held_keys_.end()) {
-		return;
-	}
-
-	held_keys_.push_back(scan_code);
-	if (emulator_) {
+	if (held_keys_press(&held_keys_, key_id, scan_code) && emulator_) {
 		emulator_->KeyPress(scan_code);
 	}
 }
 
-void MainFrame::NativeKeyRelease(unsigned scan_code)
+void MainFrame::NativeKeyRelease(unsigned key_id)
 {
-	const auto found = std::find(held_keys_.begin(), held_keys_.end(), scan_code);
-	if (found == held_keys_.end()) {
-		return;
-	}
+	unsigned scan_code = 0;
 
-	held_keys_.remove(scan_code);
-	if (emulator_) {
+	/* The scancode comes from what was recorded at press time, not from this
+	   event. They can differ: a modifier can change what the same physical key
+	   reports between its press and its release, and releasing a scancode that
+	   was never pressed would leave the real one held. */
+	if (held_keys_release(&held_keys_, key_id, &scan_code) && emulator_) {
 		emulator_->KeyRelease(scan_code);
 	}
 }
@@ -1784,9 +1788,9 @@ void MainFrame::ProcessEmulatorKeyEvent(wxKeyEvent &event, bool key_down)
 	}
 
 	if (key_down) {
-		NativeKeyPress(scan_code);
+		NativeKeyPress(InputKeyIdentityFromKeyEvent(event), scan_code);
 	} else {
-		NativeKeyRelease(scan_code);
+		NativeKeyRelease(InputKeyIdentityFromKeyEvent(event));
 	}
 	event.StopPropagation();
 }
