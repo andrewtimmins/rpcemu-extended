@@ -124,6 +124,12 @@ static const KeyMapInfo key_map[] = {
 	{ 0x68, { 0xe0, 0x5a } },	// Keypad Enter
 	{ 0x69, { 0xe0, 0x14 } },	// Right Ctrl
 	{ 0x6a, { 0xe0, 0x4a } },	// Keypad /
+	// Right Alt / AltGr. Absent until 2026-08-04, so the key was dropped on
+	// every platform: X11 reported keycode 0x6c and found nothing here, while
+	// Windows and macOS reported it as LEFT Alt because they were mapping
+	// characters rather than positions. A German keyboard needs AltGr for
+	// @ \ | ~ and the like - see issue #88.
+	{ 0x6c, { 0xe0, 0x11 } },	// Right Alt (AltGr)
 
 	{ 0x6e, { 0xe0, 0x6c } },	// Home
 	{ 0x6f, { 0xe0, 0x75 } },	// Up
