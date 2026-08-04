@@ -136,6 +136,21 @@ add_executable(test_mode_fit test_mode_fit.c
 target_include_directories(test_mode_fit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 rpcemu_add_test(test_mode_fit)
 
+# Host keys to RISC OS keys. Compiles the two units directly, which is the whole
+# point of them being separate: they are integer lookup tables with no wxWidgets
+# and no platform calls, so THE WINDOWS AND macOS MAPPINGS ARE BOTH TESTED FROM
+# WHICHEVER PLATFORM HAPPENS TO BE RUNNING. The keyboard had no test at all until
+# three faults arrived that all came from mapping characters instead of physical
+# key positions - #88 (German layout), #91 (third mouse button on macOS) and part
+# of #70 (left and right modifiers). See docs/keyboard.md.
+add_executable(test_keymap test_keymap.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui/keymap_platform.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui/keyboard_x.c)
+target_include_directories(test_keymap PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui)
+rpcemu_add_test(test_keymap)
+
 # Networking tests for the Access+/ShareFS path, where large copies drive IP
 # fragment reassembly. These compile the code under test directly rather than
 # linking rpcemu_core, because each replaces a symbol the core also defines: the
@@ -296,7 +311,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 16)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 17)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()
