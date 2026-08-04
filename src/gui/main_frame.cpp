@@ -1281,57 +1281,6 @@ void MainFrame::OnReportIssue(wxCommandEvent &)
 	wxLaunchDefaultBrowser(URL_ISSUES);
 }
 
-/*
- * Move the data folder, which the first-run dialogue promises is possible.
- *
- * Only the pointer is changed: nothing is copied or moved. Doing it properly
- * would mean relocating machines, discs and ROMs that may be gigabytes and may
- * be open, and getting that wrong loses somebody's work. So the honest offer is
- * "point somewhere else", and the dialogue says what that means before it does
- * it.
- */
-void MainFrame::OnChooseDataDir(wxCommandEvent &)
-{
-	const wxString current = wxString::FromUTF8(rpcemu_get_datadir());
-
-	wxDirDialog dlg(this,
-	    "Where should RPCEmu keep its machines, ROMs and settings?",
-	    current, wxDD_DEFAULT_STYLE | wxDD_NEW_DIR_BUTTON);
-
-	if (dlg.ShowModal() != wxID_OK) {
-		return;
-	}
-
-	const wxString chosen = dlg.GetPath();
-
-	if (chosen.empty() || wxFileName(chosen, "").SameAs(wxFileName(current, ""))) {
-		return;
-	}
-
-	/* Said plainly, and before anything is written: an empty folder means an
-	   empty machine list next time, which looks exactly like lost data to
-	   somebody who expected their machines to follow. */
-	const wxString message = wxString::Format(
-	    "RPCEmu will use:\n%s\n\n"
-	    "Your existing machines, discs and ROMs are NOT moved. They stay in:\n%s\n\n"
-	    "If the new folder is empty, RPCEmu will start with no machines and set up "
-	    "a fresh folder. You can point it back at any time, and nothing is deleted "
-	    "either way.\n\n"
-	    "This takes effect when RPCEmu is restarted. Change the data folder?",
-	    chosen, current);
-
-	if (wxMessageBox(message, "RPCEmu Extended - Data Folder",
-	                 wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION, this) != wxYES) {
-		return;
-	}
-
-	SetDataDir(chosen.utf8_string());
-
-	wxMessageBox("The data folder has been changed.\n\n"
-	             "Restart RPCEmu for it to take effect.",
-	             "RPCEmu Extended - Data Folder", wxOK | wxICON_INFORMATION, this);
-}
-
 void MainFrame::OnSupportBundle(wxCommandEvent &)
 {
 	wxString screenshot;

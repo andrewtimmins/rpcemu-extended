@@ -78,8 +78,9 @@ public:
 #endif
 
 		main->Add(new wxStaticText(this, wxID_ANY,
-		    "It will be created if it does not exist. You can move it later from\n"
-		    "Settings, and RPCEMU_DATADIR or --datadir override it for one run."),
+		    "It will be created if it does not exist. You can change it later from\n"
+		    "Options on the machine selector, and RPCEMU_DATADIR or --datadir\n"
+		    "override it for one run."),
 		    0, wxALL, 12);
 
 		main->Add(new wxStaticLine(this), 0, wxEXPAND | wxLEFT | wxRIGHT, 12);
