@@ -266,7 +266,13 @@ bool InitHeadlessPaths()
 		datadir = stored;
 		break;
 	case DATA_DIR_FROM_PORTABLE:
-		datadir = HasConfigs(exe) ? exe : (HasConfigs(cwd) ? cwd : home);
+		datadir = exe;
+		break;
+	case DATA_DIR_FROM_CWD:
+		datadir = cwd;
+		break;
+	case DATA_DIR_FROM_INSTALL:
+		datadir = home;
 		break;
 	case DATA_DIR_FROM_EXISTING_DEFAULT:
 		datadir = home;

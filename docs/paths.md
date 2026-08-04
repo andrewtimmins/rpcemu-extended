@@ -36,13 +36,14 @@ Linux, reached through `wxConfig`.
 | 1 | `--datadir` on the command line | No |
 | 2 | `RPCEMU_DATADIR` | No |
 | 3 | The folder chosen on first run, or via *Settings → Data Folder…* | Already stored |
-| 4 | `configs/` beside the binary, or in the current directory | No |
-| 5 | A macOS `.app` bundle: payload inside, data outside | No |
-| 6 | `configs/` in the install prefix or `/usr/share/rpcemu` | No |
-| 7 | `RPCEMU_RESOURCE_DIR` (settles the payload only) | No |
-| 8 | An existing default location that is already set up | Yes, once |
-| 9 | Nothing to go on, and a GUI to ask with: **ask** | Yes |
-| 10 | Nothing to go on and no GUI: the default, silently | No |
+| 4 | `configs/` beside the binary | No |
+| 5 | `configs/` in the current directory | No |
+| 6 | A macOS `.app` bundle: payload inside, data outside | No |
+| 7 | `configs/` in the install prefix or `/usr/share/rpcemu` | No |
+| 8 | `RPCEMU_RESOURCE_DIR` (settles the payload only) | No |
+| 9 | An existing default location that is already set up | **No** |
+| 10 | Nothing to go on, and a GUI to ask with: **ask** | Yes |
+| 11 | Nothing to go on and no GUI: the default, silently | No |
 
 Two of those deserve their reasons stated.
 
@@ -50,6 +51,13 @@ Two of those deserve their reasons stated.
 would let a CI job or a packaging script be quietly redirected by whatever
 somebody once clicked in a dialogue, and a reproducible run is worth more than
 honouring a preference in the one case nobody is watching.
+
+**★ A STORED PREFERENCE ONLY EVER EXISTS BECAUSE A HUMAN CHOSE ONE.** Row 9 used
+to be remembered and that was wrong. A preference outranks a self-contained folder
+beside the binary, so recording a location that was merely *inferred* pins it
+globally: unpack a portable copy afterwards and it ignores its own machines in
+favour of somewhere the user never picked. Re-deriving row 9 costs nothing,
+because the condition that reached it is still true next time.
 
 **Explicit inputs are not remembered** (1, 2). They are supplied afresh every run,
 so recording them would let one scripted run with an unusual `--datadir` silently
@@ -86,6 +94,25 @@ discs and ROMs that may be gigabytes and may be open is how data gets lost, so t
 offer is the honest one, and the dialogue says what it means before doing it: if
 the new folder is empty you will start with no machines and a freshly seeded
 folder, the old folder is untouched, and you can point back at any time.
+
+## The payload is a separate question
+
+`gfxroms`, `poduleroms`, `usbroms` and `netroms` are loaded from the **resource**
+directory, not the data directory. So the resource directory follows the
+**payload**, wherever that is, independently of where the user keeps their
+machines: bundle, beside the binary, current directory, install prefix,
+`/usr/share/rpcemu`, and only then the data directory as a last resort.
+
+Pointing it at the data directory instead is what broke a real machine: none of
+that payload is in a folder the user picked for their machines, and `poduleroms`
+holds `hostfs,ffa`, so the machine came up with **no HostFS at all**, no graphics
+card driver and no networking module.
+
+**And it cannot probe for `configs/` alone**, which is how it was missed. The two
+come apart: moving your machines into a folder of your own takes `configs/` with
+it and leaves the payload beside the binary. So the folder beside the binary still
+has `poduleroms` and no longer has `configs`, was declared empty, and the search
+fell through. The probe tests `poduleroms/` as well.
 
 ## Both entry points agree
 

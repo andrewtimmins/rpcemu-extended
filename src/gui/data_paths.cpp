@@ -375,19 +375,19 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 		break;
 
 	case DATA_DIR_FROM_PORTABLE:
-		if (inputs.configs_beside_binary) {
-			resource_dir = exe_dir;
-			user_dir = exe_dir;
-		} else if (inputs.configs_in_cwd) {
-			resource_dir = cwd;
-			user_dir = cwd;
-		} else if (HasConfigsDir(install_dir)) {
-			resource_dir = install_dir;
-			user_dir = UserDataRoot();
-		} else {
-			resource_dir = "/usr/share/rpcemu/";
-			user_dir = UserDataRoot();
-		}
+		resource_dir = exe_dir;
+		user_dir = exe_dir;
+		break;
+
+	case DATA_DIR_FROM_CWD:
+		resource_dir = cwd;
+		user_dir = cwd;
+		break;
+
+	case DATA_DIR_FROM_INSTALL:
+		resource_dir = HasConfigsDir(install_dir) ? install_dir
+		                                         : wxString("/usr/share/rpcemu/");
+		user_dir = UserDataRoot();
 		break;
 
 	case DATA_DIR_FROM_EXISTING_DEFAULT:
