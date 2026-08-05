@@ -46,6 +46,7 @@
 #include "riscos_fetch.h"
 
 extern "C" {
+#include "openbus_stub.h"
 #include "rpcemu.h"
 #include "savestate.h"
 #include "app_settings.h"
@@ -982,6 +983,16 @@ int main(int argc, char **argv)
 				return 2;
 			}
 			g_datadir = value;
+		} else if (strcmp(arg, "--openbus-stub") == 0) {
+			/* Fits the OPEN Bus test card. Not a model of real hardware: it
+			   exists so the second processor bus has something in it before
+			   there is a processor to put on it. Note the debugger cannot read
+			   the card - its accessor covers only ROM, VRAM and RAM, being
+			   side-effect-free by design - so the decode is proved by
+			   tests/test_openbus_decode.c instead. This is also the only
+			   reference to openbus_stub.o, which would otherwise sit unused in
+			   the static library. */
+			openbus_stub_request();
 		} else if (strcmp(arg, "--no-disc") == 0) {
 			g_fetch_disc = false;
 		} else if (strcmp(arg, "--accept-licence") == 0 ||

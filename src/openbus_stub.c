@@ -201,6 +201,21 @@ static const openbus_master stub_master = {
 	.close = NULL,		/* state is static, so there is nothing to free */
 };
 
+/* Set from the command line, long before there is a bus to fit anything to. */
+static int stub_requested;
+
+void
+openbus_stub_request(void)
+{
+	stub_requested = 1;
+}
+
+int
+openbus_stub_requested(void)
+{
+	return stub_requested;
+}
+
 int
 openbus_stub_fit(void)
 {

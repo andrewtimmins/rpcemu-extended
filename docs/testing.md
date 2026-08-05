@@ -83,6 +83,7 @@ need a native recompiler backend.
 | `test_mode_fit` | display mode selection against a VRAM budget |
 | `test_keymap` | host keys to RISC OS keys, for **all three platforms from any one of them** |
 | `test_openbus` | the second processor bus: window, bus mastering, nPIRQ, reset, timeslice |
+| `test_openbus_decode` | that the machine's own memory decode reaches a fitted card, which an unhooked window would hide |
 | `test_hostfs_path` | where a machine's HostFS drive resolves to, on all three platforms |
 | `test_data_dir` | which data directory is used, and above all when the user is asked |
 | `test_held_keys` | which keys the guest believes are held, when several map to one |

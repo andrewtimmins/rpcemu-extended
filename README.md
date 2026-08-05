@@ -439,6 +439,7 @@ portable between them.
 | `--no-relay` | Do not relay Access broadcasts. Only one emulator per host can, and the others decline automatically; this says so deliberately. |
 | `--headless` | Run with no GUI window, over VNC. Without `--machine`, the machine list is offered over VNC and you choose one from a client. VNC is started for the run whether or not the settings enable it, since it is the only way in; the setting itself is left alone. |
 | `--list-machines` | List the available machine configs and exit. |
+| `--openbus-stub` | Fit the OPEN Bus test card to the second processor slot, so the plumbing a real card needs can be exercised on a running machine. A development aid rather than a model of real hardware, and nothing is fitted without it. See [docs/openbus.md](docs/openbus.md). |
 | `--datadir <dir>` | Where machines, ROMs and settings live, for this run only. Also accepts `--datadir=<dir>`. Outranks `RPCEMU_DATADIR` and the folder chosen on first run, and is deliberately not remembered, so a scripted run cannot become the default for later interactive ones. |
 | `--fetch-riscos[=which]` | Download RISC OS from RISC OS Open, unpack it, create a machine and exit. `which` is `stable` (default) or `nightly`. |
 | `--no-disc` | With `--fetch-riscos`, fetch the ROM only. |

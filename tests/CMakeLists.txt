@@ -217,6 +217,17 @@ target_include_directories(test_openbus PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 rpcemu_add_test(test_openbus)
 
+# Does the machine's own memory decode actually reach a fitted card? Links
+# rpcemu_core for the real physical accessors, as test_mmu_perms does. Separate
+# from test_openbus because that checks the bus rules against a fake host and this
+# checks the wiring into mem.c - and a mistake there would be silent, since an
+# unhooked window reads exactly like an empty slot. It exists because the obvious
+# way to poke the card, the debugger socket, cannot: the debugger's accessor is
+# deliberately side-effect-free and handles only ROM, VRAM and RAM.
+add_executable(test_openbus_decode test_openbus_decode.c test_stubs.c)
+target_link_libraries(test_openbus_decode PRIVATE rpcemu_core m)
+rpcemu_add_test(test_openbus_decode)
+
 # Networking tests for the Access+/ShareFS path, where large copies drive IP
 # fragment reassembly. These compile the code under test directly rather than
 # linking rpcemu_core, because each replaces a symbol the core also defines: the
@@ -377,7 +388,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 22)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 23)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()

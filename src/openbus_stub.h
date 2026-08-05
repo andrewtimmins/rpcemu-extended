@@ -91,6 +91,18 @@ extern "C" {
 #define OPENBUS_STUB_WORDS_PER_CYCLE	1
 
 /**
+ * Ask for the stub to be fitted when the machine starts.
+ *
+ * Set by --openbus-stub, before the emulator core is up. Separate from
+ * openbus_stub_fit() because the command line is parsed long before there is a
+ * bus to fit anything to.
+ */
+void openbus_stub_request(void);
+
+/** Was the stub asked for? */
+int openbus_stub_requested(void);
+
+/**
  * Fit the stub to the second slot.
  *
  * @return zero on success, non-zero if the bus is not started or a card is

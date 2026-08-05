@@ -59,6 +59,7 @@
 #include "usb_ohci.h"
 #include "usbcard.h"
 #include "openbus.h"
+#include "openbus_stub.h"
 #include "podules.h"
 #include "fdc.h"
 #include "hostfs.h"
@@ -951,10 +952,6 @@ resetrpc(void)
 
 	/* Install plugin-ABI podules into any remaining free slots, after the
 	   legacy extension-ROM and network podules have claimed theirs. */
-	/* Started before anything can be fitted. No card is fitted by default:
-	   every machine that ever shipped had an empty second slot unless somebody
-	   bought a PC card, and an emulated machine should match. */
-	openbus_init(&openbus_ops);
 	podules_init_headers();
 
 	cycles = 0;
@@ -1097,6 +1094,28 @@ rpcemu_start(void)
         usbcard_init();
         initpodulerom();
         podule_build_list();
+
+	/*
+	 * The second processor bus is started ONCE, here, and not in resetrpc().
+	 *
+	 * A card is physically still in its slot after a machine reset, so a reset
+	 * must reset the card and not remove it - which is what openbus_reset() in
+	 * resetrpc() does. Starting the bus there instead wiped the slot on every
+	 * reset, and would have quietly unfitted any card the moment the guest
+	 * rebooted.
+	 *
+	 * No card is fitted unless one is asked for: every machine that shipped had
+	 * an empty second slot unless somebody bought a PC card.
+	 */
+	openbus_init(&openbus_ops);
+	if (openbus_stub_requested()) {
+		if (openbus_stub_fit() == 0) {
+			rpclog("OPEN Bus: fitted '%s' to the second processor slot\n",
+			       openbus_name());
+		} else {
+			rpclog("OPEN Bus: could not fit the test card\n");
+		}
+	}
 
 	/* Other components are initialised in the same way as the hardware
 	   being reset */

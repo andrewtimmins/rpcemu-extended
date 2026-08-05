@@ -144,9 +144,24 @@ memory exactly as an x86 card would.
 Nothing fits it automatically. It is there for tests and for bringing up a real
 card.
 
+### Fitting it on a running machine
+
+    rpcemu --machine MyMachine --openbus-stub
+
+The switch is per-run and never written to a config, because a test card is not a
+property of anybody's machine. When it takes, the log says so:
+
+    OPEN Bus: fitted 'OPEN Bus test card (stub)' to the second processor slot
+
+**The debugger cannot read the card**, which is worth knowing before trying. The
+debugger's memory accessor is deliberately side-effect-free and handles only ROM,
+VRAM and RAM, so a read of the window answers zero — indistinguishable from an
+empty slot. That is right for a debugger, since reading a real card's registers
+can change its state, and it is why the decode is proved by a test instead.
+
 ## Testing
 
-`tests/test_openbus.c`, 70 checks, on every platform, with no emulator and no
+`tests/test_openbus.c`, 73 checks, on every platform, with no emulator and no
 machine: a fake memory and a fake interrupt controller are substituted for the
 host services.
 
@@ -154,6 +169,16 @@ It pins the rules that would be expensive to get wrong later — window bounds
 against the TRM's reservation, the undriven-bus read, refusing a second card,
 interrupt release on removal, cycle clamping, resumable copies across slices, and
 absent host services degrading rather than crashing.
+
+`tests/test_openbus_decode.c`, 11 checks, covers the other half and links
+`rpcemu_core` to do it: that `mem.c`'s physical accessors really do dispatch the
+window to a fitted card, and really do leave IOMD and RAM alone. It is a separate
+test because a mistake there would be **silent** — a window nobody hooked reads
+exactly like an empty slot, and every check in `test_openbus.c` would still pass.
+
+What that test does not reach is the timeslice hook in `execrpcemu()`, which needs
+a whole machine to exercise. It is three lines and its effect on an empty slot is
+one pointer test, but it is fair to call it inspected rather than tested.
 
 That is the argument for building the bus before choosing a card: when a
 processor eventually arrives, the plumbing under it is already known good, and a

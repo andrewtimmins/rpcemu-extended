@@ -439,9 +439,33 @@ test_missing_host_services(void)
 	check("and reads answer all ones", rd(0) == 0xffffffffu);
 }
 
+/*
+ * The request flag that --openbus-stub sets.
+ *
+ * Separate from fitting because the command line is parsed long before there is a
+ * bus. Worth a check because it is also what gives the linker a reference to this
+ * object: nothing else in the emulator calls into openbus_stub.c, so without it
+ * the card is compiled into the static library and then left there.
+ */
+static void
+test_request_flag(void)
+{
+	puts("The --openbus-stub request flag:");
+
+	check("nothing is requested by default", !openbus_stub_requested());
+	openbus_stub_request();
+	check("asking is remembered", openbus_stub_requested());
+	/* Asking twice is not an error: it is a command-line flag. */
+	openbus_stub_request();
+	check("asking twice is harmless", openbus_stub_requested());
+}
+
 int
 main(void)
 {
+	/* Before anything fits a card, so the default really is the default. */
+	test_request_flag();
+
 	test_window();
 	test_empty_slot();
 	test_fitting();
