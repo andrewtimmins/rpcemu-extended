@@ -150,6 +150,39 @@ this section rather than a bug that can be fixed.
 Measured by reading a hand-written file with `wxFileConfig`, not assumed; the
 results are pinned in `tests/test_hostfs_path.c`.
 
+## Moving the data folder
+
+The *relative* form travels: a machine with `hostfs_path=disc` resolves under
+wherever its machine directory now is, and boots exactly as before. Verified by
+moving a whole data folder and booting from the new location.
+
+An *absolute* path does not, and the way it fails is worth knowing. HostFS creates
+its root **and every missing level above it**, so a machine whose absolute path
+pointed inside the data folder that moved does not report an error: the old tree
+is recreated, empty, and the machine boots from a blank disc — the grey screen
+above. The resurrected tree also makes the old location look like it is still in
+use.
+
+That is reachable without moving anything by hand, because the one-time migration
+of `~/.local/share/rpcemu` to `~/RPCEmu` renames the tree without rewriting
+configurations.
+
+The log now says so when the root is absent **and its parent is absent too**,
+which is what distinguishes a stale path from somebody asking for a new folder on
+a drive that exists:
+
+    HostFS: '/old/machines/Box/hostfs' does not exist and neither does
+    '/old/machines/Box'. If this machine's data folder has moved, this is a stale
+    absolute hostfs_path: the folder will be created empty and the guest will see
+    a blank disc. Its own folder is '/new/machines/.../hostfs'.
+
+**Whether it should instead refuse and fall back** to the machine's own folder is
+an open question, not an oversight. In the moved-folder case falling back would be
+right — the files are there, under the new location — but it would also override
+somebody who deliberately named a folder on a drive that is not mounted yet, and
+that is a behaviour change rather than a bug fix. Prefer a relative path if you
+expect to move things.
+
 ## Known gaps
 
 - The sharing warning is given when you **choose** a folder, not when two

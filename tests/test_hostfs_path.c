@@ -301,10 +301,58 @@ test_control_characters_refused(void)
 	    strcmp(out, "C:/my folder") == 0);
 }
 
+/*
+ * The parent of a resolved root, used to tell "not there yet" from "stale".
+ *
+ * ★ WHY THE DIFFERENCE MATTERS. HostFS creates its root and every missing level
+ * above it, so a machine whose absolute hostfs_path pointed inside a data folder
+ * that has since moved does not fail: the old tree is recreated empty and the
+ * guest boots from a blank disc. Confirmed by moving a data folder and watching
+ * the old tree reappear. The parent test is what separates that from somebody
+ * asking for a new folder on a drive that does exist, so it decides whether the
+ * log says anything useful.
+ */
+static void
+test_parent(void)
+{
+	char out[1024];
+
+	puts("The parent of a path, for spotting a stale absolute path:");
+
+	check("a Unix path gives the directory above",
+	    hostfs_path_parent("/data/machines/Box/hostfs", out, sizeof(out)) &&
+	    strcmp(out, "/data/machines/Box") == 0);
+	check("backslashes are understood the same way",
+	    hostfs_path_parent("D:\\data\\Box\\hostfs", out, sizeof(out)) &&
+	    strcmp(out, "D:/data/Box") == 0);
+	check("a trailing separator does not shift the answer",
+	    hostfs_path_parent("/data/Box/hostfs/", out, sizeof(out)) &&
+	    strcmp(out, "/data/Box") == 0);
+
+	/* The two cases where the obvious answer is the wrong one. */
+	check("under the root, the parent is the root",
+	    hostfs_path_parent("/hostfs", out, sizeof(out)) &&
+	    strcmp(out, "/") == 0);
+	check("on a drive, the parent is that drive's ROOT and not 'C:'",
+	    hostfs_path_parent("C:/foo", out, sizeof(out)) &&
+	    strcmp(out, "C:/") == 0);
+
+	/* And where there is no useful answer, say so rather than invent one: "."
+	   would send the caller to test the working directory by accident. */
+	check("a bare leaf has no parent to test",
+	    hostfs_path_parent("hostfs", out, sizeof(out)) == 0);
+	check("nor does an empty path",
+	    hostfs_path_parent("", out, sizeof(out)) == 0);
+	check("nor NULL", hostfs_path_parent(NULL, out, sizeof(out)) == 0);
+	check("a buffer too small is refused, not truncated",
+	    hostfs_path_parent("/data/machines/Box/hostfs", out, 4) == 0);
+}
+
 int
 main(void)
 {
 	test_default();
+	test_parent();
 	test_relative();
 	test_absolute();
 	test_truncation_is_refused();
