@@ -81,6 +81,24 @@ else
 	GCCDIR=$(dirname "$(${TARGET}-gcc -print-libgcc-file-name)")
 	SEARCH_DIRS=("$SYSROOT/bin" "$SYSROOT/lib" "$GCCDIR")
 	CMAKE_TC_ARGS=(-DCMAKE_TOOLCHAIN_FILE="$SCRIPT_DIR/cmake/mingw-w64-x86_64.cmake")
+	# Wine, if it is here, so ctest can run the cross-built tests. Looked for in
+	# the places Debian and Ubuntu put it: the `wine` wrapper is a separate
+	# package from the loader, so wine64 alone is a perfectly normal install and
+	# was what this machine had.
+	if [ -z "${WINE:-}" ]; then
+		for candidate in wine64 wine /usr/lib/wine/wine64; do
+			if command -v "$candidate" >/dev/null 2>&1; then
+				WINE=$(command -v "$candidate")
+				break
+			elif [ -x "$candidate" ]; then
+				WINE="$candidate"
+				break
+			fi
+		done
+	fi
+	if [ -n "${WINE:-}" ] && [ "${RPCEMU_SKIP_WINE_TESTS:-0}" != "1" ]; then
+		CMAKE_TC_ARGS+=(-DCMAKE_CROSSCOMPILING_EMULATOR="$WINE")
+	fi
 	command -v ${TARGET}-gcc >/dev/null || { echo "error: ${TARGET}-gcc not found (apt install mingw-w64)"; exit 1; }
 	if ! [ -x "$SYSROOT/bin/wx-config" ]; then
 		echo "error: cross wxWidgets not found in $SYSROOT. Run ./setup-cross-build-env.sh first."
@@ -102,13 +120,42 @@ cmake --build "$BUILD_DIR" -j"$(njobs)"
 
 [ -f "$BUILD_DIR/bin/$BIN" ] || { echo "error: $BIN not built"; exit 1; }
 
-# Run the test suite. Only possible on a native MSYS2 build, since a cross build
-# produces .exe files this host cannot execute. A failure is fatal: Windows spent
-# a long time as the one platform that built without ever being tested.
+# Run the test suite. A failure is fatal: Windows spent a long time as the one
+# platform that built without ever being tested.
+#
+# A cross build used to skip this entirely, on the grounds that a Linux host
+# cannot execute .exe files. It can, under Wine, and the whole suite passes there
+# - which turns "the Windows build is checked when CI gets to it" into something
+# checkable before pushing. CMAKE_CROSSCOMPILING_EMULATOR (set at configure time,
+# above) is what makes ctest run each test through it.
+#
+# WINEPATH is needed as well: the test executables link the same DLLs the emulator
+# does, and at this point they have not been staged next to anything. Without it
+# every test exits 53 - a Windows "DLL not found", with no message, which reads
+# like a crash.
+#
+# Set RPCEMU_SKIP_WINE_TESTS=1 to opt out.
 if [ "$NATIVE" = true ]; then
 	bash "$SCRIPT_DIR/tests/run-ctest.sh" "$BUILD_DIR"
+elif [ -n "${WINE:-}" ] && [ "${RPCEMU_SKIP_WINE_TESTS:-0}" != "1" ]; then
+	echo "==> Running the Windows test suite under Wine ($WINE)"
+	winepath=""
+	for d in "${SEARCH_DIRS[@]}"; do
+		[ -d "$d" ] || continue
+		# Z: is Wine's mapping of /, so an absolute Unix path converts by
+		# swapping the separators.
+		winepath="${winepath:+$winepath;}Z:${d//\//\\}"
+	done
+	WINEPATH="$winepath" WINEDEBUG="${WINEDEBUG:--all}" \
+	    bash "$SCRIPT_DIR/tests/run-ctest.sh" "$BUILD_DIR" wine
 else
-	echo "Note: skipping tests (cross-compiled binaries cannot run on this host)."
+	if [ "${RPCEMU_SKIP_WINE_TESTS:-0}" = "1" ]; then
+		echo "Note: skipping tests (RPCEMU_SKIP_WINE_TESTS=1)."
+	else
+		echo "Note: skipping tests - no wine found, so these .exe files cannot run"
+		echo "      on this host. Install wine to test a cross build before pushing"
+		echo "      (apt install wine64), or rely on the Windows CI job."
+	fi
 fi
 
 echo "==> Staging $WIN_RELEASE"
