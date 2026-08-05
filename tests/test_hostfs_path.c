@@ -231,6 +231,76 @@ test_same_root(void)
 	}
 }
 
+/*
+ * A hand-edited Windows path, after wxFileConfig has unescaped it.
+ *
+ * ★ WHERE THIS CAME FROM. Testing the Windows build under Wine, a config file
+ * written by hand with
+ *
+ *     hostfs_path=C:\foo
+ *
+ * produced the log line "HostFS: root is 'C:oo'". wx escapes backslashes when it
+ * writes a value and unescapes them when it reads one, so a file the emulator
+ * wrote is fine and a hand-edited one is not. What comes back depends on the
+ * letter, and these are the measured results, from reading a hand-written file
+ * with wxFileConfig:
+ *
+ *     C:\temp -> "C:<09>emp"    C:\foo -> "C:oo"
+ *     C:\new  -> "C:<0a>ew"     C:\bar -> "C:ar"
+ *     C:\run  -> "C:<0d>un"
+ *
+ * The left column names directories Windows will not create, so HostFS served a
+ * folder that was not there and the guest's disc looked empty with nothing to
+ * connect it to the file that had been edited. Those are refused.
+ *
+ * ★ THE RIGHT COLUMN IS NOT DETECTABLE, and this test says so out loud rather
+ * than leaving a reader to assume the whole class is handled. "C:oo" is a
+ * well-formed drive-relative path and nothing here can tell it from one somebody
+ * meant.
+ */
+static void
+test_control_characters_refused(void)
+{
+	char out[1024];
+
+	puts("A setting with control characters in it is refused:");
+
+	/* The three escapes wx actually translates. */
+	check("a tab, from an unescaped \\t in C:\\temp, is refused",
+	    hostfs_path_resolve("C:\temp", "/data/machines/Box/", out,
+	        sizeof(out)) == 0);
+	check("and nothing is left in the buffer to be used by mistake",
+	    out[0] == '\0');
+	check("a newline, from \\n in C:\\new, is refused",
+	    hostfs_path_resolve("C:\new", "/data/machines/Box/", out,
+	        sizeof(out)) == 0);
+	check("a carriage return, from \\r in C:\\run, is refused",
+	    hostfs_path_resolve("C:\run", "/data/machines/Box/", out,
+	        sizeof(out)) == 0);
+	/* Not one wx produces, but it is in the same class and free to cover. */
+	check("a form feed is refused too",
+	    hostfs_path_resolve("C:\f" "oo", "/data/machines/Box/", out,
+	        sizeof(out)) == 0);
+
+	puts("What cannot be caught is recorded rather than implied:");
+	/* C:\foo loses the backslash AND the f. The result is indistinguishable
+	   from a path somebody meant to type, so it is used - deliberately, and
+	   documented in docs/hostfs.md, which says to use forward slashes by hand. */
+	check("C:\\foo arriving as 'C:oo' is used as given, undetectable",
+	    hostfs_path_resolve("C:oo", "/data/machines/Box/", out,
+	        sizeof(out)) != 0);
+	check("and it resolves to exactly that, not to the default",
+	    strcmp(out, "C:oo") == 0);
+
+	/* The boundary, so the check cannot creep upwards into real names. A space
+	   is not a control character and is legal in a folder name everywhere. */
+	check("a space is still allowed",
+	    hostfs_path_resolve("C:\\my folder", "/data/machines/Box/", out,
+	        sizeof(out)) != 0);
+	check("and resolves to the folder that was asked for",
+	    strcmp(out, "C:/my folder") == 0);
+}
+
 int
 main(void)
 {
@@ -238,6 +308,7 @@ main(void)
 	test_relative();
 	test_absolute();
 	test_truncation_is_refused();
+	test_control_characters_refused();
 	test_same_root();
 
 	if (failures != 0) {

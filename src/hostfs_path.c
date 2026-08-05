@@ -118,6 +118,56 @@ tidy(char *path)
 	}
 }
 
+/*
+ * Is this setting unusable as a path?
+ *
+ * ★ WHY A CONTROL CHARACTER CAN EVEN GET IN HERE. wxFileConfig escapes
+ * backslashes when it writes a value and unescapes them when it reads one, so a
+ * config file the emulator wrote round-trips fine. A config file edited BY HAND
+ * on Windows does not, and what comes back depends on the letter that follows the
+ * backslash. Measured, not guessed (see tests/test_hostfs_path.c):
+ *
+ *     hostfs_path=C:\temp   ->  "C:<09>emp"   \t became a tab
+ *     hostfs_path=C:\new    ->  "C:<0a>ew"    \n became a newline
+ *     hostfs_path=C:\run    ->  "C:<0d>un"    \r became a carriage return
+ *     hostfs_path=C:\foo    ->  "C:oo"        unknown escape, BOTH characters gone
+ *     hostfs_path=C:\bar    ->  "C:ar"        likewise
+ *
+ * The first three name directories Windows will not create, so HostFS served a
+ * folder that was not there and the guest came up with a hard disc that appeared
+ * empty - with nothing anywhere to connect it to the file that was edited. Those
+ * are refused here, so the caller falls back to the machine's own folder and logs
+ * that it did. A boot from the wrong folder with a line in the log beats a boot
+ * from nowhere in silence.
+ *
+ * ★ THE LAST TWO CANNOT BE CAUGHT, and pretending otherwise would be worse than
+ * saying so. "C:oo" is a perfectly well-formed drive-relative path; nothing here
+ * can tell it from one somebody meant to type. docs/hostfs.md says so, and says
+ * to use forward slashes when editing by hand, which need no escaping at all.
+ *
+ * Found while testing the Windows build under Wine, by writing a config by hand
+ * and watching the log say C:oo.
+ */
+static int
+has_control_char(const char *path)
+{
+	size_t i;
+
+	if (path == NULL) {
+		return 0;
+	}
+	for (i = 0; path[i] != '\0'; i++) {
+		const unsigned char c = (unsigned char) path[i];
+
+		/* Below space only. Anything at or above it may be part of a perfectly
+		   good name in some encoding, and this is not the place to police that. */
+		if (c < 0x20 || c == 0x7f) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 int
 hostfs_path_resolve(const char *configured, const char *machine_dir,
                     char *out, size_t len)
@@ -128,6 +178,10 @@ hostfs_path_resolve(const char *configured, const char *machine_dir,
 		return 0;
 	}
 	out[0] = '\0';
+
+	if (has_control_char(configured)) {
+		return 0;
+	}
 
 	if (configured != NULL && hostfs_path_is_absolute(configured)) {
 		written = snprintf(out, len, "%s", configured);

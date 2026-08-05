@@ -95,6 +95,61 @@ Writing those found a real bug: a machine directory ending in `//` produced a
 doubled separator, which would also have made two identical shared folders compare
 as different and suppressed the warning.
 
+## An empty folder is an empty hard disc
+
+Pointing HostFS at a new folder gives the machine a **blank disc**. That is the
+setting working, not failing, but it does not look like it, because RISC OS does
+not say so. What you get depends on the version:
+
+| RISC OS | What an empty boot drive looks like |
+| --- | --- |
+| 5.31 | A bare grey screen with a mouse pointer. No icon bar, no banner, nothing to click. |
+| 5.30 | The supervisor prompt, with `Error: Use *Desktop to start TaskManager`. |
+
+Neither mentions a folder, so neither tells you what you just did. Nothing is
+lost: the old folder is untouched, and pointing the setting back at it brings the
+machine straight back.
+
+Both screens were reproduced deliberately, on Linux and on the Windows build under
+Wine, which is how the machine editor came to warn about it before you save rather
+than after you reboot. The warning is decided in `src/hostfs_advice.c` and checked
+by `tests/test_hostfs_advice.c` — separated from the dialog because the decision
+had been wrong: the warning lived in the branch for a folder that already existed,
+so a folder about to be **created**, which is necessarily empty, was the one case
+that never got it. Reported by David Ramsden.
+
+## Editing a config by hand on Windows
+
+Use the machine editor if you can, and **write forward slashes if you edit the
+file by hand**. `wxFileConfig` escapes backslashes when it writes a value and
+unescapes them when it reads one, so a file the emulator wrote round-trips
+correctly and a hand-edited one does not. What you get back depends on the letter
+after the backslash:
+
+| Typed by hand | Read back as | |
+| --- | --- | --- |
+| `C:\temp` | `C:<tab>emp` | refused, falls back to the machine's own folder with a line in the log |
+| `C:\new` | `C:<newline>ew` | refused |
+| `C:\run` | `C:<CR>un` | refused |
+| `C:\foo` | `C:oo` | **used as given** — see below |
+| `C:\bar` | `C:ar` | used as given |
+| `C:\\foo` | `C:\foo` | correct; this is what the editor writes |
+| `C:/foo` | `C:/foo` | correct, and needs no escaping at all |
+
+The first three become control characters, which name directories Windows will not
+create: HostFS then served a folder that was not there and the guest's disc
+appeared empty, with nothing to connect it to the file that had been edited. Those
+are now refused.
+
+The next two cannot be caught. An escape wx does not recognise loses **both**
+characters, and `C:oo` is a perfectly well-formed drive-relative path — nothing
+can tell it from one somebody meant to type. So it is used, and the machine
+quietly runs from the wrong folder. This is the reason for the advice at the top of
+this section rather than a bug that can be fixed.
+
+Measured by reading a hand-written file with `wxFileConfig`, not assumed; the
+results are pinned in `tests/test_hostfs_path.c`.
+
 ## Known gaps
 
 - The sharing warning is given when you **choose** a folder, not when two
@@ -102,4 +157,6 @@ as different and suppressed the warning.
   outside the folder itself, since anything written inside it would appear to the
   guest as a file.
 - Nothing migrates an existing `hostfs` folder when you change the setting. The
-  new folder is created empty and the old one is left alone.
+  new folder is created empty and the old one is left alone. The editor now warns
+  that it will be empty, but offering to copy or move the old contents would be
+  friendlier still.

@@ -27,6 +27,7 @@
 #include "config_paths.h"
 
 extern "C" {
+#include "hostfs_advice.h"
 #include "hostfs_path.h"
 }
 #include "gui_preferences.h"
@@ -269,26 +270,33 @@ void MachineEditDialog::UpdateHostfsNote()
 		note = "This machine's own folder: " + resolved;
 	} else {
 		note = resolved;
-		if (!wxDirExists(resolved)) {
-			note += "  (does not exist yet, it will be created)";
-		} else if (!wxDirExists(resolved + wxFileName::GetPathSeparator() + "!Boot") &&
-		           !wxFileExists(resolved + wxFileName::GetPathSeparator() + "!Boot")) {
-			/*
-			 * ★ Said because the alternative is baffling. A machine that boots
-			 * from HostFS and finds no !Boot does not report a missing boot
-			 * sequence: RISC OS comes up and drops to the supervisor prompt with
-			 * "Error: Use *Desktop to start TaskManager", which tells you
-			 * nothing about the folder you just chose. Reported by David
-			 * Ramsden, who pointed a machine at a blank folder expecting the old
-			 * "No !Boot found" and got a part-started desktop instead.
-			 *
-			 * Only a warning. An empty folder is perfectly reasonable if this
-			 * machine does not boot from HostFS, or if you are about to put
-			 * something in it.
-			 */
-			note += "\nThere is no !Boot here. If this machine boots from "
-			        "HostFS it will stop at the supervisor prompt rather than "
-			        "reaching the desktop.";
+
+		/*
+		 * Both warnings come from hostfs_advice(), which is where the decision
+		 * lives and where it is tested. It used to be decided here, in two
+		 * branches, and the branch for a folder that does not exist yet said only
+		 * that it would be created - never that it would be empty, which is the
+		 * case that most needs saying. See src/hostfs_advice.h.
+		 *
+		 * Only ever warnings. An empty folder is perfectly reasonable if this
+		 * machine does not boot from HostFS, or if you are about to put
+		 * something in it.
+		 */
+		const bool exists = wxDirExists(resolved);
+		const bool has_boot = exists &&
+		    (wxDirExists(resolved + wxFileName::GetPathSeparator() + "!Boot") ||
+		     wxFileExists(resolved + wxFileName::GetPathSeparator() + "!Boot"));
+		const unsigned advice = hostfs_advice(exists ? 1 : 0, has_boot ? 1 : 0);
+
+		static const unsigned bits[] = {
+			HOSTFS_ADVICE_WILL_CREATE,
+			HOSTFS_ADVICE_NO_BOOT,
+		};
+		for (size_t i = 0; i < sizeof(bits) / sizeof(bits[0]); i++) {
+			if (advice & bits[i]) {
+				note += "\n";
+				note += hostfs_advice_text(bits[i]);
+			}
 		}
 
 		const wxString other = MachineSharingHostfs(resolved,
