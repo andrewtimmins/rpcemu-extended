@@ -155,6 +155,82 @@ main(int argc, char *argv[])
 		    strcmp(back.hostcmd_socket, "/tmp/hc.sock") == 0);
 	}
 
+	/*
+	 * ★ A COMMAND-LINE OVERRIDE MUST NOT BECOME A SAVED SETTING.
+	 *
+	 * An override is applied to the live Config so everything downstream sees
+	 * it, and config_save() then writes the Config out - so a per-run option was
+	 * being recorded as though the user had chosen it. One run with
+	 * --debug-socket left an absolute path in the machine's configuration that
+	 * broke as soon as the data folder moved, and --vnc-port did the same to the
+	 * port, which is worse than it sounds: two instances started on different
+	 * ports permanently rewrote both machines' configured port.
+	 *
+	 * config_save() asks app_settings_is_overridden() before writing each of
+	 * these, so this checks the question is answered correctly. It cannot check
+	 * config_save() itself from here, since that needs wxWidgets.
+	 */
+	printf("\nan override is applied but never recorded as a setting\n");
+	{
+		Config cfg;
+
+		app_settings_clear_overrides();
+
+		check("nothing is overridden to begin with",
+		    !app_settings_is_overridden(APP_SETTING_VNC_PORT) &&
+		    !app_settings_is_overridden(APP_SETTING_VNC_ENABLED) &&
+		    !app_settings_is_overridden(APP_SETTING_HOSTCMD_SOCKET) &&
+		    !app_settings_is_overridden(APP_SETTING_DEBUG_SOCKET));
+
+		memset(&cfg, 0, sizeof(cfg));
+		cfg.vnc_port = 5900;
+		snprintf(cfg.debug_socket, sizeof(cfg.debug_socket), "%s", "keep-me");
+
+		/* Only --debug-socket given. */
+		app_settings_override_debug_socket("/run/one-off.sock");
+		app_settings_apply_overrides(&cfg);
+
+		check("the override reaches the live config",
+		    strcmp(cfg.debug_socket, "/run/one-off.sock") == 0);
+		check("and is reported as overridden, so it will not be written",
+		    app_settings_is_overridden(APP_SETTING_DEBUG_SOCKET));
+		check("while the settings nobody overrode are still writable",
+		    !app_settings_is_overridden(APP_SETTING_VNC_PORT) &&
+		    !app_settings_is_overridden(APP_SETTING_VNC_ENABLED) &&
+		    !app_settings_is_overridden(APP_SETTING_HOSTCMD_SOCKET));
+
+		/* --vnc-port, the one that bit two instances at once. */
+		app_settings_override_vnc_port(5911);
+		app_settings_apply_overrides(&cfg);
+		check("a port override reaches the config", cfg.vnc_port == 5911);
+		check("and is reported as overridden",
+		    app_settings_is_overridden(APP_SETTING_VNC_PORT));
+
+		app_settings_override_vnc_enabled(0);
+		app_settings_override_hostcmd_socket("/run/hc.sock");
+		app_settings_apply_overrides(&cfg);
+		check("every override is reported",
+		    app_settings_is_overridden(APP_SETTING_VNC_ENABLED) &&
+		    app_settings_is_overridden(APP_SETTING_HOSTCMD_SOCKET));
+
+		/* The count is not an id and must answer no rather than run off the
+		   end of the switch. */
+		check("APP_SETTING_COUNT is not a setting",
+		    !app_settings_is_overridden(APP_SETTING_COUNT));
+
+		app_settings_clear_overrides();
+		check("clearing forgets them all",
+		    !app_settings_is_overridden(APP_SETTING_VNC_PORT) &&
+		    !app_settings_is_overridden(APP_SETTING_DEBUG_SOCKET));
+
+		/* Cleared overrides must not still be applied, or a later save would
+		   write the value after all. */
+		memset(&cfg, 0, sizeof(cfg));
+		cfg.vnc_port = 5900;
+		app_settings_apply_overrides(&cfg);
+		check("and stops applying them", cfg.vnc_port == 5900);
+	}
+
 	printf("\nthe path is built sensibly\n");
 	check("a trailing slash is not doubled",
 	    strstr(app_settings_path("/tmp/"), "//") == NULL);

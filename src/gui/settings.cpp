@@ -782,6 +782,38 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	wxFileConfig settings(wxEmptyString, wxEmptyString,
 	                      wxString::FromUTF8(path), wxEmptyString,
 	                      wxCONFIG_USE_RELATIVE_PATH);
+
+	/*
+	 * ★ Captured BEFORE DeleteAll(), which wipes the file and writes it again.
+	 *
+	 * A setting a command-line option is overriding must come out of the file
+	 * unchanged, and simply not writing it does not achieve that - it deletes
+	 * the key, because of that DeleteAll(). Which is how the first attempt at
+	 * this silently discarded a deliberately configured socket instead of
+	 * preserving it. So the file's own value is read first and written back.
+	 *
+	 * Absence is preserved as absence: a key the file never had stays missing,
+	 * which config_load() reads as "use the default".
+	 */
+	struct PreservedEntry {
+		const char *key;
+		AppSettingId setting;
+		bool present;
+		wxString value;
+	} preserved[] = {
+		{ "vnc_enabled",    APP_SETTING_VNC_ENABLED,    false, wxEmptyString },
+		{ "vnc_port",       APP_SETTING_VNC_PORT,       false, wxEmptyString },
+		{ "hostcmd_socket", APP_SETTING_HOSTCMD_SOCKET, false, wxEmptyString },
+		{ "debug_socket",   APP_SETTING_DEBUG_SOCKET,   false, wxEmptyString },
+	};
+
+	ConfigFileUseGeneralGroup(settings);
+	for (PreservedEntry &e : preserved) {
+		if (app_settings_is_overridden(e.setting) && settings.HasEntry(e.key)) {
+			e.present = settings.Read(e.key, &e.value);
+		}
+	}
+
 	settings.DeleteAll();
 	ConfigFileUseGeneralGroup(settings);
 
@@ -847,15 +879,53 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	   without being told again on the command line every time. The app settings
 	   file supplies these before a machine is chosen, and as the default for a
 	   machine whose file has not got them yet. */
-	settings.Write("vnc_enabled", static_cast<long>(cfg->vnc_enabled));
-	settings.Write("vnc_port", static_cast<long>(cfg->vnc_port));
-	settings.Write("vnc_password", wxString(cfg->vnc_password, wxConvUTF8));
-	settings.Write("hostcmd_enabled", static_cast<long>(cfg->hostcmd_enabled));
-	settings.Write("hostcmd_socket", wxString(cfg->hostcmd_socket, wxConvUTF8));
-	settings.Write("clipboard_enabled", static_cast<long>(cfg->clipboard_enabled));
+	/*
+	 * ★ A SETTING A COMMAND-LINE OPTION IS OVERRIDING IS NOT WRITTEN, and the
+	 * file's own value is left exactly as it was.
+	 *
+	 * An override is applied to the live Config so everything downstream sees
+	 * it, and this function then writes the Config out - so a per-run option was
+	 * being recorded as though the user had chosen it. One run with
+	 * --debug-socket left an absolute path in the machine's configuration that
+	 * broke the moment the data folder moved, and --vnc-port did the same to the
+	 * port, which matters more than it sounds: running two instances with
+	 * different ports permanently rewrote both machines' configured port.
+	 *
+	 * Not writing is deliberately better than writing the pre-override value
+	 * back: there is nothing to remember, and wxFileConfig leaves an entry it is
+	 * not asked to change untouched.
+	 */
+	{
+		/* Overridden: put back exactly what the file said, or leave the key out
+		   if it never had one. Otherwise write the running value as usual. */
+		auto write_or_restore = [&](const char *key, const wxString &running) {
+			for (const PreservedEntry &e : preserved) {
+				if (strcmp(e.key, key) != 0) {
+					continue;
+				}
+				if (app_settings_is_overridden(e.setting)) {
+					if (e.present) {
+						settings.Write(key, e.value);
+					}
+					return;
+				}
+			}
+			settings.Write(key, running);
+		};
 
-	settings.Write("debug_enabled", static_cast<long>(cfg->debug_enabled));
-	settings.Write("debug_socket", wxString(cfg->debug_socket, wxConvUTF8));
+		write_or_restore("vnc_enabled",
+		    wxString::Format("%ld", static_cast<long>(cfg->vnc_enabled)));
+		write_or_restore("vnc_port",
+		    wxString::Format("%ld", static_cast<long>(cfg->vnc_port)));
+		settings.Write("vnc_password", wxString(cfg->vnc_password, wxConvUTF8));
+		settings.Write("hostcmd_enabled", static_cast<long>(cfg->hostcmd_enabled));
+		write_or_restore("hostcmd_socket",
+		    wxString(cfg->hostcmd_socket, wxConvUTF8));
+		settings.Write("clipboard_enabled",
+		    static_cast<long>(cfg->clipboard_enabled));
+		settings.Write("debug_enabled", static_cast<long>(cfg->debug_enabled));
+		write_or_restore("debug_socket", wxString(cfg->debug_socket, wxConvUTF8));
+	}
 	settings.Write("network_capture", cfg->network_capture ? wxString(cfg->network_capture, wxConvUTF8) : wxString());
 
 	config_nat_rules_save(settings);
