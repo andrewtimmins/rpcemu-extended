@@ -90,6 +90,17 @@ run() {
 }
 
 expect_output() { # <pattern> <description>
+	# A pattern of "--" means the caller wrote expect_output -- 'pattern' desc,
+	# copying a shape that looks like it protects a leading hyphen. It does not:
+	# the -- is consumed as the pattern, which then matches any line containing a
+	# double hyphen, so the check passes whatever the binary printed. Two
+	# assertions here were vacuous that way for exactly that reason. grep is
+	# already given -- below, so the guard is safe to make fatal.
+	if [ "$1" = "--" ]; then
+		echo "BUG: $0: expect_output called with -- as the pattern; drop it"
+		failures=$((failures + 1))
+		return 1
+	fi
 	if ! grep -qiE -- "$1" "$tmp/out"; then
 		echo "FAIL: $2: output did not match /$1/"
 		sed 's/^/      /' "$tmp/out"
@@ -105,8 +116,9 @@ echo "== $BIN"
 # status matters: a binary that printed nothing would still exit 0.
 if run 0 "--help" -- --help; then
 	expect_output '^Usage:' "--help"
-	expect_output -- '--machine' "--help lists --machine"
-	expect_output -- '--resume' "--help lists --resume"
+	expect_output '--machine' "--help lists --machine"
+	expect_output '--resume' "--help lists --resume"
+	expect_output '--openbus-stub' "--help lists --openbus-stub"
 fi
 
 # --list-machines names the machines it can find.
