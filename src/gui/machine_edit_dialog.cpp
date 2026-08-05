@@ -271,6 +271,24 @@ void MachineEditDialog::UpdateHostfsNote()
 		note = resolved;
 		if (!wxDirExists(resolved)) {
 			note += "  (does not exist yet, it will be created)";
+		} else if (!wxDirExists(resolved + wxFileName::GetPathSeparator() + "!Boot") &&
+		           !wxFileExists(resolved + wxFileName::GetPathSeparator() + "!Boot")) {
+			/*
+			 * ★ Said because the alternative is baffling. A machine that boots
+			 * from HostFS and finds no !Boot does not report a missing boot
+			 * sequence: RISC OS comes up and drops to the supervisor prompt with
+			 * "Error: Use *Desktop to start TaskManager", which tells you
+			 * nothing about the folder you just chose. Reported by David
+			 * Ramsden, who pointed a machine at a blank folder expecting the old
+			 * "No !Boot found" and got a part-started desktop instead.
+			 *
+			 * Only a warning. An empty folder is perfectly reasonable if this
+			 * machine does not boot from HostFS, or if you are about to put
+			 * something in it.
+			 */
+			note += "\nThere is no !Boot here. If this machine boots from "
+			        "HostFS it will stop at the supervisor prompt rather than "
+			        "reaching the desktop.";
 		}
 
 		const wxString other = MachineSharingHostfs(resolved,
@@ -1670,7 +1688,34 @@ void MachineEditDialog::SaveSettings()
 		network_type = "iptunnelling";
 	}
 
-	settings.Write("hostfs_path", hostfs_edit_->GetValue().Trim().Trim(false));
+	/*
+	 * ★ Written to the LIVE CONFIG as well as to the file, and not only to the
+	 * file, which is what it did at first and was wrong.
+	 *
+	 * Opened from the machine selector nothing else holds a Config, so writing
+	 * the file was enough and it appeared to work. Opened from a running
+	 * machine's Settings > Machine, the emulator is holding a Config that still
+	 * has the OLD value, and the next config_save() writes that back over the
+	 * file - so the setting silently reverted. Reported by David Ramsden.
+	 *
+	 * Updating it here also earns the restart prompt for nothing:
+	 * MachineNeedsRestart() memcmp()s the whole structure, so a changed
+	 * hostfs_path is now a change it can see, and the machine is offered a
+	 * restart exactly as it is for any other hardware-shaped setting.
+	 */
+	{
+		const wxString hostfs = hostfs_edit_->GetValue().Trim().Trim(false);
+
+		settings.Write("hostfs_path", hostfs);
+
+		if (snprintf(config.hostfs_path, sizeof(config.hostfs_path), "%s",
+		        hostfs.utf8_str().data()) >= (int) sizeof(config.hostfs_path)) {
+			/* Emptied rather than truncated, matching config_load(): a
+			   truncated path is a different directory, and HostFS would create
+			   it and put the guest's files there. */
+			config.hostfs_path[0] = '\0';
+		}
+	}
 	settings.Write("name", new_name_);
 	settings.Write("rom_dir", rom_dir);
 	settings.Write("model", wxString::FromUTF8(models[model_sel].name_config));
