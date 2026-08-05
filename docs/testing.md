@@ -53,6 +53,35 @@ It builds in `build-prepush/` so it cannot disturb whatever `build/` is
 configured for, and it is incremental after the first run. Push with
 `--no-verify`, or set `RPCEMU_SKIP_PRE_PUSH=1`, when you have a reason.
 
+## Testing the Windows build on Linux, with Wine
+
+`./build-windows.sh` now runs the whole suite against the cross-built `.exe`
+files under Wine, so the Windows build can be checked before pushing instead of
+when CI gets to it. Nothing to pass: it looks for `wine64`, then `wine`, then
+`/usr/lib/wine/wine64`, and runs the tests if it finds one.
+
+```
+apt install wine64          # the loader; the `wine` wrapper is a separate package
+./build-windows.sh
+==> Running the Windows test suite under Wine (/usr/lib/wine/wine64)
+==> [wine] all 32 tests passed
+```
+
+Set `RPCEMU_SKIP_WINE_TESTS=1` to opt out.
+
+Two things are worth knowing:
+
+- **`WINEPATH` is set for the run**, pointing at the mingw sysroot. The test
+  executables link the same DLLs the emulator does, and at that point nothing has
+  been staged beside them. Without it every test exits **53** — a Windows "DLL not
+  found", with no message at all, which reads exactly like a crash.
+- **Wine is not Windows.** It is enough to catch what it catches; the
+  `windows-amd64` CI job on a real MSYS2 toolchain is still the authority.
+
+The emulator itself runs under Wine too, which is how `tests/cli_smoke.sh` can be
+pointed at the Windows binary, and how the RISC OS 5.31 empty-HostFS screen in
+[hostfs.md](hostfs.md) was reproduced on a Linux desktop.
+
 ## What the suite covers
 
 Thirty tests, twenty-two of which build on every platform and eight of which
@@ -85,6 +114,7 @@ need a native recompiler backend.
 | `test_openbus` | the second processor bus: window, bus mastering, nPIRQ, reset, timeslice |
 | `test_openbus_decode` | that the machine's own memory decode reaches a fitted card, which an unhooked window would hide |
 | `test_hostfs_path` | where a machine's HostFS drive resolves to, on all three platforms |
+| `test_hostfs_advice` | what the machine editor warns about when a HostFS folder is chosen |
 | `test_data_dir` | which data directory is used, and above all when the user is asked |
 | `test_held_keys` | which keys the guest believes are held, when several map to one |
 | `test_machine_selector` | the VNC machine selector's navigation and drawing |

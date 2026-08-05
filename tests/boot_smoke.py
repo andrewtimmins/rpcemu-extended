@@ -423,16 +423,42 @@ def seed_boot_file(hostfs: str) -> None:
         f.write("Desktop\n")
 
 
-def port_is_free(host: str, port: int) -> bool:
-    """Is `port` bindable on both IP families the emulator listens on?
+def ipv6_loopback_available() -> bool:
+    """Can anything bind ::1 at all on this host?
+
+    Asked once, about a port nobody uses, so the answer is about the host and not
+    about that port. Containers and sandboxes are routinely built with IPv6
+    disabled, where every ::1 bind fails with EADDRNOTAVAIL no matter which port
+    is tried - and port_is_free() used to read that as "every port is taken" and
+    give up after scanning all 64 of them. The message was "no free port found",
+    which sent the reader looking for a stray listener that was never there.
+    """
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("::1", 0))
+        return True
+    except OSError:
+        return False
+
+
+def port_is_free(host: str, port: int, want_ipv6: bool = True) -> bool:
+    """Is `port` bindable on the IP families the emulator can listen on?
 
     VncServer sets rfb_screen_->port and ->ipv6port to the same number and only
     gives up when *both* fail, so a port where just one family is taken would
     start a server that is half-reachable. Probing both keeps the port we hand
     over honest. SO_REUSEADDR matches what the server does, so a socket left in
     TIME_WAIT is not mistaken for a live listener.
+
+    IPv4 is required because that is what this script's own client connects on.
+    IPv6 is only required when the host has IPv6 loopback at all - see
+    ipv6_loopback_available().
     """
-    for family, addr in ((socket.AF_INET, host), (socket.AF_INET6, "::1")):
+    families = [(socket.AF_INET, host)]
+    if want_ipv6:
+        families.append((socket.AF_INET6, "::1"))
+    for family, addr in families:
         try:
             with socket.socket(family, socket.SOCK_STREAM) as s:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -456,8 +482,12 @@ def pick_free_port(host: str, preferred: int) -> int:
     check and the emulator binding it. That is also why binding to port 0 is not
     used: it returns an ephemeral port with exactly that race.
     """
+    want_ipv6 = ipv6_loopback_available()
+    if not want_ipv6:
+        print("boot_smoke: no IPv6 loopback on this host, checking IPv4 only",
+              flush=True)
     for port in range(preferred, preferred + 64):
-        if port_is_free(host, port):
+        if port_is_free(host, port, want_ipv6):
             return port
     raise SmokeError(
         f"no free port found in {preferred}-{preferred + 63} for the VNC server"
