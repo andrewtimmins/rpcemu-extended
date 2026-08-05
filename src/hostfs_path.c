@@ -212,6 +212,67 @@ hostfs_path_resolve(const char *configured, const char *machine_dir,
 }
 
 int
+hostfs_path_parent(const char *path, char *out, size_t len)
+{
+	char tidied[1024];
+	size_t i;
+	size_t cut = 0;
+	int found = 0;
+
+	if (out == NULL || len == 0) {
+		return 0;
+	}
+	out[0] = '\0';
+
+	if (path == NULL || path[0] == '\0' || strlen(path) >= sizeof(tidied)) {
+		return 0;
+	}
+	snprintf(tidied, sizeof(tidied), "%s", path);
+	tidy(tidied);
+
+	for (i = 0; tidied[i] != '\0'; i++) {
+		if (tidied[i] == '/') {
+			cut = i;
+			found = 1;
+		}
+	}
+	if (!found) {
+		/* A bare leaf has no parent to speak of: "hostfs" says nothing about
+		   where it sits. The caller wants a directory it can test for, and "" is
+		   not one, so say so rather than answering "." and having the caller test
+		   the working directory by accident. */
+		return 0;
+	}
+	if (cut == 0) {
+		/* "/foo": the parent is the root itself, and its slash is the whole of
+		   it. */
+		if (len < 2) {
+			return 0;
+		}
+		out[0] = '/';
+		out[1] = '\0';
+		return 1;
+	}
+	if (cut + 1 > len) {
+		return 0;
+	}
+	memcpy(out, tidied, cut);
+	out[cut] = '\0';
+	/* "C:/foo" leaves "C:", which on Windows means the current directory of that
+	   drive rather than its root - not what a caller testing for a directory
+	   wants. Give it the root. */
+	if (cut == 2 && out[1] == ':') {
+		if (len < 4) {
+			out[0] = '\0';
+			return 0;
+		}
+		out[2] = '/';
+		out[3] = '\0';
+	}
+	return 1;
+}
+
+int
 hostfs_path_same_root(const char *a, const char *b)
 {
 	char ta[1024];

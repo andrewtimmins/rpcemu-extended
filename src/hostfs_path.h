@@ -84,6 +84,27 @@ int hostfs_path_resolve(const char *configured, const char *machine_dir,
                         char *out, size_t len);
 
 /**
+ * The directory one level above @path.
+ *
+ * For telling "you asked for a folder that is not there yet" apart from "this
+ * whole path is stale". A machine whose absolute hostfs_path pointed inside its
+ * data folder, after that folder has moved, names a directory whose PARENT has
+ * gone too - and HostFS creates the lot, so the old tree reappears empty and the
+ * guest boots to a blank disc with nothing to explain it. Only the parent test
+ * separates that from somebody legitimately asking for a new folder on a drive
+ * that does exist.
+ *
+ * Pure, like the rest of this file: the caller does the asking-the-filesystem.
+ *
+ * @return Non-zero on success. Zero when @path has no parent worth testing - a
+ *         bare leaf such as "hostfs", an empty path, or one too long to handle.
+ *         A drive-relative parent ("C:") is returned as that drive's root
+ *         ("C:/"), since "C:" on Windows means the current directory of the
+ *         drive and a caller testing for a directory would get the wrong answer.
+ */
+int hostfs_path_parent(const char *path, char *out, size_t len);
+
+/**
  * Would two machines be sharing one HostFS folder?
  *
  * Compares resolved roots, ignoring trailing separators and separator style, so

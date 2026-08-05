@@ -2444,13 +2444,53 @@ hostfs_init(void)
    */
   if (!hostfs_path_resolve(config.hostfs_path, rpcemu_get_machine_datadir(),
                            HOSTFS_ROOT, sizeof(HOSTFS_ROOT))) {
-    /* Only reachable with a configured path too long to resolve, which
-       config_load already refuses; belt and braces, since the alternative is a
-       truncated path that HostFS would happily create. */
+    /*
+     * Two ways in. A configured path too long to resolve, which config_load
+     * already refuses, so that one is belt and braces - the alternative being a
+     * truncated path that HostFS would happily create. And a path containing
+     * control characters, which is what a hand-edited Windows path becomes once
+     * wxFileConfig has unescaped it: "C:\temp" arrives as "C:<tab>emp". See
+     * hostfs_path.c.
+     */
     rpclog("HostFS: could not resolve hostfs_path '%s', using the default\n",
            config.hostfs_path);
     (void) hostfs_path_resolve("", rpcemu_get_machine_datadir(),
                                HOSTFS_ROOT, sizeof(HOSTFS_ROOT));
+  }
+
+  /*
+   * ★ SAY SO WHEN AN ABSOLUTE PATH LOOKS STALE, because the symptom explains
+   * nothing. rpcemu_ensure_dir() below creates the root and every missing level
+   * above it, so a machine whose absolute hostfs_path pointed inside a data
+   * folder that has since MOVED does not fail: the old tree is recreated empty,
+   * the guest boots from a blank disc, and RISC OS 5.31 shows a bare grey screen
+   * with no icon bar while 5.30 stops at the supervisor prompt. Neither mentions
+   * a folder, and the recreated tree makes the old location look like it is in
+   * use.
+   *
+   * That is reachable without anybody moving anything by hand: the one-time
+   * migration of ~/.local/share/rpcemu to ~/RPCEmu renames the tree without
+   * rewriting configurations.
+   *
+   * A missing PARENT is what separates this from somebody legitimately asking
+   * for a new folder on a drive that exists. Only logged - whether to create the
+   * lineage or fall back to the machine's own folder is a policy question, and
+   * quietly changing it here would surprise anyone relying on it.
+   */
+  if (config.hostfs_path[0] != '\0' &&
+      hostfs_path_is_absolute(config.hostfs_path)) {
+    struct stat st;
+    char parent[1024];
+
+    if (stat(HOSTFS_ROOT, &st) != 0 &&
+        hostfs_path_parent(HOSTFS_ROOT, parent, sizeof(parent)) &&
+        stat(parent, &st) != 0) {
+      rpclog("HostFS: '%s' does not exist and neither does '%s'. If this "
+             "machine's data folder has moved, this is a stale absolute "
+             "hostfs_path: the folder will be created empty and the guest will "
+             "see a blank disc. Its own folder is '%smachines/.../hostfs'.\n",
+             HOSTFS_ROOT, parent, rpcemu_get_datadir());
+    }
   }
   /*
    * Make sure it exists. ensure_machine_dirs() only ever creates
