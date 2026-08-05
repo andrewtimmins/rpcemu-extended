@@ -202,6 +202,21 @@ target_include_directories(test_hostfs_path PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 rpcemu_add_test(test_hostfs_path)
 
+# The Risc PC second processor bus (OPEN Bus), and the stub card that proves it.
+# Built before any real card on purpose: a second CPU is the least testable thing
+# in the machine, so the bus takes its host services through a struct of function
+# pointers and this substitutes a fake memory and a fake interrupt controller.
+# Everything about an OPEN Bus card except the processor is therefore checkable on
+# any platform with no emulator and no machine - the register window, bus
+# mastering, nPIRQ, reset and the timeslice. When an x86 or another CPU arrives,
+# the plumbing under it is already known good. See docs/openbus.md.
+add_executable(test_openbus test_openbus.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/openbus.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/openbus_stub.c)
+target_include_directories(test_openbus PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_openbus)
+
 # Networking tests for the Access+/ShareFS path, where large copies drive IP
 # fragment reassembly. These compile the code under test directly rather than
 # linking rpcemu_core, because each replaces a symbol the core also defines: the
@@ -362,7 +377,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 21)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 22)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()

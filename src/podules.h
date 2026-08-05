@@ -30,6 +30,11 @@
    podule_io_type defined by the podule plugin ABI in podule_api.h. */
 typedef podule_io_type PoduleIoType;
 
+/* The OPEN Bus second bus master shares the podule interrupt line (nPIRQ).
+   See the note in podules.c and openbus.h. */
+void podules_set_openbus_irq(int state);
+void podules_set_openbus_fiq(int state);
+
 void podules_write32(int num, PoduleIoType io_type, uint32_t addr, uint32_t val);
 void podules_write16(int num, PoduleIoType io_type, uint32_t addr, uint16_t val);
 void podules_write8(int num, PoduleIoType io_type, uint32_t addr, uint8_t val);

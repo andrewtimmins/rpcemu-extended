@@ -99,6 +99,7 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `docs/kinetic.md` | Kinetic StrongARM: how the card is detected, its 512MB memory map, and the three paths a new memory region needs |
 | `docs/usb.md` | USB: the emulated OHCI host controller, passing real devices through to the guest, streaming from a camera, USB drives, and why it is OHCI |
 | `docs/mmu-permissions.md` | MMU access permissions: the defect that made ADFFS unusable, how it was fixed, and the regression test that holds it |
+| `docs/openbus.md` | OPEN Bus: the Risc PC second processor interface, what a card must bring itself, and the stub card used to test it |
 | `docs/hostfs.md` | HostFS: where a machine's drive lives, pointing several machines at one folder, and the sharing hazard |
 | `docs/paths.md` | Where RPCEmu keeps machines, ROMs and settings: the first-run question, the precedence rules, and who is never asked |
 | `docs/keyboard.md` | Keyboard: how a host key reaches RISC OS, why it is mapped by physical position rather than by character, non-UK layouts, and diagnosing it with `RPCEMU_KEYBOARD_DEBUG` |

@@ -24,6 +24,8 @@ set(RPCEMU_CORE_SOURCES
     ide.c
     iomd.c
     keyboard.c
+    openbus.c
+    openbus_stub.c
     hostfs_path.c
     mem.c
     perfprof.c

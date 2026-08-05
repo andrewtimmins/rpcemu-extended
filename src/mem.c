@@ -25,6 +25,7 @@
 #include "rpcemu.h"
 #include "vidc20.h"
 #include "mem.h"
+#include "openbus.h"
 #include "iomd.h"
 #include "ide.h"
 #include "arm.h"
@@ -327,6 +328,17 @@ mem_phys_read32(uint32_t addr)
 		return vram[(addr & mem_vrammask) >> 2];
 
 	case 0x03000000: /* IO */
+		/*
+		 * OPEN Bus second bus master registers, 0x03600000-0x037fffff.
+		 *
+		 * Reserved for this by the Risc PC TRM, and left unclaimed by IOMD, so
+		 * nothing here was decoded before. The layout inside the window is the
+		 * card's own business; with no card fitted the read answers all ones,
+		 * which is what an undriven bus gives. See openbus.h.
+		 */
+		if (openbus_present() && openbus_addr_in_window(addr)) {
+			return openbus_reg_read(addr, OPENBUS_SIZE_32);
+		}
 		if ((addr & 0xc00000) == 0) {
 			/* 03000000 - 033fffff */
 			uint32_t bank = (addr >> 16) & 7;
@@ -478,6 +490,11 @@ mem_phys_read8(uint32_t addr)
 		return vramb[addr & mem_vrammask];
 
 	case 0x03000000: /* IO */
+		/* OPEN Bus second bus master registers - see the note in the word
+		   read path above, and openbus.h. */
+		if (openbus_present() && openbus_addr_in_window(addr)) {
+			return openbus_reg_read(addr, OPENBUS_SIZE_8);
+		}
 		if ((addr & 0xc00000) == 0) {
 			/* 03000000 - 033fffff */
 			uint32_t bank = (addr >> 16) & 7;
@@ -881,6 +898,12 @@ mem_phys_write32(uint32_t addr, uint32_t val)
 		break;
 
 	case 0x03000000: /* IO */
+		/* OPEN Bus second bus master registers - see the note in the word
+		   read path above, and openbus.h. */
+		if (openbus_present() && openbus_addr_in_window(addr)) {
+			openbus_reg_write(addr, OPENBUS_SIZE_32, val);
+			return;
+		}
 		if ((addr & 0xc00000) == 0) {
 			uint32_t bank = (addr >> 16) & 7;
 
@@ -1041,6 +1064,12 @@ mem_phys_write8(uint32_t addr, uint8_t val)
 		return;
 
 	case 0x03000000: /* IO */
+		/* OPEN Bus second bus master registers - see the note in the word
+		   read path above, and openbus.h. */
+		if (openbus_present() && openbus_addr_in_window(addr)) {
+			openbus_reg_write(addr, OPENBUS_SIZE_8, val);
+			return;
+		}
 		if ((addr & 0xc00000) == 0) {
 			uint32_t bank = (addr >> 16) & 7;
 

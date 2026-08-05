@@ -58,6 +58,7 @@
 #include "hostclipboard.h"
 #include "usb_ohci.h"
 #include "usbcard.h"
+#include "openbus.h"
 #include "podules.h"
 #include "fdc.h"
 #include "hostfs.h"
@@ -254,6 +255,47 @@ Perf perf = {
 };
 
 PortForwardRule port_forward_rules[MAX_PORT_FORWARDS]; ///< Port forward rules accross the NAT
+
+/*
+ * What the OPEN Bus subsystem is given to work with.
+ *
+ * A second bus master reaches memory PHYSICALLY - it has none of the ARM's MMU,
+ * which is precisely why the Aleph One PC card's Gemini ASIC needed mapping
+ * registers of its own. Its interrupt goes down the podule interrupt line, as the
+ * Risc PC TRM specifies for nPIRQ; telling a podule apart from the second master
+ * is then the card's job, via registers it has to provide itself.
+ */
+static uint32_t
+openbus_host_read32(uint32_t phys_addr)
+{
+	return mem_phys_read32(phys_addr);
+}
+
+static void
+openbus_host_write32(uint32_t phys_addr, uint32_t val)
+{
+	mem_phys_write32(phys_addr, val);
+}
+
+static void
+openbus_host_set_irq(int state)
+{
+	podules_set_openbus_irq(state);
+}
+
+static void
+openbus_host_set_fiq(int state)
+{
+	podules_set_openbus_fiq(state);
+}
+
+static const openbus_host_ops openbus_ops = {
+	.read32 = openbus_host_read32,
+	.write32 = openbus_host_write32,
+	.set_irq = openbus_host_set_irq,
+	.set_fiq = openbus_host_set_fiq,
+};
+
 
 int drawscre = 0;
 
@@ -876,6 +918,8 @@ resetrpc(void)
 	i8042_reset();
 	cmos_reset();
         podules_reset();
+        /* The second processor slot resets with the machine (nRESET). */
+        openbus_reset();
         /* Slot order. The support card goes back in slot 0, where it has always
            been: only PHCIDriver needed USB in slot 0, and OHCIDriver finds the
            controller by asking the HAL rather than by looking at a slot. */
@@ -907,6 +951,10 @@ resetrpc(void)
 
 	/* Install plugin-ABI podules into any remaining free slots, after the
 	   legacy extension-ROM and network podules have claimed theirs. */
+	/* Started before anything can be fitted. No card is fitted by default:
+	   every machine that ever shipped had an empty second slot unless somebody
+	   bought a PC card, and an emulated machine should match. */
+	openbus_init(&openbus_ops);
 	podules_init_headers();
 
 	cycles = 0;
@@ -1055,6 +1103,7 @@ rpcemu_start(void)
 	resetrpc();
 }
 
+
 /**
  * Execute a chunk of ARM instructions. This is the main entry point for the
  * emulation of the virtual hardware.
@@ -1077,6 +1126,17 @@ execrpcemu(void)
 		if (debugger_is_paused()) {
 			cycles = 0;
 			break;
+		}
+
+		/*
+		 * The OPEN Bus second processor's share, charged against the same budget
+		 * the ARM is spending. That is not an approximation: a second bus master
+		 * drives nWAIT to stall the host ARM while it holds the bus, so time it
+		 * uses really is time the ARM does not get. Costs one pointer test when
+		 * no card is fitted, which is every machine today. See openbus.h.
+		 */
+		if (openbus_present()) {
+			cycles -= openbus_run(cycles > 0 ? cycles : 0);
 		}
 
 		if (kcallback) {

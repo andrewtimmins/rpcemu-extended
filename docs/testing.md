@@ -55,7 +55,7 @@ configured for, and it is incremental after the first run. Push with
 
 ## What the suite covers
 
-Twenty-nine tests, twenty-one of which build on every platform and eight of which
+Thirty tests, twenty-two of which build on every platform and eight of which
 need a native recompiler backend.
 
 | Test | Covers |
@@ -82,6 +82,7 @@ need a native recompiler backend.
 | `test_clipboard` | shared clipboard text conversion |
 | `test_mode_fit` | display mode selection against a VRAM budget |
 | `test_keymap` | host keys to RISC OS keys, for **all three platforms from any one of them** |
+| `test_openbus` | the second processor bus: window, bus mastering, nPIRQ, reset, timeslice |
 | `test_hostfs_path` | where a machine's HostFS drive resolves to, on all three platforms |
 | `test_data_dir` | which data directory is used, and above all when the user is asked |
 | `test_held_keys` | which keys the guest believes are held, when several map to one |
