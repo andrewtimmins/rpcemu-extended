@@ -38,6 +38,7 @@
 
 #include "socket-compat.h"
 #ifndef _WIN32
+#include <sys/stat.h>
 #include <sys/un.h>
 #endif
 
@@ -856,6 +857,37 @@ dc_set_nonblock(int fd)
 }
 
 #ifndef _WIN32
+/*
+ * Does the directory that would hold @path exist?
+ *
+ * bind() on a Unix socket needs its parent directory to be there, and answers a
+ * missing one with ENOENT - which reads as "the socket is missing" rather than
+ * "the folder is". Checked separately so the caller can say which.
+ */
+static int
+dc_parent_dir_exists(const char *path)
+{
+	char dir[512];
+	char *slash;
+	struct stat st;
+
+	if (snprintf(dir, sizeof(dir), "%s", path) < 0 ||
+	    strlen(path) >= sizeof(dir)) {
+		return 0;
+	}
+
+	slash = strrchr(dir, '/');
+	if (slash == NULL) {
+		return 1;	/* A bare name, so the current directory. */
+	}
+	if (slash == dir) {
+		return 1;	/* Directly in the root. */
+	}
+	*slash = '\0';
+
+	return stat(dir, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
 static int
 dc_listen_unix(const char *path)
 {
@@ -972,6 +1004,28 @@ debugcmd_init(void)
 		if (config.debug_socket[0] == '/') {
 			strncpy(path, config.debug_socket, sizeof(path) - 1);
 			path[sizeof(path) - 1] = '\0';
+
+			/*
+			 * ★ Fall back to the default when the directory it names has
+			 * gone, rather than failing to bind and losing the debug
+			 * socket for the run.
+			 *
+			 * This heals configurations that already carry a stale
+			 * absolute path. Until now, one run with --debug-socket wrote
+			 * that path into the machine's configuration file, so moving
+			 * a data folder left it pointing at a directory that no
+			 * longer existed and every later run reported
+			 * "bind(...) failed: No such file or directory". The write is
+			 * fixed in settings.cpp, but existing files still hold the
+			 * bad value, and rewriting somebody's configuration on a
+			 * guess about what they meant is worse than quietly working.
+			 */
+			if (!dc_parent_dir_exists(path)) {
+				rpclog("DebugCmd: '%s' is not there any more, using the "
+				       "default socket instead\n", path);
+				snprintf(path, sizeof(path), "%srpcemu-debug.sock",
+				    rpcemu_get_datadir());
+			}
 		} else {
 			snprintf(path, sizeof(path), "%srpcemu-debug.sock",
 			    rpcemu_get_datadir());

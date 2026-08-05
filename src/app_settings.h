@@ -123,6 +123,35 @@ extern void app_settings_apply_overrides(Config *cfg);
 /** Has the relay been turned off for this instance? */
 extern int app_settings_relay_enabled(void);
 
+/*
+ * Which settings a command-line option is overriding for this run.
+ *
+ * ★ WHY THIS HAS TO BE ASKED. An override is applied to the live Config so that
+ * everything downstream sees it, and config_save() then writes the Config out -
+ * so a per-run option was being baked into the machine's configuration file as
+ * though the user had chosen it. A --debug-socket used once left an absolute path
+ * behind that broke as soon as the data folder moved, and --vnc-port, --no-vnc
+ * and --hostcmd-socket did the same to their settings. This is exactly why
+ * --datadir is not remembered either: an option supplied afresh every run must
+ * not become a permanent preference.
+ *
+ * config_save() asks about each of these and leaves the file's own value alone
+ * where an override is in force.
+ */
+typedef enum {
+	APP_SETTING_VNC_PORT,
+	APP_SETTING_VNC_ENABLED,
+	APP_SETTING_HOSTCMD_SOCKET,
+	APP_SETTING_DEBUG_SOCKET,
+	APP_SETTING_COUNT
+} AppSettingId;
+
+/** Non-zero if a command-line option is overriding @which for this run. */
+extern int app_settings_is_overridden(AppSettingId which);
+
+/** Forget every override. For tests; nothing in the emulator needs it. */
+extern void app_settings_clear_overrides(void);
+
 /** Path of the settings file, for messages. Returns a pointer to a static buffer. */
 extern const char *app_settings_path(const char *datadir);
 

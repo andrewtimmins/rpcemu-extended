@@ -320,6 +320,25 @@ app_settings_relay_enabled(void)
 	return overrides.have_relay ? overrides.relay_enabled : 1;
 }
 
+int
+app_settings_is_overridden(AppSettingId which)
+{
+	switch (which) {
+	case APP_SETTING_VNC_PORT:		return overrides.have_vnc_port;
+	case APP_SETTING_VNC_ENABLED:		return overrides.have_vnc_enabled;
+	case APP_SETTING_HOSTCMD_SOCKET:	return overrides.have_hostcmd_socket;
+	case APP_SETTING_DEBUG_SOCKET:		return overrides.have_debug_socket;
+	case APP_SETTING_COUNT:			break;
+	}
+	return 0;
+}
+
+void
+app_settings_clear_overrides(void)
+{
+	memset(&overrides, 0, sizeof(overrides));
+}
+
 void
 app_settings_apply_overrides(Config *cfg)
 {
