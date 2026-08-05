@@ -75,7 +75,10 @@ int hostfs_path_is_absolute(const char *path);
  * @return Non-zero on success. Zero if the result would not fit, in which case
  *         @out is left empty rather than truncated: a truncated path is a
  *         different directory, and for HostFS that means writing the guest's
- *         files somewhere nobody asked for.
+ *         files somewhere nobody asked for. Also zero when @configured contains a
+ *         control character, which is what a hand-edited Windows path turns into
+ *         once wxFileConfig has unescaped it - see has_control_char() in
+ *         hostfs_path.c for how "C:\foo" becomes "C:<form feed>oo".
  */
 int hostfs_path_resolve(const char *configured, const char *machine_dir,
                         char *out, size_t len);

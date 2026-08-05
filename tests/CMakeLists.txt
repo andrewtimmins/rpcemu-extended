@@ -202,6 +202,17 @@ target_include_directories(test_hostfs_path PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 rpcemu_add_test(test_hostfs_path)
 
+# What the machine editor warns about when a HostFS folder is chosen. Split out of
+# the dialog because the decision was wrong in a way that read correctly: the
+# "no !Boot" warning lived in the branch for a folder that already existed, so a
+# folder about to be created - necessarily empty - was the one case that never got
+# it. Reported by David Ramsden. See src/hostfs_advice.h.
+add_executable(test_hostfs_advice test_hostfs_advice.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/hostfs_advice.c)
+target_include_directories(test_hostfs_advice PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_hostfs_advice)
+
 # The Risc PC second processor bus (OPEN Bus), and the stub card that proves it.
 # Built before any real card on purpose: a second CPU is the least testable thing
 # in the machine, so the bus takes its host services through a struct of function
@@ -388,7 +399,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 23)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 24)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()
