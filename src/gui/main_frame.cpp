@@ -71,6 +71,7 @@
 extern "C" {
 #include "rpcemu.h"
 #include "hostclipboard.h"
+#include "machine_lock.h"
 }
 
 namespace {
@@ -2094,4 +2095,5 @@ void MainFrame::ShutdownEmulator()
 		emulator_->Join();
 		emulator_.reset();
 	}
+	machine_lock_release();
 }
