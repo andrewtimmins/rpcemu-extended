@@ -314,9 +314,59 @@ initialise(const char *cmd_tail, int podule_base, void *pw)
 		return err;
 	}
 
-	// Enable Podule IRQs
+	/*
+	 * Ask where this card's interrupt mask register is, and which bit in it is
+	 * ours.
+	 *
+	 * Asking by base address, which is the obvious thing since that is what
+	 * module initialisation hands us in R11, does not work at every RAM size.
+	 * The Podule manager resolves an address by masking it and then ORing in
+	 * &180000 to promote whatever access speed was asked for to "sync" before
+	 * comparing against the card's recorded sync base (ConvertR3ToPoduleNode in
+	 * HWSupport.Podule). Bits 19 and 20 are that speed field, so the comparison
+	 * can only succeed when the card's recorded base already has both set. The
+	 * logical address the kernel maps expansion card space at moves with the
+	 * amount of RAM fitted: on RISC OS 5.30 a 256MB machine gets &f99cc000,
+	 * where both bits are set and the promotion is a no-op, but a 128MB machine
+	 * gets &f9acc000, where bit 20 is clear and the promoted value can never
+	 * match. The call then fails with "Bad expansion card identifier" (&500).
+	 *
+	 * So fall back to asking by expansion card number, which takes the Podule
+	 * manager's list-scan path and does not go near the speed bits. Acorn's own
+	 * Econet driver does the same thing for the same reason, and additionally
+	 * treats a failure here as non-fatal.
+	 */
 	err = _swix(Podule_ReadInfo, _INR(0,3), (1 << 16) | (1 << 15), ribuff, sizeof(ribuff), podule_base);
-	if (err) {
+	if (err != NULL) {
+		int slot;
+
+		err = NULL;
+		for (slot = 0; slot < 8; slot++) {
+			int syncbase = 0;
+
+			/* Bit 1 alone, so the one word returned is the sync base */
+			if (_swix(Podule_ReadInfo, _INR(0,3), (1 << 1),
+			          &syncbase, sizeof(syncbase), slot) != NULL)
+			{
+				continue;
+			}
+			if (syncbase != (int) podule_base) {
+				continue;
+			}
+
+			err = _swix(Podule_ReadInfo, _INR(0,3), (1 << 16) | (1 << 15),
+			            ribuff, sizeof(ribuff), slot);
+			break;
+		}
+
+		if (slot == 8) {
+			/* Our own card is not in the list at all, which should not
+			   happen: we are running from its ROM. */
+			return &ERR_ENXIO;
+		}
+	}
+
+	if (err != NULL) {
 		return err;
 	}
 
@@ -500,6 +550,17 @@ service_call(int service_number, _kernel_swi_regs *r, void *pw)
 		break;
 
 	case Service_EnumerateNetworkDrivers: // on entry, r0-> chain of dibs
+		/* rg is a stack variable and only two of its registers are set
+		   below, so clear the rest rather than hand OS_Module whatever the
+		   stack happened to hold.
+
+		   Tidiness, not a fix for anything known. Issue #101 proposed this
+		   as the cause of its abort; measured, it is not. That abort
+		   happens inside initialise(), which returns an error, so the
+		   module is discarded and this handler is never reached at all.
+		   Passing an uninitialised register block to a SWI is still worth
+		   not doing. */
+		memset(&rg, 0, sizeof(rg));
 		rg.r[0] = RMAClaim;
 		rg.r[3] = sizeof(ChDib);
 		if ((erp = _kernel_swi(OS_Module, &rg, &rg)) == NULL) {
@@ -790,9 +851,15 @@ swi_handler(int swi_offset, _kernel_swi_regs *r, void *private_word)
 	//		bit 1:	0 = request/release specific mc addr (in r3 & r4)
 	//			1 = request/release all mc addrs
 	case DCI4MulticastRequest:
-		if (r->r[0] && ~3) {
-			printf("\n EYmulticast not fully implemented yet\n");
-		}
+		/* Multicast filtering is not implemented; requests are accepted and
+		   ignored, as they always have been.
+
+		   What used to be here was "if (r->r[0] && ~3) printf(...)". The test
+		   was a logical AND against a constant that is never zero, so it fired
+		   for any non-zero flags rather than the undefined ones it meant to
+		   catch, and it wrote to the shared C library's stdout from a SWI
+		   handler, which is not a safe place to do it. Both are gone; the
+		   behaviour they wrapped has not changed. */
 		break;
 
 	default:

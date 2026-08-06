@@ -35,7 +35,11 @@ networktxswi
 	LDR	a2, =errmess
 	MOV	a1, #0
 	SWI	&56ac4
-	TST	a1, #0
+; TST a1, #0 was an AND against zero, so Z was always set and the LDRNE below
+; never ran: a transmit error returned a pointer to the message text instead of
+; to the error block, and RISC OS read the first four characters of the message
+; as the error number. networkrxswi below has always had this right.
+	TEQ	a1, #0
 	LDRNE	a1, =errbuf
 	LDMFD	sp!, {v1, v2, pc}
 
