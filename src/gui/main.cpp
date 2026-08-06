@@ -37,6 +37,7 @@
 #include "data_dir_dialog.h"
 #include "gui_preferences.h"
 #include "config_selector_dialog.h"
+#include "help_actions.h"
 #include "main_frame.h"
 #include "headless_main.h"
 #include "http_transfer.h"	/* RPCEMU_HAVE_HTTP */
@@ -60,9 +61,36 @@ public:
 
 private:
 	void InstallSignalHandlers();
+#ifdef __WXOSX__
+	void BuildAppMenuBar();
+#endif
 };
 
+/*
+ * Close any modal dialogue, so a nested event loop unwinds.
+ *
+ * The iterator is tested directly rather than against nullptr. wxWidgets
+ * defines wxWindowList::compatibility_iterator two different ways: with
+ * wxUSE_STL it is a class offering operator bool() and no comparison with
+ * nullptr_t, and without it a wrapper that converts to a node pointer. Only the
+ * second form compiles against nullptr, so a build with the STL containers
+ * enabled - which is what Homebrew's wx gives on macOS - failed here with
+ * "invalid operands to binary expression". Truth-testing works in both.
+ * Reported by Septercius, issue #30.
+ */
 #ifndef __WXMSW__
+static void EndModalDialogues()
+{
+	for (auto node = wxTopLevelWindows.GetFirst(); node;
+	     node = node->GetNext()) {
+		auto *dialog = dynamic_cast<wxDialog *>(node->GetData());
+
+		if (dialog != nullptr && dialog->IsModal()) {
+			dialog->EndModal(wxID_CANCEL);
+		}
+	}
+}
+
 /*
  * Ctrl-C, or a "please stop" from the system.
  *
@@ -98,22 +126,7 @@ void HandleQuitSignal(int signum)
 	   emulator would appear to ignore it. End the dialogue first, which
 	   unwinds that loop and lets the startup path fall through to its "no
 	   machine chosen" exit. */
-	/* The iterator is tested directly rather than against nullptr. wxWidgets
-	   defines wxWindowList::compatibility_iterator two different ways: with
-	   wxUSE_STL it is a class offering operator bool() and no comparison with
-	   nullptr_t, and without it a wrapper that converts to a node pointer. Only
-	   the second form compiles against nullptr, so a build with the STL
-	   containers enabled - which is what Homebrew's wx gives on macOS - failed
-	   here with "invalid operands to binary expression". Truth-testing works in
-	   both. Reported by Septercius, issue #30. */
-	for (auto node = wxTopLevelWindows.GetFirst(); node;
-	     node = node->GetNext()) {
-		auto *dialog = dynamic_cast<wxDialog *>(node->GetData());
-
-		if (dialog != nullptr && dialog->IsModal()) {
-			dialog->EndModal(wxID_CANCEL);
-		}
-	}
+	EndModalDialogues();
 
 	wxTheApp->ExitMainLoop();
 }
@@ -141,6 +154,91 @@ void HandleResetSignal(int /*signum*/)
 		   through the same helper so the log reads the same either way. */
 		EmulatorResetForSignal(nullptr);
 	}
+}
+#endif
+
+#ifdef __WXOSX__
+/*
+ * A window nobody sees, so that the menu bar has an owner.
+ *
+ * macOS has one menu bar for the application rather than one per window, and
+ * something has to be on it before the first machine window opens and after
+ * the last one closes. MacSetCommonMenuBar() will put a bar up with no window
+ * behind it, but wxWidgets cannot then enable anything on it: EnableTop() and
+ * Refresh() both start with wxCHECK_RET(IsAttached()), and IsAttached() means
+ * "has a frame". Cocoa asks before opening a menu, wx answers from those, and
+ * every item comes up greyed - including Quit, and a greyed item is never
+ * dispatched at all.
+ *
+ * Owning the bar from a real frame answers that: the frame is never shown, so
+ * there is nothing on screen, but IsAttached() is true and the items behave.
+ */
+class AppMenuFrame : public wxFrame {
+public:
+	AppMenuFrame() : wxFrame(nullptr, wxID_ANY, wxEmptyString) { }
+
+	/* Or the application could never quit: IsLastBeforeExit() walks every
+	   top-level window and any one of them saying yes keeps the process
+	   alive, whether or not it is visible. wxWidgets overrides this the same
+	   way for its own help and log windows. */
+	bool ShouldPreventAppExit() const override { return false; }
+};
+
+/*
+ * The menu bar the application owns, as distinct from a machine window's.
+ *
+ * Only the items that mean something with no machine running: everything else
+ * would need an emulator to act on. wxWidgets supplies the application menu
+ * itself - About, Hide, Services, Quit - and moves wxID_ABOUT into it.
+ */
+void RpcemuApp::BuildAppMenuBar()
+{
+	auto *help_menu = new wxMenu;
+
+	help_menu->Append(ID_MENU_ONLINE_MANUAL, "Online Manual...");
+	help_menu->Append(ID_MENU_VISIT_WEBSITE, "Visit Website...");
+	help_menu->Append(ID_MENU_REPORT_ISSUE, "Report an Issue...");
+	help_menu->Append(ID_MENU_CHECK_UPDATE, "Check for Update...");
+	help_menu->AppendSeparator();
+	help_menu->Append(ID_MENU_ABOUT_RISCOS, "About RISC OS...");
+	help_menu->Append(wxID_ABOUT, "About RPCEmu Extended...");
+
+	auto *file_menu = new wxMenu;
+
+	file_menu->Append(wxID_EXIT, "E&xit");
+
+	auto *bar = new wxMenuBar;
+
+	bar->Append(file_menu, "&File");
+	bar->Append(help_menu, "&Help");
+
+	auto *frame = new AppMenuFrame;
+
+	/* SetMenuBar() rather than MacSetCommonMenuBar(): this is the frame's own
+	   bar, which is what makes it usable. */
+	frame->SetMenuBar(bar);
+
+	frame->Bind(wxEVT_MENU, [](wxCommandEvent &) { HelpShowAbout(nullptr); },
+	    wxID_ABOUT);
+	frame->Bind(wxEVT_MENU, [](wxCommandEvent &) { HelpShowAboutRiscos(nullptr); },
+	    ID_MENU_ABOUT_RISCOS);
+	frame->Bind(wxEVT_MENU, [](wxCommandEvent &) { HelpOpenOnlineManual(nullptr); },
+	    ID_MENU_ONLINE_MANUAL);
+	frame->Bind(wxEVT_MENU, [](wxCommandEvent &) { HelpOpenWebsite(nullptr); },
+	    ID_MENU_VISIT_WEBSITE);
+	frame->Bind(wxEVT_MENU, [](wxCommandEvent &) { HelpReportIssue(nullptr); },
+	    ID_MENU_REPORT_ISSUE);
+	frame->Bind(wxEVT_MENU, [](wxCommandEvent &) { HelpCheckForUpdate(nullptr); },
+	    ID_MENU_CHECK_UPDATE);
+
+	/* Quit has to do the work itself. What it falls back to, ExitMainLoop(),
+	   does nothing before OnRun(): the selector runs inside OnInit(), where
+	   there is no main loop yet. Ending the dialogue unwinds the loop that
+	   does exist, and startup then takes its "no machine chosen" path. */
+	frame->Bind(wxEVT_MENU, [](wxCommandEvent &) {
+		EndModalDialogues();
+		wxTheApp->ExitMainLoop();
+	}, wxID_EXIT);
 }
 #endif
 
@@ -689,6 +787,12 @@ bool RpcemuApp::OnInit()
 	// wxMSW does not; without this, PNG bitmaps (toolbar icons, app icon) fail
 	// to load.
 	wxInitAllImageHandlers();
+
+#ifdef __WXOSX__
+	/* Before the selector, so there is a menu bar for the whole life of the
+	   process rather than only while a machine window is open. */
+	BuildAppMenuBar();
+#endif
 
 	/*
 	 * The only call that passes a prompt, so the first-run question can only

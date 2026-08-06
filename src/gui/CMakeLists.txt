@@ -32,6 +32,7 @@ set(GUI_SOURCES
     package_sources_dialog.cpp
     riscos_fetch.cpp
     riscos_setup_dialog.cpp
+    help_actions.cpp
     support_bundle.cpp
     podule_config_dialog.cpp
     machine_inspector_window.cpp
