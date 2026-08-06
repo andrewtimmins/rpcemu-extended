@@ -59,9 +59,19 @@ static struct {
 
 	uint32_t	irq_status;	///< Address of a word in RAM, used as the IRQ status register
 
-	uint8_t		buffer[2048];
+	/* The received frame the guest's next receive call will take, and the
+	   queue of frames behind it. */
+	uint8_t		buffer[PKT_MAX_SIZE];
 
 	size_t		buffer_len;
+
+	/* Transmit has a buffer of its own, and must keep it. Sharing the receive
+	   buffer meant a transmit issued while a received frame was still waiting
+	   overwrote that frame without clearing buffer_len, so the guest then read
+	   its own outgoing frame back as if it had arrived. The window is real,
+	   because a transmit can be issued with interrupts off, or by a protocol
+	   module called from the driver's own receive path. */
+	uint8_t		tx_buffer[PKT_MAX_SIZE];
 
 	FILE		*capture;	///< Handle for debug capture file, or NULL if not in use
 
@@ -76,6 +86,8 @@ static struct {
 
 /* Forward declarations */
 static void deliver_queued_packet(void);
+static int rx_space(void);
+static int rx_deliver(const uint8_t *pkt, size_t pkt_len);
 
 static void
 write16(FILE *f, uint16_t x)
@@ -138,34 +150,99 @@ write_packet(FILE *f, const void *data, size_t data_len)
 }
 
 /**
+ * Number of received frames the guest side can still take: the delivery slot
+ * if it is free, plus the free entries in the queue behind it.
+ */
+static int
+rx_space(void)
+{
+	return ((nat.buffer_len == 0) ? 1 : 0) +
+	       (PKT_QUEUE_SIZE - nat.pkt_queue_count);
+}
+
+/**
+ * Hand a received frame to the guest, queueing it behind the delivery slot if
+ * that slot is still occupied.
+ *
+ * Both sources of received frames come through here: SLiRP, and the Access
+ * broadcast relay. They used to have a path each, and only the relay's was
+ * queued.
+ *
+ * @param pkt     Complete Ethernet frame
+ * @param pkt_len Length of frame in bytes
+ *
+ * @return 1 if the frame was taken, 0 if it was dropped
+ */
+static int
+rx_deliver(const uint8_t *pkt, size_t pkt_len)
+{
+	queued_packet_t *slot;
+
+	if (pkt_len == 0 || pkt_len > PKT_MAX_SIZE) {
+		return 0;
+	}
+
+	/* Write to capture file for debug. Done on arrival rather than on
+	   delivery to the guest, so the capture keeps the order and the timing
+	   the frames actually turned up in. */
+	write_packet(nat.capture, pkt, pkt_len);
+
+	if (nat.irq_status == 0 || network_poduleinfo == NULL) {
+		// The guest driver has not registered, so there is nowhere to put it
+		return 0;
+	}
+
+	if (nat.buffer_len == 0 && nat.pkt_queue_count == 0) {
+		memcpy(nat.buffer, pkt, pkt_len);
+		nat.buffer_len = pkt_len;
+		network_irq_raise();
+		return 1;
+	}
+
+	if (nat.pkt_queue_count >= PKT_QUEUE_SIZE) {
+		return 0;
+	}
+
+	slot = &nat.pkt_queue[nat.pkt_queue_head];
+	memcpy(slot->data, pkt, pkt_len);
+	slot->len = pkt_len;
+	nat.pkt_queue_head = (nat.pkt_queue_head + 1) % PKT_QUEUE_SIZE;
+	nat.pkt_queue_count++;
+
+	return 1;
+}
+
+/**
  */
 void
 slirp_output(void *opaque, const uint8_t *pkt, int pkt_len)
 {
 	NOT_USED(opaque);
 
-	// Write to capture file for debug
-	write_packet(nat.capture, pkt, pkt_len);
-
-	if (nat.irq_status == 0 || network_poduleinfo == NULL) {
-		// Not set-up to generate IRQ
+	if (pkt_len <= 0) {
 		return;
 	}
 
-	memcpy(nat.buffer, pkt, pkt_len);
-	nat.buffer_len = pkt_len;
-
-	network_irq_raise();
+	(void) rx_deliver(pkt, (size_t) pkt_len);
 }
 
 /**
+ * Tell SLiRP whether it may hand over another frame.
+ *
+ * This gates if_start(), which is only reached from network_nat_poll(). While
+ * this answered "only when the single delivery slot is free" the guest could
+ * take at most one frame per poll, and the guest cannot drain the slot during a
+ * poll because both run on the emulation thread. That put a hard ceiling of one
+ * received packet per ~2.5 million emulated instructions on everything
+ * arriving through NAT. Reporting the queue behind the slot lets one poll drain
+ * a burst.
  */
 int
 slirp_can_output(void *opaque)
 {
 	NOT_USED(opaque);
 
-	return (nat.buffer_len == 0);
+	return rx_space() > 0;
 }
 
 /**
@@ -339,7 +416,7 @@ network_nat_poll(void)
 uint32_t
 network_nat_tx(uint32_t errbuf, uint32_t mbufs, uint32_t dest, uint32_t src, uint32_t frametype)
 {
-	uint8_t *buf = nat.buffer;
+	uint8_t *buf = nat.tx_buffer;
 	struct ro_mbuf_part txb;
 	uint32_t packet_length;
 
@@ -362,7 +439,7 @@ network_nat_tx(uint32_t errbuf, uint32_t mbufs, uint32_t dest, uint32_t src, uin
 	while (mbufs != 0) {
 		memcpytohost(&txb, mbufs, sizeof(txb));
 		packet_length += txb.m_len;
-		if (packet_length > sizeof(nat.buffer)) {
+		if (packet_length > sizeof(nat.tx_buffer)) {
 			strcpyfromhost(errbuf, "RPCEmu: Packet too large to send");
 			return errbuf;
 		}
@@ -372,7 +449,7 @@ network_nat_tx(uint32_t errbuf, uint32_t mbufs, uint32_t dest, uint32_t src, uin
 	}
 
 	// Write to capture file for debug
-	write_packet(nat.capture, nat.buffer, packet_length);
+	write_packet(nat.capture, nat.tx_buffer, packet_length);
 
 	// Offer the packet to the Access+/ShareFS broadcast relay. If it returns
 	// non-zero it has taken full ownership of the packet (an external unicast
@@ -380,8 +457,8 @@ network_nat_tx(uint32_t errbuf, uint32_t mbufs, uint32_t dest, uint32_t src, uin
 	// duplicate out of SLiRP's NAT with a masqueraded source port, splitting
 	// the ShareFS conversation across two ports and stalling disc opens.
 	// Broadcasts and non-Access traffic return zero and still go to SLiRP.
-	if (!broadcast_relay_tx(nat.buffer, packet_length)) {
-		slirp_input(nat.slirp, nat.buffer, packet_length);
+	if (!broadcast_relay_tx(nat.tx_buffer, packet_length)) {
+		slirp_input(nat.slirp, nat.tx_buffer, packet_length);
 	}
 
 	return 0;
@@ -390,12 +467,17 @@ network_nat_tx(uint32_t errbuf, uint32_t mbufs, uint32_t dest, uint32_t src, uin
 /**
  * Receive data from the network
  *
- * @param errbuf     Address of buffer to return error string
+ * A frame that cannot be delivered is dropped and reported to the log rather
+ * than raised to the guest as an error: see the comment in the body for why
+ * returning an error here was worse than losing the frame. Nothing is left for
+ * the caller to report, so errbuf goes unused.
+ *
+ * @param errbuf     Address of buffer to return error string (unused)
  * @param mbuf       Address of mbuf to hold received payload
  * @param rxhdr      Address of mbuf to hold received header
  * @param data_avail Address of flag to return indication of data available
  *
- * @return errbuf on error, else zero
+ * @return Always zero
  */
 uint32_t
 network_nat_rx(uint32_t errbuf, uint32_t mbuf, uint32_t rxhdr, uint32_t *data_avail)
@@ -404,49 +486,76 @@ network_nat_rx(uint32_t errbuf, uint32_t mbuf, uint32_t rxhdr, uint32_t *data_av
 	struct rx_hdr hdr;
 	size_t packet_length;
 
+	NOT_USED(errbuf);
+
 	*data_avail = 0;
+
+	/* Promote a queued frame, in case the slot fell empty without one
+	   following it in */
+	if (nat.buffer_len == 0) {
+		deliver_queued_packet();
+	}
 
 	if (nat.buffer_len == 0) {
 		// No data
 		return 0;
 	}
 
+	/*
+	 * From here the frame is consumed whatever happens to it. Every path that
+	 * left it in the slot and returned an error stopped slirp_can_output()
+	 * from ever returning true again, so a single undeliverable frame took the
+	 * machine's networking down for the rest of the session, silently and with
+	 * no way back short of a reset. Dropping the frame costs a
+	 * retransmission.
+	 */
+	packet_length = nat.buffer_len;
+	nat.buffer_len = 0;
+
+	if (mbuf == 0 || packet_length <= HEADERLEN) {
+		// Nowhere to put it, or nothing in it beyond the header
+		rpclog("Network: dropped a received frame of %zu bytes (%s)\n",
+		       packet_length,
+		       (mbuf == 0) ? "no mbuf supplied" : "no payload");
+		deliver_queued_packet();
+		return 0;
+	}
+
 	memset(&hdr, 0, sizeof(hdr));
 
-	packet_length = nat.buffer_len;
+	// Fill in received header structure
+	memcpy(hdr.rx_dst_addr, nat.buffer + 0, 6);
+	memcpy(hdr.rx_src_addr, nat.buffer + 6, 6);
+	hdr.rx_frame_type = (nat.buffer[12] << 8) | nat.buffer[13];
+	hdr.rx_error_level = 0;
 
-	if (mbuf != 0 && packet_length > HEADERLEN) {
-		const uint8_t *payload = nat.buffer + HEADERLEN;
+	packet_length -= HEADERLEN;
 
-		// Fill in received header structure
-		memcpy(hdr.rx_dst_addr, nat.buffer + 0, 6);
-		memcpy(hdr.rx_src_addr, nat.buffer + 6, 6);
-		hdr.rx_frame_type = (nat.buffer[12] << 8) | nat.buffer[13];
-		hdr.rx_error_level = 0;
-		memcpyfromhost(rxhdr, &hdr, sizeof(hdr));
+	memcpytohost(&rxb, mbuf, sizeof(rxb));
 
-		packet_length -= HEADERLEN;
-
-		memcpytohost(&rxb, mbuf, sizeof(rxb));
-
-		if (packet_length > rxb.m_inilen) {
-			// Mbuf too small for received packet
-			return errbuf;
-		}
-
-		// Copy payload in to the mbuf
-		rxb.m_off = rxb.m_inioff;
-		memcpyfromhost(mbuf + rxb.m_off, payload, packet_length);
-		rxb.m_len = packet_length;
-		memcpyfromhost(mbuf, &rxb, sizeof(rxb));
-
-		*data_avail = 1;
-
-		nat.buffer_len = 0;
-
-		// Try to deliver next queued packet
+	if (packet_length > rxb.m_inilen) {
+		// Mbuf too small for received packet
+		rpclog("Network: dropped a received frame, its %zu byte payload does "
+		       "not fit the guest's %u byte mbuf\n",
+		       packet_length, (unsigned) rxb.m_inilen);
 		deliver_queued_packet();
+		return 0;
 	}
+
+	/* Only now that the frame is known to be deliverable, so a dropped one
+	   leaves the guest's header untouched rather than half filled in */
+	memcpyfromhost(rxhdr, &hdr, sizeof(hdr));
+
+	// Copy payload in to the mbuf
+	rxb.m_off = rxb.m_inioff;
+	memcpyfromhost(mbuf + rxb.m_off, nat.buffer + HEADERLEN, packet_length);
+	rxb.m_len = packet_length;
+	memcpyfromhost(mbuf, &rxb, sizeof(rxb));
+
+	*data_avail = 1;
+
+	// Try to deliver next queued packet
+	deliver_queued_packet();
 
 	return 0;
 }
@@ -546,12 +655,9 @@ deliver_queued_packet(void)
 	// Get packet from queue
 	pkt = &nat.pkt_queue[nat.pkt_queue_tail];
 
-	// Copy to main buffer
+	// Copy to main buffer. Already written to the capture file on arrival.
 	memcpy(nat.buffer, pkt->data, pkt->len);
 	nat.buffer_len = pkt->len;
-
-	// Write to capture file for debug
-	write_packet(nat.capture, pkt->data, pkt->len);
 
 	// Advance tail
 	nat.pkt_queue_tail = (nat.pkt_queue_tail + 1) % PKT_QUEUE_SIZE;
@@ -577,9 +683,7 @@ network_nat_inject_space(void)
 		return 0;
 	}
 
-	/* One slot for the main buffer if idle, plus the free queue entries. */
-	return ((nat.buffer_len == 0) ? 1 : 0) +
-	       (PKT_QUEUE_SIZE - nat.pkt_queue_count);
+	return rx_space();
 }
 
 /**
@@ -595,39 +699,11 @@ network_nat_inject_space(void)
 int
 network_nat_inject_packet(const uint8_t *pkt, int pkt_len)
 {
-	queued_packet_t *slot;
-
-	// Check if networking is ready
-	if (nat.irq_status == 0 || network_poduleinfo == NULL) {
+	if (pkt_len <= 0) {
 		return 0;
 	}
 
-	// Check packet fits
-	if (pkt_len > PKT_MAX_SIZE) {
-		return 0;
-	}
-
-	// If main buffer is empty and queue is empty, deliver directly
-	if (nat.buffer_len == 0 && nat.pkt_queue_count == 0) {
-		memcpy(nat.buffer, pkt, pkt_len);
-		nat.buffer_len = pkt_len;
-		write_packet(nat.capture, pkt, pkt_len);
-		network_irq_raise();
-		return 1;
-	}
-
-	// Queue the packet
-	if (nat.pkt_queue_count >= PKT_QUEUE_SIZE) {
-		return 0;  // Queue full
-	}
-
-	slot = &nat.pkt_queue[nat.pkt_queue_head];
-	memcpy(slot->data, pkt, pkt_len);
-	slot->len = pkt_len;
-	nat.pkt_queue_head = (nat.pkt_queue_head + 1) % PKT_QUEUE_SIZE;
-	nat.pkt_queue_count++;
-
-	return 1;
+	return rx_deliver(pkt, (size_t) pkt_len);
 }
 
 /**
