@@ -1808,6 +1808,10 @@ void MainFrame::OnActivate(wxActivateEvent &event)
 	} else if (panel_ != nullptr) {
 		panel_->FocusPanel();
 	}
+	/* wxFrame's own handler is what puts this window's menu bar up on macOS,
+	   where the bar belongs to the application rather than to a window. Without
+	   this the File, Disc and Settings menus never appeared at all. */
+	event.Skip();
 }
 
 /* Let the guest change screen mode to match the host display.
