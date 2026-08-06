@@ -64,7 +64,7 @@ when CI gets to it. Nothing to pass: it looks for `wine64`, then `wine`, then
 apt install wine64          # the loader; the `wine` wrapper is a separate package
 ./build-windows.sh
 ==> Running the Windows test suite under Wine (/usr/lib/wine/wine64)
-==> [wine] all 32 tests passed
+==> [wine] all 34 tests passed
 ```
 
 Set `RPCEMU_SKIP_WINE_TESTS=1` to opt out.
@@ -84,8 +84,8 @@ pointed at the Windows binary, and how the RISC OS 5.31 empty-HostFS screen in
 
 ## What the suite covers
 
-Thirty tests, twenty-two of which build on every platform and eight of which
-need a native recompiler backend.
+Thirty-four tests, twenty-six of which build on every platform and eight of
+which need a native recompiler backend.
 
 | Test | Covers |
 | --- | --- |
@@ -115,6 +115,8 @@ need a native recompiler backend.
 | `test_openbus_decode` | that the machine's own memory decode reaches a fitted card, which an unhooked window would hide |
 | `test_hostfs_path` | where a machine's HostFS drive resolves to, on all three platforms |
 | `test_hostfs_advice` | what the machine editor warns about when a HostFS folder is chosen |
+| `test_folder_move` | whether moving somebody's files can be offered: empty destination, free space, in use |
+| `test_folder_transfer` | the transfer itself on real files, including one that fails half way through |
 | `test_data_dir` | which data directory is used, and above all when the user is asked |
 | `test_held_keys` | which keys the guest believes are held, when several map to one |
 | `test_machine_selector` | the VNC machine selector's navigation and drawing |

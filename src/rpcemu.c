@@ -894,6 +894,15 @@ rpclog(const char *format, ...)
 	fflush(arclog);
 }
 
+void
+rpclog_close(void)
+{
+	if (arclog != NULL) {
+		fclose(arclog);
+		arclog = NULL;
+	}
+}
+
 /**
  * Reinitialise all emulated subsystems based on current configuration. This
  * is equivalent to resetting the emulated hardware.

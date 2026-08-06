@@ -20,6 +20,7 @@ set(GUI_SOURCES
     input_helpers.cpp
     config_selector_dialog.cpp
     config_paths.cpp
+    folder_transfer.cpp
     machine_edit_dialog.cpp
     new_machine_dialog.cpp
     guest_command.cpp

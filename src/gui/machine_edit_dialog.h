@@ -130,11 +130,17 @@ private:
 	wxStaticText *hostfs_note_ = nullptr;
 
 	wxString ResolvedHostfsRoot() const;
+	wxString ResolveHostfsValue(const wxString &configured) const;
+	/* Returns false when the user backed out and nothing should be saved. */
+	bool OfferToBringHostfsFilesAcross();
 	void UpdateHostfsNote();
 	bool renamed_ = false;
 	bool allow_rename_ = true;
 	bool loading_settings_ = false;
 	bool emulator_running_ = false;
+	/* The hostfs_path as loaded, so a change can be spotted on OK and the files
+	   offered a lift to the new folder. */
+	wxString original_hostfs_;
 	bool cdrom_enabled_ = false;
 
 	wxTextCtrl *name_edit_ = nullptr;

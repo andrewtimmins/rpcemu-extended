@@ -25,6 +25,7 @@
 #include "riscos_fetch.h"
 
 #include "config_paths.h"
+#include "folder_transfer.h"
 
 extern "C" {
 #include "hostfs_advice.h"
@@ -230,10 +231,8 @@ static wxString MachineSharingHostfs(const wxString &root, const wxString &self)
  * Uses the same rules the emulator will, rather than a second copy of them, so
  * the dialogue cannot disagree with what actually happens at startup.
  */
-wxString MachineEditDialog::ResolvedHostfsRoot() const
+wxString MachineEditDialog::ResolveHostfsValue(const wxString &configured) const
 {
-	const wxString configured = hostfs_edit_ != nullptr
-	    ? hostfs_edit_->GetValue().Trim().Trim(false) : wxString();
 	const wxString name = new_name_.empty() ? original_name_ : new_name_;
 	const wxString machine_dir =
 	    ConfigPathsMachinesDir() + wxFileName::GetPathSeparator() +
@@ -245,6 +244,12 @@ wxString MachineEditDialog::ResolvedHostfsRoot() const
 		return machine_dir;
 	}
 	return wxString::FromUTF8(out);
+}
+
+wxString MachineEditDialog::ResolvedHostfsRoot() const
+{
+	return ResolveHostfsValue(hostfs_edit_ != nullptr
+	    ? hostfs_edit_->GetValue().Trim().Trim(false) : wxString());
 }
 
 /*
@@ -1619,6 +1624,9 @@ void MachineEditDialog::LoadSettings()
 
 		settings.Read("hostfs_path", &hostfs, wxEmptyString);
 		hostfs_edit_->SetValue(hostfs);
+		/* Kept so OK can tell whether the folder changed, and offer to bring
+		   the files across if it did. */
+		original_hostfs_ = hostfs;
 		UpdateHostfsNote();
 	}
 
@@ -2116,6 +2124,96 @@ void MachineEditDialog::OnOk(wxCommandEvent &)
 		wxMessageBox(wxString::FromUTF8(msg), "ROM compatibility", wxOK | wxICON_WARNING, this);
 		return;
 	}
+	/* Before saving, because the setting must not change unless the files
+	   actually got there. See folder_transfer.h. */
+	if (!OfferToBringHostfsFilesAcross()) {
+		return;
+	}
 	SaveSettings();
 	EndModal(wxID_OK);
+}
+
+/*
+ * The HostFS folder has been pointed somewhere new: offer to take the files with
+ * it.
+ *
+ * ★ THE ORDER IS THE SAFETY. The transfer happens first and the configuration is
+ * only written if it succeeded, so a failure leaves the machine booting from the
+ * folder it was booting from before. Getting this the other way round would mean a
+ * failed copy and a machine pointed at an empty folder, which is the very thing
+ * this feature exists to stop.
+ *
+ * @return false when the user cancelled, or when a transfer failed - in both
+ *         cases nothing should be saved and the dialogue stays open.
+ */
+bool MachineEditDialog::OfferToBringHostfsFilesAcross()
+{
+	if (hostfs_edit_ == nullptr) {
+		return true;
+	}
+
+	const wxString now = hostfs_edit_->GetValue().Trim().Trim(false);
+
+	if (now == original_hostfs_) {
+		return true;
+	}
+
+	const wxString from = ResolveHostfsValue(original_hostfs_);
+	const wxString to = ResolveHostfsValue(now);
+	unsigned long long bytes = 0;
+	const folder_move_facts facts =
+	    FolderTransferGatherFacts(from, to, emulator_running_, &bytes);
+	folder_move_reason why = FOLDER_MOVE_OK;
+	const folder_move_offer offer = folder_move_decide(&facts, &why);
+
+	if (offer == FOLDER_MOVE_OFFER_NOTHING) {
+		/*
+		 * Nothing to move is the ordinary case - a new machine, or the same
+		 * folder spelled differently - and saying so would be noise. The others
+		 * are worth a word, because the user asked for something that cannot
+		 * happen and would otherwise find an empty disc later.
+		 */
+		if (why == FOLDER_MOVE_SAME_PLACE || why == FOLDER_MOVE_SOURCE_EMPTY ||
+		    why == FOLDER_MOVE_SOURCE_MISSING) {
+			return true;
+		}
+		const FolderTransferChoice choice = FolderTransferAsk(this, "hard disc",
+		    from, to, offer, why, bytes);
+
+		return choice != FolderTransferChoice::Cancel;
+	}
+
+	const FolderTransferChoice choice = FolderTransferAsk(this, "hard disc",
+	    from, to, offer, why, bytes);
+
+	switch (choice) {
+	case FolderTransferChoice::Cancel:
+		return false;
+
+	case FolderTransferChoice::Manual:
+		/* The note under the field already says what an empty folder means, and
+		   they have just read it in the dialogue. Nothing more to add. */
+		return true;
+
+	case FolderTransferChoice::Move:
+	case FolderTransferChoice::Copy: {
+		const FolderTransferResult result =
+		    FolderTransferRun(this, from, to, choice);
+
+		if (!result.ok) {
+			wxMessageBox(result.message, "The files were not moved",
+			    wxOK | wxICON_ERROR, this);
+			/* Put the field back, so pressing OK again saves everything else
+			   without pointing the machine at a folder its files are not in. */
+			hostfs_edit_->SetValue(original_hostfs_);
+			UpdateHostfsNote();
+			return false;
+		}
+		wxMessageBox(result.message,
+		    choice == FolderTransferChoice::Move ? "Files moved" : "Files copied",
+		    wxOK | wxICON_INFORMATION, this);
+		return true;
+	}
+	}
+	return true;
 }

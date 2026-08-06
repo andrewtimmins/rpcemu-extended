@@ -150,6 +150,67 @@ this section rather than a bug that can be fixed.
 Measured by reading a hand-written file with `wxFileConfig`, not assumed; the
 results are pinned in `tests/test_hostfs_path.c`.
 
+## Taking your files with you
+
+Point HostFS somewhere new and RPCEmu offers to bring the files across:
+
+    Your files are in:
+        /home/you/RPCEmu/machines/Box/hostfs
+    The new folder is:
+        /mnt/data/riscos
+
+    There is 412 MB to bring across.
+
+    Move - the files are copied and checked, and only then removed from the old
+    folder.
+    Copy - the old folder is left exactly as it is, so it doubles as a backup.
+    Needs room for both.
+
+    Either way, please make sure you have a backup first: this is your hard disc.
+    Nothing is deleted until every file has been copied and checked, but an
+    automatic move is not a substitute for a backup.
+
+      [ Move my files ]  [ Copy my files ]  [ I'll do it myself ]  [ Cancel ]
+
+"I'll do it myself" is the old behaviour: the setting changes, the files stay put,
+and the warning above about an empty disc applies until you move them.
+
+A progress window names each file with a running count and a remaining time, and
+its Cancel leaves everything as it was.
+
+### What makes it safe
+
+- **The setting is only changed after the transfer has succeeded.** If anything
+  fails part way, both copies are still on disc and the machine still boots from the
+  folder it was booting from before. A failed move is then an inconvenience rather
+  than a lost hard disc, which matters more than any wording, because people click
+  through warnings.
+- **Nothing is deleted until every file has been copied *and verified*** — MD5 on
+  both sides, not a size comparison. A copy truncated by a disc filling up has the
+  wrong content and the right length often enough to matter.
+- **A move within one filesystem is a rename**, so it is instant whatever the size
+  and cannot half-happen.
+- **A destination with files in it is refused, never merged.** Deciding which copy
+  of a clashing file wins is not a choice RPCEmu should make silently. Checked
+  twice: once when deciding what to offer, and again inside the transfer itself,
+  because the cleanup-on-failure step deletes everything at the destination and is
+  only safe if everything there is ours.
+- **It is refused outright while a machine is running from either folder.** HostFS
+  opens files as the guest asks for them, so moving them under a live machine would
+  damage whatever it read next.
+- **Free space is checked first**, with a margin, since a copy that exactly fills
+  the disc leaves nothing for the machine to write afterwards.
+
+The decision is `src/folder_move.c` (pure, `tests/test_folder_move.c`); the doing
+is `src/gui/folder_transfer.cpp` (`tests/test_folder_transfer.cpp`, which runs the
+real copy, verify and delete on real files, including a transfer that fails half
+way).
+
+The same offer is made for the **data folder**, from Options > Data Folder in the
+machine selector, where it moves the machines, ROMs and settings together. That one
+takes effect on restart, and closes the log file first because it lives in the
+folder being moved and Windows will not move an open file.
+
 ## Moving the data folder
 
 The *relative* form travels: a machine with `hostfs_path=disc` resolves under

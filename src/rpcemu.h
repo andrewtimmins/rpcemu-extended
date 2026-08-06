@@ -422,6 +422,15 @@ extern void rpcemu_floppy_load(int drive, const char *filename);
 extern void rpcemu_floppy_eject(int drive);
 extern void rpclog(const char *format, ...)
 	RPCEMU_FORMAT_PRINTF(1, 2);
+/*
+ * Close the log file, so the next rpclog() opens it again at whatever
+ * rpcemu_get_log_path() says by then.
+ *
+ * For moving the data folder: the log lives inside it and we are holding it open,
+ * and Windows will not move a file that is open. Nothing else needs this - the log
+ * is opened lazily and never otherwise closed.
+ */
+extern void rpclog_close(void);
 extern void rpcemu_model_changed(Model model);
 extern const char *rpcemu_file_get_extension(const char *filename);
 extern int rpcemu_config_is_reset_required(const Config *new_config, Model new_model);

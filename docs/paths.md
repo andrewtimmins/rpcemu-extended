@@ -89,16 +89,34 @@ Exactly one of the 512 possible input combinations produces a dialogue, and
 
 On the machine selector, *Options ▾ → **Data Folder…***, then restart.
 
-It lives there and not on a running machine's Settings menu on purpose: the data
-folder is where *every* machine lives, so it is not a property of whichever one
-happens to be loaded, and the moment you want to change it is before choosing a
-machine rather than after.
+**You are offered a move or a copy**, and can still decline both:
 
-**Nothing is copied or moved.** Only the pointer changes. Relocating machines,
-discs and ROMs that may be gigabytes and may be open is how data gets lost, so the
-offer is the honest one, and the dialogue says what it means before doing it: if
-the new folder is empty you will start with no machines and a freshly seeded
-folder, the old folder is untouched, and you can point back at any time.
+| | |
+| --- | --- |
+| **Move my files** | The machines, ROMs and settings are brought across and the old folder emptied. Within one filesystem this is a rename, so it is instant. |
+| **Copy my files** | The same, but the old folder is left exactly as it is, so it doubles as a backup. Needs room for both. |
+| **I'll do it myself** | Only the pointer changes, which is what this used to do unconditionally. If the new folder is empty you start with no machines and a freshly seeded folder; the old one is untouched and you can point back at any time. |
+| **Cancel** | Nothing changes at all. |
+
+Either transfer takes effect on **restart**, like every other change to this
+setting. The rules that keep it safe — verified before anything is deleted, the
+pointer only changed once the files have arrived, a destination with files in it
+refused rather than merged — are in [hostfs.md](hostfs.md#what-makes-it-safe),
+since the same machinery does both folders.
+
+Two things specific to the data folder:
+
+- **The log file is closed first.** `rpclog.txt` lives in the folder being moved
+  and RPCEmu is holding it open; Windows will not move an open file. It reopens at
+  the new location on the next message.
+- **It is refused while any machine in either folder is running**, including one
+  belonging to a second copy of RPCEmu. Asked by trying to take each machine's
+  lock rather than by looking for a lock *file*, because the file outlives a crash
+  and would refuse the move for a machine that stopped running last week.
+
+It lives on the selector and not on a running machine's Settings menu on purpose:
+the data folder is where *every* machine lives, so it is not a property of
+whichever one happens to be loaded.
 
 ## The payload is a separate question
 

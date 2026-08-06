@@ -35,7 +35,10 @@
 #include <wx/progdlg.h>
 #include <wx/textdlg.h>
 
+#include "folder_transfer.h"
+
 extern "C" {
+#include "machine_lock.h"
 #include "rpcemu.h"
 #include "savestate.h"
 }
@@ -589,14 +592,62 @@ void ConfigSelectorDialog::OnOptions(wxCommandEvent &)
 }
 
 /*
- * Point RPCEmu at a different data folder.
+ * Is any machine in this data folder being used by a running RPCEmu?
  *
- * Only the pointer changes: nothing is copied or moved. Relocating machines,
- * discs and ROMs that may be gigabytes and may be open is how data gets lost, so
- * the honest offer is "look somewhere else", and the dialogue says what that
- * means before doing it. An empty folder means an empty machine list, which to
- * somebody expecting their machines to follow is indistinguishable from having
- * lost them, so it is spelled out.
+ * Asked by trying to take each machine's lock, not by looking for a lock FILE.
+ * The file is only a hint - it survives a crash, so its presence would refuse the
+ * move for a machine that stopped running last Tuesday. The lock underneath it is
+ * an flock, which the kernel drops when the holder dies, so acquiring it is an
+ * accurate answer. Anything taken here is given straight back.
+ *
+ * Nothing of ours is running: this dialogue is the machine selector, shown before
+ * a machine starts. The point is the OTHER RPCEmu that might be, on the same data
+ * folder, writing to a disc while we copy it.
+ */
+static bool AnyMachineInUse(const wxString &datadir)
+{
+	const wxString machines = datadir + wxFileName::GetPathSeparator() +
+	    "machines";
+
+	if (!wxDirExists(machines)) {
+		return false;
+	}
+
+	wxDir dir(machines);
+	if (!dir.IsOpened()) {
+		/* Cannot tell. Say yes: refusing to move somebody's files is a nuisance,
+		   copying them out from under a live machine is not. */
+		return true;
+	}
+
+	wxString name;
+	bool more = dir.GetFirst(&name, wxEmptyString, wxDIR_DIRS);
+	while (more) {
+		const wxString machine_dir = machines +
+		    wxFileName::GetPathSeparator() + name +
+		    wxFileName::GetPathSeparator();
+
+		if (machine_lock_acquire(machine_dir.utf8_str().data(), 0) != 0) {
+			return true;
+		}
+		machine_lock_release();
+		more = dir.GetNext(&name);
+	}
+	return false;
+}
+
+/*
+ * Point RPCEmu at a different data folder, and offer to take the files along.
+ *
+ * It used to only change the pointer, on the grounds that relocating machines,
+ * discs and ROMs that may be gigabytes and may be open is how data gets lost. That
+ * is a fair worry but the wrong conclusion: somebody who moves their data folder
+ * wants their machines to follow, and leaving them behind produces exactly the
+ * "where have my machines gone" moment the old wording had to apologise for.
+ *
+ * So the files are offered a lift, under the rules in folder_transfer.h - verified
+ * before anything is deleted, and the pointer only changed once they have arrived.
+ * Declining still works exactly as it did before.
  */
 void ConfigSelectorDialog::OnChooseDataDir()
 {
@@ -617,6 +668,53 @@ void ConfigSelectorDialog::OnChooseDataDir()
 		return;
 	}
 
+	/*
+	 * The offer comes first, because it decides what the confirmation should
+	 * say. Telling somebody their machines stay behind and then offering to move
+	 * them would be two dialogues arguing with each other.
+	 */
+	unsigned long long bytes = 0;
+	const folder_move_facts facts = FolderTransferGatherFacts(current, chosen,
+	    AnyMachineInUse(current) || AnyMachineInUse(chosen), &bytes);
+	folder_move_reason why = FOLDER_MOVE_OK;
+	const folder_move_offer offer = folder_move_decide(&facts, &why);
+	FolderTransferChoice choice = FolderTransferChoice::Manual;
+
+	if (offer != FOLDER_MOVE_OFFER_NOTHING ||
+	    (why != FOLDER_MOVE_SAME_PLACE && why != FOLDER_MOVE_SOURCE_EMPTY &&
+	     why != FOLDER_MOVE_SOURCE_MISSING)) {
+		choice = FolderTransferAsk(this, "data folder", current, chosen, offer,
+		    why, bytes);
+		if (choice == FolderTransferChoice::Cancel) {
+			return;
+		}
+	}
+
+	if (choice == FolderTransferChoice::Move ||
+	    choice == FolderTransferChoice::Copy) {
+		/* The log lives in the folder being moved and we are holding it open;
+		   Windows will not move an open file. Reopens at the new location on the
+		   next message. */
+		rpclog_close();
+
+		const FolderTransferResult result = FolderTransferRun(this, current,
+		    chosen, choice);
+
+		if (!result.ok) {
+			wxMessageBox(result.message, "The files were not moved",
+			    wxOK | wxICON_ERROR, this);
+			/* Pointer left where it was, so the machines are still found. */
+			return;
+		}
+		SetDataDir(chosen.utf8_string());
+		wxMessageBox(result.message + "\n\nRestart RPCEmu for the new data "
+		    "folder to take effect.", "RPCEmu Extended - Data Folder",
+		    wxOK | wxICON_INFORMATION, this);
+		return;
+	}
+
+	/* Manual: the old behaviour, and the old warning, which is still the right
+	   thing to say when the files are staying where they are. */
 	const wxString message = wxString::Format(
 	    "RPCEmu will use:\n%s\n\n"
 	    "Your existing machines, discs and ROMs are NOT moved. They stay in:\n%s\n\n"

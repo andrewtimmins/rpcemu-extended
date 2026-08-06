@@ -202,6 +202,42 @@ target_include_directories(test_hostfs_path PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 rpcemu_add_test(test_hostfs_path)
 
+# Whether moving somebody's files can be offered at all. Copying a hard disc is the
+# most destructive thing RPCEmu does to the host filesystem, and every condition
+# that makes it unsafe - a destination with files in it, a full disc, a machine
+# still running from the folder - is awkward to arrange for real. So the rules are
+# pure over facts the caller gathers, and this puts the combinations to them. The
+# doing is src/gui/folder_transfer.cpp. See docs/hostfs.md.
+add_executable(test_folder_move test_folder_move.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/folder_move.c)
+target_include_directories(test_folder_move PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_folder_move)
+
+# C++ for the tests that need it. Enabled here as well as in src/CMakeLists.txt
+# because enable_language() sets its variables in the calling directory's scope, and
+# tests/ is a sibling of src/ rather than a child - without this, configuring fails
+# with "CMAKE_CXX_LINK_EXECUTABLE not set" while confusingly still compiling.
+enable_language(CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# The doing, on real files: copy, verify, delete, and above all what happens when a
+# transfer fails half way through. Needs wx (wxBase, for file and directory work)
+# but NOT a display: FolderTransferRun() creates its progress dialogue only when
+# there is a GUI, which is what lets this run in CI. rpcemu_core comes along for
+# md5_file_hex(), which is how a copy is verified rather than merely sized.
+add_executable(test_folder_transfer test_folder_transfer.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui/folder_transfer.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/folder_move.c
+               test_stubs.c)
+target_include_directories(test_folder_transfer PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui)
+target_link_libraries(test_folder_transfer PRIVATE rpcemu_core m)
+rpcemu_setup_wxwidgets(test_folder_transfer)
+rpcemu_add_test(test_folder_transfer)
+
 # What the machine editor warns about when a HostFS folder is chosen. Split out of
 # the dialog because the decision was wrong in a way that read correctly: the
 # "no !Boot" warning lived in the branch for a folder that already existed, so a
@@ -399,7 +435,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 24)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 26)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()
