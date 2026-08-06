@@ -446,7 +446,23 @@ FolderTransferRun(wxWindow *parent, const wxString &from, const wxString &to,
 		 * code - which is the destructive part, and the part worth testing - on a
 		 * console build with no display, including in CI.
 		 */
-		const bool have_gui = (wxTheApp != nullptr && wxTheApp->IsGUI());
+		/*
+		 * ★ wxAppConsole::GetInstance(), NOT wxTheApp.
+		 *
+		 * wxTheApp is a macro that DOWNCASTS the application object to wxApp*,
+		 * and in a console program - which is exactly what the test is - the
+		 * object is a wxAppConsole and never was a wxApp. The cast is undefined
+		 * behaviour even though the pointer is only tested and IsGUI() is virtual
+		 * on the base, and UBSan says so:
+		 *
+		 *   runtime error: downcast of address 0x... which does not point to an
+		 *   object of type 'wxApp'
+		 *
+		 * Caught by the sanitiser job, in the first version of this file. Asking
+		 * the base class needs no cast and answers the same question.
+		 */
+		const wxAppConsole *const app = wxAppConsole::GetInstance();
+		const bool have_gui = (app != nullptr && app->IsGUI());
 		std::unique_ptr<wxProgressDialog> progress;
 
 		const int total = (int) listing.files.size();
