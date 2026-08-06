@@ -63,6 +63,17 @@ static uint8_t *sdramb1 = NULL; /**< Byte pointer to Kinetic SDRAM bank 1 */
 
 #define SDRAM_BANK_SIZE  (128 * 1024 * 1024) /**< Kinetic SDRAM bank size */
 #define SDRAM_BANK_MASK  0x7ffffff            /**< 128MB address mask within an SDRAM bank */
+
+/**
+ * Address mask within SIMM 1.
+ *
+ * SIMM 1 is not shaped like SIMM 0. SIMM 0 is two banks of mem_rammask + 1
+ * bytes, one at 0x10000000 and one at 0x14000000; SIMM 1 is a single 128MB
+ * block spanning 0x18000000-0x1fffffff, fitted only on a 256MB machine. So it
+ * needs its own mask, and using mem_rammask on it folds its upper half onto its
+ * lower half.
+ */
+#define SIMM1_MASK       0x7ffffff
 uint8_t *romb = NULL;          /**< Byte pointer to ROM */
 static uint8_t *vramb  = NULL; /**< Byte pointer to Video RAM */
 
@@ -226,6 +237,97 @@ mem_reset(uint32_t ramsize, uint32_t vram_size)
 		/* 29 address bits are connected to IOMD. This results in a
 		   physical memory map of 512M that repeats in the 4G address space */
 		phys_space_mask = 0x1fffffff;
+	}
+}
+
+/**
+ * Resolve a physical RAM address to the host memory behind it, for the paths
+ * that fetch straight out of RAM by physical address rather than going through
+ * the MMU: sound DMA, and the VIDC cursor shape.
+ *
+ * Those two used to decode the address themselves, with a bit test that ignored
+ * the region base and applied mem_rammask to every region. That is wrong for
+ * SIMM 1, whose upper half was folded onto its lower half (see SIMM1_MASK), and
+ * it does not recognise the Kinetic SDRAM banks at all, which it silently
+ * treated as SIMM 0 bank 0. One decode, used by both, cannot disagree with
+ * itself.
+ *
+ * @param      phys_addr Physical address
+ * @param[out] mask      Mask to apply to addresses within the returned region
+ * @return Host pointer to the base of the region, or NULL if no RAM is fitted
+ *         there (the caller should then do nothing rather than read anything)
+ */
+const uint32_t *
+mem_dma_region(uint32_t phys_addr, uint32_t *mask)
+{
+	*mask = mem_rammask;
+
+	switch (phys_addr & 0x3f000000) {
+	case 0x10000000: /* SIMM 0 bank 0 */
+	case 0x11000000:
+	case 0x12000000:
+	case 0x13000000:
+		return ram00;
+
+	case 0x14000000: /* SIMM 0 bank 1 */
+	case 0x15000000:
+	case 0x16000000:
+	case 0x17000000:
+		return ram01;
+
+	case 0x18000000: /* SIMM 1, one 128MB block, only fitted at 256MB */
+	case 0x19000000:
+	case 0x1a000000:
+	case 0x1b000000:
+	case 0x1c000000:
+	case 0x1d000000:
+	case 0x1e000000:
+	case 0x1f000000:
+		*mask = SIMM1_MASK;
+		return ram1; /* NULL below 256MB */
+
+	case 0x20000000: /* Kinetic SDRAM bank 0 */
+	case 0x21000000:
+	case 0x22000000:
+	case 0x23000000:
+	case 0x24000000:
+	case 0x25000000:
+	case 0x26000000:
+	case 0x27000000:
+	case 0x28000000:
+	case 0x29000000:
+	case 0x2a000000:
+	case 0x2b000000:
+	case 0x2c000000:
+	case 0x2d000000:
+	case 0x2e000000:
+	case 0x2f000000:
+		*mask = SDRAM_BANK_MASK;
+		return sdram0; /* NULL without the Kinetic's on-card SDRAM */
+
+	case 0x30000000: /* Kinetic SDRAM bank 1 */
+	case 0x31000000:
+	case 0x32000000:
+	case 0x33000000:
+	case 0x34000000:
+	case 0x35000000:
+	case 0x36000000:
+	case 0x37000000:
+	case 0x38000000:
+	case 0x39000000:
+	case 0x3a000000:
+	case 0x3b000000:
+	case 0x3c000000:
+	case 0x3d000000:
+	case 0x3e000000:
+	case 0x3f000000:
+		*mask = SDRAM_BANK_MASK;
+		return sdram1;
+
+	default:
+		/* ROM, I/O, VRAM and the podule windows. Neither caller has any
+		   business fetching from those. */
+		return NULL;
 	}
 }
 

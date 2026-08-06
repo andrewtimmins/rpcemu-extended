@@ -1181,15 +1181,20 @@ vidcthread(void)
 	if (thr.cursorheight > 1) {
 		/* Calculate host address of cursor data from physical address.
 		   This assumes that cursor data is always in DRAM, not VRAM,
-		   which is currently true for RISC OS */
-		if (thr.iomd_cinit & 0x8000000) {
-			ramp = (const uint8_t *) ram1;
-		} else if (thr.iomd_cinit & 0x4000000) {
-			ramp = (const uint8_t *) ram01;
-		} else {
-			ramp = (const uint8_t *) ram00;
+		   which is currently true for RISC OS. Each RAM region has its own
+		   mask, so let mem.c decode it: SIMM 1 is a single 128MB block
+		   rather than two mem_rammask-sized banks, and the Kinetic's SDRAM
+		   is elsewhere again. */
+		uint32_t rammask;
+		const uint32_t *region = mem_dma_region(thr.iomd_cinit, &rammask);
+
+		if (region == NULL) {
+			/* No RAM fitted where the shape is said to be; draw no
+			   pointer rather than reading from a NULL pointer. */
+			goto cursor_done;
 		}
-		addr = thr.iomd_cinit & mem_rammask;
+		ramp = (const uint8_t *) region;
+		addr = thr.iomd_cinit & rammask;
 		// printf("Mouse now at %i,%i\n", thr.cursorx, thr.cursory);
 		for (y = 0; y < thr.cursorheight; y++) {
 			if ((y + thr.cursory) >= thr.vidc_ysize) {
@@ -1235,6 +1240,7 @@ vidcthread(void)
 			yh = thr.cursorheight + thr.cursory;
 		}
 	}
+cursor_done:
 	oldcursorheight = thr.cursorheight;
 	oldcursory = thr.cursory;
 

@@ -119,6 +119,7 @@ void
 sound_irq_update(void)
 {
 	const uint32_t *ramp; /**< Pointer to which bank of RAM 'page' is in */
+	uint32_t rammask;     /**< Address mask for that bank */
         uint32_t page,start,end,temp;
         int offset = (iomd.sndstat & IOMD_DMA_STATUS_BUFFER) << 1;
         int len;
@@ -146,25 +147,21 @@ sound_irq_update(void)
         iomd.sndstat |= (IOMD_DMA_STATUS_INTERRUPT | IOMD_DMA_STATUS_OVERRUN);
         iomd.sndstat ^= IOMD_DMA_STATUS_BUFFER; /* Swap between buffer A and B */
 
-	/* Handle sound data all over physical RAM */
-	if (page & 0x08000000) {
-		ramp =  ram1;
-	} else if (page & 0x04000000) {
-		ramp = ram01;
-	} else {
-		ramp = ram00;
-	}
+	/* Handle sound data all over physical RAM. Each region has its own mask,
+	   so ask mem.c rather than decoding it here: SIMM 1 is not shaped like
+	   SIMM 0, and the Kinetic's SDRAM banks are somewhere else entirely. */
+	ramp = mem_dma_region(page, &rammask);
 
-	/* The second SIMM (ram1) is only present on 256MB machines; on smaller
-	   configurations a DMA page resolving to that bank leaves ramp NULL, so
-	   skip the transfer rather than dereferencing a NULL pointer. */
+	/* No RAM fitted where the DMA points: SIMM 1 below 256MB, or the SDRAM
+	   banks on a non-Kinetic. Skip the transfer rather than dereferencing
+	   NULL. */
 	if (ramp == NULL) {
 		return;
 	}
 
         for (c = start; c < end; c += 4)
         {
-                temp = ramp[((c + page) & mem_rammask) >> 2];
+                temp = ramp[((c + page) & rammask) >> 2];
                 bigsoundbuffer[bigsoundbufferhead][bigsoundpos++] = (int16_t)(temp & 0xFFFF);
                 bigsoundbuffer[bigsoundbufferhead][bigsoundpos++] = (int16_t)(temp >> 16);
                 if (bigsoundpos >= (BUFFERLENSAMPLES))

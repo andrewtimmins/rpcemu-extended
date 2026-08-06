@@ -275,6 +275,16 @@ add_executable(test_openbus_decode test_openbus_decode.c test_stubs.c)
 target_link_libraries(test_openbus_decode PRIVATE rpcemu_core m)
 rpcemu_add_test(test_openbus_decode)
 
+# Physical-address decode for the DMA fetch paths (sound, VIDC cursor). Links
+# rpcemu_core for the real physical accessors, as test_mmu_perms does, and writes
+# markers through them so a decode that lands in the wrong region is caught
+# rather than reading a plausible zero. Exists because both callers used to
+# decode the address themselves and both got SIMM 1 and the Kinetic SDRAM wrong,
+# silently: the sound is noise and the pointer is rubbish, with nothing logged.
+add_executable(test_dma_region test_dma_region.c test_stubs.c)
+target_link_libraries(test_dma_region PRIVATE rpcemu_core m)
+rpcemu_add_test(test_dma_region)
+
 # Networking tests for the Access+/ShareFS path, where large copies drive IP
 # fragment reassembly. These compile the code under test directly rather than
 # linking rpcemu_core, because each replaces a symbol the core also defines: the
@@ -435,7 +445,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 26)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 27)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()

@@ -142,6 +142,10 @@ extern void cacheclearpage(uint32_t a);
 extern uint32_t mem_rammask;
 extern uint32_t mem_vrammask;
 
+/* Resolve a physical RAM address for the paths that fetch straight out of RAM
+   rather than through the MMU: sound DMA and the VIDC cursor. See mem.c. */
+extern const uint32_t *mem_dma_region(uint32_t phys_addr, uint32_t *mask);
+
 /**
  * Read a 32-bit word from a virtual address.
  *
