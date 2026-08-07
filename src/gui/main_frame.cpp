@@ -1943,6 +1943,13 @@ void MainFrame::OnClose(wxCloseEvent &event)
 	ShutdownEmulator();
 	shutting_down_ = true;
 	Destroy();
+
+#ifdef __WXOSX__
+	/* Linux and Windows exit when the last frame goes; wxOSX does not. Queued
+	   on the application, not this frame: Destroy() is deferred, and a callback
+	   queued on a window that is then deleted is dropped. */
+	wxTheApp->CallAfter([] { wxTheApp->ExitMainLoop(); });
+#endif
 }
 
 void MainFrame::CloseForSignal()
