@@ -59,14 +59,6 @@ public:
 	bool OnInit() override;
 	void OnInitCmdLine(wxCmdLineParser &parser) override;
 
-	/* Not proof that the loop ended: macOS also calls this straight from
-	   applicationWillTerminate: when the Dock quits the app. */
-	int OnExit() override
-	{
-		rpclog("RPCEmu: OnExit\n");
-		return wxApp::OnExit();
-	}
-
 	/*
 	 * wxAppConsoleBase::ExitMainLoop() only acts while the main loop is the
 	 * active one, and IsRunning() means exactly that - GetActive() == this. A
