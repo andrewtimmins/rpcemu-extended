@@ -376,6 +376,12 @@ network_nat_poll(void)
 	int fd_max, ret;
 	struct timeval tv;
 
+	/* Networking can be switched on while the emulator thread is running, so
+	   this is reached before network_nat_open() has made a stack to poll. */
+	if (nat.slirp == NULL) {
+		return;
+	}
+
 	FD_ZERO(&rfds);
 	FD_ZERO(&wfds);
 	FD_ZERO(&efds);
