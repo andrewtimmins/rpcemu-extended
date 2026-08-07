@@ -20,17 +20,14 @@
 
 #include "manager_frame.h"
 
-#include <wx/dcmemory.h>
 #include <wx/dir.h>
 #include <wx/filename.h>
-#include <wx/statbmp.h>
 #include <wx/stdpaths.h>
 #include <wx/textdlg.h>
 
 #include "config_paths.h"
 #include "machine_edit_dialog.h"
 #include "new_machine_dialog.h"
-#include "toolbar_icons.h"
 
 extern "C" {
 #include "machine_lock.h"
@@ -51,42 +48,12 @@ enum {
 	ID_POLL_TIMER,
 };
 
-enum {
-	kStatusIconRunning = 0,
-	kStatusIconStarting,
-	kStatusIconStopped,
-};
-
 /* How long a --managed child gets to publish its control-channel endpoint
    before the Manager gives up on it (ROM loading and machine start can
    legitimately take a few seconds; a genuinely wedged/crashed launch should
    not hang the UI forever). */
 constexpr int kStartupTimeoutMs = 20000;
 constexpr int kPollIntervalMs = 200;
-
-/* A small filled circle for the machine list's status column - cheaper and
-   crisper at list-row size than trying to press one of the toolbar's 24x24
-   SVGs into service, and it keeps "what's running" glanceable the way
-   VirtualBox's own machine list uses a coloured state icon per row.
-   Drawn on plain white rather than masked: a masked bitmap picked up a
-   visible colour-keyed halo from anti-aliased edge pixels that were close to,
-   but not exactly, the mask colour. wxListCtrl rows are white outside
-   selection, so the square corners are not noticeable in practice. */
-wxBitmap MakeStatusDot(const wxColour &fill)
-{
-	const int size = 12;
-	wxBitmap bmp(size, size);
-	wxMemoryDC dc(bmp);
-
-	dc.SetBackground(*wxWHITE_BRUSH);
-	dc.Clear();
-	dc.SetBrush(wxBrush(fill));
-	dc.SetPen(wxPen(fill.ChangeLightness(65)));
-	dc.DrawEllipse(0, 0, size, size);
-	dc.SelectObject(wxNullBitmap);
-
-	return bmp;
-}
 
 } /* namespace */
 
@@ -121,12 +88,14 @@ private:
 };
 
 wxBEGIN_EVENT_TABLE(ManagerFrame, wxFrame)
-	EVT_LIST_ITEM_SELECTED(wxID_ANY, ManagerFrame::OnMachineSelected)
-	EVT_LIST_ITEM_ACTIVATED(wxID_ANY, ManagerFrame::OnMachineActivated)
+	EVT_LISTBOX(wxID_ANY, ManagerFrame::OnMachineSelected)
+	EVT_LISTBOX_DCLICK(wxID_ANY, ManagerFrame::OnMachineActivated)
 	EVT_BUTTON(ID_NEW, ManagerFrame::OnNew)
 	EVT_BUTTON(ID_EDIT, ManagerFrame::OnEdit)
 	EVT_BUTTON(ID_CLONE, ManagerFrame::OnClone)
 	EVT_BUTTON(ID_DELETE, ManagerFrame::OnDelete)
+	EVT_BUTTON(ID_START, ManagerFrame::OnStart)
+	EVT_BUTTON(ID_STOP, ManagerFrame::OnStop)
 	EVT_MENU(ID_NEW, ManagerFrame::OnNew)
 	EVT_MENU(ID_EDIT, ManagerFrame::OnEdit)
 	EVT_MENU(ID_CLONE, ManagerFrame::OnClone)
@@ -141,14 +110,11 @@ wxBEGIN_EVENT_TABLE(ManagerFrame, wxFrame)
 wxEND_EVENT_TABLE()
 
 ManagerFrame::ManagerFrame()
-	: wxFrame(nullptr, wxID_ANY, "RPCEmu Extended", wxDefaultPosition, wxSize(1100, 750))
+	: wxFrame(nullptr, wxID_ANY, "RPCEmu Extended", wxDefaultPosition, wxSize(1000, 700))
 	, poll_timer_(this, ID_POLL_TIMER)
 {
-	SetMinSize(wxSize(760, 520));
-
 	BuildUi();
 	BuildMenus();
-	BuildToolBar();
 	RefreshMachineList();
 	DiscoverAlreadyRunningMachines();
 	poll_timer_.Start(kPollIntervalMs);
@@ -158,96 +124,55 @@ ManagerFrame::~ManagerFrame()
 {
 }
 
-void ManagerFrame::BuildStatusImages()
-{
-	status_images_ = new wxImageList(12, 12, true);
-	status_images_->Add(MakeStatusDot(wxColour(46, 160, 67)));	/* running: green */
-	status_images_->Add(MakeStatusDot(wxColour(214, 158, 46)));	/* starting: amber */
-	status_images_->Add(MakeStatusDot(wxColour(160, 160, 160)));	/* stopped: grey */
-}
-
-wxPanel *ManagerFrame::BuildPlaceholderPage()
-{
-	auto *placeholder = new wxPanel(display_book_);
-	placeholder->SetBackgroundColour(wxColour(32, 32, 36));
-
-	auto *sizer = new wxBoxSizer(wxVERTICAL);
-	sizer->AddStretchSpacer();
-
-	const wxString icon_path = wxString::FromUTF8(rpcemu_get_resourcedir()) +
-	    "resources" + wxFileName::GetPathSeparator() + "rpcemu.png";
-	wxImage icon_image;
-	if (wxFileExists(icon_path) && icon_image.LoadFile(icon_path, wxBITMAP_TYPE_PNG)) {
-		icon_image.Rescale(64, 64, wxIMAGE_QUALITY_HIGH);
-		auto *icon_bitmap = new wxStaticBitmap(placeholder, wxID_ANY, wxBitmap(icon_image));
-		sizer->Add(icon_bitmap, 0, wxALIGN_CENTER | wxBOTTOM, 16);
-	}
-
-	auto *text = new wxStaticText(placeholder, wxID_ANY,
-	    "Select a machine on the left and press Start.");
-	text->SetForegroundColour(wxColour(190, 190, 190));
-	sizer->Add(text, 0, wxALIGN_CENTER);
-
-	sizer->AddStretchSpacer();
-	placeholder->SetSizer(sizer);
-	return placeholder;
-}
-
 void ManagerFrame::BuildUi()
 {
-	BuildStatusImages();
+	auto *root = new wxBoxSizer(wxHORIZONTAL);
 
-	auto *splitter = new wxSplitterWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
-	    wxSP_LIVE_UPDATE | wxSP_3DSASH);
-	splitter->SetMinimumPaneSize(240);
-
-	auto *left_panel = new wxPanel(splitter);
+	auto *left_panel = new wxPanel(this);
 	auto *left_sizer = new wxBoxSizer(wxVERTICAL);
 
-	auto *heading = new wxStaticText(left_panel, wxID_ANY, "Machines");
-	wxFont heading_font = heading->GetFont();
-	heading_font.SetWeight(wxFONTWEIGHT_BOLD);
-	heading_font.SetPointSize(heading_font.GetPointSize() + 1);
-	heading->SetFont(heading_font);
-	left_sizer->Add(heading, 0, wxALL, 10);
+	left_sizer->Add(new wxStaticText(left_panel, wxID_ANY, "Machines:"), 0, wxALL, 6);
 
-	machine_list_ = new wxListCtrl(left_panel, wxID_ANY, wxDefaultPosition, wxDefaultSize,
-	    wxLC_REPORT | wxLC_SINGLE_SEL | wxLC_HRULES);
-	machine_list_->AssignImageList(status_images_, wxIMAGE_LIST_SMALL);
-	machine_list_->InsertColumn(0, "Machine", wxLIST_FORMAT_LEFT, 170);
-	machine_list_->InsertColumn(1, "Status", wxLIST_FORMAT_LEFT, 90);
-	left_sizer->Add(machine_list_, 1, wxEXPAND | wxLEFT | wxRIGHT, 10);
+	machine_list_ = new wxListBox(left_panel, wxID_ANY);
+	left_sizer->Add(machine_list_, 1, wxEXPAND | wxLEFT | wxRIGHT, 6);
 
-	/* A 2x2 grid rather than one row of four: at a sidebar's natural width,
-	   four buttons in a row do not fit their own minimum sizes side by side
-	   (Delete was being pushed clean off the edge of the panel), and a grid
-	   reads better in a narrow column regardless. */
-	auto *manage_grid = new wxFlexGridSizer(2, 2, 6, 6);
-	manage_grid->AddGrowableCol(0, 1);
-	manage_grid->AddGrowableCol(1, 1);
+	auto *manage_row = new wxBoxSizer(wxHORIZONTAL);
 	new_button_ = new wxButton(left_panel, ID_NEW, "New...");
 	edit_button_ = new wxButton(left_panel, ID_EDIT, "Edit...");
 	clone_button_ = new wxButton(left_panel, ID_CLONE, "Clone...");
 	delete_button_ = new wxButton(left_panel, ID_DELETE, "Delete");
-	manage_grid->Add(new_button_, 1, wxEXPAND);
-	manage_grid->Add(edit_button_, 1, wxEXPAND);
-	manage_grid->Add(clone_button_, 1, wxEXPAND);
-	manage_grid->Add(delete_button_, 1, wxEXPAND);
-	left_sizer->Add(manage_grid, 0, wxEXPAND | wxALL, 10);
+	manage_row->Add(new_button_, 0, wxALL, 3);
+	manage_row->Add(edit_button_, 0, wxALL, 3);
+	manage_row->Add(clone_button_, 0, wxALL, 3);
+	manage_row->Add(delete_button_, 0, wxALL, 3);
+	left_sizer->Add(manage_row, 0, wxALIGN_CENTER);
+
+	auto *power_row = new wxBoxSizer(wxHORIZONTAL);
+	start_button_ = new wxButton(left_panel, ID_START, "Start");
+	stop_button_ = new wxButton(left_panel, ID_STOP, "Stop");
+	power_row->Add(start_button_, 0, wxALL, 3);
+	power_row->Add(stop_button_, 0, wxALL, 3);
+	left_sizer->Add(power_row, 0, wxALIGN_CENTER | wxBOTTOM, 6);
 
 	left_panel->SetSizer(left_sizer);
 
-	display_book_ = new wxSimplebook(splitter);
+	display_book_ = new wxSimplebook(this);
+	auto *placeholder = new wxPanel(display_book_);
+	placeholder->SetBackgroundColour(*wxBLACK);
+	auto *placeholder_sizer = new wxBoxSizer(wxVERTICAL);
+	auto *placeholder_text = new wxStaticText(placeholder, wxID_ANY,
+	    "Select a machine on the left and press Start.");
+	placeholder_text->SetForegroundColour(*wxWHITE);
+	placeholder_sizer->AddStretchSpacer();
+	placeholder_sizer->Add(placeholder_text, 0, wxALIGN_CENTER);
+	placeholder_sizer->AddStretchSpacer();
+	placeholder->SetSizer(placeholder_sizer);
 	placeholder_page_ = display_book_->GetPageCount();
-	display_book_->AddPage(BuildPlaceholderPage(), "", true);
+	display_book_->AddPage(placeholder, "", true);
 
-	splitter->SplitVertically(left_panel, display_book_, 300);
-
-	auto *root = new wxBoxSizer(wxVERTICAL);
-	root->Add(splitter, 1, wxEXPAND);
+	root->Add(left_panel, 0, wxEXPAND);
+	root->Add(display_book_, 1, wxEXPAND);
 	SetSizer(root);
-
-	CreateStatusBar();
 }
 
 void ManagerFrame::BuildMenus()
@@ -261,7 +186,7 @@ void ManagerFrame::BuildMenus()
 	file_menu->Append(wxID_EXIT, "E&xit\tCtrl+Q");
 
 	auto *machine_menu = new wxMenu();
-	start_item_ = machine_menu->Append(ID_START, "&Start\tCtrl+S");
+	machine_menu->Append(ID_START, "&Start\tCtrl+S");
 	stop_item_ = machine_menu->Append(ID_STOP, "S&top");
 	machine_menu->AppendSeparator();
 	reset_item_ = machine_menu->Append(ID_RESET, "&Reset");
@@ -271,31 +196,6 @@ void ManagerFrame::BuildMenus()
 	menu_bar->Append(file_menu, "&File");
 	menu_bar->Append(machine_menu, "&Machine");
 	SetMenuBar(menu_bar);
-}
-
-void ManagerFrame::BuildToolBar()
-{
-	const wxSize icon_size(24, 24);
-
-	/* Machine power controls only - New/Edit/Clone/Delete already have their
-	   own buttons beside the list, where they act on whichever row is
-	   selected the same way; duplicating them up here added width without
-	   adding anything a user could not already do. */
-	tool_bar_ = CreateToolBar(wxTB_HORIZONTAL | wxTB_NODIVIDER);
-	tool_bar_->SetToolBitmapSize(icon_size);
-
-	tool_bar_->AddTool(ID_START, "Start", ToolbarIconDebugRun(icon_size),
-	    "Start the selected machine");
-	tool_bar_->AddTool(ID_STOP, "Stop", ToolbarIconDebugPause(icon_size),
-	    "Stop the selected machine");
-	tool_bar_->AddSeparator();
-	tool_bar_->AddTool(ID_RESET, "Reset", ToolbarIconReset(icon_size),
-	    "Reset the running machine");
-	tool_bar_->Realize();
-
-	tool_bar_->Bind(wxEVT_TOOL, &ManagerFrame::OnStart, this, ID_START);
-	tool_bar_->Bind(wxEVT_TOOL, &ManagerFrame::OnStop, this, ID_STOP);
-	tool_bar_->Bind(wxEVT_TOOL, &ManagerFrame::OnReset, this, ID_RESET);
 }
 
 wxString ManagerFrame::MachineDirFor(const wxString &name) const
@@ -312,54 +212,31 @@ void ManagerFrame::RefreshMachineList()
 {
 	const wxString was_selected = SelectedMachineName();
 
-	machine_list_->DeleteAllItems();
+	machine_list_->Clear();
 	machine_names_.clear();
-
-	long index = 0;
-	long selected_index = -1;
-	size_t running_count = 0;
 
 	for (const std::string &name_utf8 : ConfigPathsMachineNames()) {
 		const wxString name = wxString::FromUTF8(name_utf8);
-		int image = kStatusIconStopped;
-		wxString status;
+		wxString label = name;
 
-		const auto it = running_.find(name);
-		if (it != running_.end()) {
-			if (it->second.starting) {
-				image = kStatusIconStarting;
-				status = "Starting...";
-			} else {
-				image = kStatusIconRunning;
-				status = "Running";
-				running_count++;
-			}
+		if (running_.count(name) != 0) {
+			label += running_[name].starting ? "  (starting...)" : "  (running)";
 		}
 
 		machine_names_.push_back(name);
-		machine_list_->InsertItem(index, name, image);
-		machine_list_->SetItem(index, 1, status);
+		machine_list_->Append(label);
 
 		if (name == was_selected) {
-			selected_index = index;
+			machine_list_->SetSelection((int) machine_names_.size() - 1);
 		}
-		index++;
 	}
-
-	if (selected_index >= 0) {
-		machine_list_->SetItemState(selected_index, wxLIST_STATE_SELECTED | wxLIST_STATE_FOCUSED,
-		    wxLIST_STATE_SELECTED | wxLIST_STATE_FOCUSED);
-	}
-
-	SetStatusText(wxString::Format("%zu machine%s, %zu running",
-	    machine_names_.size(), machine_names_.size() == 1 ? "" : "s", running_count));
 
 	UpdateButtons();
 }
 
 wxString ManagerFrame::SelectedMachineName() const
 {
-	const long sel = machine_list_->GetNextItem(-1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED);
+	const int sel = machine_list_->GetSelection();
 
 	if (sel < 0 || (size_t) sel >= machine_names_.size()) {
 		return wxString();
@@ -378,13 +255,9 @@ void ManagerFrame::UpdateButtons()
 	edit_button_->Enable(have_selection && !is_running);
 	clone_button_->Enable(have_selection);
 	delete_button_->Enable(have_selection && !is_running);
+	start_button_->Enable(have_selection && !is_running);
+	stop_button_->Enable(is_running);
 
-	if (tool_bar_ != nullptr) {
-		tool_bar_->EnableTool(ID_START, have_selection && !is_running);
-		tool_bar_->EnableTool(ID_STOP, is_running);
-		tool_bar_->EnableTool(ID_RESET, is_live);
-	}
-	if (start_item_ != nullptr) start_item_->Enable(have_selection && !is_running);
 	if (stop_item_ != nullptr) stop_item_->Enable(is_running);
 	if (reset_item_ != nullptr) reset_item_->Enable(is_live);
 	if (restart_item_ != nullptr) restart_item_->Enable(is_live);
@@ -562,9 +435,9 @@ void ManagerFrame::StopMachine(const wxString &name)
 	it->second.panel->SendRequest(request);
 	/* The rest of the teardown (removing the list entry, the display page)
 	   happens when the machine confirms it is gone - either the IPC Quit
-	   event RemoteEmulatorPanel reports through its GoneCallback, or the OS
-	   process exiting, whichever the machine actually manages given
-	   whatever state it is in. Asking twice is harmless. */
+	   event RemoteEmulatorPanel reports through its GoneCallback, or the
+	   OS process exiting, whichever the machine actually manages given
+	   whatever state it is in. Asking twoffice is harmless. */
 }
 
 void ManagerFrame::RemoveRunningEntry(const wxString &name)
@@ -602,7 +475,7 @@ void ManagerFrame::OnChildProcessEnded(const wxString &machine_name, int /*pid*/
 	RemoveRunningEntry(machine_name);
 }
 
-void ManagerFrame::OnMachineSelected(wxListEvent & /*event*/)
+void ManagerFrame::OnMachineSelected(wxCommandEvent & /*event*/)
 {
 	UpdateButtons();
 
@@ -612,7 +485,7 @@ void ManagerFrame::OnMachineSelected(wxListEvent & /*event*/)
 	}
 }
 
-void ManagerFrame::OnMachineActivated(wxListEvent & /*event*/)
+void ManagerFrame::OnMachineActivated(wxCommandEvent & /*event*/)
 {
 	const wxString name = SelectedMachineName();
 	if (name.empty()) {
