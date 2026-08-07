@@ -58,12 +58,20 @@ public:
 	bool OnInit() override;
 	void OnInitCmdLine(wxCmdLineParser &parser) override;
 
-	/* Reached once the main loop has returned, so a process that is still
-	   around afterwards can be told apart from one whose loop never ended. */
+	/* Not proof that the loop ended: macOS also calls this straight from
+	   applicationWillTerminate: when the Dock quits the app. */
 	int OnExit() override
 	{
-		rpclog("RPCEmu: event loop finished, exiting\n");
+		rpclog("RPCEmu: OnExit\n");
 		return wxApp::OnExit();
+	}
+
+	/* Whether wx ever asked the loop to stop, which is the step between the
+	   window being deleted and the process ending. */
+	void ExitMainLoop() override
+	{
+		rpclog("RPCEmu: ExitMainLoop\n");
+		wxApp::ExitMainLoop();
 	}
 
 private:

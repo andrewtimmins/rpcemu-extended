@@ -299,6 +299,11 @@ MainFrame::MainFrame()
 
 MainFrame::~MainFrame()
 {
+	/* Reached only once wx prunes wxPendingDelete on an idle pass, which is
+	   also what ends the event loop. Says whether a process still running
+	   after its window closed ever got this far. */
+	rpclog("MainFrame: window destroyed\n");
+
 #ifdef RPCEMU_VNC
 	if (vnc_server_) {
 		/* Detached, not stopped: the server outlives this window, and a client
@@ -1943,6 +1948,17 @@ void MainFrame::OnClose(wxCloseEvent &event)
 	ShutdownEmulator();
 	shutting_down_ = true;
 	Destroy();
+
+	/* Destroy() only queues the window; wx deletes it on the next idle pass,
+	   and deleting the last one is what ends the loop. ShutdownEmulator() has
+	   just stopped the timers, so on macOS nothing else would wake the run loop
+	   and that pass would never come. */
+	wxWakeUpIdle();
+
+	/* Anything still open here keeps wx from treating this as the last window
+	   and ending the loop. */
+	rpclog("MainFrame: closed, %u top level windows remain\n",
+	       (unsigned) wxTopLevelWindows.GetCount());
 }
 
 void MainFrame::CloseForSignal()
