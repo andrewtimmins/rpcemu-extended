@@ -313,8 +313,6 @@ network_nat_open(void)
 		for (i = 0; i < MAX_PORT_FORWARDS; i++) {
 			if (port_forward_rules[i].type != PORT_FORWARD_NONE) {
 				network_nat_forward_add(port_forward_rules[i]);
-
-				rpcemu_send_nat_rule_to_gui(port_forward_rules[i]);
 			}
 		}
 	}

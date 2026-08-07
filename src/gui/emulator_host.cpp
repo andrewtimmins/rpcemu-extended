@@ -321,13 +321,6 @@ extern "C" void rpcemu_set_host_clipboard_image(int file_type, const void *data,
 	}
 }
 
-extern "C" void rpcemu_send_nat_rule_to_gui(PortForwardRule rule)
-{
-	if (g_emulator_host != nullptr) {
-		g_emulator_host->StoreNatRuleForGui(rule);
-	}
-}
-
 extern "C" void rpcemu_request_poweroff(void)
 {
 	/* Guest soft power-off: ask the active front-end to quit. Fall back to
@@ -1446,26 +1439,6 @@ std::string EmulatorHost::DisassembleAt(uint32_t address, int count)
 
 	disasm_cv_.wait(lock, [this]() { return disasm_ready_ || g_fatal_occurred.load(); });
 	return disasm_result_;
-}
-
-void EmulatorHost::StoreNatRuleForGui(PortForwardRule rule)
-{
-	{
-		std::lock_guard<std::mutex> lock(nat_rules_mutex_);
-		pending_nat_rules_.push_back(rule);
-	}
-
-	if (gui_bridge_ != nullptr) {
-		gui_bridge_->PostNatRule(rule);
-	}
-}
-
-std::vector<PortForwardRule> EmulatorHost::TakePendingNatRules()
-{
-	std::lock_guard<std::mutex> lock(nat_rules_mutex_);
-	std::vector<PortForwardRule> rules(pending_nat_rules_.begin(), pending_nat_rules_.end());
-	pending_nat_rules_.clear();
-	return rules;
 }
 
 void EmulatorHost::NotifyDebuggerStateChanged()

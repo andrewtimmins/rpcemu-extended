@@ -249,7 +249,6 @@ MainFrame::MainFrame()
 	}
 
 	emulator_ = std::make_unique<EmulatorHost>(this);
-	nat_list_dialog_ = std::make_unique<NatListDialog>(this, emulator_.get());
 
 #ifdef RPCEMU_VNC
 	/*
@@ -752,9 +751,9 @@ void MainFrame::OnMachine(wxCommandEvent &) { EditMachineConfiguration(); }
 void MainFrame::OnNatList(wxCommandEvent &)
 {
 #ifdef RPCEMU_NETWORKING
-	if (nat_list_dialog_) {
-		nat_list_dialog_->ShowRules();
-	}
+	NatListDialog dlg(this, emulator_.get());
+
+	dlg.ShowRules();
 #else
 	/* Networking (and the NAT list) is not compiled in - nothing to do.
 	   (The handler's wxCommandEvent parameter is unnamed, so nothing to void.) */
@@ -1972,11 +1971,6 @@ void MainFrame::ShowFatal(const std::string &message)
 	// which would themselves try to join the spinning thread).
 	fflush(nullptr);
 	std::_Exit(EXIT_FAILURE);
-}
-
-void MainFrame::PostNatRule(PortForwardRule rule)
-{
-	CallAfter([rule]() { NatListDialogNotifyRule(rule); });
 }
 
 void MainFrame::PostDebuggerStateChanged()

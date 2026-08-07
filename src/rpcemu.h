@@ -466,7 +466,6 @@ extern int debugger_swi_hook(uint32_t swinum, uint32_t opcode);
 extern void rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize, int yl, int yh, int double_size, int host_xsize, int host_ysize);
 extern void rpcemu_move_host_mouse(uint16_t x, uint16_t y);
 extern void rpcemu_idle_process_events(void);
-extern void rpcemu_send_nat_rule_to_gui(PortForwardRule rule);
 extern uint64_t rpcemu_nsec_timer_ticks(void);
 
 extern int drawscre;

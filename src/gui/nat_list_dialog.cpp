@@ -28,8 +28,6 @@ enum {
 	ID_NAT_LIST_DELETE,
 };
 
-static NatListDialog *g_active_nat_list_dialog = nullptr;
-
 NatListDialog::NatListDialog(wxWindow *parent, EmulatorHost *emulator_host)
 	: wxDialog(parent, wxID_ANY, "Configure NAT Port Forwarding Rules", wxDefaultPosition, wxSize(560, 360),
 	           wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER | wxCLOSE_BOX)
@@ -39,23 +37,6 @@ NatListDialog::NatListDialog(wxWindow *parent, EmulatorHost *emulator_host)
 	LoadRulesFromConfig();
 	Fit();
 	CentreOnParent();
-
-	g_active_nat_list_dialog = this;
-}
-
-NatListDialog::~NatListDialog()
-{
-	if (g_active_nat_list_dialog == this) {
-		g_active_nat_list_dialog = nullptr;
-	}
-	delete nat_edit_dialog_;
-}
-
-void NatListDialogNotifyRule(PortForwardRule rule)
-{
-	if (g_active_nat_list_dialog != nullptr) {
-		g_active_nat_list_dialog->AddNatRule(rule);
-	}
 }
 
 void NatListDialog::BuildUi()
