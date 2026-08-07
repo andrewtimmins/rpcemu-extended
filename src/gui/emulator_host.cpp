@@ -1611,6 +1611,17 @@ void EmulatorHost::MainEmuLoop()
 				instruction_count.fetch_add(static_cast<int>(inscount >> 16), std::memory_order_release);
 				inscount &= 0xffff;
 			}
+
+			/* Inside the batch, not outside it. The one-in-four rate came
+			   from the Qt front end, where the loop ran execrpcemu() once
+			   per turn; batching 32 of them made the same test fire once
+			   every 32 batches instead, and NAT throughput fell with it. */
+			if (config.network_type == NetworkType_NAT) {
+				network_nat_rate++;
+				if ((network_nat_rate & 0x3u) == 0u) {
+					network_nat_poll();
+				}
+			}
 		}
 
 		if (debugger_is_paused()) {
@@ -1623,13 +1634,6 @@ void EmulatorHost::MainEmuLoop()
 
 		ServiceTimers(GetElapsedTimerNs());
 		perfprof_poll();
-
-		if (config.network_type == NetworkType_NAT) {
-			network_nat_rate++;
-			if ((network_nat_rate & 0x3u) == 0u) {
-				network_nat_poll();
-			}
-		}
 	}
 
 	perfprof_stop();
