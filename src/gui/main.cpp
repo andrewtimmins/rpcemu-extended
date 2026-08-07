@@ -66,11 +66,18 @@ public:
 		return wxApp::OnExit();
 	}
 
-	/* Whether wx ever asked the loop to stop, which is the step between the
-	   window being deleted and the process ending. */
+	/* Whether wx ever asked the loop to stop, and whether the request could
+	   land: wxAppConsoleBase::ExitMainLoop() is a silent no-op unless the main
+	   loop exists and is running. */
 	void ExitMainLoop() override
 	{
-		rpclog("RPCEmu: ExitMainLoop\n");
+		const wxEventLoopBase *loop = wxEventLoopBase::GetActive();
+
+		rpclog("RPCEmu: ExitMainLoop, main loop %s, active loop %s\n",
+		       GetMainLoop() == nullptr ? "none" :
+		       GetMainLoop()->IsRunning() ? "running" : "not running",
+		       loop == nullptr ? "none" :
+		       loop == GetMainLoop() ? "is the main loop" : "is a nested loop");
 		wxApp::ExitMainLoop();
 	}
 

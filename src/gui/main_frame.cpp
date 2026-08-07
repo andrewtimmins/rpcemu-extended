@@ -1956,9 +1956,22 @@ void MainFrame::OnClose(wxCloseEvent &event)
 	wxWakeUpIdle();
 
 	/* Anything still open here keeps wx from treating this as the last window
-	   and ending the loop. */
+	   and ending the loop, so say what they are. */
 	rpclog("MainFrame: closed, %u top level windows remain\n",
 	       (unsigned) wxTopLevelWindows.GetCount());
+	for (auto node = wxTopLevelWindows.GetFirst(); node;
+	     node = node->GetNext()) {
+		const wxWindow *win = node->GetData();
+		const auto *tlw = dynamic_cast<const wxTopLevelWindow *>(win);
+
+		rpclog("  %s \"%s\"%s%s%s\n",
+		       (const char *) wxString(win->GetClassInfo()->GetClassName()).utf8_str(),
+		       (const char *) win->GetLabel().utf8_str(),
+		       win == this ? " (this)" : "",
+		       win->IsShown() ? " shown" : " hidden",
+		       tlw != nullptr && tlw->ShouldPreventAppExit() ?
+		       " prevents exit" : "");
+	}
 }
 
 void MainFrame::CloseForSignal()
