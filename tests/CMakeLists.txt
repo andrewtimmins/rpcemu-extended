@@ -250,6 +250,15 @@ target_include_directories(test_machine_ipc PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui)
 target_link_libraries(test_machine_ipc PRIVATE Threads::Threads)
+if(WIN32)
+    # machine_ipc.cpp uses Winsock (WSAPoll, socket, bind, connect, ...) via
+    # socket-compat.h. rpcemu_core PUBLIC-links ws2_32 for the same reason
+    # (see src/CMakeLists.txt), but this target compiles machine_ipc.cpp
+    # directly rather than linking that library, so it needs its own copy -
+    # missed the first time round, which linux-amd64/macos passed silently
+    # since neither needs it, and only windows-amd64 CI caught it.
+    target_link_libraries(test_machine_ipc PRIVATE ws2_32)
+endif()
 if(UNIX AND NOT APPLE)
     target_link_libraries(test_machine_ipc PRIVATE rt)
 endif()
