@@ -21,6 +21,7 @@
 #include <wx/wx.h>
 #include <wx/cmdline.h>
 #include <wx/display.h>
+#include <wx/evtloop.h>
 
 #include <cstdarg>
 #include <cstdio>
@@ -66,18 +67,24 @@ public:
 		return wxApp::OnExit();
 	}
 
-	/* Whether wx ever asked the loop to stop, and whether the request could
-	   land: wxAppConsoleBase::ExitMainLoop() is a silent no-op unless the main
-	   loop exists and is running. */
+	/*
+	 * wxAppConsoleBase::ExitMainLoop() only acts while the main loop is the
+	 * active one, and IsRunning() means exactly that - GetActive() == this. A
+	 * request arriving from anywhere else is dropped without a word, which is
+	 * how closing the machine window left the application running.
+	 *
+	 * ScheduleExit() is wx's answer for that case: it marks the loop to finish
+	 * without needing it to be the active one. It does require the loop to have
+	 * been started, so fall back to the base version when there is none.
+	 */
 	void ExitMainLoop() override
 	{
-		const wxEventLoopBase *loop = wxEventLoopBase::GetActive();
+		wxEventLoopBase *loop = GetMainLoop();
 
-		rpclog("RPCEmu: ExitMainLoop, main loop %s, active loop %s\n",
-		       GetMainLoop() == nullptr ? "none" :
-		       GetMainLoop()->IsRunning() ? "running" : "not running",
-		       loop == nullptr ? "none" :
-		       loop == GetMainLoop() ? "is the main loop" : "is a nested loop");
+		if (loop != nullptr && !loop->IsRunning()) {
+			loop->ScheduleExit(0);
+			return;
+		}
 		wxApp::ExitMainLoop();
 	}
 
