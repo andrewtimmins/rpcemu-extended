@@ -34,10 +34,6 @@ class NatEditDialog : public wxDialog {
 public:
 	NatEditDialog(NatListDialog *parent);
 
-	/* As for the list dialog it belongs to: built up front, hidden until
-	   wanted, and not something to keep the application alive. */
-	bool ShouldPreventAppExit() const override { return false; }
-
 	void SetValues(bool is_edit, PortForwardRule rule);
 
 private:

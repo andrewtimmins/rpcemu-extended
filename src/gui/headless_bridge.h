@@ -45,7 +45,6 @@ public:
 	void ShowError(const std::string &message) override;
 	void ShowFatal(const std::string &message) override;
 
-	void PostNatRule(PortForwardRule rule) override;
 	void PostDebuggerStateChanged() override;
 	void PostMachineSwitched(const std::string &machine_name) override;
 	void PostGuestCommandResult(unsigned token, unsigned rc,
