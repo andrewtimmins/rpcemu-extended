@@ -63,7 +63,7 @@ main(void)
 {
 	/* Enough of a machine for the physical accessors to work. */
 	mem_init();
-	mem_reset(8 * 1024 * 1024, 0);
+	mem_reset(8, 0);
 
 	puts("With an empty second slot, the window is not claimed:");
 	openbus_init(&ops);
