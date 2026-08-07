@@ -74,6 +74,8 @@ extern "C" {
 #include "machine_lock.h"
 }
 
+#include "machine_ipc.h"
+
 namespace {
 
 wxString WindowTitleFor(const wxString &machine_name)
@@ -325,6 +327,136 @@ void MainFrame::UpdateMachineStatus()
 		status += " - Mouse follows host pointer";
 	}
 	SetStatusText(status, STATUS_MACHINE);
+}
+
+void MainFrame::EnableManagedMode()
+{
+	managed_mode_ = true;
+
+	const std::string machine_dir = rpcemu_get_machine_datadir();
+
+	shared_fb_ = std::make_unique<SharedFramebuffer>();
+	if (!shared_fb_->CreateNew(MachineIpcNameFor(machine_dir))) {
+		rpclog("MainFrame: could not create the shared framebuffer; "
+		       "this machine will not be visible to the Manager\n");
+	}
+
+	ipc_server_ = std::make_unique<MachineIpcServer>();
+
+#ifdef _WIN32
+	const std::string control_endpoint;	/* --managed always gets an OS-assigned TCP port on Windows */
+#else
+	const std::string control_endpoint = machine_dir + "manager.sock";
+#endif
+
+	if (ipc_server_->Start(control_endpoint,
+	        [this](const IpcRequest &request) { HandleIpcRequest(request); })) {
+		machine_lock_set_ipc_endpoint(ipc_server_->BoundEndpoint().c_str());
+	} else {
+		rpclog("MainFrame: could not start the machine control channel; "
+		       "this machine will not be controllable from the Manager\n");
+	}
+}
+
+void MainFrame::MirrorToSharedFramebuffer(const VideoUpdate &update)
+{
+	if (!shared_fb_ || update.buffer == nullptr || update.xsize <= 0 || update.ysize <= 0) {
+		return;
+	}
+
+	/* Copies synchronously before returning, so - unlike the wxImage path
+	   below - this is safe to call directly from the VIDC worker thread with
+	   no heap copy or CallAfter hop: update.buffer is only valid until this
+	   call returns, and by the time it does, the frame is already in shared
+	   memory. */
+	shared_fb_->Publish(update.buffer, update.xsize, update.ysize);
+
+	if (ipc_server_) {
+		IpcEvent event;
+		event.type = IpcEventType::FrameReady;
+		ipc_server_->SendEvent(event);
+	}
+}
+
+/*
+ * Dispatch a request that arrived over the machine control channel.
+ *
+ * Runs on MachineIpcServer's own thread, never the GUI thread - which is why
+ * this goes straight to EmulatorHost's public methods rather than through the
+ * menu handlers (OnReset() and friends) that call them on the window's
+ * behalf: those methods are themselves just PostCommand() onto a mutex-
+ * protected queue the emulator thread drains, already safe to call from a
+ * foreign thread. The VNC server's keyboard/pointer callbacks call the same
+ * methods the same way today.
+ */
+void MainFrame::HandleIpcRequest(const IpcRequest &request)
+{
+	if (!emulator_) {
+		return;
+	}
+
+	switch (request.type) {
+	case IpcRequestType::KeyPress:
+		emulator_->KeyPress((unsigned) request.arg1);
+		break;
+	case IpcRequestType::KeyRelease:
+		emulator_->KeyRelease((unsigned) request.arg1);
+		break;
+	case IpcRequestType::MouseMove:
+		emulator_->MouseMove(request.arg1, request.arg2);
+		break;
+	case IpcRequestType::MouseMoveRelative:
+		emulator_->MouseMoveRelative(request.arg1, request.arg2);
+		break;
+	case IpcRequestType::MousePress:
+		emulator_->MousePress(request.arg1);
+		break;
+	case IpcRequestType::MouseRelease:
+		emulator_->MouseRelease(request.arg1);
+		break;
+	case IpcRequestType::MouseWheel:
+		emulator_->MouseWheel(request.arg1);
+		break;
+	case IpcRequestType::Reset:
+		emulator_->Reset();
+		break;
+	case IpcRequestType::Restart:
+		emulator_->Restart();
+		break;
+	case IpcRequestType::RequestExit:
+		/* Close() touches wx window state, so it has to run on the GUI
+		   thread; everything above is a plain EmulatorHost call and needs
+		   no hop. */
+		CallAfter([this]() { Close(true); });
+		break;
+	case IpcRequestType::LoadDisc0:
+		emulator_->LoadDisc(0, request.path);
+		break;
+	case IpcRequestType::LoadDisc1:
+		emulator_->LoadDisc(1, request.path);
+		break;
+	case IpcRequestType::EjectDisc0:
+		emulator_->EjectDisc(0);
+		break;
+	case IpcRequestType::EjectDisc1:
+		emulator_->EjectDisc(1);
+		break;
+	case IpcRequestType::CdromDisabled:
+		emulator_->CdromDisabled();
+		break;
+	case IpcRequestType::CdromEmpty:
+		emulator_->CdromEmpty();
+		break;
+	case IpcRequestType::CdromLoadIso:
+		emulator_->CdromLoadIso(request.path);
+		break;
+	case IpcRequestType::RequestKeyFrame:
+		/* Nothing to do: the shared framebuffer always holds the most
+		   recently published frame regardless of who has asked for it, so a
+		   Manager tab that has just switched to this machine can read it
+		   immediately without waiting for the guest to draw something new. */
+		break;
+	}
 }
 
 wxString MainFrame::BlankDiscResourcePath(const wxString &filename) const
@@ -1887,6 +2019,14 @@ bool MainFrame::IsGuiThread() const { return wxIsMainThread(); }
 
 void MainFrame::PostVideoUpdate(VideoUpdate update)
 {
+	if (managed_mode_) {
+		/* No window is shown, so there is nothing for panel_ to paint: send
+		   the frame to the Manager instead of building a wxBitmap nobody
+		   will ever see. Safe from any thread - see MirrorToSharedFramebuffer. */
+		MirrorToSharedFramebuffer(update);
+		return;
+	}
+
 	if (wxIsMainThread()) {
 		if (panel_ != nullptr) {
 			panel_->ApplyVideoUpdate(update);

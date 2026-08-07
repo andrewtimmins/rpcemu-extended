@@ -31,6 +31,33 @@
 /* Remembered so the port can be corrected later without re-deriving the path. */
 static int lock_vnc_port;
 
+/* Remembered so it survives into a later rewrite of the file (e.g. when the
+   VNC port is corrected) without the caller having to repeat itself. Empty
+   when this process is not running as a managed machine, i.e. every case
+   except the manager's own child processes - see machine_ipc.h. */
+static char lock_ipc_endpoint[512];
+
+static void
+set_str_field(char *out, size_t size, const char *value)
+{
+	if (value == NULL) {
+		out[0] = '\0';
+		return;
+	}
+	snprintf(out, size, "%s", value);
+}
+
+/** Render the file's contents. `ipc_endpoint` may be NULL or empty. */
+static void
+format_lock_text(char *out, size_t size, long pid, int vnc_port, const char *ipc_endpoint)
+{
+	int n = snprintf(out, size, "pid=%ld\nvnc_port=%d\n", pid, vnc_port);
+
+	if (ipc_endpoint != NULL && ipc_endpoint[0] != '\0' && n > 0 && (size_t) n < size) {
+		snprintf(out + n, size - (size_t) n, "ipc=%s\n", ipc_endpoint);
+	}
+}
+
 /** Join a machine directory and the lock file name, tolerating a missing separator. */
 static void
 lock_path(char *out, size_t size, const char *machine_dir)
@@ -58,7 +85,7 @@ int
 machine_lock_acquire(const char *machine_dir, int vnc_port)
 {
 	char path[1024];
-	char text[128];
+	char text[700];
 	DWORD written = 0;
 
 	lock_path(path, sizeof(path), machine_dir);
@@ -88,29 +115,42 @@ machine_lock_acquire(const char *machine_dir, int vnc_port)
 
 	SetFilePointer(lock_handle, 0, NULL, FILE_BEGIN);
 	SetEndOfFile(lock_handle);
-	snprintf(text, sizeof(text), "pid=%lu\nvnc_port=%d\n",
-	    (unsigned long) GetCurrentProcessId(), vnc_port);
+	format_lock_text(text, sizeof(text), (long) GetCurrentProcessId(), vnc_port,
+	    lock_ipc_endpoint);
 	WriteFile(lock_handle, text, (DWORD) strlen(text), &written, NULL);
 	FlushFileBuffers(lock_handle);
 	return 1;
 }
 
-void
-machine_lock_set_vnc_port(int vnc_port)
+static void
+rewrite_lock_file_win32(void)
 {
-	char text[128];
+	char text[700];
 	DWORD written = 0;
 
-	lock_vnc_port = vnc_port;
 	if (lock_handle == INVALID_HANDLE_VALUE) {
 		return;
 	}
 	SetFilePointer(lock_handle, 0, NULL, FILE_BEGIN);
 	SetEndOfFile(lock_handle);
-	snprintf(text, sizeof(text), "pid=%lu\nvnc_port=%d\n",
-	    (unsigned long) GetCurrentProcessId(), vnc_port);
+	format_lock_text(text, sizeof(text), (long) GetCurrentProcessId(), lock_vnc_port,
+	    lock_ipc_endpoint);
 	WriteFile(lock_handle, text, (DWORD) strlen(text), &written, NULL);
 	FlushFileBuffers(lock_handle);
+}
+
+void
+machine_lock_set_vnc_port(int vnc_port)
+{
+	lock_vnc_port = vnc_port;
+	rewrite_lock_file_win32();
+}
+
+void
+machine_lock_set_ipc_endpoint(const char *ipc_endpoint)
+{
+	set_str_field(lock_ipc_endpoint, sizeof(lock_ipc_endpoint), ipc_endpoint);
+	rewrite_lock_file_win32();
 }
 
 void
@@ -134,7 +174,7 @@ int
 machine_lock_acquire(const char *machine_dir, int vnc_port)
 {
 	char path[1024];
-	char text[128];
+	char text[700];
 	int fd;
 
 	lock_path(path, sizeof(path), machine_dir);
@@ -160,8 +200,7 @@ machine_lock_acquire(const char *machine_dir, int vnc_port)
 	if (ftruncate(fd, 0) != 0) {
 		/* Not worth failing over: the contents are only a hint. */
 	}
-	snprintf(text, sizeof(text), "pid=%ld\nvnc_port=%d\n", (long) getpid(),
-	    vnc_port);
+	format_lock_text(text, sizeof(text), (long) getpid(), vnc_port, lock_ipc_endpoint);
 	if (write(fd, text, strlen(text)) < 0) {
 		/* Likewise. The lock is what matters. */
 	}
@@ -170,23 +209,35 @@ machine_lock_acquire(const char *machine_dir, int vnc_port)
 	return 1;
 }
 
-void
-machine_lock_set_vnc_port(int vnc_port)
+static void
+rewrite_lock_file_posix(void)
 {
-	char text[128];
+	char text[700];
 
-	lock_vnc_port = vnc_port;
 	if (lock_fd < 0) {
 		return;
 	}
 	if (lseek(lock_fd, 0, SEEK_SET) < 0 || ftruncate(lock_fd, 0) != 0) {
 		return;
 	}
-	snprintf(text, sizeof(text), "pid=%ld\nvnc_port=%d\n", (long) getpid(),
-	    vnc_port);
+	format_lock_text(text, sizeof(text), (long) getpid(), lock_vnc_port, lock_ipc_endpoint);
 	if (write(lock_fd, text, strlen(text)) < 0) {
 		/* Informational only; the lock is what matters. */
 	}
+}
+
+void
+machine_lock_set_vnc_port(int vnc_port)
+{
+	lock_vnc_port = vnc_port;
+	rewrite_lock_file_posix();
+}
+
+void
+machine_lock_set_ipc_endpoint(const char *ipc_endpoint)
+{
+	set_str_field(lock_ipc_endpoint, sizeof(lock_ipc_endpoint), ipc_endpoint);
+	rewrite_lock_file_posix();
 }
 
 void
@@ -235,6 +286,49 @@ machine_lock_read_owner(const char *machine_dir, long *pid, int *vnc_port)
 				*vnc_port = (int) value;
 			}
 			found = 1;
+		}
+	}
+	fclose(f);
+	return found;
+}
+
+int
+machine_lock_read_ipc_endpoint(const char *machine_dir, char *endpoint_out, size_t endpoint_out_size)
+{
+	char path[1024];
+	char line[700];	/* wide enough for "ipc=" plus a full AF_UNIX path */
+	FILE *f;
+	int found = 0;
+
+	if (endpoint_out != NULL && endpoint_out_size > 0) {
+		endpoint_out[0] = '\0';
+	}
+	if (endpoint_out == NULL || endpoint_out_size == 0) {
+		return 0;
+	}
+
+	lock_path(path, sizeof(path), machine_dir);
+	f = fopen(path, "r");
+	if (f == NULL) {
+		return 0;
+	}
+	while (fgets(line, sizeof(line), f) != NULL) {
+		const size_t prefix_len = 4;	/* strlen("ipc=") */
+
+		if (strncmp(line, "ipc=", prefix_len) == 0) {
+			size_t len = strlen(line + prefix_len);
+
+			while (len > 0 && (line[prefix_len + len - 1] == '\n' ||
+			                   line[prefix_len + len - 1] == '\r')) {
+				len--;
+			}
+			if (len >= endpoint_out_size) {
+				len = endpoint_out_size - 1;
+			}
+			memcpy(endpoint_out, line + prefix_len, len);
+			endpoint_out[len] = '\0';
+			found = 1;
+			break;
 		}
 	}
 	fclose(f);
