@@ -37,7 +37,7 @@
 #include "config_paths.h"
 #include "data_dir_dialog.h"
 #include "gui_preferences.h"
-#include "config_selector_dialog.h"
+#include "manager_frame.h"
 #include "main_frame.h"
 #include "headless_main.h"
 #include "http_transfer.h"	/* RPCEMU_HAVE_HTTP */
@@ -208,6 +208,15 @@ void RpcemuApp::OnInitCmdLine(wxCmdLineParser &parser)
 static const char *g_startup_machine = nullptr;
 static bool g_startup_resume = false;
 static const char *g_startup_state_file = nullptr;
+
+/*
+ * --managed: this process is a machine started by the Manager window (see
+ * manager_frame.h), not a standalone launch. It boots exactly like --machine
+ * (indeed it requires --machine, to say which one), except the window is
+ * never shown - the Manager displays it instead, via the shared-memory
+ * framebuffer and control channel MainFrame::EnableManagedMode() sets up.
+ */
+static bool g_startup_managed = false;
 
 /*
  * --fetch-riscos and its modifiers. Unlike the options above, this one is not
@@ -770,22 +779,23 @@ bool RpcemuApp::OnInit()
 
 		if (!used_default) {
 			/*
-			 * Deliberately local only. The machine list is offered over VNC in
-			 * headless mode, where remote is the only user there is; doing it here
-			 * as well meant a local and a remote user could race for the same
-			 * dialogue, and a remote client could boot a machine on somebody's
-			 * desktop without them asking for it. What a remote user of a desktop
-			 * session actually wants is control of the machine that is running,
-			 * which is the overlay rather than this.
+			 * The Manager window is the ordinary entry point: it lists every
+			 * configured machine and can start any number of them at once,
+			 * each as its own "--managed" process (see manager_frame.h and
+			 * MainFrame::EnableManagedMode()), switching the single display
+			 * area between whichever ones are running - the way VirtualBox
+			 * and VMware Workstation's own manager windows do.
+			 *
+			 * Unlike --machine or the default-machine path just above, this
+			 * process's job stops here: it does not go on to load a config or
+			 * run an emulator itself, only to start/stop/display others that
+			 * do. A scripted or remote launch that wants exactly one machine
+			 * and nothing else still has --machine for that.
 			 */
-			ConfigSelectorDialog selector(nullptr);
-			if (selector.ShowModal() != wxID_OK) {
-				return false;
-			}
-
-			config_path = selector.GetSelectedConfigPath();
-			resume_requested = selector.ShouldResume();
-			state_file = selector.GetStateFileToLoad();
+			auto *manager = new ManagerFrame();
+			manager->Show(true);
+			SetTopWindow(manager);
+			return true;
 		}
 	}
 	// The machine's own snapshot is "consumed" (renamed to .bak) on resume;
@@ -853,7 +863,11 @@ bool RpcemuApp::OnInit()
 	}
 
 	auto *frame = new MainFrame();
-	frame->Show(true);
+	if (g_startup_managed) {
+		frame->EnableManagedMode();
+	} else {
+		frame->Show(true);
+	}
 	SetTopWindow(frame);
 
 	// Tell the core the size of the display the window opened on, before
@@ -938,6 +952,7 @@ int main(int argc, char **argv)
 	bool list_machines = false;
 	bool show_help = false;
 	bool resume = false;
+	bool managed = false;
 	const char *machine_name = nullptr;
 	const char *state_file = nullptr;
 
@@ -1057,6 +1072,13 @@ int main(int argc, char **argv)
 			app_settings_override_debug_socket(value);
 		} else if (strcmp(arg, "--no-relay") == 0) {
 			app_settings_override_relay(0);
+		} else if (strcmp(arg, "--managed") == 0) {
+			/* Internal: used by the Manager window to launch a machine it
+			   will display and control itself. Not documented as a
+			   user-facing option (HeadlessPrintUsage does not mention it),
+			   the way no ordinary user needs to type --datadir's
+			   RPCEMU_DATADIR equivalent by hand either. */
+			managed = true;
 		} else if (strcmp(arg, "--machine") == 0) {
 			if (i + 1 < argc) {
 				machine_name = argv[++i];
@@ -1153,6 +1175,19 @@ int main(int argc, char **argv)
 	if ((resume || state_file != nullptr) && machine_name == nullptr) {
 		ConsoleMessage(true, "error: %s requires --machine <name>.\n",
 		               resume ? "--resume" : "--state");
+		ConsoleMessageFlush();
+		return 2;
+	}
+	/* --managed has no meaning without a machine to run, and headless mode
+	   answers a different display path entirely (VNC only, no window and
+	   hence nothing for a Manager to show). */
+	if (managed && machine_name == nullptr) {
+		ConsoleMessage(true, "error: --managed requires --machine <name>.\n");
+		ConsoleMessageFlush();
+		return 2;
+	}
+	if (managed && headless) {
+		ConsoleMessage(true, "error: --managed and --headless are mutually exclusive.\n");
 		ConsoleMessageFlush();
 		return 2;
 	}
@@ -1253,6 +1288,7 @@ int main(int argc, char **argv)
 		g_startup_machine = machine_name;
 		g_startup_resume = resume;
 		g_startup_state_file = state_file;
+		g_startup_managed = managed;
 	}
 
 	/* Normal graphical launch, with the options consumed above removed. */
