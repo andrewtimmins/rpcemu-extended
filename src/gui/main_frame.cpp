@@ -1808,6 +1808,8 @@ void MainFrame::OnActivate(wxActivateEvent &event)
 	} else if (panel_ != nullptr) {
 		panel_->FocusPanel();
 	}
+	/* wxFrame's handler is what puts this window's menu bar up on macOS. */
+	event.Skip();
 }
 
 /* Let the guest change screen mode to match the host display.
