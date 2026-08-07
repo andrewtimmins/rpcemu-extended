@@ -35,7 +35,6 @@
 #include "gui_bridge.h"
 #include "gui_preferences.h"
 #include "held_keys.h"
-#include "machine_ipc.h"
 
 class MachineInspectorWindow;
 class NatListDialog;
@@ -151,17 +150,6 @@ public:
 
 	void StartEmulator();
 	void UpdateMachineStatus();
-
-	/*
-	 * Run as a machine owned by the Manager window rather than shown as its
-	 * own top-level window: publish video into a shared-memory framebuffer
-	 * and accept input/control requests over a local socket instead of (or
-	 * rather, in addition to - both keep working) taking them from this
-	 * process's own wxFrame. Call once, right after construction and before
-	 * Show()/StartEmulator(); see main.cpp's --managed handling.
-	 */
-	void EnableManagedMode();
-	bool IsManagedMode() const { return managed_mode_; }
 
 	/* Shut down because the process was signalled. Saves what a machine would
 	   not want to lose and closes, without writing a snapshot - see
@@ -290,9 +278,6 @@ private:
 	void UpdateDebuggerActionStates();
 	void SyncSettingsMenuChecks();
 
-	void MirrorToSharedFramebuffer(const VideoUpdate &update);
-	void HandleIpcRequest(const IpcRequest &request);
-
 	void LoadDisc(int drive);
 	void CreateDisc(int drive);
 	void EditMachineConfiguration();
@@ -317,12 +302,6 @@ private:
 #endif
 	EmulatorPanel *panel_ = nullptr;
 	wxToolBar *tool_bar_ = nullptr;
-
-	/* Managed-mode plumbing (see EnableManagedMode()). Null/false for an
-	   ordinary single-window launch. */
-	bool managed_mode_ = false;
-	std::unique_ptr<SharedFramebuffer> shared_fb_;
-	std::unique_ptr<MachineIpcServer> ipc_server_;
 
 	wxMenu *recent_machines_menu_ = nullptr;
 	wxMenu *recent_floppies_menu_ = nullptr;

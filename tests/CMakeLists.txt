@@ -238,23 +238,6 @@ target_link_libraries(test_folder_transfer PRIVATE rpcemu_core m)
 rpcemu_setup_wxwidgets(test_folder_transfer)
 rpcemu_add_test(test_folder_transfer)
 
-# machine_ipc: the shared-memory framebuffer and local control-channel
-# transport the Manager window and a --managed machine talk over (see
-# src/gui/machine_ipc.h). Pure std::thread + BSD/Winsock sockets, so this
-# exercises the real transport without needing wxWidgets, a display, ROMs or
-# a running emulator.
-find_package(Threads REQUIRED)
-add_executable(test_machine_ipc test_machine_ipc.cpp
-               ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui/machine_ipc.cpp)
-target_include_directories(test_machine_ipc PRIVATE
-                           ${CMAKE_CURRENT_SOURCE_DIR}/../src
-                           ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui)
-target_link_libraries(test_machine_ipc PRIVATE Threads::Threads)
-if(UNIX AND NOT APPLE)
-    target_link_libraries(test_machine_ipc PRIVATE rt)
-endif()
-rpcemu_add_test(test_machine_ipc)
-
 # What the machine editor warns about when a HostFS folder is chosen. Split out of
 # the dialog because the decision was wrong in a way that read correctly: the
 # "no !Boot" warning lived in the branch for a folder that already existed, so a
@@ -462,7 +445,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 28)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 27)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()

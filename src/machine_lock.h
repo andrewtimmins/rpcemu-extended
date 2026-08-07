@@ -47,8 +47,6 @@
 #ifndef MACHINE_LOCK_H
 #define MACHINE_LOCK_H
 
-#include <stddef.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -76,15 +74,6 @@ extern int machine_lock_acquire(const char *machine_dir, int vnc_port);
 extern void machine_lock_set_vnc_port(int vnc_port);
 
 /**
- * Record the local control-channel endpoint a managed child (see
- * machine_ipc.h) is listening on, so the Manager can find it without a
- * separate discovery step. An AF_UNIX path on Linux/macOS, "tcp:<port>" on
- * Windows. Empty (the default) for every process that is not a managed
- * child - a plain single-window launch has nothing to advertise here.
- */
-extern void machine_lock_set_ipc_endpoint(const char *ipc_endpoint);
-
-/**
  * Release it. Safe to call when nothing was acquired.
  *
  * Called on an orderly exit for tidiness; the operating system would do it anyway.
@@ -100,15 +89,6 @@ extern void machine_lock_release(void);
  * @return 1 if something was read, 0 otherwise.
  */
 extern int machine_lock_read_owner(const char *machine_dir, long *pid, int *vnc_port);
-
-/**
- * The running owner's IPC endpoint, if it has one (see machine_lock_set_ipc_endpoint).
- *
- * @return 1 if an endpoint was read, 0 if there is no lock file or no managed
- *         child has recorded one (an ordinary single-window machine, most of
- *         the time).
- */
-extern int machine_lock_read_ipc_endpoint(const char *machine_dir, char *endpoint_out, size_t endpoint_out_size);
 
 #ifdef __cplusplus
 }

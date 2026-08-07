@@ -446,8 +446,7 @@ void HeadlessPrintUsage(const char *argv0)
 	HeadlessOutput(
 	    "Usage: %s [options]\n"
 	    "\n"
-	    "With no options the Manager window is shown, listing every machine\n"
-	    "and able to start any number of them at once.\n"
+	    "With no options the graphical machine selector is shown.\n"
 	    "\n"
 	    "Options:\n"
 	    "  --machine <name>      Machine to run (config name in the configs dir,\n"

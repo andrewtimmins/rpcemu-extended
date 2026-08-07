@@ -18,6 +18,7 @@ set(GUI_SOURCES
     emulator_snapshot.cpp
     gui_preferences.cpp
     input_helpers.cpp
+    config_selector_dialog.cpp
     config_paths.cpp
     folder_transfer.cpp
     machine_edit_dialog.cpp
@@ -48,9 +49,6 @@ set(GUI_SOURCES
     data_dir_choice.c
     data_dir_store.c
     data_dir_dialog.cpp
-    machine_ipc.cpp
-    manager_frame.cpp
-    remote_emulator_panel.cpp
 )
 
 if(RPCEMU_ENABLE_VNC)
@@ -112,14 +110,6 @@ endif()
 target_link_libraries(${RPCEMU_GUI_TARGET} PRIVATE
     rpcemu_core
 )
-
-# machine_ipc.cpp's shared-memory framebuffer uses shm_open()/shm_unlink(),
-# which pre-2.34 glibc ships in librt rather than libc. Linking it is a no-op
-# on newer glibc (and on macOS/BSD, which have no separate librt) and harmless
-# either way, so it is not worth detecting the glibc version for.
-if(UNIX AND NOT APPLE)
-    target_link_libraries(${RPCEMU_GUI_TARGET} PRIVATE rt)
-endif()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL2 REQUIRED sdl2)
