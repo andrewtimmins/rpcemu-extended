@@ -37,6 +37,12 @@ public:
 	NatListDialog(wxWindow *parent, EmulatorHost *emulator_host);
 	~NatListDialog() override;
 
+	/* Built once at startup and kept hidden until asked for, so it is not a
+	   window the user would think of as open. Every top level window claims
+	   otherwise by default, which would leave wx believing the machine window
+	   was not the last one and stop it ending the application. */
+	bool ShouldPreventAppExit() const override { return false; }
+
 	void AddNatRule(PortForwardRule rule);
 
 	/* Show the dialog, re-reading the rules first. The dialog is built once at
