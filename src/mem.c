@@ -164,7 +164,7 @@ mem_reset(uint32_t ramsize, uint32_t vram_size)
 	   SDRAM banks (physical 0x20000000 and 0x30000000). */
 	have_sdram = ramsize > 256;
 
-	/* Convert ramsize from bytes to megabytes */
+	/* Convert ramsize from megabytes to bytes */
 	ramsize *= (1024 * 1024);
 
 	if (have_sdram) {
