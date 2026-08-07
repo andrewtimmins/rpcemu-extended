@@ -21,6 +21,7 @@
 #include <wx/wx.h>
 #include <wx/cmdline.h>
 #include <wx/display.h>
+#include <wx/evtloop.h>
 
 #include <cstdarg>
 #include <cstdio>
@@ -57,6 +58,27 @@ class RpcemuApp : public wxApp {
 public:
 	bool OnInit() override;
 	void OnInitCmdLine(wxCmdLineParser &parser) override;
+
+	/*
+	 * wxAppConsoleBase::ExitMainLoop() only acts while the main loop is the
+	 * active one, and IsRunning() means exactly that - GetActive() == this. A
+	 * request arriving from anywhere else is dropped without a word, which is
+	 * how closing the machine window left the application running.
+	 *
+	 * ScheduleExit() is wx's answer for that case: it marks the loop to finish
+	 * without needing it to be the active one. It does require the loop to have
+	 * been started, so fall back to the base version when there is none.
+	 */
+	void ExitMainLoop() override
+	{
+		wxEventLoopBase *loop = GetMainLoop();
+
+		if (loop != nullptr && !loop->IsRunning()) {
+			loop->ScheduleExit(0);
+			return;
+		}
+		wxApp::ExitMainLoop();
+	}
 
 private:
 	void InstallSignalHandlers();
