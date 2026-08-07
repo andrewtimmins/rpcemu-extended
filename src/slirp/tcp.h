@@ -38,8 +38,18 @@ typedef	uint32_t tcp_seq;
 #define      PR_SLOWHZ       2               /* 2 slow timeouts per second (approx) */
 #define      PR_FASTHZ       5               /* 5 fast timeouts per second (not important) */
 
-#define TCP_SNDSPACE 8192
-#define TCP_RCVSPACE 8192
+/*
+ * These were 8192 (the original Danny Gasparovski slirp default), which caps
+ * throughput to roughly window / RTT: 8192 bytes over a ~10-12ms path is
+ * only 650-800 KB/s, however fast the two ends and the host link actually
+ * are. tcp_output() already clamps the advertised window to TCP_MAXWIN
+ * (65535, the largest an unscaled 16-bit TCP window field can carry - this
+ * code doesn't negotiate the window scale option, so that ceiling is real),
+ * so raising these all the way to it is safe and lets a connection use
+ * several times the bandwidth-delay product it could before.
+ */
+#define TCP_SNDSPACE 65536
+#define TCP_RCVSPACE 65536
 
 /*
  * TCP header.
