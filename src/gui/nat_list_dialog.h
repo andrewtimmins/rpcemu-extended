@@ -35,7 +35,6 @@ class NatEditDialog;
 class NatListDialog : public wxDialog {
 public:
 	NatListDialog(wxWindow *parent, EmulatorHost *emulator_host);
-	~NatListDialog() override;
 
 	void AddNatRule(PortForwardRule rule);
 
@@ -66,6 +65,5 @@ private:
 	NatEditDialog *nat_edit_dialog_ = nullptr;
 };
 
-void NatListDialogNotifyRule(PortForwardRule rule);
 
 #endif

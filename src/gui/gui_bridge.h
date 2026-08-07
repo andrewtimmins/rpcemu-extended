@@ -42,7 +42,6 @@ public:
 	virtual void ShowError(const std::string &message) = 0;
 	virtual void ShowFatal(const std::string &message) = 0;
 
-	virtual void PostNatRule(PortForwardRule rule) = 0;
 	virtual void PostDebuggerStateChanged() = 0;
 	virtual void PostMachineSwitched(const std::string &machine_name) = 0;
 

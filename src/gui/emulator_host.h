@@ -25,7 +25,6 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
-#include <deque>
 #include <mutex>
 #include <queue>
 #include <string>
@@ -220,11 +219,9 @@ public:
 	bool SaveState(const std::string &path);
 	bool LoadState(const std::string &path, std::string *error_out);
 
-	void StoreNatRuleForGui(PortForwardRule rule);
 	/* Host clipboard text, on its way to the guest (emulator thread). */
 	void HostClipboardChanged(int file_type, const std::string &data);
 	void ClipboardEnabled(bool enabled);
-	std::vector<PortForwardRule> TakePendingNatRules();
 
 	void IdleProcessEvents();
 	int64_t GetElapsedTimerNs() const;
@@ -276,9 +273,6 @@ private:
 	bool trace_ready_ = false;
 	std::vector<DebugTraceEvent> trace_result_{};
 	uint32_t trace_dropped_ = 0;
-
-	std::mutex nat_rules_mutex_;
-	std::deque<PortForwardRule> pending_nat_rules_;
 
 	std::atomic<bool> flyback_pending_{false};
 };
