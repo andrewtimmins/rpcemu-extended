@@ -25,8 +25,11 @@
 #include <vector>
 
 #include <wx/wx.h>
+#include <wx/imaglist.h>
+#include <wx/listctrl.h>
 #include <wx/process.h>
 #include <wx/simplebook.h>
+#include <wx/splitter.h>
 
 #include "remote_emulator_panel.h"
 
@@ -65,6 +68,9 @@ private:
 
 	void BuildUi();
 	void BuildMenus();
+	void BuildToolBar();
+	void BuildStatusImages();
+	wxPanel *BuildPlaceholderPage();
 	void RefreshMachineList();
 	wxString SelectedMachineName() const;
 	void UpdateButtons();
@@ -78,8 +84,8 @@ private:
 	void AttachPanelFor(const wxString &name, const wxString &shared_fb_name,
 	                     const wxString &ipc_endpoint, bool newly_started);
 
-	void OnMachineSelected(wxCommandEvent &event);
-	void OnMachineActivated(wxCommandEvent &event);
+	void OnMachineSelected(wxListEvent &event);
+	void OnMachineActivated(wxListEvent &event);
 	void OnNew(wxCommandEvent &event);
 	void OnEdit(wxCommandEvent &event);
 	void OnClone(wxCommandEvent &event);
@@ -92,18 +98,19 @@ private:
 	void OnClose(wxCloseEvent &event);
 	void OnPollTimer(wxTimerEvent &event);
 
-	wxListBox *machine_list_ = nullptr;
+	wxListCtrl *machine_list_ = nullptr;
+	wxImageList *status_images_ = nullptr;
 	wxSimplebook *display_book_ = nullptr;
 	int placeholder_page_ = -1;
 	wxButton *new_button_ = nullptr;
 	wxButton *edit_button_ = nullptr;
 	wxButton *clone_button_ = nullptr;
 	wxButton *delete_button_ = nullptr;
-	wxButton *start_button_ = nullptr;
-	wxButton *stop_button_ = nullptr;
+	wxToolBar *tool_bar_ = nullptr;
 	wxMenuItem *reset_item_ = nullptr;
 	wxMenuItem *restart_item_ = nullptr;
 	wxMenuItem *stop_item_ = nullptr;
+	wxMenuItem *start_item_ = nullptr;
 
 	std::map<wxString, RunningMachine> running_;
 	std::vector<wxString> machine_names_;	/* same order as machine_list_'s rows */
