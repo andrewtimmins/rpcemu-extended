@@ -58,6 +58,14 @@ public:
 	bool OnInit() override;
 	void OnInitCmdLine(wxCmdLineParser &parser) override;
 
+	/* Reached once the main loop has returned, so a process that is still
+	   around afterwards can be told apart from one whose loop never ended. */
+	int OnExit() override
+	{
+		rpclog("RPCEmu: event loop finished, exiting\n");
+		return wxApp::OnExit();
+	}
+
 private:
 	void InstallSignalHandlers();
 };
