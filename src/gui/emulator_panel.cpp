@@ -522,8 +522,51 @@ void EmulatorPanel::OnPaint(wxPaintEvent &event)
 			dc.DrawRectangle(dest);
 		}
 
-		dc.StretchBlit(offset_x_, offset_y_, scaled_x_, scaled_y_, &memDC, 0, 0, image_width_,
-		               image_height_, wxCOPY, false);
+		if (scaled_x_ <= 0 || scaled_y_ <= 0) {
+			return;
+		}
+
+		wxRect blit_dest = dest;
+		blit_dest.Intersect(wxRect(offset_x_, offset_y_, scaled_x_, scaled_y_));
+		if (blit_dest.IsEmpty()) {
+			return;
+		}
+
+		/*
+		 * Rescaling the whole guest frame to the whole screen on every paint
+		 * call, even when GetUpdateRegion() said only a few rows were dirty,
+		 * is what pegged a core on macOS: a hardware cursor gets re-marked
+		 * dirty every vsync frame whether or not it moved (vidcthread_gfxcard()
+		 * in vidc20.c), so this ran a full-frame CoreGraphics rescale up to 60
+		 * times a second even on a static desktop - dropping the refresh rate
+		 * didn't help because the per-frame cost, not the rate, dominated.
+		 *
+		 * Map the invalidated destination rect back to source pixels instead,
+		 * padded by one guest pixel on each side so the two rects' scaled edges
+		 * always overlap and no seam is left between repaints, and blit only
+		 * that band - mirroring what the unscaled path below already does.
+		 */
+		int sx0 = (blit_dest.x - offset_x_) * image_width_ / scaled_x_;
+		int sx1 = ((blit_dest.x + blit_dest.width - offset_x_) * image_width_ + scaled_x_ - 1) / scaled_x_;
+		int sy0 = (blit_dest.y - offset_y_) * image_height_ / scaled_y_;
+		int sy1 = ((blit_dest.y + blit_dest.height - offset_y_) * image_height_ + scaled_y_ - 1) / scaled_y_;
+
+		sx0 = std::max(0, sx0 - 1);
+		sy0 = std::max(0, sy0 - 1);
+		sx1 = std::min(image_width_, sx1 + 1);
+		sy1 = std::min(image_height_, sy1 + 1);
+
+		if (sx1 <= sx0 || sy1 <= sy0) {
+			return;
+		}
+
+		const int dx0 = offset_x_ + (sx0 * scaled_x_) / image_width_;
+		const int dx1 = offset_x_ + (sx1 * scaled_x_ + image_width_ - 1) / image_width_;
+		const int dy0 = offset_y_ + (sy0 * scaled_y_) / image_height_;
+		const int dy1 = offset_y_ + (sy1 * scaled_y_ + image_height_ - 1) / image_height_;
+
+		dc.StretchBlit(dx0, dy0, dx1 - dx0, dy1 - dy0, &memDC, sx0, sy0,
+		               sx1 - sx0, sy1 - sy0, wxCOPY, false);
 		return;
 	}
 
