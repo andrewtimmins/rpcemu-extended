@@ -232,8 +232,12 @@ rpcemu_add_test(test_debugsym ${CMAKE_CURRENT_BINARY_DIR})
 
 # The debugger's wire protocol, over a real socket. Links rpcemu_core and calls
 # debugcmd_poll() from the test in place of the emulator thread, which is the
-# same arrangement the real code uses while the CPU is paused. AF_UNIX, so not
-# built on Windows.
+# same arrangement the real code uses while the CPU is paused.
+#
+# Runs on every platform. The transport differs - AF_UNIX on Unix, a loopback
+# TCP port on Windows - because that is what debugcmd.c itself does; the parser
+# under test never sees the difference, and it is the parser that a client on
+# any platform depends on.
 #
 # Every other layer of the debugger is reached through C functions with types on
 # them. This one is a hand-written parser over strtok, and it is what every
@@ -244,11 +248,12 @@ rpcemu_add_test(test_debugsym ${CMAKE_CURRENT_BINARY_DIR})
 # order, and keeping the condition - which contains spaces - whole to the end of
 # the line; a parser that gets that wrong sets an unconditional breakpoint and
 # reports success.
-if(NOT WIN32)
-    add_executable(test_debugcmd test_debugcmd.c test_stubs.c)
-    target_link_libraries(test_debugcmd PRIVATE rpcemu_core m)
-    rpcemu_add_test(test_debugcmd ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_debugcmd test_debugcmd.c test_stubs.c)
+target_link_libraries(test_debugcmd PRIVATE rpcemu_core m)
+if(WIN32)
+    target_link_libraries(test_debugcmd PRIVATE ws2_32)
 endif()
+rpcemu_add_test(test_debugcmd ${CMAKE_CURRENT_BINARY_DIR})
 
 # The CI abort watcher's classification and verdict (tests/abort_watch.py, used
 # by tests/boot_smoke.py). Pure Python, no emulator.
