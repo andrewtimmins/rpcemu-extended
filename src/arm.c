@@ -569,7 +569,11 @@ arm_exec(void)
 		}
 		opcode = pccache2[PC >> 2];
 
-		if (debugger_instruction_hook(PC, opcode)) {
+		/* Gated on the cached flag rather than calling in unconditionally:
+		   with no breakpoint, watchpoint, step or trap set there is nothing
+		   for the hook to do, and this is the innermost loop in the
+		   emulator. The recompiler's dispatch gates on the same flag. */
+		if (debugger_hook_active && debugger_instruction_hook(PC, opcode)) {
 			return linecyc;
 		}
 
@@ -1871,7 +1875,9 @@ arm_exec(void)
 	// This label is used to skip the switch above
 skip:
 
-		debugger_after_instruction(PC, opcode);
+		if (debugger_hook_active) {
+			debugger_after_instruction(PC, opcode);
+		}
 
 		if (arm.event != 0) {
 			if (!ARM_MODE_32(arm.mode)) {

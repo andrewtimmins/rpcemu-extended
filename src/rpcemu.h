@@ -455,6 +455,12 @@ extern void debugger_after_instruction(uint32_t pc, uint32_t opcode);
 
 /* Debug tracing: exception trapping, SWI tracing, logging watchpoints */
 extern int debugger_swi_trace_active;	/**< Fast gate read from opSWI() */
+
+/** Fast gate read once per instruction by the interpreter and the recompiler's
+    dispatch. Non-zero when something (a breakpoint, a watchpoint, a step, a
+    trap, or a pause) needs to see each instruction. Equivalent to calling
+    debugger_requires_instruction_hook(), but without the call. */
+extern int debugger_hook_active;
 extern void debugger_set_trace_config(const DebugTraceConfig *cfg);
 extern void debugger_get_trace_config(DebugTraceConfig *cfg);
 extern uint32_t debugger_trace_pending(void);

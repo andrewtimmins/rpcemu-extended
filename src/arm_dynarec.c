@@ -851,7 +851,7 @@ int
 arm_exec(void)
 {
 	for (linecyc = 256; linecyc >= 0; linecyc--) {
-		if (!isblockvalid(PC) || debugger_requires_instruction_hook()) {
+		if (!isblockvalid(PC) || debugger_hook_active) {
 			// Interpret block
 			if ((PC >> 12) != pccache) {
 				pccache = PC >> 12;
@@ -867,7 +867,7 @@ arm_exec(void)
 			blockend = 0;
 			do {
 				const uint32_t opcode = pccache2[PC >> 2];
-				const int debug_active = debugger_requires_instruction_hook();
+				const int debug_active = debugger_hook_active;
 
 				if (debug_active) {
 					if (debugger_instruction_hook(PC, opcode)) {
@@ -902,7 +902,7 @@ arm_exec(void)
 				pagedirty[PC>>9]=0;
 				cacheclearpage(PC>>9);
 			}
-			else */ if (!debugger_requires_instruction_hook() && codeblockpc[hash] == PC) {
+			else */ if (!debugger_hook_active && codeblockpc[hash] == PC) {
 				const uint32_t templ = codeblocknum[hash];
 				void (*gen_func)(void);
 
@@ -933,7 +933,7 @@ arm_exec(void)
 				blockend = 0;
 				do {
 					opcode = pccache2[PC >> 2];
-					const int debug_active = debugger_requires_instruction_hook();
+					const int debug_active = debugger_hook_active;
 
 					if (debug_active) {
 						if (debugger_instruction_hook(PC, opcode)) {
