@@ -121,6 +121,22 @@ add_executable(test_mmu_perms test_mmu_perms.c test_stubs.c)
 target_link_libraries(test_mmu_perms PRIVATE rpcemu_core m)
 rpcemu_add_test(test_mmu_perms)
 
+# The disassembler, and the instruction description the debugger acts on. Needs
+# nothing but arm_disasm.c - it is pure decoding, no machine state.
+#
+# A wrong mnemonic used to cost a double-take in the inspector window and nothing
+# more. It costs more now that arm_decode() answers "is this a call", "is this a
+# return" and "where does this branch go", because step-over and step-out are
+# built on those answers: a decoding mistake stops looking like an odd line and
+# starts looking like a debugger that runs away when asked to step. This also
+# pins down the FPA10 encodings, hand-assembled from the operation tables in
+# fpa.c, which is the only written record of what those bit patterns mean.
+add_executable(test_arm_disasm test_arm_disasm.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/arm_disasm.c)
+target_include_directories(test_arm_disasm PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_arm_disasm)
+
 # Display mode selection against a VRAM budget. Architecture-neutral and needs
 # no dynarec, so unlike the JIT tests it builds everywhere.
 # Compiles the unit under test directly rather than linking rpcemu_core: the
@@ -445,7 +461,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 27)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 28)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()
