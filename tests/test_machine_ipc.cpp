@@ -189,11 +189,119 @@ static void test_ipc_roundtrip()
 	server.Stop();
 }
 
+/*
+ * A forwarded menu command, and the tick-box state that comes back.
+ *
+ * This is the whole of the Manager's menu bar in one message type: the id says
+ * which command, arg2 carries a tick-box's new state (or Create Disc's chosen
+ * file type), and path carries a file the Manager's own dialogue picked. If any
+ * of those three failed to survive the trip, the command that ran in the machine
+ * would not be the one the user chose - and it would report success either way,
+ * which is exactly the failure this is here to catch.
+ *
+ * The reply direction matters as much: a StateReport the Manager cannot read
+ * leaves its tick-boxes showing something the machine does not agree with.
+ */
+void test_menu_command_roundtrip()
+{
+	std::printf("\nForwarded menu commands\n");
+
+#ifdef _WIN32
+	const std::string endpoint;	/* Start() ignores it and picks a TCP port */
+#else
+	char path[128];
+	std::snprintf(path, sizeof(path), "/tmp/rpcemu-test-menu-%ld.sock", (long) getpid());
+	const std::string endpoint = path;
+#endif
+
+	MachineIpcServer server;
+	MachineIpcClient client;
+	std::mutex m;
+	std::condition_variable cv;
+	std::vector<IpcRequest> received;
+	std::vector<IpcEvent> events;
+
+	const bool server_ok = server.Start(endpoint, [&](const IpcRequest &req) {
+		std::lock_guard<std::mutex> lock(m);
+		received.push_back(req);
+		cv.notify_all();
+	});
+	CHECK(server_ok);
+
+	const bool client_ok = client.Connect(server.BoundEndpoint(), [&](const IpcEvent &ev) {
+		std::lock_guard<std::mutex> lock(m);
+		events.push_back(ev);
+		cv.notify_all();
+	});
+	CHECK(client_ok);
+
+	/* A tick-box: the id and the state it was moved to. */
+	IpcRequest toggle;
+	toggle.type = IpcRequestType::MenuCommand;
+	toggle.arg1 = 5006;		/* a menu id; the value is opaque to the transport */
+	toggle.arg2 = 1;		/* now ticked */
+	client.Send(toggle);
+
+	/* A command carrying a file chosen in the Manager, and - for Create Disc -
+	   which entry of the file-type list was chosen, in the same field a
+	   tick-box would use. No command needs both. */
+	IpcRequest with_file;
+	with_file.type = IpcRequestType::MenuCommand;
+	with_file.arg1 = 5011;
+	with_file.arg2 = 3;		/* the fourth disc type */
+	std::snprintf(with_file.path, sizeof(with_file.path), "%s",
+	    "/tmp/a directory with spaces/blank disc.adf");
+	client.Send(with_file);
+
+	IpcRequest ask_state;
+	ask_state.type = IpcRequestType::RequestState;
+	client.Send(ask_state);
+
+	{
+		std::unique_lock<std::mutex> lock(m);
+		cv.wait_for(lock, std::chrono::seconds(5), [&] { return received.size() >= 3; });
+	}
+	CHECK(received.size() == 3);
+	if (received.size() == 3) {
+		CHECK(received[0].type == IpcRequestType::MenuCommand);
+		CHECK(received[0].arg1 == 5006);
+		CHECK(received[0].arg2 == 1);
+
+		CHECK(received[1].type == IpcRequestType::MenuCommand);
+		CHECK(received[1].arg1 == 5011);
+		CHECK(received[1].arg2 == 3);
+		CHECK(std::string(received[1].path) ==
+		    "/tmp/a directory with spaces/blank disc.adf");
+
+		CHECK(received[2].type == IpcRequestType::RequestState);
+	}
+
+	/* The answer: the pairs the Manager parses to set its own tick-boxes. */
+	IpcEvent state;
+	state.type = IpcEventType::StateReport;
+	std::snprintf(state.path, sizeof(state.path), "%s", "5006=1 5007=0 5008=1");
+	server.SendEvent(state);
+
+	{
+		std::unique_lock<std::mutex> lock(m);
+		cv.wait_for(lock, std::chrono::seconds(5), [&] { return !events.empty(); });
+	}
+	CHECK(!events.empty());
+	if (!events.empty()) {
+		CHECK(events[0].type == IpcEventType::StateReport);
+		CHECK(std::string(events[0].path) == "5006=1 5007=0 5008=1");
+	}
+
+	client.Disconnect();
+	server.Stop();
+}
+
 int main()
 {
 	test_shared_framebuffer();
 	test_ipc_name_for();
 	test_ipc_roundtrip();
+	test_menu_command_roundtrip();
 
 	if (failures != 0) {
 		std::fprintf(stderr, "%d failure(s)\n", failures);

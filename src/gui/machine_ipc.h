@@ -166,6 +166,34 @@ enum class IpcRequestType : uint32_t {
 	CdromLoadIso,		/* path = iso path */
 	RequestKeyFrame,	/* ask for the current frame to be republished, e.g.
 				   right after a Manager tab switches to this machine */
+
+	/*
+	 * ★ One verb for every menu command, rather than a verb per command.
+	 *
+	 * A managed machine never shows its window, so its menu bar - which is
+	 * complete, and whose handlers all work - has nothing to hang off and no
+	 * way to be reached. The obvious repair is a request type per command,
+	 * which is around forty of them, each needing a handler here that
+	 * duplicates the one the menu item already has.
+	 *
+	 * Instead this carries the menu id itself (a MainFrameMenuId, or a
+	 * wxID_* such as wxID_ABOUT) in arg1, and the child turns it back into a
+	 * menu event aimed at its own frame. The existing handler then runs,
+	 * unchanged and unaware that the click came from another process. A
+	 * command added to the machine window in future needs nothing here.
+	 *
+	 * arg2 carries the checked state for a tick-box item, and path carries a
+	 * string argument where one is needed - a file the Manager's own dialogue
+	 * chose, for instance, since the Manager is the process with a window to
+	 * put a dialogue over.
+	 */
+	MenuCommand,		/* arg1 = menu id, arg2 = check state, path = optional argument */
+
+	/*
+	 * Ask the machine what its tick-boxes currently say, so the Manager can
+	 * show them correctly. Answered with an IpcEventType::StateReport.
+	 */
+	RequestState,
 };
 
 struct IpcRequest {
@@ -181,6 +209,18 @@ enum class IpcEventType : uint32_t {
 	Fatal,		/* path = message; the machine is about to exit */
 	Quit,		/* the machine has exited (or is about to, cleanly) */
 	TitleChanged,	/* path = new machine name, e.g. after Switch Machine */
+
+	/*
+	 * What the machine's own tick-box menu items currently say, so the
+	 * Manager's copies of them can agree with the machine rather than with
+	 * whatever they happened to be set to when it started.
+	 *
+	 * Carried in path as "id=0|1" pairs separated by spaces, which fits
+	 * comfortably and needs no new struct or versioning: an id the Manager
+	 * does not recognise is ignored, and one it expects but does not receive
+	 * simply keeps its previous value.
+	 */
+	StateReport,
 };
 
 struct IpcEvent {

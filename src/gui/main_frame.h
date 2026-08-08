@@ -293,6 +293,15 @@ private:
 	void MirrorToSharedFramebuffer(const VideoUpdate &update);
 	void HandleIpcRequest(const IpcRequest &request);
 
+	/* Menu commands forwarded from the Manager, and the tick-box state sent
+	   back so its copies of them can agree. See machine_ipc.h. */
+	void DispatchMenuCommand(int id, bool checked, const wxString &argument,
+	                         int filter = 0);
+	bool AskForFile(const wxString &title, const wxString &wildcard, bool save,
+	                wxString *path, const wxString &default_dir = wxEmptyString,
+	                const wxString &default_file = wxEmptyString);
+	void ReportMenuState();
+
 	void LoadDisc(int drive);
 	void CreateDisc(int drive);
 	void EditMachineConfiguration();
@@ -321,6 +330,17 @@ private:
 	/* Managed-mode plumbing (see EnableManagedMode()). Null/false for an
 	   ordinary single-window launch. */
 	bool managed_mode_ = false;
+
+	/* A string argument sent with a forwarded menu command - a file the
+	   Manager's own dialogue chose, for instance. Set for the duration of the
+	   handler and cleared afterwards, so a handler that runs from a real menu
+	   click sees it empty and asks the user as it always has. */
+	wxString pending_menu_argument_;
+
+	/* Which entry of a forwarded command's file-type list was chosen. Only
+	   Create Disc needs it: the disc type comes from the dialogue's filter
+	   rather than from the file name. */
+	int pending_menu_filter_ = 0;
 	std::unique_ptr<SharedFramebuffer> shared_fb_;
 	std::unique_ptr<MachineIpcServer> ipc_server_;
 

@@ -455,7 +455,174 @@ void MainFrame::HandleIpcRequest(const IpcRequest &request)
 		   Manager tab that has just switched to this machine can read it
 		   immediately without waiting for the guest to draw something new. */
 		break;
+
+	case IpcRequestType::MenuCommand:
+		/* arg2 is the tick-box state for a checkable item, and the chosen
+		   file-type for Create Disc; no command needs both. */
+		DispatchMenuCommand(request.arg1, request.arg2 != 0,
+		    wxString::FromUTF8(request.path), request.arg2);
+		break;
+
+	case IpcRequestType::RequestState:
+		/* Reads menu items, so it belongs on the GUI thread like the rest
+		   of the wx object graph. */
+		CallAfter([this] { ReportMenuState(); });
+		break;
 	}
+}
+
+/*
+ * The file a command should act on.
+ *
+ * Normally this asks, exactly as it always has. When the command was forwarded
+ * from the Manager, the file has already been chosen there and travels with the
+ * request, so there is nothing to ask.
+ *
+ * ★ That is not a shortcut, it is the only thing that can work.
+ *
+ * A managed machine's window is never shown. A wxFileDialog opened on it would
+ * be modal to a window that is not on screen: on some platforms it appears with
+ * no owner and no taskbar entry, on others behind the Manager, and in every case
+ * the user is looking at a Manager that has silently stopped responding to the
+ * menu they just used. The dialogue therefore belongs to the process with a
+ * window, and only the answer crosses.
+ *
+ * @param title    Dialogue title, when one is shown
+ * @param wildcard Dialogue file filter
+ * @param save     Whether this is a save rather than an open
+ * @param path     Where the chosen file is written
+ * @return         true if there is a file to act on
+ */
+bool MainFrame::AskForFile(const wxString &title, const wxString &wildcard,
+    bool save, wxString *path, const wxString &default_dir,
+    const wxString &default_file)
+{
+	if (!pending_menu_argument_.empty()) {
+		*path = pending_menu_argument_;
+		return true;
+	}
+
+	wxFileDialog dlg(this, title, default_dir, default_file, wildcard,
+	    save ? (wxFD_SAVE | wxFD_OVERWRITE_PROMPT)
+	         : (wxFD_OPEN | wxFD_FILE_MUST_EXIST));
+
+	if (dlg.ShowModal() != wxID_OK) {
+		return false;
+	}
+	*path = dlg.GetPath();
+	return true;
+}
+
+/*
+ * Turn a menu id that arrived from the Manager back into a menu event on this
+ * window.
+ *
+ * The point of doing it this way round is that nothing below has to know which
+ * command it is. ProcessWindowEvent() runs the same handler the menu item is
+ * bound to, so every command the machine window has is available to the Manager,
+ * including ones added after this was written.
+ *
+ * ★ CallAfter, because this arrives on MachineIpcServer's thread.
+ *
+ * Unlike the input and disc requests above - which go to EmulatorHost methods
+ * that are explicitly safe to call from a foreign thread - a menu handler is
+ * ordinary GUI code. It reads menu items, opens dialogues and touches the window
+ * hierarchy, none of which may be done from anywhere but the GUI thread.
+ */
+void MainFrame::DispatchMenuCommand(int id, bool checked, const wxString &argument,
+    int filter)
+{
+	CallAfter([this, id, checked, argument, filter] {
+		/*
+		 * A tick-box handler asks the event whether it is now ticked, and
+		 * for a menu event wx answers from the item rather than the event,
+		 * so the item has to be set before the event is sent. The Manager
+		 * has already moved its own copy, and sends where it ended up.
+		 */
+		wxMenuBar *bar = GetMenuBar();
+		if (bar != nullptr) {
+			wxMenuItem *item = bar->FindItem(id);
+
+			if (item != nullptr && item->IsCheckable()) {
+				item->Check(checked);
+			}
+		}
+
+		if (!argument.empty()) {
+			pending_menu_argument_ = argument;
+			pending_menu_filter_ = filter;
+		}
+
+		wxCommandEvent event(wxEVT_MENU, id);
+		event.SetInt(checked ? 1 : 0);
+		event.SetEventObject(this);
+		ProcessWindowEvent(event);
+
+		pending_menu_argument_.clear();
+		pending_menu_filter_ = 0;
+
+		/* The command may well have moved a tick-box - muting sound, say -
+		   so tell the Manager where things stand rather than leaving its
+		   copy to drift. */
+		ReportMenuState();
+	});
+}
+
+/*
+ * Tell the Manager what this machine's tick-box menu items currently say.
+ *
+ * Sent when asked, and again after every forwarded command, since a command can
+ * change an item other than the one that was clicked.
+ */
+void MainFrame::ReportMenuState()
+{
+	if (!ipc_server_) {
+		return;
+	}
+
+	static const int checkable[] = {
+		ID_MENU_MUTE,
+		ID_MENU_FULLSCREEN,
+		ID_MENU_INTEGER_SCALING,
+		ID_MENU_FIT_TO_WINDOW,
+		ID_MENU_FOLLOW_HOST_DISPLAY,
+		ID_MENU_SUSPEND_ON_EXIT,
+		ID_MENU_CPU_IDLE,
+		ID_MENU_MOUSE_TWOBUTTON,
+		ID_MENU_SHARED_CLIPBOARD,
+		ID_MENU_DEFAULT_MACHINE,
+	};
+
+	wxMenuBar *bar = GetMenuBar();
+
+	if (bar == nullptr) {
+		return;
+	}
+
+	wxString report;
+
+	for (int id : checkable) {
+		wxMenuItem *item = bar->FindItem(id);
+
+		if (item == nullptr || !item->IsCheckable()) {
+			continue;
+		}
+		if (!report.empty()) {
+			report += " ";
+		}
+		report += wxString::Format("%d=%d", id, item->IsChecked() ? 1 : 0);
+	}
+
+	IpcEvent event;
+	event.type = IpcEventType::StateReport;
+	const wxScopedCharBuffer utf8 = report.utf8_str();
+
+	/* Truncation would only cost the Manager a tick-box it cannot see the
+	   state of, but the list is far shorter than the field, so it does not
+	   happen in practice. */
+	strncpy(event.path, utf8.data(), sizeof(event.path) - 1);
+	event.path[sizeof(event.path) - 1] = '\0';
+	ipc_server_->SendEvent(event);
 }
 
 wxString MainFrame::BlankDiscResourcePath(const wxString &filename) const
@@ -506,13 +673,13 @@ void MainFrame::StartEmulator()
 
 void MainFrame::OnScreenshot(wxCommandEvent &)
 {
-	wxFileDialog dlg(this, "Save Screenshot", wxEmptyString, "screenshot.png",
-	                 "PNG (*.png)|*.png", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
-	if (dlg.ShowModal() != wxID_OK) {
+	wxString path;
+
+	if (!AskForFile("Save Screenshot", "PNG (*.png)|*.png", true, &path)) {
 		return;
 	}
 
-	if (panel_ == nullptr || !panel_->SaveScreenshot(dlg.GetPath())) {
+	if (panel_ == nullptr || !panel_->SaveScreenshot(path)) {
 		wxMessageBox("Error saving screenshot", "RPCEmu Extended", wxOK | wxICON_WARNING, this);
 	}
 }
@@ -544,15 +711,16 @@ void MainFrame::OnSaveState(wxCommandEvent &)
 	const wxFileName snapshot(ConfigPathsSnapshotForConfig(
 	    ConfigPathsAbsoluteConfigPath(wxString::FromUTF8(config_get_path()))));
 
-	wxFileDialog dlg(this, "Save Machine State", snapshot.GetPath(), snapshot.GetFullName(),
-	                 "RPCEmu machine state (*.state)|*.state|All files (*)|*",
-	                 wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
-	if (dlg.ShowModal() != wxID_OK) {
+	wxString path;
+
+	if (!AskForFile("Save Machine State",
+	        "RPCEmu machine state (*.state)|*.state|All files (*)|*", true, &path,
+	        snapshot.GetPath(), snapshot.GetFullName())) {
 		return;
 	}
 
 	if (emulator_) {
-		if (!emulator_->SaveState(dlg.GetPath().utf8_str().data())) {
+		if (!emulator_->SaveState(path.utf8_str().data())) {
 			wxMessageBox("Failed to save the machine state.", "RPCEmu Extended",
 			             wxOK | wxICON_WARNING, this);
 		}
@@ -564,16 +732,17 @@ void MainFrame::OnLoadState(wxCommandEvent &)
 	const wxFileName snapshot(ConfigPathsSnapshotForConfig(
 	    ConfigPathsAbsoluteConfigPath(wxString::FromUTF8(config_get_path()))));
 
-	wxFileDialog dlg(this, "Load Machine State", snapshot.GetPath(), wxEmptyString,
-	                 "RPCEmu machine state (*.state)|*.state|All files (*)|*",
-	                 wxFD_OPEN | wxFD_FILE_MUST_EXIST);
-	if (dlg.ShowModal() != wxID_OK) {
+	wxString path;
+
+	if (!AskForFile("Load Machine State",
+	        "RPCEmu machine state (*.state)|*.state|All files (*)|*", false, &path,
+	        snapshot.GetPath())) {
 		return;
 	}
 
 	if (emulator_) {
 		std::string error;
-		if (!emulator_->LoadState(dlg.GetPath().utf8_str().data(), &error)) {
+		if (!emulator_->LoadState(path.utf8_str().data(), &error)) {
 			wxMessageBox(error.empty() ? wxString("Failed to load the machine state.")
 			                           : wxString::FromUTF8(error.c_str()),
 			             "RPCEmu Extended", wxOK | wxICON_WARNING, this);
@@ -648,18 +817,17 @@ void MainFrame::OnClearRecentMachines(wxCommandEvent &)
 
 void MainFrame::LoadDisc(int drive)
 {
-	wxFileDialog dlg(this, "Open Disc Image", wxEmptyString, wxEmptyString,
-	                 "All disc images (*.adf;*.adl;*.hfe;*.img)|*.adf;*.adl;*.hfe;*.img|"
-	                 "ADFS D/E/F Disc Image (*.adf)|*.adf|"
-	                 "ADFS L Disc Image (*.adl)|*.adl|"
-	                 "DOS Disc Image (*.img)|*.img|"
-	                 "HFE Disc Image (*.hfe)|*.hfe",
-	                 wxFD_OPEN | wxFD_FILE_MUST_EXIST);
-	if (dlg.ShowModal() != wxID_OK) {
+	wxString path;
+
+	if (!AskForFile("Open Disc Image",
+	        "All disc images (*.adf;*.adl;*.hfe;*.img)|*.adf;*.adl;*.hfe;*.img|"
+	        "ADFS D/E/F Disc Image (*.adf)|*.adf|"
+	        "ADFS L Disc Image (*.adl)|*.adl|"
+	        "DOS Disc Image (*.img)|*.img|"
+	        "HFE Disc Image (*.hfe)|*.hfe", false, &path)) {
 		return;
 	}
 
-	const wxString path = dlg.GetPath();
 	AddRecentFloppy(path.utf8_str().data());
 	UpdateRecentFloppiesMenu();
 
@@ -694,19 +862,38 @@ void MainFrame::CreateDisc(int drive)
 	    "DOS 720k Disc Image (*.img)|*.img|"
 	    "DOS 1440k Disc Image (*.img)|*.img";
 
-	wxFileDialog dlg(this, "Create Blank Disc Image", wxEmptyString, wxEmptyString, filter,
-	                 wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
-	if (dlg.ShowModal() != wxID_OK) {
-		return;
+	wxString chosen_path;
+	int filter_index = 0;
+
+	/*
+	 * ★ This one needs more than a path.
+	 *
+	 * Which disc is created comes from the dialogue's selected filter, not
+	 * from the file name, so a forwarded command has to carry that choice as
+	 * well - it arrives in pending_menu_filter_. Sending only the path would
+	 * silently create an ADFS F image whatever the user picked, which is the
+	 * kind of wrong that is not noticed until the guest cannot read the disc.
+	 */
+	if (!pending_menu_argument_.empty()) {
+		chosen_path = pending_menu_argument_;
+		filter_index = pending_menu_filter_;
+	} else {
+		wxFileDialog dlg(this, "Create Blank Disc Image", wxEmptyString,
+		    wxEmptyString, filter, wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+
+		if (dlg.ShowModal() != wxID_OK) {
+			return;
+		}
+		chosen_path = dlg.GetPath();
+		filter_index = dlg.GetFilterIndex();
 	}
 
-	const int filter_index = dlg.GetFilterIndex();
 	if (filter_index < 0 || filter_index >= static_cast<int>(WXSIZEOF(kDiscTypeFileMaps))) {
 		return;
 	}
 	const DiscTypeFileMap *disc_type = &kDiscTypeFileMaps[static_cast<size_t>(filter_index)];
 
-	wxString file_name = dlg.GetPath();
+	wxString file_name = chosen_path;
 	const wxString extension = disc_type->extension;
 	if (!file_name.Lower().EndsWith(extension)) {
 		file_name += extension;
@@ -798,10 +985,10 @@ void MainFrame::OnCdromEmpty(wxCommandEvent &)
 
 void MainFrame::OnCdromIso(wxCommandEvent &)
 {
-	wxFileDialog dlg(this, "Open ISO Image", wxEmptyString, wxEmptyString,
-	                 "ISO CD-ROM Image (*.iso)|*.iso|All Files (*.*)|*.*",
-	                 wxFD_OPEN | wxFD_FILE_MUST_EXIST);
-	if (dlg.ShowModal() != wxID_OK) {
+	wxString iso_path;
+
+	if (!AskForFile("Open ISO Image",
+	        "ISO CD-ROM Image (*.iso)|*.iso|All Files (*.*)|*.*", false, &iso_path)) {
 		SyncCdromMenuChecks();
 		return;
 	}
@@ -811,7 +998,7 @@ void MainFrame::OnCdromIso(wxCommandEvent &)
 		return;
 	}
 
-	const wxString path = dlg.GetPath();
+	const wxString path = iso_path;
 	AddRecentCDROM(path.utf8_str().data());
 	UpdateRecentCdromsMenu();
 
@@ -2070,6 +2257,27 @@ void MainFrame::PostVideoUpdate(VideoUpdate update)
 
 void MainFrame::PostMoveHostMouse(const MouseMoveUpdate &update)
 {
+	/*
+	 * ★ A managed machine must never move the host pointer.
+	 *
+	 * This exists so the guest can keep the host cursor with the RISC OS
+	 * pointer, and it works by converting guest coordinates through this
+	 * window and calling WarpPointer(). Under the Manager this window is
+	 * never shown, so it has no position on screen: ScreenToClient() cannot
+	 * answer (wx says so, repeatedly, in the log) and the warp lands at
+	 * whatever an unmapped window's origin comes out as - the corner of the
+	 * host display. Moving the mouse anywhere near the Manager threw the
+	 * cursor into that corner, over and over.
+	 *
+	 * The Manager owns the pointer for a machine it is showing: its panel
+	 * takes real mouse events and sends them over, and nothing needs to warp
+	 * the host cursor for that. So this is dropped here, exactly as
+	 * PostVideoUpdate drops painting into a window nobody can see.
+	 */
+	if (managed_mode_) {
+		return;
+	}
+
 	CallAfter([this, update]() {
 		if (panel_ != nullptr) {
 			panel_->HandleMoveHostMouse(update);
