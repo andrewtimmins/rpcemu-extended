@@ -281,11 +281,14 @@ dc_cmd_help(char *r)
 	    "\"mem <hexaddr> <len> [phys]\","
 	    "\"mem write <hexaddr> <hexbytes> [phys]\","
 	    "\"dis <hexaddr> [count]\","
-	    "\"bp add|del <hexaddr> | bp clear\","
+	    "\"bp add <hexaddr> [once] [count <n>] [if <expr>]\","
+	    "\"bp del|enable|disable <hexaddr> | bp clear\","
 	    "\"wp add|del <hexaddr> <size> <r|w|rw> [log] | wp clear\","
 	    "\"trace [max]\","
 	    "\"trace config [key=value ...]\","
-	    "\"pause\",\"resume\",\"continue\",\"step [count]\",\"reset\","
+	    "\"pause\",\"resume\",\"continue\",\"reset\","
+	    "\"step [count] | step into [count] | step over | step out\","
+	    "\"runto <hexaddr>\",\"bt [depth]\","
 	    "\"state save|load <path>\","
 	    "\"clipboard get|set [text]\""
 	    "]}");
@@ -578,6 +581,98 @@ dc_cmd_dis(char *r, char *args)
  * A malformed condition is refused here rather than accepted and found to be
  * unusable later, when the breakpoint is reached and quietly fails to fire.
  */
+/**
+ * step [n] | step into [n] | step over | step out
+ *
+ * "into" is the original behaviour and stays the default, so an existing
+ * client that says `step 5` is unaffected.
+ *
+ * Over and out both run the machine rather than stepping it, so neither can
+ * report how far it went - they answer immediately and the client polls
+ * `status` to learn where it stopped, exactly as it already does for `pause`.
+ */
+static void
+dc_cmd_step(char *r, char *args)
+{
+	char *a1 = strtok(args, " \t");
+	char *a2 = strtok(NULL, " \t");
+	uint32_t nsteps;
+
+	if (a1 && strcmp(a1, "over") == 0) {
+		if (!debugger_step_over()) {
+			dc_error("the machine must be paused to step");
+			return;
+		}
+		snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"mode\":\"over\"}");
+		return;
+	}
+
+	if (a1 && strcmp(a1, "out") == 0) {
+		if (!debugger_step_out()) {
+			dc_error("no return address to step out to "
+			         "(is the machine paused, and in a called function?)");
+			return;
+		}
+		snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"mode\":\"out\"}");
+		return;
+	}
+
+	if (a1 && strcmp(a1, "into") == 0) {
+		a1 = a2;
+	}
+
+	nsteps = a1 ? (uint32_t) strtoul(a1, NULL, 0) : 1;
+	if (nsteps == 0) {
+		nsteps = 1;
+	}
+	debugger_single_step(nsteps);
+	snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"stepped\":%u,\"mode\":\"into\"}",
+	    (unsigned) nsteps);
+}
+
+/**
+ * bt [depth]
+ *
+ * `truncated` is not decoration. The frame chain is a compiler convention and
+ * much of RISC OS keeps no frame pointer, so a two-frame answer may be the
+ * whole stack or may be the point at which the walk gave up. Those mean
+ * entirely different things and the client cannot tell them apart otherwise.
+ */
+static void
+dc_cmd_backtrace(char *r, char *args)
+{
+	char *a1 = strtok(args, " \t");
+	DebugFrame frames[DEBUGGER_MAX_FRAMES];
+	uint32_t depth = DEBUGGER_MAX_FRAMES;
+	uint32_t count, i;
+	int truncated = 0;
+	size_t n;
+
+	if (a1) {
+		depth = (uint32_t) strtoul(a1, NULL, 0);
+		if (depth == 0 || depth > DEBUGGER_MAX_FRAMES) {
+			depth = DEBUGGER_MAX_FRAMES;
+		}
+	}
+
+	count = debugger_backtrace(frames, depth, &truncated);
+
+	n = (size_t) snprintf(r, DC_RESP_SZ,
+	    "{\"ok\":true,\"truncated\":%s,\"frames\":[",
+	    truncated ? "true" : "false");
+
+	for (i = 0; i < count; i++) {
+		n += (size_t) snprintf(r + n, DC_RESP_SZ - n,
+		    "%s{\"level\":%u,\"pc\":\"%08x\",\"lr\":\"%08x\","
+		    "\"sp\":\"%08x\",\"fp\":\"%08x\"}",
+		    i ? "," : "", (unsigned) i, (unsigned) frames[i].pc,
+		    (unsigned) frames[i].lr, (unsigned) frames[i].sp,
+		    (unsigned) frames[i].fp);
+	}
+
+	snprintf(r + n, DC_RESP_SZ - n, "]}");
+}
+
 static void
 dc_cmd_bp(char *r, char *args)
 {
@@ -906,14 +1001,21 @@ dc_dispatch(char *line)
 		debugger_resume();
 		snprintf(resp, DC_RESP_SZ, "{\"ok\":true,\"paused\":false}");
 	} else if (strcmp(verb, "step") == 0) {
+		dc_cmd_step(resp, args ? args : (char *) "");
+	} else if (strcmp(verb, "runto") == 0) {
 		char *a1 = args ? strtok(args, " \t") : NULL;
-		uint32_t nsteps = a1 ? (uint32_t) strtoul(a1, NULL, 0) : 1;
 
-		if (nsteps == 0) {
-			nsteps = 1;
+		if (!a1) {
+			dc_error("usage: runto <hexaddr>");
+			return;
 		}
-		debugger_single_step(nsteps);
-		snprintf(resp, DC_RESP_SZ, "{\"ok\":true,\"stepped\":%u}", (unsigned) nsteps);
+		if (!debugger_run_to((uint32_t) strtoul(a1, NULL, 16))) {
+			dc_error("the machine must be paused to run to an address");
+			return;
+		}
+		snprintf(resp, DC_RESP_SZ, "{\"ok\":true}");
+	} else if (strcmp(verb, "bt") == 0 || strcmp(verb, "backtrace") == 0) {
+		dc_cmd_backtrace(resp, args ? args : (char *) "");
 	} else if (strcmp(verb, "reset") == 0) {
 		/* A wedged guest is otherwise the end of an unattended session: the
 		   command channel into RISC OS can be left mid-command by a client

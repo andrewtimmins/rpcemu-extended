@@ -169,6 +169,38 @@ target_include_directories(test_debugexpr PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 rpcemu_add_test(test_debugexpr)
 
+# Walking the APCS frame-pointer chain. Links rpcemu_core and builds frames in
+# real emulated RAM with the MMU off, so addresses are physical.
+#
+# A backtrace is the one debugger output people read without checking, which
+# makes a wrong one uniquely expensive: it does not look wrong, it looks like an
+# explanation. The chain is a compiler convention and much of RISC OS is
+# assembler that does not keep it, so the walk is regularly handed a register
+# that is not a frame pointer - it must not loop, must not invent frames, and
+# must say when it gave up. The 26-bit case is here because forgetting to strip
+# the PSR bits from a saved link register does not fail, it silently reports
+# addresses that are all wrong.
+add_executable(test_backtrace test_backtrace.c test_stubs.c)
+target_link_libraries(test_backtrace PRIVATE rpcemu_core m)
+rpcemu_add_test(test_backtrace)
+
+# Step over, step out and run to. Links rpcemu_core and drives the debugger's
+# state machine through its public API with the MMU off, so a fake instruction
+# can be put where the CPU will look for it.
+#
+# These are the only debugger operations whose failure mode is to RUN THE
+# MACHINE. A breakpoint that is wrong stops in the wrong place; a step-over that
+# is wrong does not stop at all, and whatever state was being examined is gone -
+# recovering it means rebooting and reproducing. So the rules pinned down here
+# are the ones that keep that from happening: an unrecognised instruction
+# degrades to a single step rather than a guess, the temporary target never
+# outlives the operation that armed it, and it is kept out of the breakpoint
+# table so stepping over an address the user has breakpointed cannot disturb
+# their breakpoint.
+add_executable(test_stepping test_stepping.c test_stubs.c)
+target_link_libraries(test_stepping PRIVATE rpcemu_core m)
+rpcemu_add_test(test_stepping)
+
 # Display mode selection against a VRAM budget. Architecture-neutral and needs
 # no dynarec, so unlike the JIT tests it builds everywhere.
 # Compiles the unit under test directly rather than linking rpcemu_core: the
@@ -493,7 +525,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 30)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 32)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()
