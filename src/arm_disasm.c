@@ -78,12 +78,23 @@ decode_shifter(uint32_t opcode, char *buf, size_t buflen, int imm)
 		/* Immediate value with rotation */
 		uint32_t imm8 = opcode & 0xFF;
 		uint32_t rot = ((opcode >> 8) & 0xF) * 2;
-		uint32_t value = (imm8 >> rot) | (imm8 << (32 - rot));
+
+		/*
+		 * ★ The unrotated case leaves before the rotation is worked out,
+		 * rather than after.
+		 *
+		 * Shifting a 32-bit value by 32 is undefined, and that is exactly
+		 * what `imm8 << (32 - rot)` asks for when rot is zero - which is
+		 * every ordinary small immediate, so it happened constantly. The
+		 * result was then thrown away by the rot == 0 branch below, which
+		 * is why nothing ever looked wrong. Working it out only when it is
+		 * going to be used leaves the shift with 1..31.
+		 */
 		if (rot == 0) {
 			return snprintf(buf, buflen, "#%u", imm8);
-		} else {
-			return snprintf(buf, buflen, "#0x%X", value);
 		}
+		return snprintf(buf, buflen, "#0x%X",
+		    (imm8 >> rot) | (imm8 << (32 - rot)));
 	} else {
 		/* Register with optional shift */
 		int rm = opcode & 0xF;
@@ -1561,7 +1572,11 @@ disasm_msr(uint32_t opcode, uint32_t address, char *buf, size_t buflen)
 	if (imm) {
 		uint32_t imm8 = opcode & 0xFF;
 		uint32_t rot = ((opcode >> 8) & 0xF) * 2;
-		uint32_t value = (imm8 >> rot) | (imm8 << (32 - rot));
+		/* Shifting by 32 is undefined; see decode_shifter(). MSR prints the
+		   rotated form either way, so only the shift itself is guarded. */
+		uint32_t value = (rot == 0) ? imm8
+		    : ((imm8 >> rot) | (imm8 << (32 - rot)));
+
 		snprintf(operand, sizeof(operand), "#0x%X", value);
 	} else {
 		int rm = opcode & 0xF;
