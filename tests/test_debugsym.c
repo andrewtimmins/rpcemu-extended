@@ -281,9 +281,14 @@ test_empty_table(void)
 int
 main(int argc, char *argv[])
 {
-	if (argc > 1) {
-		work_dir = argv[1];
+	/* Required rather than defaulting to ".": this test writes the files it
+	   then loads, and a default of the working directory means running it by
+	   hand from a source tree scatters a dozen .sym files through it. */
+	if (argc < 2) {
+		fprintf(stderr, "usage: test_debugsym <writable-directory>\n");
+		return 2;
 	}
+	work_dir = argv[1];
 
 	printf("Guest symbol table\n\n");
 
