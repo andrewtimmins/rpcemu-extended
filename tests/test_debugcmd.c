@@ -344,8 +344,17 @@ int
 main(int argc, char *argv[])
 {
 	struct sockaddr_un addr;
-	const char *dir = (argc > 1) ? argv[1] : ".";
+	const char *dir;
 	char sock_path[512];
+
+	/* Required rather than defaulting to ".": this test writes a socket and
+	   a symbol file, and a default of the working directory means running it
+	   by hand from a source tree leaves them there. */
+	if (argc < 2) {
+		fprintf(stderr, "usage: test_debugcmd <writable-directory>\n");
+		return 2;
+	}
+	dir = argv[1];
 
 	printf("Debugger wire protocol\n\n");
 
