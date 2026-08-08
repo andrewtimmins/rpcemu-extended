@@ -43,6 +43,7 @@
 #endif
 
 #include "debugcmd.h"
+#include "debugexpr.h"
 #include "arm.h"
 #include "arm_disasm.h"
 #include "cp15.h"
@@ -120,41 +121,28 @@ dc_send(const char *s)
 	dc.out_head = (dc.out_head + 1) & (DC_OUT_RING_SZ - 1);
 }
 
+/* The precision is not decoration: it bounds the message so the result
+   provably fits, which is what lets a caller pass a message it built itself
+   (a rejected breakpoint condition, say) without having to size it here. */
+#define DC_ERROR_MAX_MSG 400
+
 static void
 dc_error(const char *msg)
 {
-	char buf[256];
+	char buf[DC_ERROR_MAX_MSG + 64];
 
-	snprintf(buf, sizeof(buf), "{\"ok\":false,\"error\":\"%s\"}", msg);
+	snprintf(buf, sizeof(buf), "{\"ok\":false,\"error\":\"%.*s\"}",
+	    DC_ERROR_MAX_MSG, msg);
 	dc_send(buf);
 }
 
 /* ---- safe, side-effect-free memory access ---------------------------- */
 
 /* Translate a virtual address to physical without leaving a data-abort event
-   pending on the CPU (readmemfl/translateaddress set arm.event & 0x40 on a
-   miss, which would otherwise inject a spurious abort into execution). Returns
-   1 and *phys on success, 0 if unmapped. */
-static int
-dc_translate(uint32_t vaddr, uint32_t *phys)
-{
-	if (!mmu) {
-		*phys = vaddr;
-		return 1;
-	}
-	{
-		uint32_t saved_event = arm.event;
-		uint32_t p = translateaddress2(vaddr, 0, 0);
-		int fault = (arm.event & 0x40) != 0;
-
-		arm.event = saved_event;	/* undo any injected abort */
-		if (fault) {
-			return 0;
-		}
-		*phys = p;
-		return 1;
-	}
-}
+   pending on the CPU (translateaddress2 sets arm.event & 0x40 on a miss, which
+   would otherwise inject a spurious abort into execution). Lives in mem.c
+   because breakpoint conditions need the same guarantee. */
+#define dc_translate(vaddr, phys) mem_debug_translate((vaddr), (phys))
 
 /* Read one byte at a virtual (default) or physical address; *mapped=0 if the
    virtual page is unmapped. Never triggers watchpoints or aborts. */
@@ -455,9 +443,30 @@ dc_cmd_status(char *r)
 	    (unsigned) st.last_pc, (unsigned) st.hit_address, (unsigned) st.hit_value,
 	    (unsigned) st.hit_size, (unsigned) st.hit_is_write,
 	    (unsigned) st.step_active, (unsigned) debugger_trace_pending());
+	/* Objects rather than bare addresses: a breakpoint now carries a
+	   condition, an ignore count and its hit counts, and those are exactly
+	   what is needed to explain a breakpoint that is not firing. */
 	for (i = 0; i < st.breakpoint_count; i++) {
-		n += (size_t) snprintf(r + n, DC_RESP_SZ - n, "%s\"%08x\"",
-		    i ? "," : "", (unsigned) st.breakpoints[i]);
+		const DebugBreakpointInfo *bp = &st.breakpoints[i];
+		char cond[DEBUGGER_MAX_CONDITION * 2 + 4];
+
+		cond[0] = '\0';
+		if (bp->has_condition) {
+			dc_json_str(cond, sizeof(cond), bp->condition);
+		}
+
+		n += (size_t) snprintf(r + n, DC_RESP_SZ - n,
+		    "%s{\"address\":\"%08x\",\"enabled\":%s,\"one_shot\":%s,"
+		    "\"condition\":%s%s%s,\"ignore_count\":%u,\"hit_count\":%u,"
+		    "\"eval_errors\":%u}",
+		    i ? "," : "", (unsigned) bp->address,
+		    bp->enabled ? "true" : "false",
+		    bp->one_shot ? "true" : "false",
+		    bp->has_condition ? "\"" : "null",
+		    bp->has_condition ? cond : "",
+		    bp->has_condition ? "\"" : "",
+		    (unsigned) bp->ignore_count, (unsigned) bp->hit_count,
+		    (unsigned) bp->eval_errors);
 	}
 	n += (size_t) snprintf(r + n, DC_RESP_SZ - n, "],\"watchpoints\":[");
 	for (i = 0; i < st.watchpoint_count; i++) {
@@ -553,6 +562,22 @@ dc_cmd_dis(char *r, char *args)
 	snprintf(r + n, DC_RESP_SZ - n, "]}");
 }
 
+#define DC_BP_USAGE \
+	"usage: bp add <hexaddr> [once] [count <n>] [if <expr>] | " \
+	"bp del|enable|disable <hexaddr> | bp clear"
+
+/**
+ * bp add <hexaddr> [once] [count <n>] [if <expr>]
+ * bp del|enable|disable <hexaddr>
+ * bp clear
+ *
+ * "if" is last and swallows the rest of the line, so a condition can contain
+ * spaces without needing quoting - which the newline-delimited protocol has no
+ * way to express anyway.
+ *
+ * A malformed condition is refused here rather than accepted and found to be
+ * unusable later, when the breakpoint is reached and quietly fails to fire.
+ */
 static void
 dc_cmd_bp(char *r, char *args)
 {
@@ -561,7 +586,7 @@ dc_cmd_bp(char *r, char *args)
 	uint32_t addr;
 
 	if (!sub) {
-		dc_error("usage: bp add|del|clear [hexaddr]");
+		dc_error(DC_BP_USAGE);
 		return;
 	}
 	if (strcmp(sub, "clear") == 0) {
@@ -570,21 +595,81 @@ dc_cmd_bp(char *r, char *args)
 		return;
 	}
 	if (!a1) {
-		dc_error("usage: bp add|del <hexaddr>");
+		dc_error(DC_BP_USAGE);
 		return;
 	}
 	addr = (uint32_t) strtoul(a1, NULL, 16);
-	if (strcmp(sub, "add") == 0) {
-		int ok = debugger_add_breakpoint(addr);
 
+	if (strcmp(sub, "add") == 0) {
+		const char *condition = NULL;
+		uint32_t ignore_count = 0;
+		int one_shot = 0;
+		const char *error = NULL;
+		char *tok;
+		int ok;
+
+		while ((tok = strtok(NULL, " \t")) != NULL) {
+			if (strcmp(tok, "once") == 0) {
+				one_shot = 1;
+			} else if (strcmp(tok, "count") == 0) {
+				char *value = strtok(NULL, " \t");
+
+				if (!value) {
+					dc_error(DC_BP_USAGE);
+					return;
+				}
+				ignore_count = (uint32_t) strtoul(value, NULL, 0);
+			} else if (strcmp(tok, "if") == 0) {
+				/* Rest of the line, spaces and all */
+				condition = strtok(NULL, "");
+				break;
+			} else {
+				dc_error(DC_BP_USAGE);
+				return;
+			}
+		}
+
+		if (condition != NULL) {
+			while (*condition == ' ' || *condition == '\t') {
+				condition++;
+			}
+			if (*condition == '\0') {
+				dc_error("bp add: 'if' needs an expression");
+				return;
+			}
+			if (!debugexpr_check(condition, &error)) {
+				char buf[256];
+				char esc[192];
+
+				esc[0] = '\0';
+				dc_json_str(esc, sizeof(esc), condition);
+				snprintf(buf, sizeof(buf),
+				    "bad condition \\\"%s\\\": %s", esc,
+				    error ? error : "cannot be parsed");
+				dc_error(buf);
+				return;
+			}
+		}
+
+		ok = debugger_add_breakpoint_ex(addr, condition, ignore_count, one_shot);
 		snprintf(r, DC_RESP_SZ, "{\"ok\":%s,\"address\":\"%08x\"%s}",
 		    ok ? "true" : "false", (unsigned) addr,
 		    ok ? "" : ",\"error\":\"breakpoint table full\"");
 	} else if (strcmp(sub, "del") == 0) {
 		debugger_remove_breakpoint(addr);
 		snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"address\":\"%08x\"}", (unsigned) addr);
+	} else if (strcmp(sub, "enable") == 0 || strcmp(sub, "disable") == 0) {
+		int enable = (sub[0] == 'e');
+
+		if (!debugger_set_breakpoint_enabled(addr, enable)) {
+			dc_error("no breakpoint at that address");
+			return;
+		}
+		snprintf(r, DC_RESP_SZ,
+		    "{\"ok\":true,\"address\":\"%08x\",\"enabled\":%s}",
+		    (unsigned) addr, enable ? "true" : "false");
 	} else {
-		dc_error("usage: bp add|del|clear [hexaddr]");
+		dc_error(DC_BP_USAGE);
 	}
 }
 

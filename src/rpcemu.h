@@ -102,6 +102,9 @@ typedef enum {
 #define DEBUGGER_MAX_BREAKPOINTS 64
 #define DEBUGGER_MAX_WATCHPOINTS 32
 
+/** Longest breakpoint condition expression, including the terminator. */
+#define DEBUGGER_MAX_CONDITION 64
+
 typedef enum {
 	DebugPauseReason_None = 0,
 	DebugPauseReason_User = 1,
@@ -120,6 +123,34 @@ typedef struct {
 	uint8_t log_only;	/**< Emit a trace event instead of halting */
 	uint8_t reserved1;
 } DebugWatchpointInfo;
+
+/**
+ * A breakpoint.
+ *
+ * More than an address, because "stop here" is rarely the question. The
+ * interesting one is "stop here when R0 is zero", or "stop here the eleventh
+ * time round", and without those the only way to reach an interesting state is
+ * to sit on the continue button.
+ *
+ * The two counters exist to make a quiet breakpoint explicable. hit_count
+ * counts every time the address was reached while armed, whether or not it
+ * halted, so "the condition is never true" can be told apart from "this code
+ * never runs" - which look identical from outside and mean very different
+ * things. eval_errors counts conditions that could not be evaluated at all,
+ * which in practice means a dereference of an address that was not mapped at
+ * the time; those do not halt, and without a count they would be invisible.
+ */
+typedef struct {
+	uint32_t address;
+	uint8_t enabled;	/**< Cleared to keep a breakpoint without arming it */
+	uint8_t one_shot;	/**< Remove once it halts; backs step-over and run-to */
+	uint8_t has_condition;	/**< condition[] holds an expression to evaluate */
+	uint8_t reserved0;
+	uint32_t ignore_count;	/**< Matches still to be skipped before halting */
+	uint32_t hit_count;	/**< Times the address was reached while armed */
+	uint32_t eval_errors;	/**< Times the condition could not be evaluated */
+	char condition[DEBUGGER_MAX_CONDITION];
+} DebugBreakpointInfo;
 
 /** Categories of event captured by the debug trace ring */
 typedef enum {
@@ -175,7 +206,7 @@ typedef struct {
 	uint8_t step_active;
 	uint8_t reserved;
 	uint32_t breakpoint_count;
-	uint32_t breakpoints[DEBUGGER_MAX_BREAKPOINTS];
+	DebugBreakpointInfo breakpoints[DEBUGGER_MAX_BREAKPOINTS];
 	uint32_t watchpoint_count;
 	DebugWatchpointInfo watchpoints[DEBUGGER_MAX_WATCHPOINTS];
 } DebuggerStatus;
@@ -444,8 +475,12 @@ extern void debugger_resume(void);
 extern void debugger_single_step(uint32_t instruction_count);
 extern void debugger_clear_breakpoints(void);
 extern int debugger_add_breakpoint(uint32_t address);
+extern int debugger_add_breakpoint_ex(uint32_t address, const char *condition,
+                                      uint32_t ignore_count, int one_shot);
 extern int debugger_remove_breakpoint(uint32_t address);
 extern int debugger_has_breakpoint(uint32_t address);
+extern int debugger_set_breakpoint_enabled(uint32_t address, int enabled);
+extern const DebugBreakpointInfo *debugger_get_breakpoint(uint32_t address);
 extern void debugger_clear_watchpoints(void);
 extern int debugger_add_watchpoint(uint32_t address, uint32_t size, int on_read, int on_write, int log_only);
 extern int debugger_remove_watchpoint(uint32_t address, uint32_t size, int on_read, int on_write);

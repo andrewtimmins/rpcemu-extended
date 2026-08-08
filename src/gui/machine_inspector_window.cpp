@@ -563,7 +563,7 @@ void MachineInspectorWindow::PopulateBreakpointList(const MachineSnapshot &snaps
 
 	breakpoint_list_->Clear();
 	for (uint32_t i = 0; i < snapshot.debug_breakpoint_count; i++) {
-		const uint32_t address = snapshot.debug_breakpoints[i];
+		const uint32_t address = snapshot.debug_breakpoints[i].address;
 		breakpoint_list_->Append(FormatHex(address), reinterpret_cast<void *>(static_cast<uintptr_t>(address)));
 	}
 

@@ -151,6 +151,24 @@ add_executable(test_debugger_gate test_debugger_gate.c test_stubs.c)
 target_link_libraries(test_debugger_gate PRIVATE rpcemu_core m)
 rpcemu_add_test(test_debugger_gate)
 
+# Breakpoint condition expressions. Compiles debugexpr.c directly - it reads the
+# machine only through a caller-supplied environment, so a test substitutes its
+# own registers and memory and needs no emulator.
+#
+# A conditional breakpoint is trusted differently from a plain one. "Stop at
+# 0x8000" visibly works or visibly does not; "stop at 0x8000 when R0 is 5" that
+# evaluates wrongly stops at the wrong moment, or never, and the person
+# debugging draws a conclusion about their own program from an answer the tool
+# got wrong. The cases lean on how small parsers are usually wrong: operator
+# precedence, operators that are prefixes of other operators (& vs &&, < vs <=),
+# and - the one that matters most - malformed input being accepted rather than
+# refused.
+add_executable(test_debugexpr test_debugexpr.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/debugexpr.c)
+target_include_directories(test_debugexpr PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_debugexpr)
+
 # Display mode selection against a VRAM budget. Architecture-neutral and needs
 # no dynarec, so unlike the JIT tests it builds everywhere.
 # Compiles the unit under test directly rather than linking rpcemu_core: the
@@ -475,7 +493,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 29)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 30)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()

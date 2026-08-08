@@ -21,6 +21,7 @@ set(RPCEMU_CORE_SOURCES
     hostcmd.c
     hostclipboard.c
     debugcmd.c
+    debugexpr.c
     ide.c
     iomd.c
     keyboard.c
