@@ -102,6 +102,9 @@ typedef enum {
 #define DEBUGGER_MAX_BREAKPOINTS 64
 #define DEBUGGER_MAX_WATCHPOINTS 32
 
+/** Longest breakpoint condition expression, including the terminator. */
+#define DEBUGGER_MAX_CONDITION 64
+
 typedef enum {
 	DebugPauseReason_None = 0,
 	DebugPauseReason_User = 1,
@@ -120,6 +123,52 @@ typedef struct {
 	uint8_t log_only;	/**< Emit a trace event instead of halting */
 	uint8_t reserved1;
 } DebugWatchpointInfo;
+
+/**
+ * A breakpoint.
+ *
+ * More than an address, because "stop here" is rarely the question. The
+ * interesting one is "stop here when R0 is zero", or "stop here the eleventh
+ * time round", and without those the only way to reach an interesting state is
+ * to sit on the continue button.
+ *
+ * The two counters exist to make a quiet breakpoint explicable. hit_count
+ * counts every time the address was reached while armed, whether or not it
+ * halted, so "the condition is never true" can be told apart from "this code
+ * never runs" - which look identical from outside and mean very different
+ * things. eval_errors counts conditions that could not be evaluated at all,
+ * which in practice means a dereference of an address that was not mapped at
+ * the time; those do not halt, and without a count they would be invisible.
+ */
+typedef struct {
+	uint32_t address;
+	uint8_t enabled;	/**< Cleared to keep a breakpoint without arming it */
+	uint8_t one_shot;	/**< Remove once it halts; backs step-over and run-to */
+	uint8_t has_condition;	/**< condition[] holds an expression to evaluate */
+	uint8_t reserved0;
+	uint32_t ignore_count;	/**< Matches still to be skipped before halting */
+	uint32_t hit_count;	/**< Times the address was reached while armed */
+	uint32_t eval_errors;	/**< Times the condition could not be evaluated */
+	char condition[DEBUGGER_MAX_CONDITION];
+} DebugBreakpointInfo;
+
+/** Deepest call stack debugger_backtrace() will walk. */
+#define DEBUGGER_MAX_FRAMES 64
+
+/**
+ * One frame of a call stack.
+ *
+ * Recovered by walking the APCS frame-pointer chain from R11, so it depends on
+ * the code having been compiled to keep one. A good deal of RISC OS is
+ * assembler that does not, which is why debugger_backtrace() reports whether
+ * the walk ended cleanly or gave up.
+ */
+typedef struct {
+	uint32_t pc;	/**< Where execution is, or will resume, in this frame */
+	uint32_t lr;	/**< Live link register; only meaningful for frame 0 */
+	uint32_t sp;
+	uint32_t fp;
+} DebugFrame;
 
 /** Categories of event captured by the debug trace ring */
 typedef enum {
@@ -142,7 +191,9 @@ typedef struct DebugTraceEvent {
 	uint32_t pc;		/**< Faulting / calling PC */
 	uint32_t opcode;	/**< Instruction word (0 if not available) */
 	uint32_t arg0;		/**< exc: TraceExceptionKind | swi: number | wp: address */
-	uint32_t arg1;		/**< exc: abort address | swi: R0 | wp: value */
+	/* exc: the faulting PC again, not the address that faulted - the
+	   exception hook is passed the vector, which arg0 already says. */
+	uint32_t arg1;		/**< exc: faulting PC | swi: R0 | wp: value */
 	uint32_t arg2;		/**< swi: cpsr flags | wp: (size << 1) | is_write */
 } DebugTraceEvent;
 
@@ -175,7 +226,7 @@ typedef struct {
 	uint8_t step_active;
 	uint8_t reserved;
 	uint32_t breakpoint_count;
-	uint32_t breakpoints[DEBUGGER_MAX_BREAKPOINTS];
+	DebugBreakpointInfo breakpoints[DEBUGGER_MAX_BREAKPOINTS];
 	uint32_t watchpoint_count;
 	DebugWatchpointInfo watchpoints[DEBUGGER_MAX_WATCHPOINTS];
 } DebuggerStatus;
@@ -442,10 +493,18 @@ extern int debugger_requires_instruction_hook(void);
 extern void debugger_request_pause(DebugPauseReason reason);
 extern void debugger_resume(void);
 extern void debugger_single_step(uint32_t instruction_count);
+extern int debugger_step_over(void);
+extern int debugger_step_out(void);
+extern int debugger_run_to(uint32_t address);
+extern uint32_t debugger_backtrace(DebugFrame *out, uint32_t max, int *truncated);
 extern void debugger_clear_breakpoints(void);
 extern int debugger_add_breakpoint(uint32_t address);
+extern int debugger_add_breakpoint_ex(uint32_t address, const char *condition,
+                                      uint32_t ignore_count, int one_shot);
 extern int debugger_remove_breakpoint(uint32_t address);
 extern int debugger_has_breakpoint(uint32_t address);
+extern int debugger_set_breakpoint_enabled(uint32_t address, int enabled);
+extern const DebugBreakpointInfo *debugger_get_breakpoint(uint32_t address);
 extern void debugger_clear_watchpoints(void);
 extern int debugger_add_watchpoint(uint32_t address, uint32_t size, int on_read, int on_write, int log_only);
 extern int debugger_remove_watchpoint(uint32_t address, uint32_t size, int on_read, int on_write);
@@ -455,6 +514,12 @@ extern void debugger_after_instruction(uint32_t pc, uint32_t opcode);
 
 /* Debug tracing: exception trapping, SWI tracing, logging watchpoints */
 extern int debugger_swi_trace_active;	/**< Fast gate read from opSWI() */
+
+/** Fast gate read once per instruction by the interpreter and the recompiler's
+    dispatch. Non-zero when something (a breakpoint, a watchpoint, a step, a
+    trap, or a pause) needs to see each instruction. Equivalent to calling
+    debugger_requires_instruction_hook(), but without the call. */
+extern int debugger_hook_active;
 extern void debugger_set_trace_config(const DebugTraceConfig *cfg);
 extern void debugger_get_trace_config(DebugTraceConfig *cfg);
 extern uint32_t debugger_trace_pending(void);
@@ -466,7 +531,6 @@ extern int debugger_swi_hook(uint32_t swinum, uint32_t opcode);
 extern void rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize, int yl, int yh, int double_size, int host_xsize, int host_ysize);
 extern void rpcemu_move_host_mouse(uint16_t x, uint16_t y);
 extern void rpcemu_idle_process_events(void);
-extern void rpcemu_send_nat_rule_to_gui(PortForwardRule rule);
 extern uint64_t rpcemu_nsec_timer_ticks(void);
 
 extern int drawscre;

@@ -1,5 +1,8 @@
 # Debugger: exception trapping, SWI tracing and logging watchpoints
 
+> These are the *trace* features. For breakpoints with conditions, stepping over
+> and out of calls, backtraces and symbols, see [debugcmd.md](debugcmd.md).
+
 The Machine Inspector's debugger can, in addition to breakpoints and
 watchpoints, trap CPU exceptions, trace operating-system calls (SWIs) and record
 memory accesses to a running log. These are controlled from the **Trace** tab of
@@ -61,3 +64,12 @@ The logging-only paths add no cost to the recompiler's fast path: SWI logging is
 gated by a flag checked in `opSWI()` (always interpreted), and exception logging
 lives in the cold `exception()` path. Halting (trapping or halt-on-SWI) engages
 the per-instruction hooked execution path, the same cost model as a breakpoint.
+
+Whether that path is engaged at all is decided by one flag, `debugger_hook_active`,
+recomputed whenever the debugger's state changes and read once per instruction by
+both the interpreter and the recompiler's dispatch. With nothing attached the
+cost is a predictable load rather than a call. (The interpreter used to call the
+hook unconditionally on every instruction, attached or not; the recompiler never
+did.) Because a missed refresh would silently stop breakpoints firing, with no
+error and no log line, `tests/test_debugger_gate.c` walks every route in and out
+of "something is watching" and fails if the flag does not follow.

@@ -313,8 +313,6 @@ network_nat_open(void)
 		for (i = 0; i < MAX_PORT_FORWARDS; i++) {
 			if (port_forward_rules[i].type != PORT_FORWARD_NONE) {
 				network_nat_forward_add(port_forward_rules[i]);
-
-				rpcemu_send_nat_rule_to_gui(port_forward_rules[i]);
 			}
 		}
 	}
@@ -377,6 +375,12 @@ network_nat_poll(void)
 	fd_set rfds, wfds, efds;
 	int fd_max, ret;
 	struct timeval tv;
+
+	/* Networking can be switched on while the emulator thread is running, so
+	   this is reached before network_nat_open() has made a stack to poll. */
+	if (nat.slirp == NULL) {
+		return;
+	}
 
 	FD_ZERO(&rfds);
 	FD_ZERO(&wfds);

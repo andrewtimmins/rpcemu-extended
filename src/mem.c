@@ -164,7 +164,7 @@ mem_reset(uint32_t ramsize, uint32_t vram_size)
 	   SDRAM banks (physical 0x20000000 and 0x30000000). */
 	have_sdram = ramsize > 256;
 
-	/* Convert ramsize from bytes to megabytes */
+	/* Convert ramsize from megabytes to bytes */
 	ramsize *= (1024 * 1024);
 
 	if (have_sdram) {
@@ -978,6 +978,80 @@ mem_phys_write8_debug(uint32_t addr, uint8_t val)
 		break;
 	}
 	return 0;
+}
+
+/**
+ * Translate a virtual address for debugging, without disturbing the CPU.
+ *
+ * translateaddress2() reports a miss by setting the data-abort bit in
+ * arm.event, which is right when the guest took the fault and disastrous when
+ * the debugger merely looked: the abort would be injected into whatever the
+ * guest was about to do next, and the machine would fault at an address nobody
+ * touched. So the event is saved and restored around the call, and a miss is
+ * reported by the return value instead.
+ *
+ * @param vaddr Virtual address to translate
+ * @param[out] phys Physical address, untouched on failure
+ * @return 1 if mapped, 0 if not
+ */
+int
+mem_debug_translate(uint32_t vaddr, uint32_t *phys)
+{
+	uint32_t saved_event;
+	uint32_t p;
+	int fault;
+
+	if (!mmu) {
+		*phys = vaddr;
+		return 1;
+	}
+
+	saved_event = arm.event;
+	p = translateaddress2(vaddr, 0, 0);
+	fault = (arm.event & 0x40) != 0;
+	arm.event = saved_event;	/* undo any injected abort */
+
+	if (fault) {
+		return 0;
+	}
+	*phys = p;
+	return 1;
+}
+
+/**
+ * Read 1, 2 or 4 bytes from a virtual address for debugging.
+ *
+ * Little-endian, assembled from mem_phys_read8_debug() so it inherits that
+ * function's guarantees: no I/O side effects, no aborts, and no watchpoint
+ * hits. A read that spans an unmapped page fails as a whole rather than
+ * returning a half-read value.
+ *
+ * @param vaddr Virtual address
+ * @param size  1, 2 or 4
+ * @param[out] out Value read, untouched on failure
+ * @return 1 on success, 0 if unmapped or the size is not one of 1, 2 or 4
+ */
+int
+mem_debug_read(uint32_t vaddr, uint32_t size, uint32_t *out)
+{
+	uint32_t value = 0;
+	uint32_t i;
+
+	if (size != 1 && size != 2 && size != 4) {
+		return 0;
+	}
+
+	for (i = 0; i < size; i++) {
+		uint32_t phys;
+
+		if (!mem_debug_translate(vaddr + i, &phys)) {
+			return 0;
+		}
+		value |= (mem_phys_read8_debug(phys) & 0xff) << (i * 8);
+	}
+
+	*out = value;
+	return 1;
 }
 
 /**

@@ -16,6 +16,12 @@ This drives a real boot instead, and asks the guest two questions:
     deliberately configured some way from UTC. That is issue #69, where the
     clock came out an hour slow whenever local time differed from UTC. See
     hostcmd_clock() for what it does and does not prove.
+  - over DebugCmd: watch the emulated CPU for data and prefetch aborts through
+    the whole run. A screenshot cannot show these - RISC OS handles the abort
+    and carries on, so an MMU or memory-decode regression boots to a perfect
+    desktop. Aborts while booting are expected, because RISC OS sizes memory
+    and probes for hardware by reading addresses that may not answer; aborts
+    once the machine is up and idle are not. See tests/abort_watch.py.
 
 Both run against one machine on whichever platform the job runs.
 
@@ -47,6 +53,8 @@ import sys
 import tempfile
 import time
 import zlib
+
+import abort_watch
 
 
 class SmokeError(Exception):
@@ -270,7 +278,8 @@ def describe_screen(w: int, h: int, fb: bytearray) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 
-def make_test_config(dst_cfg: str, name: str, rom_dir: str | None) -> None:
+def make_test_config(dst_cfg: str, name: str, rom_dir: str | None,
+                     debug_socket: str | None = None) -> None:
     """
     Write the test machine's configuration.
 
@@ -303,6 +312,12 @@ def make_test_config(dst_cfg: str, name: str, rom_dir: str | None) -> None:
             + "refresh_rate=60\n"
             + "cdrom_enabled=0\n"
             + "network_type=off\n"
+            # An explicit path rather than the default: the default is derived
+            # from the machine's data directory, and AF_UNIX paths are limited
+            # to about a hundred bytes, which a temporary directory on a CI
+            # runner can exceed on its own.
+            + (f"debug_enabled=1\ndebug_socket={debug_socket}\n"
+               if debug_socket else "")
         )
 
 
@@ -592,6 +607,23 @@ def main() -> int:
                          "slow to reach the desktop in any sensible time - there "
                          "the point of booting is what the sanitisers say, not "
                          "how far RISC OS got")
+    ap.add_argument("--abort-check", choices=("require", "advisory", "off"),
+                    default="require",
+                    help="watch the emulated CPU for data/prefetch aborts. "
+                         "'require' fails the run on an abort after the machine "
+                         "is up (and, with --abort-baseline, on a new site while "
+                         "booting); 'advisory' reports and never fails; 'off' "
+                         "does not connect the debugger at all")
+    ap.add_argument("--abort-baseline",
+                    help="file of known boot-phase abort sites, one "
+                         "'<data|prefetch> <hex pc>' per line. Without it, "
+                         "aborts while booting are reported and accepted, since "
+                         "a healthy RISC OS boot takes them while probing for "
+                         "hardware")
+    ap.add_argument("--write-abort-baseline",
+                    help="write the boot-phase sites actually seen to this file "
+                         "and carry on. How a baseline is recorded in the first "
+                         "place; look at what it wrote before committing it")
     args = ap.parse_args()
 
     binary = os.path.abspath(args.binary)
@@ -640,7 +672,22 @@ def main() -> int:
 
     test_name = "vncsmoke"
     test_cfg = os.path.join(configs, f"{test_name}.cfg")
-    make_test_config(test_cfg, test_name, args.rom_dir)
+    # Where the debugger listens. Windows has no useful AF_UNIX, and debugcmd.c
+    # reads a socket spec that is a bare integer as a TCP port there, so the two
+    # platforms genuinely need different values rather than one with a fallback.
+    #
+    # On the others it is a path, kept short deliberately: AF_UNIX paths are
+    # limited to about a hundred bytes and a runner's data directory is already
+    # deep enough to spend most of that. tempfile puts this under /tmp.
+    debug_socket = None
+    if args.abort_check != "off":
+        if sys.platform == "win32":
+            debug_socket = str(pick_free_port(args.host, 15591))
+        else:
+            debug_socket = os.path.join(
+                tempfile.mkdtemp(prefix="rpcemu-dbg-"), "d.sock")
+
+    make_test_config(test_cfg, test_name, args.rom_dir, debug_socket)
 
     # The machine directory is keyed by the config's "name" field, which
     # make_test_config() has just set to test_name, so the test gets a directory
@@ -689,13 +736,44 @@ def main() -> int:
     )
 
     rc = 1
+    watcher = None
+    dbg = None
     try:
         wait_for_port(args.host, port, proc, args.boot_timeout)
+
+        # Attach the debugger before the settle, so the probing RISC OS does on
+        # the way up is seen rather than missed. Logging only - the traps stay
+        # off, so the recompiler keeps its fast path and the boot takes the
+        # time it usually does.
+        if debug_socket:
+            try:
+                # A bare port number means TCP on loopback, matching how the
+                # emulator reads the same setting.
+                spec = debug_socket
+                if sys.platform == "win32":
+                    spec = f"{args.host}:{debug_socket}"
+                dbg = abort_watch.connect(spec)
+                watcher = abort_watch.AbortWatcher(dbg.cmd)
+                watcher.start()
+                print("==> watching the CPU for aborts", flush=True)
+            except (abort_watch.AbortWatchError, OSError) as e:
+                if args.abort_check == "require":
+                    raise SmokeError(f"cannot watch for aborts: {e}") from e
+                print(f"NOTE: not watching for aborts: {e}", flush=True)
+
         print(f"==> VNC accepted on {args.host}:{port}; "
               f"letting RISC OS settle for {args.settle:.0f}s", flush=True)
         # The server accepts as soon as it is listening, which is well before
         # the desktop is drawn. Give the guest time to get there.
-        time.sleep(args.settle)
+        #
+        # Drained as we wait rather than only at the end: the emulator's ring
+        # holds 4096 events and discards the oldest when it overflows, and the
+        # earliest aborts are the ones worth having.
+        deadline = time.time() + args.settle
+        while time.time() < deadline:
+            time.sleep(min(2.0, max(0.0, deadline - time.time())))
+            if watcher:
+                watcher.drain()
 
         w, h, fb = vnc_capture(args.host, port)
         if args.save:
@@ -719,6 +797,14 @@ def main() -> int:
             print("==> asking the guest its version over HostCmd", flush=True)
             version = hostcmd_version(binary, datadir, env)
             print(f"PASS: the guest reports {version}", flush=True)
+
+            # RISC OS has answered, so it is up: everything from here on is a
+            # machine sitting at a prompt with nothing to probe. That is the
+            # line between "expected" and "not expected" for an abort, and it
+            # is drawn from the guest's own behaviour rather than from a clock.
+            if watcher:
+                watcher.drain()
+                watcher.mark_running()
 
             # Only RISC OS 5 runs SyncClock's ticker to completion, so only there
             # does the clock say anything about it. Said out loud, because a
@@ -746,6 +832,46 @@ def main() -> int:
         print(f"FAIL: {e}", file=sys.stderr, flush=True)
         rc = 1
     finally:
+        # Before the machine is stopped, and outside the try above, so the
+        # abort report survives a failure of any earlier check - a boot that
+        # failed the screen check is exactly when knowing the CPU took forty
+        # data aborts is most useful.
+        if watcher:
+            try:
+                watcher.drain()
+            except (abort_watch.AbortWatchError, OSError) as e:
+                print(f"NOTE: could not finish reading the trace ring: {e}",
+                      flush=True)
+
+            watcher.report(sys.stdout)
+
+            if args.write_abort_baseline:
+                with open(args.write_abort_baseline, "w", encoding="utf-8") as f:
+                    f.write(abort_watch.format_baseline(watcher.sites("boot")))
+                print(f"==> wrote {args.write_abort_baseline}", flush=True)
+
+            baseline = None
+            if args.abort_baseline:
+                baseline = abort_watch.load_baseline(args.abort_baseline)
+
+            ok_aborts, reasons = abort_watch.verdict(watcher, baseline)
+            if ok_aborts:
+                total = watcher.count()
+                print(f"PASS: no unexpected aborts "
+                      f"({total} while booting, none after)"
+                      if total else "PASS: the CPU took no aborts at all",
+                      flush=True)
+            elif args.abort_check == "advisory":
+                for reason in reasons:
+                    print(f"NOTE: {reason}", flush=True)
+            else:
+                for reason in reasons:
+                    print(f"FAIL: {reason}", file=sys.stderr, flush=True)
+                rc = 1
+
+        if dbg:
+            dbg.close()
+
         if proc.poll() is None:
             proc.terminate()  # SIGTERM: headless saves CMOS and discs on this
             try:

@@ -1,3 +1,15 @@
+# Standalone host-side client for the DebugCmd channel - the counterpart of
+# rpcemu-run below. That one drives RISC OS's command line; this one drives the
+# processor underneath it, which is a different socket speaking a different
+# protocol. Like rpcemu-run it does not link the emulator core.
+add_executable(rpcemu-debug rpcemu_debug.c)
+set_target_properties(rpcemu-debug PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+if(WIN32)
+    target_link_libraries(rpcemu-debug PRIVATE ws2_32)
+endif()
+install(TARGETS rpcemu-debug RUNTIME DESTINATION bin)
+
 # Standalone host-side client for the HostCmd channel. Does not link the
 # emulator core - it is just a small socket client.
 

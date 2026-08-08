@@ -38,10 +38,6 @@ void HeadlessBridge::PostMoveHostMouse(const MouseMoveUpdate & /*update*/)
 {
 }
 
-void HeadlessBridge::PostNatRule(PortForwardRule /*rule*/)
-{
-}
-
 void HeadlessBridge::PostDebuggerStateChanged()
 {
 }

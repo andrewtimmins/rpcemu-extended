@@ -640,6 +640,19 @@ def riscos_drag(x1: int, y1: int, x2: int, y2: int, button: str = "select") -> s
     return f"{button} drag ({x1}, {y1}) -> ({x2}, {y2})"
 
 
+def _is_symbol_name(text: str) -> bool:
+    """True if `text` can only be a symbol name, not a hex address.
+
+    A bare hex number is always treated as an address, matching the emulator:
+    loading a symbol table must not change what an existing call means.
+    """
+    try:
+        int(text.strip().lstrip("&").removeprefix("0x").removeprefix("0X"), 16)
+        return False
+    except ValueError:
+        return True
+
+
 def _hexaddr(a: str) -> str:
     a = a.strip().lower()
     if a.startswith("0x"):
@@ -795,20 +808,51 @@ def riscos_debug_step(count: int = 1) -> dict:
 
 
 @mcp.tool()
-def riscos_debug_breakpoint(action: str, address: str = "") -> dict:
-    """Manage PC breakpoints (max 64). `action` is "add", "del", or "clear".
-    `address` (hex) is required for add/del. When the emulated PC reaches a
-    breakpoint the CPU pauses (riscos_debug_status shows reason=2); resume with
-    riscos_debug_resume.
+def riscos_debug_breakpoint(action: str, address: str = "", condition: str = "",
+                            ignore_count: int = 0, once: bool = False) -> dict:
+    """Manage PC breakpoints (max 64). `action` is "add", "del", "enable",
+    "disable", or "clear". `address` is hex, or the name of a loaded symbol
+    (see riscos_debug_symbols).
+
+    For "add":
+      `condition`    an expression that must be true to halt, e.g. "r0 == 0",
+                     "[sp + 4] != 0", "pc >= 0x8000 && z". Over registers
+                     (r0-r15, pc, sp, lr, cpsr), flags (n z c v), literals
+                     (0x10, &10, 16), memory ([addr], [addr]:1/:2/:4) and the
+                     operators == != < > <= >= + - * / % & | ^ ~ ! << >> && ||.
+                     Comparisons are UNSIGNED. A malformed condition is
+                     refused here rather than silently never firing.
+      `ignore_count` skip this many matches before halting.
+      `once`         remove the breakpoint once it halts.
+
+    Adding at an address that already has a breakpoint replaces its settings.
+    When the CPU halts, riscos_debug_status shows reason=2; resume with
+    riscos_debug_resume. If a breakpoint is not firing, riscos_debug_status
+    reports its hit_count (times the address was reached) and eval_errors
+    (times the condition could not be evaluated), which distinguishes "the
+    condition is never true" from "this code never runs".
     """
     action = action.strip().lower()
     if action == "clear":
         return _debug.cmd("bp clear")
-    if action in ("add", "del"):
+    if action in ("add", "del", "enable", "disable"):
         if not address:
             raise HostCmdError(f"bp {action} requires an address")
-        return _debug.cmd(f"bp {action} {_hexaddr(address)}")
-    raise HostCmdError('action must be "add", "del", or "clear"')
+        # A symbol name is passed through as written; only a hex address is
+        # normalised, so "main" reaches the emulator intact.
+        target = address if _is_symbol_name(address) else _hexaddr(address)
+        if action != "add":
+            return _debug.cmd(f"bp {action} {target}")
+        parts = [f"bp add {target}"]
+        if once:
+            parts.append("once")
+        if ignore_count:
+            parts.append(f"count {int(ignore_count)}")
+        if condition:
+            # "if" swallows the rest of the line, so it must come last
+            parts.append(f"if {condition}")
+        return _debug.cmd(" ".join(parts))
+    raise HostCmdError('action must be "add", "del", "enable", "disable", or "clear"')
 
 
 @mcp.tool()
@@ -829,6 +873,108 @@ def riscos_debug_watchpoint(action: str, address: str = "", size: int = 4,
         tail = " log" if (log_only and action == "add") else ""
         return _debug.cmd(f"wp {action} {_hexaddr(address)} {int(size)} {access}{tail}")
     raise HostCmdError('action must be "add", "del", or "clear"')
+
+
+@mcp.tool()
+def riscos_debug_backtrace(depth: int = 32) -> dict:
+    """Walk the call stack of the emulated CPU.
+
+    Returns {truncated, frames:[{level, pc, lr, sp, fp, symbol, offset}]},
+    innermost frame first. Frame 0 comes from the live registers; the rest are
+    recovered by following the APCS frame-pointer chain from R11.
+
+    **Check `truncated`.** The frame chain is a compiler convention, and a great
+    deal of RISC OS is hand-written assembler that does not keep one. A
+    two-frame answer with truncated=false is the whole stack; the same answer
+    with truncated=true is where the walk gave up, and the real caller is not
+    shown. Treating the second as the first will send you reading the wrong
+    code. `symbol` is null unless symbols have been loaded.
+    """
+    return _debug.cmd(f"bt {int(depth)}")
+
+
+@mcp.tool()
+def riscos_debug_step_over() -> dict:
+    """Step one instruction, running any subroutine call to completion.
+
+    The CPU must be paused. If the instruction at PC is a call (BL), the whole
+    subroutine runs at full speed and the CPU stops at the following
+    instruction; anything else is an ordinary single step. Returns immediately
+    — poll riscos_debug_status to see where it stopped, as with pause.
+    """
+    return _debug.cmd("step over")
+
+
+@mcp.tool()
+def riscos_debug_step_out() -> dict:
+    """Run until the current function returns.
+
+    The CPU must be paused. The return address is taken from the frame chain
+    where there is one, falling back to R14. Fails if neither yields a usable
+    address, which happens in the outermost frame. Poll riscos_debug_status to
+    see where it stopped.
+    """
+    return _debug.cmd("step out")
+
+
+@mcp.tool()
+def riscos_debug_run_to(address: str) -> dict:
+    """Run until the emulated PC reaches an address, then pause.
+
+    The CPU must be paused to start. `address` is hex, or the name of a loaded
+    symbol. The target fires once and is then forgotten; it is separate from
+    the breakpoint list, so this never disturbs a breakpoint you have set. It
+    is also abandoned by any resume or step, so it cannot fire later out of
+    nowhere. If the address is never reached the machine simply keeps running —
+    poll riscos_debug_status.
+    """
+    target = address if _is_symbol_name(address) else _hexaddr(address)
+    return _debug.cmd(f"runto {target}")
+
+
+@mcp.tool()
+def riscos_debug_symbols(action: str = "load", path: str = "", name: str = "",
+                         address: str = "") -> dict:
+    """Give guest addresses names, so backtraces and disassembly are readable.
+
+    `action`:
+      "load"    read a symbol file from the HOST path `path`, replacing any
+                already loaded. Format is one symbol per line,
+                "<hex address> <name>"; blank lines and #/; comments are
+                skipped, and & or 0x address prefixes are accepted. A file that
+                is not a symbol file is refused outright rather than partly
+                loaded.
+      "clear"   discard all symbols.
+      "lookup"  name the symbol containing hex `address`.
+      "find"    the address of symbol `name`.
+
+    Once loaded, riscos_debug_disassemble labels addresses and annotates branch
+    targets, riscos_debug_backtrace names frames, riscos_debug_status reports
+    pc_symbol, and breakpoints can be set by name.
+
+    A symbol reaches only as far as the next one starts, so an address outside
+    the table is reported as unnamed rather than attributed to whatever symbol
+    happens to sit below it. There is no way to read symbols out of the running
+    guest: that would mean depending on RISC OS kernel internals that differ
+    between versions, and a name that cannot be trusted is worse than a bare
+    address.
+    """
+    action = action.strip().lower()
+    if action == "clear":
+        return _debug.cmd("sym clear")
+    if action == "load":
+        if not path:
+            raise HostCmdError("sym load requires a path")
+        return _debug.cmd(f"sym load {path}")
+    if action == "lookup":
+        if not address:
+            raise HostCmdError("sym lookup requires an address")
+        return _debug.cmd(f"sym lookup {_hexaddr(address)}")
+    if action == "find":
+        if not name:
+            raise HostCmdError("sym find requires a name")
+        return _debug.cmd(f"sym find {name}")
+    raise HostCmdError('action must be "load", "clear", "lookup", or "find"')
 
 
 @mcp.tool()

@@ -147,7 +147,7 @@ emulator_fill_snapshot(MachineSnapshot *snapshot)
 	if (bp_count > 0) {
 		memcpy(snapshot->debug_breakpoints,
 		       debug_status.breakpoints,
-		       bp_count * sizeof(uint32_t));
+		       bp_count * sizeof(DebugBreakpointInfo));
 	}
 
 	uint32_t wp_count = debug_status.watchpoint_count;

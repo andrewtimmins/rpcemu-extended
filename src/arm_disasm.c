@@ -78,12 +78,23 @@ decode_shifter(uint32_t opcode, char *buf, size_t buflen, int imm)
 		/* Immediate value with rotation */
 		uint32_t imm8 = opcode & 0xFF;
 		uint32_t rot = ((opcode >> 8) & 0xF) * 2;
-		uint32_t value = (imm8 >> rot) | (imm8 << (32 - rot));
+
+		/*
+		 * ★ The unrotated case leaves before the rotation is worked out,
+		 * rather than after.
+		 *
+		 * Shifting a 32-bit value by 32 is undefined, and that is exactly
+		 * what `imm8 << (32 - rot)` asks for when rot is zero - which is
+		 * every ordinary small immediate, so it happened constantly. The
+		 * result was then thrown away by the rot == 0 branch below, which
+		 * is why nothing ever looked wrong. Working it out only when it is
+		 * going to be used leaves the shift with 1..31.
+		 */
 		if (rot == 0) {
 			return snprintf(buf, buflen, "#%u", imm8);
-		} else {
-			return snprintf(buf, buflen, "#0x%X", value);
 		}
+		return snprintf(buf, buflen, "#0x%X",
+		    (imm8 >> rot) | (imm8 << (32 - rot)));
 	} else {
 		/* Register with optional shift */
 		int rm = opcode & 0xF;
@@ -1561,7 +1572,11 @@ disasm_msr(uint32_t opcode, uint32_t address, char *buf, size_t buflen)
 	if (imm) {
 		uint32_t imm8 = opcode & 0xFF;
 		uint32_t rot = ((opcode >> 8) & 0xF) * 2;
-		uint32_t value = (imm8 >> rot) | (imm8 << (32 - rot));
+		/* Shifting by 32 is undefined; see decode_shifter(). MSR prints the
+		   rotated form either way, so only the shift itself is guarded. */
+		uint32_t value = (rot == 0) ? imm8
+		    : ((imm8 >> rot) | (imm8 << (32 - rot)));
+
 		snprintf(operand, sizeof(operand), "#0x%X", value);
 	} else {
 		int rm = opcode & 0xF;
@@ -1586,101 +1601,723 @@ disasm_bx(uint32_t opcode, uint32_t address, char *buf, size_t buflen)
 	return snprintf(buf, buflen, "BX%s %s", cond_names[cond], reg_names[rm]);
 }
 
+/*
+ * FPA10 floating point (coprocessors 1 and 2).
+ *
+ * The encodings mirror those interpreted by fpaopcode() in fpa.c, which is the
+ * authority for what this machine's FPA actually does:
+ *   Opcodes Cx/Dx, CP1     - LDF/STF
+ *   Opcodes Cx/Dx, CP2     - LFM/SFM
+ *   Opcodes Ex, bit 4 clear - data processing (CPDO)
+ *   Opcodes Ex, bit 4 set   - register transfer (CPRT)
+ *   Opcodes Ex, bit 4 set, Rd=15 - compare
+ */
+
+/** Dyadic CPDO operations, indexed by bits 23-20. */
+static const char *fpa_dyadic_names[16] = {
+	"ADF", "MUF", "SUF", "RSF", "DVF", "RDF", "POW", "RPW",
+	"RMF", "FML", "FDV", "FRD", "POL", NULL,  NULL,  NULL
+};
+
+/** Monadic CPDO operations, indexed by bits 23-20. */
+static const char *fpa_monadic_names[16] = {
+	"MVF", "MNF", "ABS", "RND", "SQT", "LOG", "LGN", "EXP",
+	"SIN", "COS", "TAN", "ASN", "ACS", "ATN", "URD", "NRM"
+};
+
+/** The eight FPA immediate constants, selected by bit 3 of the operand field. */
+static const char *fpa_constants[8] = {
+	"#0.0", "#1.0", "#2.0", "#3.0", "#4.0", "#5.0", "#0.5", "#10.0"
+};
+
+static const char *fpa_reg_names[8] = {
+	"F0", "F1", "F2", "F3", "F4", "F5", "F6", "F7"
+};
+
+/**
+ * Destination precision of a CPDO or FLT, held in bits 19 and 7.
+ */
+static const char *
+fpa_precision(uint32_t opcode)
+{
+	switch (((opcode >> 18) & 2) | ((opcode >> 7) & 1)) {
+	case 0:  return "S"; /* single */
+	case 1:  return "D"; /* double */
+	case 2:  return "E"; /* extended */
+	default: return "P"; /* packed */
+	}
+}
+
+/**
+ * Rounding mode, held in bits 6-5. Round-to-nearest is the default and has no
+ * suffix.
+ */
+static const char *
+fpa_rounding(uint32_t opcode)
+{
+	switch ((opcode >> 5) & 3) {
+	case 1:  return "P"; /* towards +infinity */
+	case 2:  return "M"; /* towards -infinity */
+	case 3:  return "Z"; /* towards zero */
+	default: return "";  /* nearest */
+	}
+}
+
+/** A CPDO source operand: either Fm, or one of the eight constants. */
+static const char *
+fpa_operand(uint32_t opcode)
+{
+	if (opcode & 8) {
+		return fpa_constants[opcode & 7];
+	}
+	return fpa_reg_names[opcode & 7];
+}
+
+/**
+ * Transfer precision of an LDF/STF, held in bits 22 and 15.
+ */
+static const char *
+fpa_transfer_precision(uint32_t opcode)
+{
+	switch (opcode & 0x408000) {
+	case 0x000000: return "S";
+	case 0x008000: return "D";
+	case 0x400000: return "E";
+	default:       return "P";
+	}
+}
+
+/**
+ * Decode an FPA data operation (CPDO).
+ */
+static int
+disasm_fpa_data_op(uint32_t opcode, uint32_t address, char *buf, size_t buflen)
+{
+	int cond = (opcode >> 28) & 0xF;
+	int op = (opcode >> 20) & 0xF;
+	int monadic = (opcode >> 15) & 1;
+	const char *mnem = monadic ? fpa_monadic_names[op] : fpa_dyadic_names[op];
+
+	(void) address;
+
+	if (mnem == NULL) {
+		return snprintf(buf, buflen, "DCD 0x%08X", opcode);
+	}
+
+	if (monadic) {
+		return snprintf(buf, buflen, "%s%s%s%s %s, %s",
+		                mnem, cond_names[cond],
+		                fpa_precision(opcode), fpa_rounding(opcode),
+		                fpa_reg_names[(opcode >> 12) & 7], fpa_operand(opcode));
+	}
+
+	return snprintf(buf, buflen, "%s%s%s%s %s, %s, %s",
+	                mnem, cond_names[cond],
+	                fpa_precision(opcode), fpa_rounding(opcode),
+	                fpa_reg_names[(opcode >> 12) & 7],
+	                fpa_reg_names[(opcode >> 16) & 7], fpa_operand(opcode));
+}
+
+/**
+ * Decode an FPA register transfer or compare (CPRT).
+ */
+static int
+disasm_fpa_reg_transfer(uint32_t opcode, uint32_t address, char *buf, size_t buflen)
+{
+	int cond = (opcode >> 28) & 0xF;
+	int rd = (opcode >> 12) & 0xF;
+
+	(void) address;
+
+	/* Compares put 15 in the Rd field and set the load bit. */
+	if (rd == 15 && (opcode & 0x100000)) {
+		const char *mnem;
+
+		switch ((opcode >> 21) & 7) {
+		case 4:  mnem = "CMF";  break;
+		case 5:  mnem = "CNF";  break;
+		case 6:  mnem = "CMFE"; break;
+		case 7:  mnem = "CNFE"; break;
+		default: return snprintf(buf, buflen, "DCD 0x%08X", opcode);
+		}
+
+		return snprintf(buf, buflen, "%s%s %s, %s",
+		                mnem, cond_names[cond],
+		                fpa_reg_names[(opcode >> 16) & 7], fpa_operand(opcode));
+	}
+
+	switch ((opcode >> 20) & 0xF) {
+	case 0: /* FLT - ARM register to FPA register */
+		return snprintf(buf, buflen, "FLT%s%s%s %s, %s",
+		                cond_names[cond],
+		                fpa_precision(opcode), fpa_rounding(opcode),
+		                fpa_reg_names[(opcode >> 16) & 7], reg_names[rd]);
+
+	case 1: /* FIX - FPA register to ARM register */
+		return snprintf(buf, buflen, "FIX%s%s %s, %s",
+		                cond_names[cond], fpa_rounding(opcode),
+		                reg_names[rd], fpa_reg_names[opcode & 7]);
+
+	case 2:
+		return snprintf(buf, buflen, "WFS%s %s", cond_names[cond], reg_names[rd]);
+	case 3:
+		return snprintf(buf, buflen, "RFS%s %s", cond_names[cond], reg_names[rd]);
+	case 4:
+		return snprintf(buf, buflen, "WFC%s %s", cond_names[cond], reg_names[rd]);
+	case 5:
+		return snprintf(buf, buflen, "RFC%s %s", cond_names[cond], reg_names[rd]);
+	default:
+		return snprintf(buf, buflen, "DCD 0x%08X", opcode);
+	}
+}
+
+/**
+ * Number of registers transferred by an LFM/SFM, from the length field.
+ * Mirrors lfm_sfm_count() in fpa.c.
+ */
+static int
+lfm_sfm_count(uint32_t opcode)
+{
+	switch (opcode & 0x408000) {
+	case 0x008000: return 1;
+	case 0x400000: return 2;
+	case 0x408000: return 3;
+	default:       return 4; /* 0x000000 */
+	}
+}
+
+/**
+ * Decode an FPA load/store: LDF/STF on CP1, LFM/SFM on CP2.
+ */
+static int
+disasm_fpa_transfer(uint32_t opcode, uint32_t address, char *buf, size_t buflen)
+{
+	int cond = (opcode >> 28) & 0xF;
+	int p = (opcode >> 24) & 1;
+	int u = (opcode >> 23) & 1;
+	int w = (opcode >> 21) & 1;
+	int l = (opcode >> 20) & 1;
+	int rn = (opcode >> 16) & 0xF;
+	int fd = (opcode >> 12) & 7;
+	int offset = (opcode & 0xFF) << 2;
+	const char *sign = u ? "" : "-";
+	char addr_str[96];
+	char offset_str[32];
+
+	(void) address;
+
+	if (offset == 0 && p) {
+		offset_str[0] = '\0';
+	} else {
+		snprintf(offset_str, sizeof(offset_str), ", #%s%d", sign, offset);
+	}
+
+	if (p) {
+		snprintf(addr_str, sizeof(addr_str), "[%s%s]%s",
+		         reg_names[rn], offset_str, w ? "!" : "");
+	} else {
+		snprintf(addr_str, sizeof(addr_str), "[%s]%s",
+		         reg_names[rn], offset_str);
+	}
+
+	if (opcode & 0x100) {
+		/* CP1: single register, one of four formats. */
+		return snprintf(buf, buflen, "%s%s%s %s, %s",
+		                l ? "LDF" : "STF", cond_names[cond],
+		                fpa_transfer_precision(opcode),
+		                fpa_reg_names[fd], addr_str);
+	}
+
+	/* CP2: 1-4 registers, always in extended format. */
+	return snprintf(buf, buflen, "%s%s %s, %d, %s",
+	                l ? "LFM" : "SFM", cond_names[cond],
+	                fpa_reg_names[fd], lfm_sfm_count(opcode), addr_str);
+}
+
+/** True if a coprocessor number belongs to the FPA. */
+static int
+is_fpa_coproc(uint32_t opcode)
+{
+	uint32_t cpn = (opcode >> 8) & 0xF;
+
+	return cpn == 1 || cpn == 2;
+}
+
+/**
+ * Identify an instruction's encoding.
+ *
+ * This is the single dispatch point shared by arm_disasm() and arm_decode(),
+ * so the text and the structured description can never disagree about what an
+ * instruction is.
+ */
+static ArmInsnClass
+arm_classify(uint32_t opcode)
+{
+	uint32_t bits_27_25 = (opcode >> 25) & 7;
+	uint32_t bits_7_4 = (opcode >> 4) & 0xF;
+
+	/* NV is undefined on every core this emulator implements */
+	if (((opcode >> 28) & 0xF) == 0xF) {
+		return ARM_CLASS_UNKNOWN;
+	}
+
+	switch (bits_27_25) {
+	case 0: /* Data processing / Multiply / Misc */
+		if ((opcode & 0x0FFFFFD0) == 0x012FFF10) {
+			return ARM_CLASS_BX;
+		} else if ((opcode & 0x0FBF0FFF) == 0x010F0000) {
+			return ARM_CLASS_MRS;
+		} else if ((opcode & 0x0DB0F000) == 0x0120F000) {
+			return ARM_CLASS_MSR;
+		} else if ((opcode & 0x0FB00FF0) == 0x01000090) {
+			return ARM_CLASS_SWAP;
+		} else if ((opcode & 0x0F8000F0) == 0x00800090) {
+			return ARM_CLASS_MULTIPLY_LONG;
+		} else if ((opcode & 0x0FC000F0) == 0x00000090) {
+			return ARM_CLASS_MULTIPLY;
+		} else if ((bits_7_4 & 0x9) == 0x9) {
+			/* Halfword transfer; multiply and SWP are already handled */
+			if ((opcode & 0x0E400F90) == 0x00000090) {
+				return ARM_CLASS_DATAPROC;
+			}
+			return ARM_CLASS_LDST_HALF;
+		}
+		return ARM_CLASS_DATAPROC;
+
+	case 1: /* Data processing immediate */
+		if ((opcode & 0x0FBF0FFF) == 0x010F0000) {
+			return ARM_CLASS_MRS;
+		} else if ((opcode & 0x0DB0F000) == 0x0120F000) {
+			return ARM_CLASS_MSR;
+		}
+		return ARM_CLASS_DATAPROC;
+
+	case 2: /* Load/Store immediate offset */
+	case 3: /* Load/Store register offset */
+		return ARM_CLASS_LDST;
+
+	case 4: /* Load/Store multiple */
+		return ARM_CLASS_LDM_STM;
+
+	case 5: /* Branch */
+		return ARM_CLASS_BRANCH;
+
+	case 6: /* Coprocessor load/store */
+		return is_fpa_coproc(opcode) ? ARM_CLASS_FPA_LDST
+		                             : ARM_CLASS_COPROC_LDST;
+
+	case 7: /* Coprocessor data/register transfer or SWI */
+		if (opcode & (1 << 24)) {
+			return ARM_CLASS_SWI;
+		} else if (opcode & (1 << 4)) {
+			return is_fpa_coproc(opcode) ? ARM_CLASS_FPA_REG
+			                             : ARM_CLASS_COPROC_REG;
+		}
+		return is_fpa_coproc(opcode) ? ARM_CLASS_FPA_DATA
+		                             : ARM_CLASS_COPROC_DATA;
+
+	default:
+		return ARM_CLASS_UNKNOWN;
+	}
+}
+
+/**
+ * Registers read by a data-processing shifter operand.
+ */
+static uint16_t
+shifter_regs_read(uint32_t opcode, int imm)
+{
+	uint16_t regs;
+
+	if (imm) {
+		return 0;
+	}
+
+	regs = (uint16_t) (1u << (opcode & 0xF));
+	if ((opcode >> 4) & 1) {
+		/* Shift amount comes from Rs */
+		regs |= (uint16_t) (1u << ((opcode >> 8) & 0xF));
+	}
+
+	return regs;
+}
+
+/**
+ * Fill in the control-flow and register-usage fields for a decoded
+ * instruction. Split out of arm_decode() purely to keep it readable.
+ */
+static void
+arm_decode_effects(uint32_t opcode, uint32_t address, ArmInsnInfo *out)
+{
+	switch (out->cls) {
+	case ARM_CLASS_DATAPROC: {
+		int imm = (opcode >> 25) & 1;
+		int op = (opcode >> 21) & 0xF;
+		int rn = (opcode >> 16) & 0xF;
+		int rd = (opcode >> 12) & 0xF;
+
+		out->regs_read = shifter_regs_read(opcode, imm);
+
+		if (op >= 8 && op <= 11) {
+			/* TST/TEQ/CMP/CMN write nothing */
+			out->regs_read |= (uint16_t) (1u << rn);
+		} else {
+			if (op != 13 && op != 15) {
+				/* Everything but MOV/MVN reads Rn */
+				out->regs_read |= (uint16_t) (1u << rn);
+			}
+			out->regs_written = (uint16_t) (1u << rd);
+
+			if (rd == 15) {
+				out->writes_pc = 1;
+				out->is_branch = 1;
+				/* MOV PC, LR with no shift applied is a return */
+				if (op == 13 && !imm && (opcode & 0xFFF) == 0x00E) {
+					out->is_return = 1;
+				}
+			}
+		}
+		break;
+	}
+
+	case ARM_CLASS_MULTIPLY: {
+		int rd = (opcode >> 16) & 0xF;
+		int rn = (opcode >> 12) & 0xF;
+		int rs = (opcode >> 8) & 0xF;
+		int rm = opcode & 0xF;
+
+		out->regs_written = (uint16_t) (1u << rd);
+		out->regs_read = (uint16_t) ((1u << rm) | (1u << rs));
+		if ((opcode >> 21) & 1) {
+			/* MLA also reads the accumulator */
+			out->regs_read |= (uint16_t) (1u << rn);
+		}
+		break;
+	}
+
+	case ARM_CLASS_MULTIPLY_LONG: {
+		int rdhi = (opcode >> 16) & 0xF;
+		int rdlo = (opcode >> 12) & 0xF;
+		int rs = (opcode >> 8) & 0xF;
+		int rm = opcode & 0xF;
+
+		out->regs_written = (uint16_t) ((1u << rdhi) | (1u << rdlo));
+		out->regs_read = (uint16_t) ((1u << rm) | (1u << rs));
+		if ((opcode >> 21) & 1) {
+			/* Accumulating forms read the destination pair too */
+			out->regs_read |= out->regs_written;
+		}
+		break;
+	}
+
+	case ARM_CLASS_LDST:
+	case ARM_CLASS_LDST_HALF: {
+		int p = (opcode >> 24) & 1;
+		int w = (opcode >> 21) & 1;
+		int l = (opcode >> 20) & 1;
+		int rn = (opcode >> 16) & 0xF;
+		int rd = (opcode >> 12) & 0xF;
+		int reg_offset;
+
+		if (out->cls == ARM_CLASS_LDST) {
+			reg_offset = (opcode >> 25) & 1;
+		} else {
+			reg_offset = !((opcode >> 22) & 1);
+		}
+
+		out->regs_read = (uint16_t) (1u << rn);
+		if (reg_offset) {
+			out->regs_read |= (uint16_t) (1u << (opcode & 0xF));
+		}
+
+		if (l) {
+			out->regs_written = (uint16_t) (1u << rd);
+			if (rd == 15) {
+				out->writes_pc = 1;
+				out->is_branch = 1;
+			}
+		} else {
+			out->regs_read |= (uint16_t) (1u << rd);
+		}
+
+		/* Post-indexed always writes back; pre-indexed only when W is set */
+		if (!p || w) {
+			out->regs_written |= (uint16_t) (1u << rn);
+		}
+		break;
+	}
+
+	case ARM_CLASS_LDM_STM: {
+		int w = (opcode >> 21) & 1;
+		int l = (opcode >> 20) & 1;
+		int rn = (opcode >> 16) & 0xF;
+		uint16_t reglist = (uint16_t) (opcode & 0xFFFF);
+
+		out->regs_read = (uint16_t) (1u << rn);
+		if (l) {
+			out->regs_written = reglist;
+			if (reglist & 0x8000) {
+				out->writes_pc = 1;
+				out->is_branch = 1;
+				/* Popping PC is how a subroutine returns */
+				out->is_return = 1;
+			}
+		} else {
+			out->regs_read |= reglist;
+		}
+		if (w) {
+			out->regs_written |= (uint16_t) (1u << rn);
+		}
+		break;
+	}
+
+	case ARM_CLASS_BRANCH: {
+		int32_t offset = (int32_t) (opcode & 0x00FFFFFF);
+
+		/* Sign extend the 24-bit offset */
+		if (offset & 0x00800000) {
+			offset |= (int32_t) 0xFF000000;
+		}
+
+		out->is_branch = 1;
+		out->writes_pc = 1;
+		out->branch_target_known = 1;
+		out->branch_target = address + 8 + ((uint32_t) offset << 2);
+		out->regs_written = 0x8000;
+
+		if ((opcode >> 24) & 1) {
+			/* BL returns to the following instruction */
+			out->is_call = 1;
+			out->regs_written |= 0x4000;
+		}
+		break;
+	}
+
+	case ARM_CLASS_BX: {
+		int rm = opcode & 0xF;
+
+		out->is_branch = 1;
+		out->writes_pc = 1;
+		out->regs_read = (uint16_t) (1u << rm);
+		out->regs_written = 0x8000;
+		if (rm == 14) {
+			out->is_return = 1;
+		}
+		break;
+	}
+
+	case ARM_CLASS_SWAP: {
+		int rn = (opcode >> 16) & 0xF;
+		int rd = (opcode >> 12) & 0xF;
+		int rm = opcode & 0xF;
+
+		out->regs_read = (uint16_t) ((1u << rn) | (1u << rm));
+		out->regs_written = (uint16_t) (1u << rd);
+		break;
+	}
+
+	case ARM_CLASS_MRS:
+		out->regs_written = (uint16_t) (1u << ((opcode >> 12) & 0xF));
+		break;
+
+	case ARM_CLASS_MSR:
+		if (!((opcode >> 25) & 1)) {
+			out->regs_read = (uint16_t) (1u << (opcode & 0xF));
+		}
+		break;
+
+	case ARM_CLASS_SWI:
+		out->is_swi = 1;
+		out->swi_number = opcode & 0x00FFFFFF;
+		out->swi_name = lookup_swi_name(out->swi_number);
+		break;
+
+	case ARM_CLASS_COPROC_LDST:
+	case ARM_CLASS_FPA_LDST: {
+		int p = (opcode >> 24) & 1;
+		int w = (opcode >> 21) & 1;
+		int rn = (opcode >> 16) & 0xF;
+
+		out->regs_read = (uint16_t) (1u << rn);
+		if (!p || w) {
+			out->regs_written = (uint16_t) (1u << rn);
+		}
+		break;
+	}
+
+	case ARM_CLASS_COPROC_REG: {
+		int rd = (opcode >> 12) & 0xF;
+
+		if ((opcode >> 20) & 1) {
+			out->regs_written = (uint16_t) (1u << rd);
+		} else {
+			out->regs_read = (uint16_t) (1u << rd);
+		}
+		break;
+	}
+
+	case ARM_CLASS_FPA_REG: {
+		int rd = (opcode >> 12) & 0xF;
+
+		/* Compares name no ARM register; the rest read or write Rd */
+		if (rd == 15 && (opcode & 0x100000)) {
+			break;
+		}
+		switch ((opcode >> 20) & 0xF) {
+		case 1: /* FIX */
+		case 3: /* RFS */
+		case 5: /* RFC */
+			out->regs_written = (uint16_t) (1u << rd);
+			break;
+		case 0: /* FLT */
+		case 2: /* WFS */
+		case 4: /* WFC */
+			out->regs_read = (uint16_t) (1u << rd);
+			break;
+		default:
+			break;
+		}
+		break;
+	}
+
+	case ARM_CLASS_COPROC_DATA:
+	case ARM_CLASS_FPA_DATA:
+	case ARM_CLASS_UNKNOWN:
+	default:
+		break;
+	}
+}
+
+int
+arm_decode(uint32_t opcode, uint32_t address, ArmInsnInfo *out)
+{
+	uint8_t cond;
+
+	if (out == NULL) {
+		return 0;
+	}
+
+	memset(out, 0, sizeof(*out));
+	out->opcode = opcode;
+	out->address = address;
+
+	cond = (uint8_t) ((opcode >> 28) & 0xF);
+	out->cond = cond;
+	out->is_conditional = (cond != ARM_COND_AL && cond != 0xF);
+	out->cls = arm_classify(opcode);
+
+	if (out->cls == ARM_CLASS_UNKNOWN) {
+		return 0;
+	}
+
+	arm_decode_effects(opcode, address, out);
+
+	return 1;
+}
+
+const char *
+arm_disasm_sym(uint32_t opcode, uint32_t address, char *buffer, size_t buflen,
+               ArmSymbolLookup lookup, void *ctx)
+{
+	ArmInsnClass cls;
+
+	if (buffer == NULL || buflen == 0) {
+		return NULL;
+	}
+
+	cls = arm_classify(opcode);
+
+	switch (cls) {
+	case ARM_CLASS_DATAPROC:
+		disasm_data_processing(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_MULTIPLY:
+		disasm_multiply(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_MULTIPLY_LONG:
+		disasm_multiply_long(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_LDST:
+		disasm_single_transfer(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_LDST_HALF:
+		disasm_halfword_transfer(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_LDM_STM:
+		disasm_block_transfer(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_BRANCH:
+		disasm_branch(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_BX:
+		disasm_bx(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_SWI:
+		disasm_swi(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_SWAP:
+		disasm_swap(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_MRS:
+		disasm_mrs(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_MSR:
+		disasm_msr(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_COPROC_LDST:
+		disasm_coproc_transfer(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_COPROC_DATA:
+		disasm_coproc_data_op(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_COPROC_REG:
+		disasm_coproc_reg_transfer(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_FPA_DATA:
+		disasm_fpa_data_op(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_FPA_REG:
+		disasm_fpa_reg_transfer(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_FPA_LDST:
+		disasm_fpa_transfer(opcode, address, buffer, buflen);
+		break;
+	case ARM_CLASS_UNKNOWN:
+	default:
+		snprintf(buffer, buflen, "DCD 0x%08X", opcode);
+		break;
+	}
+
+	/* Annotate a computable branch target with its symbol, if one is known */
+	if (lookup != NULL && cls == ARM_CLASS_BRANCH) {
+		ArmInsnInfo info;
+
+		if (arm_decode(opcode, address, &info) && info.branch_target_known) {
+			uint32_t offset = 0;
+			const char *name = lookup(info.branch_target, &offset, ctx);
+
+			if (name != NULL) {
+				size_t len = strlen(buffer);
+
+				if (offset != 0) {
+					snprintf(buffer + len, buflen - len,
+					         "  ; %s+0x%X", name, offset);
+				} else {
+					snprintf(buffer + len, buflen - len,
+					         "  ; %s", name);
+				}
+			}
+		}
+	}
+
+	return buffer;
+}
+
 /**
  * Main disassembly entry point.
  */
 const char *
 arm_disasm(uint32_t opcode, uint32_t address, char *buffer, size_t buflen)
 {
-	if (buffer == NULL || buflen == 0) {
-		return NULL;
-	}
-
-	/* Check condition - NV condition is undefined in ARMv4 */
-	int cond = (opcode >> 28) & 0xF;
-	if (cond == 0xF) {
-		snprintf(buffer, buflen, "DCD 0x%08X", opcode);
-		return buffer;
-	}
-
-	/* Decode based on bits [27:25] and other fields */
-	uint32_t bits_27_25 = (opcode >> 25) & 7;
-	uint32_t bits_7_4 = (opcode >> 4) & 0xF;
-
-	switch (bits_27_25) {
-	case 0: /* Data processing / Multiply / Misc */
-		if ((opcode & 0x0FFFFFD0) == 0x012FFF10) {
-			/* BX */
-			disasm_bx(opcode, address, buffer, buflen);
-		} else if ((opcode & 0x0FBF0FFF) == 0x010F0000) {
-			/* MRS */
-			disasm_mrs(opcode, address, buffer, buflen);
-		} else if ((opcode & 0x0DB0F000) == 0x0120F000) {
-			/* MSR */
-			disasm_msr(opcode, address, buffer, buflen);
-		} else if ((opcode & 0x0FB00FF0) == 0x01000090) {
-			/* SWP/SWPB */
-			disasm_swap(opcode, address, buffer, buflen);
-		} else if ((opcode & 0x0F8000F0) == 0x00800090) {
-			/* Long multiply */
-			disasm_multiply_long(opcode, address, buffer, buflen);
-		} else if ((opcode & 0x0FC000F0) == 0x00000090) {
-			/* Multiply */
-			disasm_multiply(opcode, address, buffer, buflen);
-		} else if ((bits_7_4 & 0x9) == 0x9) {
-			/* Halfword transfer or SWP */
-			if ((opcode & 0x0E400F90) == 0x00000090) {
-				/* Multiply already handled above */
-				disasm_data_processing(opcode, address, buffer, buflen);
-			} else {
-				disasm_halfword_transfer(opcode, address, buffer, buflen);
-			}
-		} else {
-			disasm_data_processing(opcode, address, buffer, buflen);
-		}
-		break;
-
-	case 1: /* Data processing immediate */
-		if ((opcode & 0x0FBF0FFF) == 0x010F0000) {
-			disasm_mrs(opcode, address, buffer, buflen);
-		} else if ((opcode & 0x0DB0F000) == 0x0120F000) {
-			disasm_msr(opcode, address, buffer, buflen);
-		} else {
-			disasm_data_processing(opcode, address, buffer, buflen);
-		}
-		break;
-
-	case 2: /* Load/Store immediate offset */
-	case 3: /* Load/Store register offset */
-		disasm_single_transfer(opcode, address, buffer, buflen);
-		break;
-
-	case 4: /* Load/Store multiple */
-		disasm_block_transfer(opcode, address, buffer, buflen);
-		break;
-
-	case 5: /* Branch */
-		disasm_branch(opcode, address, buffer, buflen);
-		break;
-
-	case 6: /* Coprocessor load/store */
-		disasm_coproc_transfer(opcode, address, buffer, buflen);
-		break;
-
-	case 7: /* Coprocessor data/register transfer or SWI */
-		if (opcode & (1 << 24)) {
-			disasm_swi(opcode, address, buffer, buflen);
-		} else if (opcode & (1 << 4)) {
-			disasm_coproc_reg_transfer(opcode, address, buffer, buflen);
-		} else {
-			disasm_coproc_data_op(opcode, address, buffer, buflen);
-		}
-		break;
-
-	default:
-		snprintf(buffer, buflen, "DCD 0x%08X", opcode);
-		break;
-	}
-
-	return buffer;
+	return arm_disasm_sym(opcode, address, buffer, buflen, NULL, NULL);
 }

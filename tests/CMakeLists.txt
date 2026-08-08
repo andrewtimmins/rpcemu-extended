@@ -19,6 +19,17 @@ macro(rpcemu_add_test name)
     list(APPEND RPCEMU_REGISTERED_TESTS ${name})
 endmacro()
 
+# The same, for a test that is a script rather than a compiled target. Kept
+# separate only because add_test() needs an interpreter in front of the file;
+# it appends to the same list, so a script test is counted like any other and
+# cannot go missing quietly.
+macro(rpcemu_add_python_test name script)
+    add_test(NAME ${name}
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/${script} ${ARGN})
+    list(APPEND RPCEMU_REGISTERED_TESTS ${name})
+endmacro()
+
 # The JIT differential testers use the recompiler's test hooks
 # (compiled into rpcemu_core when RPCEMU_JIT_TEST is set, see src/CMakeLists.txt).
 # They compare each recompiled instruction class against the interpreter and are
@@ -120,6 +131,150 @@ rpcemu_add_test(test_app_settings
 add_executable(test_mmu_perms test_mmu_perms.c test_stubs.c)
 target_link_libraries(test_mmu_perms PRIVATE rpcemu_core m)
 rpcemu_add_test(test_mmu_perms)
+
+# The disassembler, and the instruction description the debugger acts on. Needs
+# nothing but arm_disasm.c - it is pure decoding, no machine state.
+#
+# A wrong mnemonic used to cost a double-take in the inspector window and nothing
+# more. It costs more now that arm_decode() answers "is this a call", "is this a
+# return" and "where does this branch go", because step-over and step-out are
+# built on those answers: a decoding mistake stops looking like an odd line and
+# starts looking like a debugger that runs away when asked to step. This also
+# pins down the FPA10 encodings, hand-assembled from the operation tables in
+# fpa.c, which is the only written record of what those bit patterns mean.
+add_executable(test_arm_disasm test_arm_disasm.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/arm_disasm.c)
+target_include_directories(test_arm_disasm PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_arm_disasm)
+
+# The debugger's per-instruction fast gate. Links rpcemu_core because the
+# debugger state is file-static in rpcemu.c and the public API is the only way
+# to reach it - which is the thing worth testing.
+#
+# The interpreter used to call the debugger hook on every instruction whether or
+# not anything was attached. It is now gated on a cached flag, and caching it
+# introduces exactly one silent failure: a state change that forgets to
+# recompute it. Breakpoints then never fire, with no error and no log line, and
+# the person debugging blames their breakpoint address. This checks the flag is
+# raised and lowered again on every route in and out.
+add_executable(test_debugger_gate test_debugger_gate.c test_stubs.c)
+target_link_libraries(test_debugger_gate PRIVATE rpcemu_core m)
+rpcemu_add_test(test_debugger_gate)
+
+# Breakpoint condition expressions. Compiles debugexpr.c directly - it reads the
+# machine only through a caller-supplied environment, so a test substitutes its
+# own registers and memory and needs no emulator.
+#
+# A conditional breakpoint is trusted differently from a plain one. "Stop at
+# 0x8000" visibly works or visibly does not; "stop at 0x8000 when R0 is 5" that
+# evaluates wrongly stops at the wrong moment, or never, and the person
+# debugging draws a conclusion about their own program from an answer the tool
+# got wrong. The cases lean on how small parsers are usually wrong: operator
+# precedence, operators that are prefixes of other operators (& vs &&, < vs <=),
+# and - the one that matters most - malformed input being accepted rather than
+# refused.
+add_executable(test_debugexpr test_debugexpr.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/debugexpr.c)
+target_include_directories(test_debugexpr PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_debugexpr)
+
+# Walking the APCS frame-pointer chain. Links rpcemu_core and builds frames in
+# real emulated RAM with the MMU off, so addresses are physical.
+#
+# A backtrace is the one debugger output people read without checking, which
+# makes a wrong one uniquely expensive: it does not look wrong, it looks like an
+# explanation. The chain is a compiler convention and much of RISC OS is
+# assembler that does not keep it, so the walk is regularly handed a register
+# that is not a frame pointer - it must not loop, must not invent frames, and
+# must say when it gave up. The 26-bit case is here because forgetting to strip
+# the PSR bits from a saved link register does not fail, it silently reports
+# addresses that are all wrong.
+add_executable(test_backtrace test_backtrace.c test_stubs.c)
+target_link_libraries(test_backtrace PRIVATE rpcemu_core m)
+rpcemu_add_test(test_backtrace)
+
+# Step over, step out and run to. Links rpcemu_core and drives the debugger's
+# state machine through its public API with the MMU off, so a fake instruction
+# can be put where the CPU will look for it.
+#
+# These are the only debugger operations whose failure mode is to RUN THE
+# MACHINE. A breakpoint that is wrong stops in the wrong place; a step-over that
+# is wrong does not stop at all, and whatever state was being examined is gone -
+# recovering it means rebooting and reproducing. So the rules pinned down here
+# are the ones that keep that from happening: an unrecognised instruction
+# degrades to a single step rather than a guess, the temporary target never
+# outlives the operation that armed it, and it is kept out of the breakpoint
+# table so stepping over an address the user has breakpointed cannot disturb
+# their breakpoint.
+add_executable(test_stepping test_stepping.c test_stubs.c)
+target_link_libraries(test_stepping PRIVATE rpcemu_core m)
+rpcemu_add_test(test_stepping)
+
+# The guest symbol table. Compiles debugsym.c directly - it reads a text file
+# and searches an array, and needs no machine. Runs in the build directory,
+# since it writes the files it then loads.
+#
+# The value of a symbol table is entirely that the name beside an address can be
+# trusted: a backtrace reading "main+0x24" gets acted on, and if the attribution
+# is wrong the person reads the wrong function with nothing to warn them. Almost
+# all of that risk is in deciding what NOT to name, so the cases lean on the
+# boundaries - below the first symbol, between two, and past the end of the last
+# - where the naive "nearest symbol at or below" would label an address in the
+# RISC OS kernel as main+0x3f21c. The rest covers refusing a file that is not a
+# symbol file outright, rather than loading whichever lines happened to parse.
+add_executable(test_debugsym test_debugsym.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/debugsym.c)
+target_include_directories(test_debugsym PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_debugsym ${CMAKE_CURRENT_BINARY_DIR})
+
+# The debugger's wire protocol, over a real socket. Links rpcemu_core and calls
+# debugcmd_poll() from the test in place of the emulator thread, which is the
+# same arrangement the real code uses while the CPU is paused.
+#
+# Runs on every platform. The transport differs - AF_UNIX on Unix, a loopback
+# TCP port on Windows - because that is what debugcmd.c itself does; the parser
+# under test never sees the difference, and it is the parser that a client on
+# any platform depends on.
+#
+# Every other layer of the debugger is reached through C functions with types on
+# them. This one is a hand-written parser over strtok, and it is what every
+# external client actually touches - the MCP server, rpcemu-debug, and anything
+# a person writes. A mistake here is invisible from inside: the command is
+# understood as something other than what was sent. "bp add 8000 if r0 == 0"
+# has to survive being split on spaces, having its options recognised in any
+# order, and keeping the condition - which contains spaces - whole to the end of
+# the line; a parser that gets that wrong sets an unconditional breakpoint and
+# reports success.
+add_executable(test_debugcmd test_debugcmd.c test_stubs.c)
+target_link_libraries(test_debugcmd PRIVATE rpcemu_core m)
+if(WIN32)
+    target_link_libraries(test_debugcmd PRIVATE ws2_32)
+endif()
+rpcemu_add_test(test_debugcmd ${CMAKE_CURRENT_BINARY_DIR})
+
+# The CI abort watcher's classification and verdict (tests/abort_watch.py, used
+# by tests/boot_smoke.py). Pure Python, no emulator.
+#
+# That module decides whether the boot job goes red, and everything it needs to
+# do its real work - a ROM, a real boot, a machine taking real aborts - is
+# exactly what the unit suite does not have. Without this, the only thing that
+# ever exercises the logic is the thing it is meant to be checking, and a
+# mistake would show up as a boot test that passes forever. The cases pull in
+# both directions: a healthy RISC OS boot takes aborts on purpose while probing
+# for hardware and must not fail, while an abort once the machine is idle must.
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    set(RPCEMU_PYTHON_TESTS TRUE)
+    rpcemu_add_python_test(test_abort_watch test_abort_watch.py)
+else()
+    set(RPCEMU_PYTHON_TESTS FALSE)
+    message(STATUS
+        "RPCEmu: no Python 3 interpreter here, so the abort-watcher test is "
+        "not registered (tests/boot_smoke.py needs one too)")
+endif()
 
 # Display mode selection against a VRAM budget. Architecture-neutral and needs
 # no dynarec, so unlike the JIT tests it builds everywhere.
@@ -471,9 +626,12 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 28)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 35)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
+endif()
+if(RPCEMU_PYTHON_TESTS)
+    math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 1")	# abort watcher
 endif()
 
 list(LENGTH RPCEMU_REGISTERED_TESTS RPCEMU_ACTUAL_TESTS)

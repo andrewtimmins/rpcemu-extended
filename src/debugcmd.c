@@ -43,6 +43,8 @@
 #endif
 
 #include "debugcmd.h"
+#include "debugexpr.h"
+#include "debugsym.h"
 #include "arm.h"
 #include "arm_disasm.h"
 #include "cp15.h"
@@ -62,6 +64,7 @@
 #define DC_RESP_SZ	(64u * 1024u)	/* max size of a single JSON response */
 #define DC_MEM_MAX	4096u		/* cap bytes per mem read */
 #define DC_DIS_MAX	256u		/* cap instructions per disassemble */
+#define SYM_ESC_SZ	160u		/* JSON-escaped symbol name */
 
 typedef struct {
 	int	initialised;
@@ -120,41 +123,28 @@ dc_send(const char *s)
 	dc.out_head = (dc.out_head + 1) & (DC_OUT_RING_SZ - 1);
 }
 
+/* The precision is not decoration: it bounds the message so the result
+   provably fits, which is what lets a caller pass a message it built itself
+   (a rejected breakpoint condition, say) without having to size it here. */
+#define DC_ERROR_MAX_MSG 400
+
 static void
 dc_error(const char *msg)
 {
-	char buf[256];
+	char buf[DC_ERROR_MAX_MSG + 64];
 
-	snprintf(buf, sizeof(buf), "{\"ok\":false,\"error\":\"%s\"}", msg);
+	snprintf(buf, sizeof(buf), "{\"ok\":false,\"error\":\"%.*s\"}",
+	    DC_ERROR_MAX_MSG, msg);
 	dc_send(buf);
 }
 
 /* ---- safe, side-effect-free memory access ---------------------------- */
 
 /* Translate a virtual address to physical without leaving a data-abort event
-   pending on the CPU (readmemfl/translateaddress set arm.event & 0x40 on a
-   miss, which would otherwise inject a spurious abort into execution). Returns
-   1 and *phys on success, 0 if unmapped. */
-static int
-dc_translate(uint32_t vaddr, uint32_t *phys)
-{
-	if (!mmu) {
-		*phys = vaddr;
-		return 1;
-	}
-	{
-		uint32_t saved_event = arm.event;
-		uint32_t p = translateaddress2(vaddr, 0, 0);
-		int fault = (arm.event & 0x40) != 0;
-
-		arm.event = saved_event;	/* undo any injected abort */
-		if (fault) {
-			return 0;
-		}
-		*phys = p;
-		return 1;
-	}
-}
+   pending on the CPU (translateaddress2 sets arm.event & 0x40 on a miss, which
+   would otherwise inject a spurious abort into execution). Lives in mem.c
+   because breakpoint conditions need the same guarantee. */
+#define dc_translate(vaddr, phys) mem_debug_translate((vaddr), (phys))
 
 /* Read one byte at a virtual (default) or physical address; *mapped=0 if the
    virtual page is unmapped. Never triggers watchpoints or aborts. */
@@ -293,11 +283,15 @@ dc_cmd_help(char *r)
 	    "\"mem <hexaddr> <len> [phys]\","
 	    "\"mem write <hexaddr> <hexbytes> [phys]\","
 	    "\"dis <hexaddr> [count]\","
-	    "\"bp add|del <hexaddr> | bp clear\","
+	    "\"bp add <hexaddr> [once] [count <n>] [if <expr>]\","
+	    "\"bp del|enable|disable <hexaddr> | bp clear\","
 	    "\"wp add|del <hexaddr> <size> <r|w|rw> [log] | wp clear\","
 	    "\"trace [max]\","
 	    "\"trace config [key=value ...]\","
-	    "\"pause\",\"resume\",\"continue\",\"step [count]\",\"reset\","
+	    "\"pause\",\"resume\",\"continue\",\"reset\","
+	    "\"step [count] | step into [count] | step over | step out\","
+	    "\"runto <hexaddr>\",\"bt [depth]\","
+	    "\"sym load <path> | sym clear | sym lookup <hexaddr> | sym find <name>\","
 	    "\"state save|load <path>\","
 	    "\"clipboard get|set [text]\""
 	    "]}");
@@ -442,22 +436,57 @@ dc_cmd_status(char *r)
 	DebuggerStatus st;
 	size_t n;
 	uint32_t i;
+	uint32_t pc_offset = 0;
+	const char *pc_sym;
+	char pc_esc[SYM_ESC_SZ];
 
 	debugger_get_status(&st);
+
+	/* Where the machine stopped, said in the program's own terms */
+	pc_sym = debugsym_lookup(st.halt_pc, &pc_offset);
+	pc_esc[0] = '\0';
+	if (pc_sym != NULL) {
+		dc_json_str(pc_esc, sizeof(pc_esc), pc_sym);
+	}
 	n = (size_t) snprintf(r, DC_RESP_SZ,
 	    "{\"ok\":true,\"paused\":%s,\"pause_requested\":%s,\"reason\":%u,"
 	    "\"halt_pc\":\"%08x\",\"halt_opcode\":\"%08x\",\"last_pc\":\"%08x\","
 	    "\"hit_address\":\"%08x\",\"hit_value\":\"%08x\",\"hit_size\":%u,"
 	    "\"hit_is_write\":%u,\"step_active\":%u,\"trace_pending\":%u,"
+	    "\"pc_symbol\":%s%s%s,\"pc_offset\":%u,"
+	    "\"symbols_loaded\":%u,"
 	    "\"breakpoints\":[",
 	    st.paused ? "true" : "false", st.pause_requested ? "true" : "false",
 	    (unsigned) st.reason, (unsigned) st.halt_pc, (unsigned) st.halt_opcode,
 	    (unsigned) st.last_pc, (unsigned) st.hit_address, (unsigned) st.hit_value,
 	    (unsigned) st.hit_size, (unsigned) st.hit_is_write,
-	    (unsigned) st.step_active, (unsigned) debugger_trace_pending());
+	    (unsigned) st.step_active, (unsigned) debugger_trace_pending(),
+	    pc_sym ? "\"" : "null", pc_sym ? pc_esc : "", pc_sym ? "\"" : "",
+	    (unsigned) pc_offset, (unsigned) debugsym_count());
+	/* Objects rather than bare addresses: a breakpoint now carries a
+	   condition, an ignore count and its hit counts, and those are exactly
+	   what is needed to explain a breakpoint that is not firing. */
 	for (i = 0; i < st.breakpoint_count; i++) {
-		n += (size_t) snprintf(r + n, DC_RESP_SZ - n, "%s\"%08x\"",
-		    i ? "," : "", (unsigned) st.breakpoints[i]);
+		const DebugBreakpointInfo *bp = &st.breakpoints[i];
+		char cond[DEBUGGER_MAX_CONDITION * 2 + 4];
+
+		cond[0] = '\0';
+		if (bp->has_condition) {
+			dc_json_str(cond, sizeof(cond), bp->condition);
+		}
+
+		n += (size_t) snprintf(r + n, DC_RESP_SZ - n,
+		    "%s{\"address\":\"%08x\",\"enabled\":%s,\"one_shot\":%s,"
+		    "\"condition\":%s%s%s,\"ignore_count\":%u,\"hit_count\":%u,"
+		    "\"eval_errors\":%u}",
+		    i ? "," : "", (unsigned) bp->address,
+		    bp->enabled ? "true" : "false",
+		    bp->one_shot ? "true" : "false",
+		    bp->has_condition ? "\"" : "null",
+		    bp->has_condition ? cond : "",
+		    bp->has_condition ? "\"" : "",
+		    (unsigned) bp->ignore_count, (unsigned) bp->hit_count,
+		    (unsigned) bp->eval_errors);
 	}
 	n += (size_t) snprintf(r + n, DC_RESP_SZ - n, "],\"watchpoints\":[");
 	for (i = 0; i < st.watchpoint_count; i++) {
@@ -541,9 +570,24 @@ dc_cmd_dis(char *r, char *args)
 		if (!mapped) {
 			snprintf(line, sizeof(line), "%08x: <unmapped>", (unsigned) a);
 		} else {
-			arm_disasm(opcode, a, dis, sizeof(dis));
-			snprintf(line, sizeof(line), "%08x: %08x  %s",
-			    (unsigned) a, (unsigned) opcode, dis);
+			const char *sym;
+			uint32_t sym_offset = 0;
+
+			/* Branch targets are annotated by the disassembler; the
+			   label here is for the instruction's own address, which
+			   is what makes a listing navigable rather than a wall
+			   of hex. */
+			arm_disasm_sym(opcode, a, dis, sizeof(dis),
+			    debugsym_count() ? debugsym_disasm_lookup : NULL, NULL);
+			sym = debugsym_lookup(a, &sym_offset);
+
+			if (sym != NULL && sym_offset == 0) {
+				snprintf(line, sizeof(line), "%08x <%s>: %08x  %s",
+				    (unsigned) a, sym, (unsigned) opcode, dis);
+			} else {
+				snprintf(line, sizeof(line), "%08x: %08x  %s",
+				    (unsigned) a, (unsigned) opcode, dis);
+			}
 		}
 		n += (size_t) snprintf(r + n, DC_RESP_SZ - n, "%s\"", i ? "," : "");
 		dc_json_str(r, DC_RESP_SZ, line);
@@ -551,6 +595,266 @@ dc_cmd_dis(char *r, char *args)
 		n += (size_t) snprintf(r + n, DC_RESP_SZ - n, "\"");
 	}
 	snprintf(r + n, DC_RESP_SZ - n, "]}");
+}
+
+#define DC_BP_USAGE \
+	"usage: bp add <hexaddr> [once] [count <n>] [if <expr>] | " \
+	"bp del|enable|disable <hexaddr> | bp clear"
+
+/**
+ * bp add <hexaddr> [once] [count <n>] [if <expr>]
+ * bp del|enable|disable <hexaddr>
+ * bp clear
+ *
+ * "if" is last and swallows the rest of the line, so a condition can contain
+ * spaces without needing quoting - which the newline-delimited protocol has no
+ * way to express anyway.
+ *
+ * A malformed condition is refused here rather than accepted and found to be
+ * unusable later, when the breakpoint is reached and quietly fails to fire.
+ */
+/**
+ * step [n] | step into [n] | step over | step out
+ *
+ * "into" is the original behaviour and stays the default, so an existing
+ * client that says `step 5` is unaffected.
+ *
+ * Over and out both run the machine rather than stepping it, so neither can
+ * report how far it went - they answer immediately and the client polls
+ * `status` to learn where it stopped, exactly as it already does for `pause`.
+ */
+static void
+dc_cmd_step(char *r, char *args)
+{
+	char *a1 = strtok(args, " \t");
+	char *a2 = strtok(NULL, " \t");
+	uint32_t nsteps;
+
+	if (a1 && strcmp(a1, "over") == 0) {
+		if (!debugger_step_over()) {
+			dc_error("the machine must be paused to step");
+			return;
+		}
+		snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"mode\":\"over\"}");
+		return;
+	}
+
+	if (a1 && strcmp(a1, "out") == 0) {
+		if (!debugger_step_out()) {
+			dc_error("no return address to step out to "
+			         "(is the machine paused, and in a called function?)");
+			return;
+		}
+		snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"mode\":\"out\"}");
+		return;
+	}
+
+	if (a1 && strcmp(a1, "into") == 0) {
+		a1 = a2;
+	}
+
+	nsteps = a1 ? (uint32_t) strtoul(a1, NULL, 0) : 1;
+	if (nsteps == 0) {
+		nsteps = 1;
+	}
+	debugger_single_step(nsteps);
+	snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"stepped\":%u,\"mode\":\"into\"}",
+	    (unsigned) nsteps);
+}
+
+/**
+ * bt [depth]
+ *
+ * `truncated` is not decoration. The frame chain is a compiler convention and
+ * much of RISC OS keeps no frame pointer, so a two-frame answer may be the
+ * whole stack or may be the point at which the walk gave up. Those mean
+ * entirely different things and the client cannot tell them apart otherwise.
+ */
+static void
+dc_cmd_backtrace(char *r, char *args)
+{
+	char *a1 = strtok(args, " \t");
+	DebugFrame frames[DEBUGGER_MAX_FRAMES];
+	uint32_t depth = DEBUGGER_MAX_FRAMES;
+	uint32_t count, i;
+	int truncated = 0;
+	size_t n;
+
+	if (a1) {
+		depth = (uint32_t) strtoul(a1, NULL, 0);
+		if (depth == 0 || depth > DEBUGGER_MAX_FRAMES) {
+			depth = DEBUGGER_MAX_FRAMES;
+		}
+	}
+
+	count = debugger_backtrace(frames, depth, &truncated);
+
+	n = (size_t) snprintf(r, DC_RESP_SZ,
+	    "{\"ok\":true,\"truncated\":%s,\"frames\":[",
+	    truncated ? "true" : "false");
+
+	for (i = 0; i < count; i++) {
+		uint32_t sym_offset = 0;
+		const char *sym = debugsym_lookup(frames[i].pc, &sym_offset);
+		char esc[SYM_ESC_SZ];
+
+		esc[0] = '\0';
+		if (sym != NULL) {
+			dc_json_str(esc, sizeof(esc), sym);
+		}
+
+		n += (size_t) snprintf(r + n, DC_RESP_SZ - n,
+		    "%s{\"level\":%u,\"pc\":\"%08x\",\"lr\":\"%08x\","
+		    "\"sp\":\"%08x\",\"fp\":\"%08x\","
+		    "\"symbol\":%s%s%s,\"offset\":%u}",
+		    i ? "," : "", (unsigned) i, (unsigned) frames[i].pc,
+		    (unsigned) frames[i].lr, (unsigned) frames[i].sp,
+		    (unsigned) frames[i].fp,
+		    sym ? "\"" : "null", sym ? esc : "", sym ? "\"" : "",
+		    (unsigned) sym_offset);
+	}
+
+	snprintf(r + n, DC_RESP_SZ - n, "]}");
+}
+
+/**
+ * sym load <path> | sym clear | sym lookup <hexaddr> | sym find <name>
+ *
+ * Symbols come from a file the user supplies rather than from the running
+ * guest. Reading the module chain out of RISC OS was considered and left out:
+ * it depends on kernel workspace layout that differs between versions, and a
+ * symbol table that is confidently wrong is worse than none - the whole value
+ * of a name beside an address is that it can be trusted.
+ */
+/**
+ * Accept either a hex address or the name of a loaded symbol.
+ *
+ * A bare hex number wins over a symbol of the same spelling: addresses are
+ * what this protocol has always taken, and a symbol table should not be able
+ * to change what an existing script means.
+ *
+ * @return Non-zero if `text` named somewhere
+ */
+static int
+dc_parse_address(const char *text, uint32_t *address)
+{
+	char *end;
+	unsigned long value;
+
+	if (text == NULL || *text == '\0') {
+		return 0;
+	}
+
+	value = strtoul(text, &end, 16);
+	if (*end == '\0') {
+		*address = (uint32_t) value;
+		return 1;
+	}
+
+	return debugsym_resolve(text, address);
+}
+
+static void
+dc_cmd_sym(char *r, char *args)
+{
+	char *sub = strtok(args, " \t");
+
+	if (!sub) {
+		dc_error("usage: sym load <path> | sym clear | "
+		         "sym lookup <hexaddr> | sym find <name>");
+		return;
+	}
+
+	if (strcmp(sub, "clear") == 0) {
+		debugsym_clear();
+		snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"count\":0}");
+		return;
+	}
+
+	if (strcmp(sub, "load") == 0) {
+		/* Rest of the line: a path may contain spaces */
+		char *path = strtok(NULL, "");
+		uint32_t count = 0;
+		const char *error = NULL;
+
+		if (path != NULL) {
+			while (*path == ' ' || *path == '\t') {
+				path++;
+			}
+		}
+		if (path == NULL || *path == '\0') {
+			dc_error("usage: sym load <path>");
+			return;
+		}
+		if (!debugsym_load_file(path, &count, &error)) {
+			char buf[DC_ERROR_MAX_MSG];
+
+			snprintf(buf, sizeof(buf), "cannot load symbols: %s",
+			    error ? error : "unknown error");
+			dc_error(buf);
+			return;
+		}
+		snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"count\":%u}",
+		    (unsigned) count);
+		return;
+	}
+
+	if (strcmp(sub, "lookup") == 0) {
+		char *a1 = strtok(NULL, " \t");
+		uint32_t address, offset = 0;
+		const char *name;
+		char esc[SYM_ESC_SZ];
+
+		if (!a1) {
+			dc_error("usage: sym lookup <hexaddr>");
+			return;
+		}
+		address = (uint32_t) strtoul(a1, NULL, 16);
+		name = debugsym_lookup(address, &offset);
+
+		if (name == NULL) {
+			snprintf(r, DC_RESP_SZ,
+			    "{\"ok\":true,\"address\":\"%08x\",\"symbol\":null}",
+			    (unsigned) address);
+			return;
+		}
+		esc[0] = '\0';
+		dc_json_str(esc, sizeof(esc), name);
+		snprintf(r, DC_RESP_SZ,
+		    "{\"ok\":true,\"address\":\"%08x\",\"symbol\":\"%s\","
+		    "\"offset\":%u}",
+		    (unsigned) address, esc, (unsigned) offset);
+		return;
+	}
+
+	if (strcmp(sub, "find") == 0) {
+		char *name = strtok(NULL, "");
+		uint32_t address = 0;
+		char esc[SYM_ESC_SZ];
+
+		if (name != NULL) {
+			while (*name == ' ' || *name == '\t') {
+				name++;
+			}
+		}
+		if (name == NULL || *name == '\0') {
+			dc_error("usage: sym find <name>");
+			return;
+		}
+		if (!debugsym_resolve(name, &address)) {
+			dc_error("no symbol of that name");
+			return;
+		}
+		esc[0] = '\0';
+		dc_json_str(esc, sizeof(esc), name);
+		snprintf(r, DC_RESP_SZ,
+		    "{\"ok\":true,\"symbol\":\"%s\",\"address\":\"%08x\"}",
+		    esc, (unsigned) address);
+		return;
+	}
+
+	dc_error("usage: sym load <path> | sym clear | "
+	         "sym lookup <hexaddr> | sym find <name>");
 }
 
 static void
@@ -561,7 +865,7 @@ dc_cmd_bp(char *r, char *args)
 	uint32_t addr;
 
 	if (!sub) {
-		dc_error("usage: bp add|del|clear [hexaddr]");
+		dc_error(DC_BP_USAGE);
 		return;
 	}
 	if (strcmp(sub, "clear") == 0) {
@@ -570,21 +874,96 @@ dc_cmd_bp(char *r, char *args)
 		return;
 	}
 	if (!a1) {
-		dc_error("usage: bp add|del <hexaddr>");
+		dc_error(DC_BP_USAGE);
 		return;
 	}
-	addr = (uint32_t) strtoul(a1, NULL, 16);
-	if (strcmp(sub, "add") == 0) {
-		int ok = debugger_add_breakpoint(addr);
+	/* A symbol name is accepted wherever an address is. Setting a breakpoint
+	   on "main" beats looking main up and typing its address back in, which
+	   is the whole reason for loading symbols in the first place. */
+	if (!dc_parse_address(a1, &addr)) {
+		dc_error("not an address, and no symbol of that name");
+		return;
+	}
 
+	if (strcmp(sub, "add") == 0) {
+		const char *condition = NULL;
+		uint32_t ignore_count = 0;
+		int one_shot = 0;
+		int seen_if = 0;
+		const char *error = NULL;
+		char *tok;
+		int ok;
+
+		while ((tok = strtok(NULL, " \t")) != NULL) {
+			if (strcmp(tok, "once") == 0) {
+				one_shot = 1;
+			} else if (strcmp(tok, "count") == 0) {
+				char *value = strtok(NULL, " \t");
+
+				if (!value) {
+					dc_error(DC_BP_USAGE);
+					return;
+				}
+				ignore_count = (uint32_t) strtoul(value, NULL, 0);
+			} else if (strcmp(tok, "if") == 0) {
+				/* Rest of the line, spaces and all. Note this is
+				   NULL when "if" ends the line, which is why the
+				   flag is tracked separately: without it, a bare
+				   trailing "if" would fall through and set an
+				   unconditional breakpoint while reporting
+				   success - the exact silent misunderstanding
+				   conditions are supposed to prevent. */
+				condition = strtok(NULL, "");
+				seen_if = 1;
+				break;
+			} else {
+				dc_error(DC_BP_USAGE);
+				return;
+			}
+		}
+
+		if (seen_if) {
+			while (condition != NULL &&
+			       (*condition == ' ' || *condition == '\t')) {
+				condition++;
+			}
+			if (condition == NULL || *condition == '\0') {
+				dc_error("bp add: 'if' needs an expression");
+				return;
+			}
+			if (!debugexpr_check(condition, &error)) {
+				char buf[256];
+				char esc[192];
+
+				esc[0] = '\0';
+				dc_json_str(esc, sizeof(esc), condition);
+				snprintf(buf, sizeof(buf),
+				    "bad condition \\\"%s\\\": %s", esc,
+				    error ? error : "cannot be parsed");
+				dc_error(buf);
+				return;
+			}
+		}
+
+		ok = debugger_add_breakpoint_ex(addr, condition, ignore_count, one_shot);
 		snprintf(r, DC_RESP_SZ, "{\"ok\":%s,\"address\":\"%08x\"%s}",
 		    ok ? "true" : "false", (unsigned) addr,
 		    ok ? "" : ",\"error\":\"breakpoint table full\"");
 	} else if (strcmp(sub, "del") == 0) {
 		debugger_remove_breakpoint(addr);
 		snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"address\":\"%08x\"}", (unsigned) addr);
+	} else if (strcmp(sub, "enable") == 0 || strcmp(sub, "disable") == 0) {
+		int enable = (sub[0] == 'e');
+
+		if (!debugger_set_breakpoint_enabled(addr, enable)) {
+			dc_error("no breakpoint at that address");
+			return;
+		}
+		snprintf(r, DC_RESP_SZ,
+		    "{\"ok\":true,\"address\":\"%08x\",\"enabled\":%s}",
+		    (unsigned) addr, enable ? "true" : "false");
 	} else {
-		dc_error("usage: bp add|del|clear [hexaddr]");
+		dc_error(DC_BP_USAGE);
 	}
 }
 
@@ -821,14 +1200,28 @@ dc_dispatch(char *line)
 		debugger_resume();
 		snprintf(resp, DC_RESP_SZ, "{\"ok\":true,\"paused\":false}");
 	} else if (strcmp(verb, "step") == 0) {
+		dc_cmd_step(resp, args ? args : (char *) "");
+	} else if (strcmp(verb, "runto") == 0) {
 		char *a1 = args ? strtok(args, " \t") : NULL;
-		uint32_t nsteps = a1 ? (uint32_t) strtoul(a1, NULL, 0) : 1;
+		uint32_t runto_addr = 0;
 
-		if (nsteps == 0) {
-			nsteps = 1;
+		if (!a1) {
+			dc_error("usage: runto <hexaddr>");
+			return;
 		}
-		debugger_single_step(nsteps);
-		snprintf(resp, DC_RESP_SZ, "{\"ok\":true,\"stepped\":%u}", (unsigned) nsteps);
+		if (!dc_parse_address(a1, &runto_addr)) {
+			dc_error("not an address, and no symbol of that name");
+			return;
+		}
+		if (!debugger_run_to(runto_addr)) {
+			dc_error("the machine must be paused to run to an address");
+			return;
+		}
+		snprintf(resp, DC_RESP_SZ, "{\"ok\":true}");
+	} else if (strcmp(verb, "sym") == 0) {
+		dc_cmd_sym(resp, args ? args : (char *) "");
+	} else if (strcmp(verb, "bt") == 0 || strcmp(verb, "backtrace") == 0) {
+		dc_cmd_backtrace(resp, args ? args : (char *) "");
 	} else if (strcmp(verb, "reset") == 0) {
 		/* A wedged guest is otherwise the end of an unattended session: the
 		   command channel into RISC OS can be left mid-command by a client

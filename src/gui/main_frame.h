@@ -183,7 +183,6 @@ public:
 	void PostMoveHostMouse(const MouseMoveUpdate &update) override;
 	void ShowError(const std::string &message) override;
 	void ShowFatal(const std::string &message) override;
-	void PostNatRule(PortForwardRule rule) override;
 	void PostDebuggerStateChanged() override;
 	void PostMachineSwitched(const std::string &machine_name) override;
 	void PostGuestCommandResult(unsigned token, unsigned rc,
@@ -309,7 +308,6 @@ private:
 	Config config_copy_{};
 	Model model_copy_ = Model_RPCARM710;
 	std::unique_ptr<EmulatorHost> emulator_;
-	std::unique_ptr<NatListDialog> nat_list_dialog_;
 	MachineInspectorWindow *machine_inspector_window_ = nullptr;
 #ifdef RPCEMU_VNC
 	/* Borrowed from vnc_app: the process owns the server, this window only points
