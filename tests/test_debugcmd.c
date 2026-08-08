@@ -30,23 +30,68 @@
  * The emulator is not running here - no thread, no ROM. debugcmd_poll() is
  * called from this test in place of the emulator thread, which is exactly the
  * arrangement the real code uses while the CPU is paused.
+ *
+ * TRANSPORT. The protocol is the same everywhere; only the socket underneath it
+ * differs, exactly as it does for a real client. Unix gets AF_UNIX, Windows -
+ * which has no useful AF_UNIX - gets TCP on the loopback, which is what
+ * debugcmd.c itself falls back to there. The tests below are the same either
+ * way: what is being checked is the parser, and it never sees the difference.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
-#include <sys/socket.h>
+#include "socket-compat.h"
+#ifndef _WIN32
 #include <sys/un.h>
+#endif
 
 #include "rpcemu.h"
 #include "arm.h"
 #include "mem.h"
 #include "debugcmd.h"
 
+/* The lowest port tried on Windows. Probed upwards rather than fixed: a test
+   that fails because something else on the machine holds a port has said
+   nothing about the parser. */
+#define TEST_TCP_BASE_PORT	15600
+#define TEST_TCP_PORT_TRIES	20
+
 static int failures;
 static int client_fd = -1;
+
+/**
+ * Wait a millisecond between polls. usleep() is POSIX; Windows spells it Sleep().
+ */
+static void
+settle(void)
+{
+#ifdef _WIN32
+	Sleep(1);
+#else
+	usleep(1000);
+#endif
+}
+
+#ifndef _WIN32
+/* Where the AF_UNIX socket was bound, so it can be removed afterwards. Nothing
+   to remove on Windows: a TCP listener leaves nothing behind. */
+static char sock_path[512];
+#endif
+
+/**
+ * Remove the socket file, where the transport has one.
+ */
+static void
+remove_socket_file(void)
+{
+#ifndef _WIN32
+	if (sock_path[0] != '\0') {
+		unlink(sock_path);
+	}
+#endif
+}
 
 static void
 check(const char *what, int ok)
@@ -92,7 +137,7 @@ request(const char *line)
 				return response;
 			}
 		}
-		usleep(1000);
+		settle();
 	}
 
 	response[got] = '\0';
@@ -340,26 +385,74 @@ test_memory_and_disassembly(void)
 	refused("mem 10030000");
 }
 
-int
-main(int argc, char *argv[])
+/**
+ * Start the listener and connect a client to it.
+ *
+ * @param dir Writable directory, for the AF_UNIX socket
+ * @return    0 on success, non-zero if no connection could be made
+ */
+static int
+connect_to_debugger(const char *dir)
 {
-	struct sockaddr_un addr;
-	const char *dir;
-	char sock_path[512];
+#ifdef _WIN32
+	/* No useful AF_UNIX, so debugcmd.c listens on the loopback and so do we.
+	   A bare port number in debug_socket is how that is asked for. */
+	int try;
 
-	/* Required rather than defaulting to ".": this test writes a socket and
-	   a symbol file, and a default of the working directory means running it
-	   by hand from a source tree leaves them there. */
-	if (argc < 2) {
-		fprintf(stderr, "usage: test_debugcmd <writable-directory>\n");
-		return 2;
+	(void) dir;
+
+	for (try = 0; try < TEST_TCP_PORT_TRIES; try++) {
+		int port = TEST_TCP_BASE_PORT + try;
+		struct sockaddr_in addr;
+
+		config.debug_enabled = 1;
+		snprintf(config.debug_socket, sizeof(config.debug_socket), "%d", port);
+		debugcmd_init();
+
+		client_fd = (int) socket(AF_INET, SOCK_STREAM, 0);
+		if (client_fd < 0) {
+			printf("FAIL: cannot create a client socket\n");
+			return 1;
+		}
+		memset(&addr, 0, sizeof(addr));
+		addr.sin_family = AF_INET;
+		addr.sin_port = htons((unsigned short) port);
+		addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+		debugcmd_poll();	/* let the listener come up */
+		if (connect(client_fd, (struct sockaddr *) &addr, sizeof(addr)) == 0
+		    && socket_set_nonblocking(client_fd) == 0)
+		{
+			/*
+			 * ★ Connecting is not enough: ask, and require a debugger's
+			 * answer.
+			 *
+			 * If something else on the machine already holds this port,
+			 * our own bind() failed and connect() then succeeded - against
+			 * the squatter. The port looks taken and the connection looks
+			 * good, and every check afterwards fails on a timeout with
+			 * nothing to say why. So the listener has to identify itself
+			 * before it is believed. No greeting is sent on accept, so
+			 * this asks the cheapest question there is.
+			 */
+			debugcmd_poll();	/* accept */
+			if (strstr(request("ping"), "\"ok\"") != NULL) {
+				printf("  (loopback port %d)\n\n", port);
+				return 0;
+			}
+		}
+
+		/* Not ours, or not reachable. Take both ends down, try the next. */
+		closesocket(client_fd);
+		client_fd = -1;
+		debugcmd_close();
 	}
-	dir = argv[1];
 
-	printf("Debugger wire protocol\n\n");
-
-	mem_init();
-	mem_reset(16, 2);	/* megabytes, not bytes - see mem_reset() */
+	printf("FAIL: no free loopback port in %d..%d\n", TEST_TCP_BASE_PORT,
+	    TEST_TCP_BASE_PORT + TEST_TCP_PORT_TRIES - 1);
+	return 1;
+#else
+	struct sockaddr_un addr;
 
 	/* Absolute, because debugcmd reads a socket spec that does not begin
 	   with '/' as a TCP port number rather than a path. */
@@ -404,23 +497,68 @@ main(int argc, char *argv[])
 		printf("FAIL: cannot connect to %s\n", sock_path);
 		return 1;
 	}
-	debugcmd_poll();	/* accept */
+	return 0;
+#endif
+}
 
-	/* The server greets a new client, so drain that before asking anything */
+int
+main(int argc, char *argv[])
+{
+	const char *dir;
+
+	/* Required rather than defaulting to ".": this test writes a socket and
+	   a symbol file, and a default of the working directory means running it
+	   by hand from a source tree leaves them there. */
+	if (argc < 2) {
+		fprintf(stderr, "usage: test_debugcmd <writable-directory>\n");
+		return 2;
+	}
+	dir = argv[1];
+
+	printf("Debugger wire protocol\n\n");
+
+#ifdef _WIN32
 	{
-		char greeting[4096];
-		int spins;
+		WSADATA wsadata;
 
-		for (spins = 0; spins < 50; spins++) {
-			debugcmd_poll();
-			if (recv(client_fd, greeting, sizeof(greeting), MSG_DONTWAIT) > 0) {
-				break;
-			}
-			usleep(1000);
+		if (WSAStartup(MAKEWORD(2, 2), &wsadata) != 0) {
+			printf("FAIL: WSAStartup failed\n");
+			return 1;
 		}
 	}
+#endif
 
+	mem_init();
+	mem_reset(16, 2);	/* megabytes, not bytes - see mem_reset() */
+
+	if (connect_to_debugger(dir) != 0) {
+		return 1;
+	}
+
+	/* MSG_DONTWAIT does not exist on Windows, where it is defined away to 0
+	   by socket-compat.h. The poll loop in request() would then block on a
+	   socket that is still waiting to be accepted, so put the client into
+	   non-blocking mode explicitly. Harmless where MSG_DONTWAIT is real. */
+	if (socket_set_nonblocking(client_fd) != 0) {
+		printf("FAIL: cannot put the client socket in non-blocking mode\n");
+		return 1;
+	}
+
+	debugcmd_poll();	/* accept */
+
+	/*
+	 * There is no greeting to drain here. The code that used to spin fifty
+	 * times waiting for one was reading a socket that says nothing until it
+	 * is asked: dc_poll() accepts a client and resets its output ring, and
+	 * sends nothing. The loop always ran out and always succeeded, which is
+	 * why it never looked wrong.
+	 */
+
+#ifdef _WIN32
+	_putenv_s("RPCEMU_TEST_DIR", dir);	/* no setenv() in the Windows CRT */
+#else
 	setenv("RPCEMU_TEST_DIR", dir, 1);
+#endif
 
 	test_basics();
 	test_breakpoints();
@@ -429,9 +567,9 @@ main(int argc, char *argv[])
 	test_symbols();
 	test_memory_and_disassembly();
 
-	close(client_fd);
+	closesocket(client_fd);
 	debugcmd_close();
-	unlink(sock_path);
+	remove_socket_file();
 
 	printf("\n%s\n", failures ? "FAILED" : "All tests passed");
 
