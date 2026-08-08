@@ -334,8 +334,16 @@ usage(void)
 	    "  --tcp host:port   connect over TCP instead\n"
 	    "  --help            this message\n"
 	    "\n"
+#ifdef _WIN32
+	    /* Saying "socket path" here would send a Windows user looking for a
+	       file that is never created: this build only speaks TCP. */
+	    "Windows has no AF_UNIX, so the emulator listens on the loopback and\n"
+	    "this connects there. The address defaults to $RPCEMU_DEBUG_SOCKET,\n"
+	    "then to " RPCEMU_DEBUG_DEFAULT_TCP ".\n"
+#else
 	    "The socket defaults to $RPCEMU_DEBUG_SOCKET, then to\n"
 	    "$RPCEMU_DATADIR/rpcemu-debug.sock.\n"
+#endif
 	    "\n"
 	    "Examples:\n"
 	    "  rpcemu-debug pause\n"

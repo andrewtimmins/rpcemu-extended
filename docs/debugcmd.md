@@ -44,6 +44,12 @@ Per-machine `.cfg` keys (under `[General]`):
 | `debug_enabled` | `1` | Enable the DebugCmd socket. |
 | `debug_socket` | *(empty)* | Empty ⇒ `<data-dir>/rpcemu-debug.sock` (AF_UNIX). A path ⇒ that AF_UNIX path. A bare port number ⇒ TCP on `127.0.0.1:<port>`. |
 
+**On Windows** there is no useful AF_UNIX, so the transport is always TCP on the
+loopback. An empty `debug_socket` (or a path, which cannot be honoured) means
+`127.0.0.1:15591`; a bare port number selects that port instead. `rpcemu-debug.exe`
+defaults to the same address, so it needs no arguments. Everything else — the
+commands, the responses, the debugger itself — is identical on all platforms.
+
 > **Security.** Whoever can open this socket can halt the emulated CPU and read
 > its memory. The default transport is an AF_UNIX socket under the machine's data
 > directory (filesystem-permission limited, never on the network); the optional
