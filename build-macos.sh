@@ -411,6 +411,9 @@ stage_slice() {
 	if [ -f "$build_dir/bin/rpcemu-run" ]; then
 		cp -f "$build_dir/bin/rpcemu-run" "$stage/bin/rpcemu-run"
 	fi
+	if [ -f "$build_dir/bin/rpcemu-debug" ]; then
+		cp -f "$build_dir/bin/rpcemu-debug" "$stage/bin/rpcemu-debug"
+	fi
 	chmod u+w "$stage/bin/"*
 
 	if [ -z "$OTOOL" ] || [ -z "$INSTALL_NAME_TOOL" ]; then
@@ -625,6 +628,13 @@ if [ "$DO_FUSE" = true ]; then
 			-output "$MACOSD/rpcemu-run"
 		chmod +x "$MACOSD/rpcemu-run"
 		ln -sf rpcemu-run "$MACOSD/rpcemu-shell"
+	fi
+
+	# And the DebugCmd host client, the same way.
+	if [ -f "$X86_STAGE/bin/rpcemu-debug" ] && [ -f "$ARM_STAGE/bin/rpcemu-debug" ]; then
+		"$LIPO" -create "$X86_STAGE/bin/rpcemu-debug" "$ARM_STAGE/bin/rpcemu-debug" \
+			-output "$MACOSD/rpcemu-debug"
+		chmod +x "$MACOSD/rpcemu-debug"
 	fi
 
 	# Make each bundled dependency universal in the same way. A library present

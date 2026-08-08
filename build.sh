@@ -257,6 +257,14 @@ stage_linux_release() {
 		ln -sf rpcemu-run "$LINUX_RELEASE/rpcemu-shell"
 	fi
 
+	# DebugCmd host-side client. The counterpart of rpcemu-run: that one drives
+	# RISC OS's command line, this one drives the processor underneath it.
+	# See docs/debugcmd.md.
+	if [ -f build/bin/rpcemu-debug ]; then
+		cp -f build/bin/rpcemu-debug "$LINUX_RELEASE/rpcemu-debug"
+		chmod +x "$LINUX_RELEASE/rpcemu-debug"
+	fi
+
 	# MCP server: drive a RISC OS machine (HostCmd + HostFS + VNC + the debugger
 	# control socket) from an MCP client. Python; ships with requirements.txt +
 	# README + config example. See tools/mcp/README.md and docs/debugcmd.md.
