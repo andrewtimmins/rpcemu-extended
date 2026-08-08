@@ -540,12 +540,11 @@ void MainFrame::DispatchMenuCommand(int id, bool checked, const wxString &argume
 		 * has already moved its own copy, and sends where it ended up.
 		 */
 		wxMenuBar *bar = GetMenuBar();
-		if (bar != nullptr) {
-			wxMenuItem *item = bar->FindItem(id);
+		wxMenu *owner = nullptr;
+		wxMenuItem *item = (bar != nullptr) ? bar->FindItem(id, &owner) : nullptr;
 
-			if (item != nullptr && item->IsCheckable()) {
-				item->Check(checked);
-			}
+		if (item != nullptr && item->IsCheckable()) {
+			item->Check(checked);
 		}
 
 		if (!argument.empty()) {
@@ -556,7 +555,32 @@ void MainFrame::DispatchMenuCommand(int id, bool checked, const wxString &argume
 		wxCommandEvent event(wxEVT_MENU, id);
 		event.SetInt(checked ? 1 : 0);
 		event.SetEventObject(this);
-		ProcessWindowEvent(event);
+
+		/*
+		 * ★ Sent to the menu that owns the item, not to this window.
+		 *
+		 * BindMenuItem() binds each command on the wxMenu it was appended to,
+		 * not on the frame - only wxID_ABOUT, wxID_EXIT and wxID_PREFERENCES
+		 * are bound here, because macOS moves those out of our menus. A real
+		 * click reaches the menu's handler because the event starts there.
+		 * An event handed to ProcessWindowEvent() starts at the frame, and a
+		 * wxMenu is not in that chain, so it went nowhere: every forwarded
+		 * command was accepted, reported as sent, and did nothing.
+		 *
+		 * The frame is still tried afterwards, for the three ids bound there
+		 * and for anything bound that way in future.
+		 */
+		bool handled = false;
+
+		if (owner != nullptr) {
+			handled = owner->ProcessEvent(event);
+		}
+		if (!handled) {
+			handled = ProcessWindowEvent(event);
+		}
+		if (!handled) {
+			rpclog("MainFrame: forwarded menu command %d had no handler\n", id);
+		}
 
 		pending_menu_argument_.clear();
 		pending_menu_filter_ = 0;

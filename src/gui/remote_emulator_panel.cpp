@@ -302,6 +302,34 @@ void RemoteEmulatorPanel::OnPaint(wxPaintEvent & /*event*/)
 	}
 }
 
+bool RemoteEmulatorPanel::SaveScreenshot(const wxString &path)
+{
+	int w = 0, h = 0;
+
+	if (!live_ || !shared_fb_.ReadInto(&frame_pixels_, &w, &h) || w <= 0 || h <= 0) {
+		return false;
+	}
+
+	wxImage image(w, h, false);
+	unsigned char *rgb = image.GetData();
+	const uint32_t *src = frame_pixels_.data();
+
+	/* Saved at the guest's resolution, not the panel's: a screenshot of a
+	   window that happened to be dragged smaller is not what was asked for. */
+	for (int y = 0; y < h; y++) {
+		for (int x = 0; x < w; x++) {
+			const uint32_t pixel = src[(size_t) y * (size_t) w + (size_t) x];
+			const size_t idx = (size_t) (y * w + x) * 3;
+
+			rgb[idx + 0] = (unsigned char) ((pixel >> 16) & 0xff);
+			rgb[idx + 1] = (unsigned char) ((pixel >> 8) & 0xff);
+			rgb[idx + 2] = (unsigned char) (pixel & 0xff);
+		}
+	}
+
+	return image.SaveFile(path, wxBITMAP_TYPE_PNG);
+}
+
 void RemoteEmulatorPanel::OnEraseBackground(wxEraseEvent & /*event*/)
 {
 	/* Avoided: painting is done in full by OnPaint (wxBG_STYLE_PAINT), same

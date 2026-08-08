@@ -73,6 +73,12 @@ public:
 
 	void SendRequest(const IpcRequest &request) { ipc_client_.Send(request); }
 
+	/* Write what the machine is currently showing, at its own resolution.
+	   Done here rather than by asking the machine: a managed machine's own
+	   panel never receives frames (they go to shared memory instead), so it
+	   would screenshot an empty window. */
+	bool SaveScreenshot(const wxString &path);
+
 	/* Called by ManagerFrame when the underlying machine has gone away
 	   (Fatal/Quit event, or the child process itself exiting). */
 	using GoneCallback = std::function<void()>;

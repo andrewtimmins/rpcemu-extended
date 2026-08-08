@@ -1080,9 +1080,34 @@ void ManagerFrame::OnMachineMenuCommand(wxCommandEvent &event)
 
 	/* Needs a file, which is chosen here. */
 	switch (id) {
-	case ID_MENU_SCREENSHOT:
-		ForwardWithFileDialog(id, "Save Screenshot", "PNG files (*.png)|*.png", true);
+	case ID_MENU_SCREENSHOT: {
+		/*
+		 * ★ Taken here, not by the machine.
+		 *
+		 * A managed machine's own panel never receives frames - they are
+		 * published into shared memory instead - so asking it to screenshot
+		 * saved an empty 640x480 window and reported success. This window has
+		 * the pixels it is displaying, so it writes them itself, at the
+		 * guest's own resolution.
+		 */
+		auto it = running_.find(active_machine_);
+
+		if (it == running_.end() || it->second.panel == nullptr) {
+			return;
+		}
+
+		wxFileDialog dialog(this, "Save Screenshot", "", "screenshot.png",
+		    "PNG files (*.png)|*.png", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+
+		if (dialog.ShowModal() != wxID_OK) {
+			return;
+		}
+		if (!it->second.panel->SaveScreenshot(dialog.GetPath())) {
+			wxMessageBox("Could not save the screenshot.", "RPCEmu",
+			    wxOK | wxICON_WARNING, this);
+		}
 		return;
+	}
 	case ID_MENU_SAVE_STATE:
 		ForwardWithFileDialog(id, "Save State",
 		    "RPCEmu state files (*.rpcemu)|*.rpcemu", true);
