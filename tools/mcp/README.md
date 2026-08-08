@@ -13,7 +13,7 @@ It is a thin adapter over interfaces RPCEmu exposes:
 | **HostCmd** socket (see [../../docs/hostcmd.md](../../docs/hostcmd.md)) | running guest CLI commands, capturing output + return code |
 | **HostFS** directory (host filesystem) | reading/writing/listing files on the machine's HostFS drive |
 | **VNC** server | screen capture and keyboard/mouse input |
-| **DebugCmd** socket (see [../../docs/debugcmd.md](../../docs/debugcmd.md)) | inspecting and controlling the emulated ARM CPU (registers, memory, disassembly, breakpoints, watchpoints, single-step) |
+| **DebugCmd** socket (see [../../docs/debugcmd.md](../../docs/debugcmd.md)) | inspecting and controlling the emulated ARM CPU (registers, memory, disassembly, breakpoints and conditions, watchpoints, stepping, backtraces, symbols) |
 
 ## Tools
 
@@ -60,13 +60,39 @@ shared clipboard enabled for the machine and the guest module running.
 | Tool | What it does |
 | --- | --- |
 | `riscos_debug_registers()` | Read the ARM registers (r0–r15, pc, cpsr, mode, decoded flags). |
-| `riscos_debug_status()` | Paused state + reason, halt/last PC, watchpoint hit, breakpoint & watchpoint lists. |
+| `riscos_debug_status()` | Paused state + reason, halt/last PC, `pc_symbol`, watchpoint hit, breakpoint & watchpoint lists. |
 | `riscos_debug_read_memory(address, length=64, physical=False)` | Side-effect-free memory read (virtual by default; hex `data`). |
-| `riscos_debug_disassemble(address, count=16, physical=False)` | Disassemble ARM instructions (side-effect-free). |
+| `riscos_debug_disassemble(address, count=16, physical=False)` | Disassemble ARM instructions (side-effect-free), FPA included, symbolised where symbols are loaded. |
 | `riscos_debug_pause()` / `riscos_debug_resume()` / `riscos_debug_step(count=1)` | Halt / resume / single-step the CPU. |
-| `riscos_debug_breakpoint(action, address="")` | `add`/`del`/`clear` PC breakpoints (max 64; a hit pauses the CPU). |
+| `riscos_debug_step_over()` / `riscos_debug_step_out()` | Step a call to completion / run until the current function returns. |
+| `riscos_debug_run_to(address)` | Run until an address (or symbol) is reached, then pause. |
+| `riscos_debug_backtrace(depth=32)` | Walk the call stack. **Check `truncated`** — see below. |
+| `riscos_debug_breakpoint(action, address, condition, ignore_count, once)` | `add`/`del`/`enable`/`disable`/`clear` PC breakpoints (max 64), with conditions. |
 | `riscos_debug_watchpoint(action, address, size, access, log_only)` | `add`/`del`/`clear` data watchpoints (max 32). |
+| `riscos_debug_symbols(action, path, name, address)` | `load`/`clear`/`lookup`/`find` guest symbols, so addresses get names. |
 | `riscos_debug_trace(max_events=64)` | Drain the exception/SWI/log-watchpoint trace ring. |
+
+Three things about these are worth knowing before relying on them.
+
+**Conditional breakpoints.** `riscos_debug_breakpoint("add", "8000",
+condition="r0 == 0")` halts only when the expression is true, which is usually
+the difference between reaching an interesting state and stepping towards it
+for an hour. Expressions cover registers, flags, literals and memory
+(`[sp + 4] != 0 && !z`); comparisons are unsigned. A malformed condition is
+refused when the breakpoint is set rather than silently never firing. If a
+breakpoint is not firing, `riscos_debug_status` reports its `hit_count` and
+`eval_errors`, which separates "the condition is never true" from "this code
+never runs".
+
+**Backtraces can be incomplete, and say so.** The frame chain is a compiler
+convention, and much of RISC OS is hand-written assembler that keeps no frame
+pointer. `truncated:true` means the walk gave up and the real caller is *not*
+in the list. Reading that as a complete stack will send you to the wrong code.
+
+**Symbols come from a host file, not from the guest.** `riscos_debug_symbols`
+loads `<hex address> <name>` lines from a path on the host. An address the
+table does not cover is reported as unnamed rather than attributed to the
+nearest symbol below it, so a name in a backtrace can be trusted.
 
 Memory reads and disassembly are **side-effect-free** (they never trigger
 watchpoints or inject aborts) and take **virtual** addresses by default, matching
