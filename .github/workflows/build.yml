@@ -830,3 +830,140 @@ jobs:
             upload/**/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Tell a Slack channel when CI has something worth saying, which is not most
+  # of the time. A channel that receives a green tick for every push stops being
+  # read, and then the red one is missed as well, so this posts three things:
+  # a build that broke, the build that fixed it, and a release going out.
+  #
+  # Pushes only. A pull request from a fork cannot read repository secrets, so a
+  # notification step there would silently do nothing on exactly the runs an
+  # outside contributor most wants feedback on, and look configured while doing
+  # it. The PR's own checks report to the PR, which is where that conversation
+  # already is.
+  #
+  # Nothing here fails the build. A workflow that goes red because Slack was
+  # unreachable would be reporting on itself rather than on the emulator.
+  notify:
+    if: always() && github.event_name == 'push'
+    needs: [version-matches-tag, linux-amd64, linux-arm64, windows-amd64, macos-universal, sanitisers, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read   # to read whether the previous run was red
+    steps:
+      - name: Work out whether there is anything to say
+        id: verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+
+          # A job that did not run is not a job that failed: version-matches-tag
+          # and release are skipped on every push that is not a tag.
+          failed=$(printf '%s' "$RESULTS" \
+              | jq -r 'to_entries | map(select(.value.result == "failure") | .key) | join(", ")')
+
+          # Cancelled is deliberately not a failure. The concurrency group above
+          # cancels superseded runs as a matter of course, and announcing those
+          # would be announcing normal operation.
+          if [ -n "$failed" ]; then
+            state=failed
+          else
+            state=passed
+          fi
+
+          # Was the last completed run of this workflow on this ref red? That is
+          # what makes a green run worth announcing, and there is no other way to
+          # know it from inside the run. Tags have no previous run to compare
+          # against, each being its own ref, so the question is only asked for
+          # branches.
+          previous=none
+          if [ "${GITHUB_REF_TYPE}" = "branch" ]; then
+            previous=$(gh api \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/build.yml/runs?branch=${GITHUB_REF_NAME}&event=push&status=completed&per_page=5" \
+                --jq "[.workflow_runs[] | select(.id != ${GITHUB_RUN_ID})] | .[0].conclusion // \"none\"" \
+                2>/dev/null || echo none)
+          fi
+
+          post=false
+          case "$state:$previous" in
+            failed:*)     post=true; kind=broken ;;
+            passed:failure) post=true; kind=fixed ;;
+            *)            kind=quiet ;;
+          esac
+
+          # A release going out is worth saying whatever the previous run did.
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "$state" = passed ]; then
+            post=true
+            kind=released
+          fi
+
+          {
+            echo "post=$post"
+            echo "kind=$kind"
+            echo "failed=$failed"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "state=$state previous=$previous kind=$kind post=$post"
+
+      - name: Post to Slack
+        if: steps.verdict.outputs.post == 'true'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          KIND: ${{ steps.verdict.outputs.kind }}
+          FAILED: ${{ steps.verdict.outputs.failed }}
+          SUBJECT: ${{ github.event.head_commit.message }}
+        run: |
+          set -uo pipefail
+
+          # Not configured is not an error: a fork, or a clone of this repository
+          # by somebody who has no Slack, should build exactly as it does now.
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "No SLACK_WEBHOOK_URL secret is set, so nothing was posted."
+            exit 0
+          fi
+
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          subject=$(printf '%s' "${SUBJECT:-}" | head -n1)
+          short="${GITHUB_SHA:0:7}"
+
+          # printf, not a double-quoted string: a "\n" written into one of those
+          # stays two characters all the way to Slack, which then shows it as
+          # two characters. The escapes have to be interpreted by something, and
+          # doing it in the format string keeps every piece of outside text in a
+          # %s where it cannot be read as an escape of its own.
+          case "$KIND" in
+            broken)
+              text=$(printf ':red_circle: *CI is red on `%s`*\nFailed: %s\n<%s|View the run> | `%s` %s\nPushed by %s' \
+                  "$GITHUB_REF_NAME" "$FAILED" "$run_url" "$short" "$subject" "$GITHUB_ACTOR")
+              ;;
+            fixed)
+              text=$(printf ':large_green_circle: *CI is green again on `%s`*\n<%s|View the run> | `%s` %s\nFixed by %s' \
+                  "$GITHUB_REF_NAME" "$run_url" "$short" "$subject" "$GITHUB_ACTOR")
+              ;;
+            released)
+              text=$(printf ':package: *RPCEmu %s has been released*\n<%s/%s/releases/tag/%s|Release page> | <%s|Build log>' \
+                  "$GITHUB_REF_NAME" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$run_url")
+              ;;
+            *)
+              echo "Nothing to say."
+              exit 0
+              ;;
+          esac
+
+          # jq builds the JSON so a commit message containing a quote, a
+          # backslash or a newline cannot break the payload.
+          payload=$(jq -n --arg text "$text" '{text: $text}')
+
+          code=$(curl -sS -o /tmp/slack.out -w '%{http_code}' \
+              -X POST -H 'Content-type: application/json' \
+              --data "$payload" "$SLACK_WEBHOOK_URL" || echo 000)
+
+          if [ "$code" != "200" ]; then
+            echo "Slack returned $code: $(cat /tmp/slack.out)"
+            echo "Not failing the build over it."
+          else
+            echo "Posted to Slack ($KIND)."
+          fi

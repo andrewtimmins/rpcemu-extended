@@ -307,6 +307,37 @@ No baseline is committed. One is only meaningful against a pinned ROM, and the
 sites would have to be looked at by somebody who can say they are the expected
 probing rather than recorded from whatever the first run did.
 
+## Slack notifications
+
+The `notify` job posts to a Slack channel through an incoming webhook, held in
+the repository secret `SLACK_WEBHOOK_URL`. Three things are worth saying and
+nothing else is:
+
+| When | Message |
+| --- | --- |
+| A push to `main` fails | Which jobs failed, the commit, who pushed it, a link to the run |
+| A push to `main` passes after a failure | That it is green again |
+| A tag builds and publishes a release | The release page and the build log |
+
+A green run after a green run says nothing. A channel that receives a tick for
+every push stops being read, and the red one is then missed with it.
+
+Two details worth knowing before changing it:
+
+- **Pull requests are deliberately excluded.** A pull request from a fork cannot
+  read repository secrets, so the step would do nothing on exactly the runs an
+  outside contributor wants feedback on, while looking configured.
+- **Nothing here can fail the build.** An unset secret is treated as "not
+  configured" and a non-200 from Slack is logged and passed over. A workflow
+  that goes red because Slack was unreachable is reporting on itself.
+
+To point it at a different channel, create a new incoming webhook and replace
+the secret; no change to the workflow is needed:
+
+```sh
+gh secret set SLACK_WEBHOOK_URL --repo <owner>/<repo> < webhook.txt
+```
+
 ## Known gaps
 
 Said here rather than left to be discovered:
