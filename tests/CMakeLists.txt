@@ -201,6 +201,44 @@ add_executable(test_stepping test_stepping.c test_stubs.c)
 target_link_libraries(test_stepping PRIVATE rpcemu_core m)
 rpcemu_add_test(test_stepping)
 
+# The guest symbol table. Compiles debugsym.c directly - it reads a text file
+# and searches an array, and needs no machine. Runs in the build directory,
+# since it writes the files it then loads.
+#
+# The value of a symbol table is entirely that the name beside an address can be
+# trusted: a backtrace reading "main+0x24" gets acted on, and if the attribution
+# is wrong the person reads the wrong function with nothing to warn them. Almost
+# all of that risk is in deciding what NOT to name, so the cases lean on the
+# boundaries - below the first symbol, between two, and past the end of the last
+# - where the naive "nearest symbol at or below" would label an address in the
+# RISC OS kernel as main+0x3f21c. The rest covers refusing a file that is not a
+# symbol file outright, rather than loading whichever lines happened to parse.
+add_executable(test_debugsym test_debugsym.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/debugsym.c)
+target_include_directories(test_debugsym PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_debugsym ${CMAKE_CURRENT_BINARY_DIR})
+
+# The debugger's wire protocol, over a real socket. Links rpcemu_core and calls
+# debugcmd_poll() from the test in place of the emulator thread, which is the
+# same arrangement the real code uses while the CPU is paused. AF_UNIX, so not
+# built on Windows.
+#
+# Every other layer of the debugger is reached through C functions with types on
+# them. This one is a hand-written parser over strtok, and it is what every
+# external client actually touches - the MCP server, rpcemu-debug, and anything
+# a person writes. A mistake here is invisible from inside: the command is
+# understood as something other than what was sent. "bp add 8000 if r0 == 0"
+# has to survive being split on spaces, having its options recognised in any
+# order, and keeping the condition - which contains spaces - whole to the end of
+# the line; a parser that gets that wrong sets an unconditional breakpoint and
+# reports success.
+if(NOT WIN32)
+    add_executable(test_debugcmd test_debugcmd.c test_stubs.c)
+    target_link_libraries(test_debugcmd PRIVATE rpcemu_core m)
+    rpcemu_add_test(test_debugcmd ${CMAKE_CURRENT_BINARY_DIR})
+endif()
+
 # Display mode selection against a VRAM budget. Architecture-neutral and needs
 # no dynarec, so unlike the JIT tests it builds everywhere.
 # Compiles the unit under test directly rather than linking rpcemu_core: the
@@ -525,7 +563,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 32)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 34)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()
