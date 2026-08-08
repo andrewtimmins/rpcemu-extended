@@ -110,6 +110,25 @@ extern int machine_lock_read_owner(const char *machine_dir, long *pid, int *vnc_
  */
 extern int machine_lock_read_ipc_endpoint(const char *machine_dir, char *endpoint_out, size_t endpoint_out_size);
 
+/**
+ * Is the process that wrote a lock file still there?
+ *
+ * The lock file is only a record. The lock itself is held by the kernel and
+ * dropped the moment its holder dies, so a machine that crashed or was killed
+ * leaves the file behind saying it is still running. Anything that believes the
+ * file rather than checking is talking about a process that no longer exists -
+ * which is how the Manager came to attach to dead machines and then report that
+ * they had failed to start.
+ *
+ * Asked of the pid rather than by taking the lock, deliberately. Taking it would
+ * be the stronger answer, but it would also mean grabbing the lock of a machine
+ * that is in the middle of starting and turning it away.
+ *
+ * @param pid Process id from machine_lock_read_owner()
+ * @return    1 if that process exists, 0 if it does not (or pid is not valid)
+ */
+extern int machine_lock_owner_alive(long pid);
+
 #ifdef __cplusplus
 }
 #endif

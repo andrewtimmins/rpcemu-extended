@@ -214,6 +214,36 @@ main(int argc, char *argv[])
 		machine_lock_release();
 	}
 
+	/*
+	 * Whether the process named by a lock file is still there.
+	 *
+	 * The lock file outlives its holder: it is written on acquire and nothing
+	 * removes it if the process is killed or crashes. Everything that reads it
+	 * to decide "is this machine running" therefore has to ask about the pid
+	 * as well, and the Manager did not - it attached to machines that had been
+	 * dead for hours and then reported that they had failed to start.
+	 */
+	printf("\nis the recorded owner still running?\n");
+	{
+		long self = (long) getpid();
+
+		check("this process is alive", machine_lock_owner_alive(self) == 1);
+
+		/* A pid that cannot be running: 0 and negatives are not processes,
+		   and kill(0) would mean the whole process group. */
+		check("pid 0 is not a process", machine_lock_owner_alive(0) == 0);
+		check("a negative pid is not a process", machine_lock_owner_alive(-1) == 0);
+
+		/*
+		 * A pid that is almost certainly gone. Picked far above what a
+		 * freshly booted system will have issued, and the test only says
+		 * "not alive" - if the number ever were in use the check would
+		 * fail loudly rather than pass by accident.
+		 */
+		check("a pid that was never issued is not alive",
+		    machine_lock_owner_alive(4194303) == 0);
+	}
+
 	printf("\n%s\n", failures ? "FAILED" : "PASSED");
 	return failures ? 1 : 0;
 }

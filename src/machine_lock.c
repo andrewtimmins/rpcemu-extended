@@ -22,6 +22,10 @@
 
 #include <stdio.h>
 #include <string.h>
+#ifndef _WIN32
+#include <errno.h>
+#include <signal.h>
+#endif
 
 #include "rpcemu.h"
 #include "machine_lock.h"
@@ -333,4 +337,42 @@ machine_lock_read_ipc_endpoint(const char *machine_dir, char *endpoint_out, size
 	}
 	fclose(f);
 	return found;
+}
+
+int
+machine_lock_owner_alive(long pid)
+{
+	if (pid <= 0) {
+		return 0;
+	}
+
+#ifdef _WIN32
+	{
+		HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
+		    (DWORD) pid);
+		DWORD code = 0;
+
+		if (h == NULL) {
+			return 0;
+		}
+		/* Open alone is not enough: a process that has exited but whose
+		   handle is still held reports STILL_ACTIVE only while running. */
+		if (GetExitCodeProcess(h, &code) && code == STILL_ACTIVE) {
+			CloseHandle(h);
+			return 1;
+		}
+		CloseHandle(h);
+		return 0;
+	}
+#else
+	/*
+	 * Signal 0 performs the existence and permission checks without sending
+	 * anything. EPERM means the process is there but belongs to somebody
+	 * else, which for this question is still "there".
+	 */
+	if (kill((pid_t) pid, 0) == 0) {
+		return 1;
+	}
+	return errno == EPERM;
+#endif
 }
