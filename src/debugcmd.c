@@ -44,6 +44,7 @@
 
 #include "debugcmd.h"
 #include "debugexpr.h"
+#include "debugsym.h"
 #include "arm.h"
 #include "arm_disasm.h"
 #include "cp15.h"
@@ -63,6 +64,7 @@
 #define DC_RESP_SZ	(64u * 1024u)	/* max size of a single JSON response */
 #define DC_MEM_MAX	4096u		/* cap bytes per mem read */
 #define DC_DIS_MAX	256u		/* cap instructions per disassemble */
+#define SYM_ESC_SZ	160u		/* JSON-escaped symbol name */
 
 typedef struct {
 	int	initialised;
@@ -289,6 +291,7 @@ dc_cmd_help(char *r)
 	    "\"pause\",\"resume\",\"continue\",\"reset\","
 	    "\"step [count] | step into [count] | step over | step out\","
 	    "\"runto <hexaddr>\",\"bt [depth]\","
+	    "\"sym load <path> | sym clear | sym lookup <hexaddr> | sym find <name>\","
 	    "\"state save|load <path>\","
 	    "\"clipboard get|set [text]\""
 	    "]}");
@@ -433,19 +436,33 @@ dc_cmd_status(char *r)
 	DebuggerStatus st;
 	size_t n;
 	uint32_t i;
+	uint32_t pc_offset = 0;
+	const char *pc_sym;
+	char pc_esc[SYM_ESC_SZ];
 
 	debugger_get_status(&st);
+
+	/* Where the machine stopped, said in the program's own terms */
+	pc_sym = debugsym_lookup(st.halt_pc, &pc_offset);
+	pc_esc[0] = '\0';
+	if (pc_sym != NULL) {
+		dc_json_str(pc_esc, sizeof(pc_esc), pc_sym);
+	}
 	n = (size_t) snprintf(r, DC_RESP_SZ,
 	    "{\"ok\":true,\"paused\":%s,\"pause_requested\":%s,\"reason\":%u,"
 	    "\"halt_pc\":\"%08x\",\"halt_opcode\":\"%08x\",\"last_pc\":\"%08x\","
 	    "\"hit_address\":\"%08x\",\"hit_value\":\"%08x\",\"hit_size\":%u,"
 	    "\"hit_is_write\":%u,\"step_active\":%u,\"trace_pending\":%u,"
+	    "\"pc_symbol\":%s%s%s,\"pc_offset\":%u,"
+	    "\"symbols_loaded\":%u,"
 	    "\"breakpoints\":[",
 	    st.paused ? "true" : "false", st.pause_requested ? "true" : "false",
 	    (unsigned) st.reason, (unsigned) st.halt_pc, (unsigned) st.halt_opcode,
 	    (unsigned) st.last_pc, (unsigned) st.hit_address, (unsigned) st.hit_value,
 	    (unsigned) st.hit_size, (unsigned) st.hit_is_write,
-	    (unsigned) st.step_active, (unsigned) debugger_trace_pending());
+	    (unsigned) st.step_active, (unsigned) debugger_trace_pending(),
+	    pc_sym ? "\"" : "null", pc_sym ? pc_esc : "", pc_sym ? "\"" : "",
+	    (unsigned) pc_offset, (unsigned) debugsym_count());
 	/* Objects rather than bare addresses: a breakpoint now carries a
 	   condition, an ignore count and its hit counts, and those are exactly
 	   what is needed to explain a breakpoint that is not firing. */
@@ -553,9 +570,24 @@ dc_cmd_dis(char *r, char *args)
 		if (!mapped) {
 			snprintf(line, sizeof(line), "%08x: <unmapped>", (unsigned) a);
 		} else {
-			arm_disasm(opcode, a, dis, sizeof(dis));
-			snprintf(line, sizeof(line), "%08x: %08x  %s",
-			    (unsigned) a, (unsigned) opcode, dis);
+			const char *sym;
+			uint32_t sym_offset = 0;
+
+			/* Branch targets are annotated by the disassembler; the
+			   label here is for the instruction's own address, which
+			   is what makes a listing navigable rather than a wall
+			   of hex. */
+			arm_disasm_sym(opcode, a, dis, sizeof(dis),
+			    debugsym_count() ? debugsym_disasm_lookup : NULL, NULL);
+			sym = debugsym_lookup(a, &sym_offset);
+
+			if (sym != NULL && sym_offset == 0) {
+				snprintf(line, sizeof(line), "%08x <%s>: %08x  %s",
+				    (unsigned) a, sym, (unsigned) opcode, dis);
+			} else {
+				snprintf(line, sizeof(line), "%08x: %08x  %s",
+				    (unsigned) a, (unsigned) opcode, dis);
+			}
 		}
 		n += (size_t) snprintf(r + n, DC_RESP_SZ - n, "%s\"", i ? "," : "");
 		dc_json_str(r, DC_RESP_SZ, line);
@@ -662,15 +694,167 @@ dc_cmd_backtrace(char *r, char *args)
 	    truncated ? "true" : "false");
 
 	for (i = 0; i < count; i++) {
+		uint32_t sym_offset = 0;
+		const char *sym = debugsym_lookup(frames[i].pc, &sym_offset);
+		char esc[SYM_ESC_SZ];
+
+		esc[0] = '\0';
+		if (sym != NULL) {
+			dc_json_str(esc, sizeof(esc), sym);
+		}
+
 		n += (size_t) snprintf(r + n, DC_RESP_SZ - n,
 		    "%s{\"level\":%u,\"pc\":\"%08x\",\"lr\":\"%08x\","
-		    "\"sp\":\"%08x\",\"fp\":\"%08x\"}",
+		    "\"sp\":\"%08x\",\"fp\":\"%08x\","
+		    "\"symbol\":%s%s%s,\"offset\":%u}",
 		    i ? "," : "", (unsigned) i, (unsigned) frames[i].pc,
 		    (unsigned) frames[i].lr, (unsigned) frames[i].sp,
-		    (unsigned) frames[i].fp);
+		    (unsigned) frames[i].fp,
+		    sym ? "\"" : "null", sym ? esc : "", sym ? "\"" : "",
+		    (unsigned) sym_offset);
 	}
 
 	snprintf(r + n, DC_RESP_SZ - n, "]}");
+}
+
+/**
+ * sym load <path> | sym clear | sym lookup <hexaddr> | sym find <name>
+ *
+ * Symbols come from a file the user supplies rather than from the running
+ * guest. Reading the module chain out of RISC OS was considered and left out:
+ * it depends on kernel workspace layout that differs between versions, and a
+ * symbol table that is confidently wrong is worse than none - the whole value
+ * of a name beside an address is that it can be trusted.
+ */
+/**
+ * Accept either a hex address or the name of a loaded symbol.
+ *
+ * A bare hex number wins over a symbol of the same spelling: addresses are
+ * what this protocol has always taken, and a symbol table should not be able
+ * to change what an existing script means.
+ *
+ * @return Non-zero if `text` named somewhere
+ */
+static int
+dc_parse_address(const char *text, uint32_t *address)
+{
+	char *end;
+	unsigned long value;
+
+	if (text == NULL || *text == '\0') {
+		return 0;
+	}
+
+	value = strtoul(text, &end, 16);
+	if (*end == '\0') {
+		*address = (uint32_t) value;
+		return 1;
+	}
+
+	return debugsym_resolve(text, address);
+}
+
+static void
+dc_cmd_sym(char *r, char *args)
+{
+	char *sub = strtok(args, " \t");
+
+	if (!sub) {
+		dc_error("usage: sym load <path> | sym clear | "
+		         "sym lookup <hexaddr> | sym find <name>");
+		return;
+	}
+
+	if (strcmp(sub, "clear") == 0) {
+		debugsym_clear();
+		snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"count\":0}");
+		return;
+	}
+
+	if (strcmp(sub, "load") == 0) {
+		/* Rest of the line: a path may contain spaces */
+		char *path = strtok(NULL, "");
+		uint32_t count = 0;
+		const char *error = NULL;
+
+		if (path != NULL) {
+			while (*path == ' ' || *path == '\t') {
+				path++;
+			}
+		}
+		if (path == NULL || *path == '\0') {
+			dc_error("usage: sym load <path>");
+			return;
+		}
+		if (!debugsym_load_file(path, &count, &error)) {
+			char buf[DC_ERROR_MAX_MSG];
+
+			snprintf(buf, sizeof(buf), "cannot load symbols: %s",
+			    error ? error : "unknown error");
+			dc_error(buf);
+			return;
+		}
+		snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"count\":%u}",
+		    (unsigned) count);
+		return;
+	}
+
+	if (strcmp(sub, "lookup") == 0) {
+		char *a1 = strtok(NULL, " \t");
+		uint32_t address, offset = 0;
+		const char *name;
+		char esc[SYM_ESC_SZ];
+
+		if (!a1) {
+			dc_error("usage: sym lookup <hexaddr>");
+			return;
+		}
+		address = (uint32_t) strtoul(a1, NULL, 16);
+		name = debugsym_lookup(address, &offset);
+
+		if (name == NULL) {
+			snprintf(r, DC_RESP_SZ,
+			    "{\"ok\":true,\"address\":\"%08x\",\"symbol\":null}",
+			    (unsigned) address);
+			return;
+		}
+		esc[0] = '\0';
+		dc_json_str(esc, sizeof(esc), name);
+		snprintf(r, DC_RESP_SZ,
+		    "{\"ok\":true,\"address\":\"%08x\",\"symbol\":\"%s\","
+		    "\"offset\":%u}",
+		    (unsigned) address, esc, (unsigned) offset);
+		return;
+	}
+
+	if (strcmp(sub, "find") == 0) {
+		char *name = strtok(NULL, "");
+		uint32_t address = 0;
+		char esc[SYM_ESC_SZ];
+
+		if (name != NULL) {
+			while (*name == ' ' || *name == '\t') {
+				name++;
+			}
+		}
+		if (name == NULL || *name == '\0') {
+			dc_error("usage: sym find <name>");
+			return;
+		}
+		if (!debugsym_resolve(name, &address)) {
+			dc_error("no symbol of that name");
+			return;
+		}
+		esc[0] = '\0';
+		dc_json_str(esc, sizeof(esc), name);
+		snprintf(r, DC_RESP_SZ,
+		    "{\"ok\":true,\"symbol\":\"%s\",\"address\":\"%08x\"}",
+		    esc, (unsigned) address);
+		return;
+	}
+
+	dc_error("usage: sym load <path> | sym clear | "
+	         "sym lookup <hexaddr> | sym find <name>");
 }
 
 static void
@@ -693,12 +877,19 @@ dc_cmd_bp(char *r, char *args)
 		dc_error(DC_BP_USAGE);
 		return;
 	}
-	addr = (uint32_t) strtoul(a1, NULL, 16);
+	/* A symbol name is accepted wherever an address is. Setting a breakpoint
+	   on "main" beats looking main up and typing its address back in, which
+	   is the whole reason for loading symbols in the first place. */
+	if (!dc_parse_address(a1, &addr)) {
+		dc_error("not an address, and no symbol of that name");
+		return;
+	}
 
 	if (strcmp(sub, "add") == 0) {
 		const char *condition = NULL;
 		uint32_t ignore_count = 0;
 		int one_shot = 0;
+		int seen_if = 0;
 		const char *error = NULL;
 		char *tok;
 		int ok;
@@ -715,8 +906,15 @@ dc_cmd_bp(char *r, char *args)
 				}
 				ignore_count = (uint32_t) strtoul(value, NULL, 0);
 			} else if (strcmp(tok, "if") == 0) {
-				/* Rest of the line, spaces and all */
+				/* Rest of the line, spaces and all. Note this is
+				   NULL when "if" ends the line, which is why the
+				   flag is tracked separately: without it, a bare
+				   trailing "if" would fall through and set an
+				   unconditional breakpoint while reporting
+				   success - the exact silent misunderstanding
+				   conditions are supposed to prevent. */
 				condition = strtok(NULL, "");
+				seen_if = 1;
 				break;
 			} else {
 				dc_error(DC_BP_USAGE);
@@ -724,11 +922,12 @@ dc_cmd_bp(char *r, char *args)
 			}
 		}
 
-		if (condition != NULL) {
-			while (*condition == ' ' || *condition == '\t') {
+		if (seen_if) {
+			while (condition != NULL &&
+			       (*condition == ' ' || *condition == '\t')) {
 				condition++;
 			}
-			if (*condition == '\0') {
+			if (condition == NULL || *condition == '\0') {
 				dc_error("bp add: 'if' needs an expression");
 				return;
 			}
@@ -1004,16 +1203,23 @@ dc_dispatch(char *line)
 		dc_cmd_step(resp, args ? args : (char *) "");
 	} else if (strcmp(verb, "runto") == 0) {
 		char *a1 = args ? strtok(args, " \t") : NULL;
+		uint32_t runto_addr = 0;
 
 		if (!a1) {
 			dc_error("usage: runto <hexaddr>");
 			return;
 		}
-		if (!debugger_run_to((uint32_t) strtoul(a1, NULL, 16))) {
+		if (!dc_parse_address(a1, &runto_addr)) {
+			dc_error("not an address, and no symbol of that name");
+			return;
+		}
+		if (!debugger_run_to(runto_addr)) {
 			dc_error("the machine must be paused to run to an address");
 			return;
 		}
 		snprintf(resp, DC_RESP_SZ, "{\"ok\":true}");
+	} else if (strcmp(verb, "sym") == 0) {
+		dc_cmd_sym(resp, args ? args : (char *) "");
 	} else if (strcmp(verb, "bt") == 0 || strcmp(verb, "backtrace") == 0) {
 		dc_cmd_backtrace(resp, args ? args : (char *) "");
 	} else if (strcmp(verb, "reset") == 0) {

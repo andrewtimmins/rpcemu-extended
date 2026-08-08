@@ -1,0 +1,6 @@
+# a comment line
+
+  00008000   main  
+&8100 parse
+0x8200 emit
+0X8300 finish ; trailing comment
