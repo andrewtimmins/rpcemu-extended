@@ -34,6 +34,11 @@ extern void mem_phys_write32(uint32_t addr, uint32_t val);
 extern uint32_t mem_phys_read8_debug(uint32_t addr);
 extern int mem_phys_write8_debug(uint32_t addr, uint8_t val);
 
+/* Side-effect-free virtual reads for the debugger: no I/O, no aborts, no
+   watchpoint hits, and no data-abort event left pending on the CPU. */
+extern int mem_debug_translate(uint32_t vaddr, uint32_t *phys);
+extern int mem_debug_read(uint32_t vaddr, uint32_t size, uint32_t *out);
+
 extern uint32_t readmemfl(uint32_t addr);
 extern uint32_t readmemfb(uint32_t addr);
 extern void writememfb(uint32_t addr, uint8_t val);

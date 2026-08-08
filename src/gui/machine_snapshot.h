@@ -90,7 +90,7 @@ typedef struct MachineSnapshot {
 	uint8_t debug_step_active;
 	uint8_t debug_reserved0;
 	uint32_t debug_breakpoint_count;
-	uint32_t debug_breakpoints[DEBUGGER_MAX_BREAKPOINTS];
+	DebugBreakpointInfo debug_breakpoints[DEBUGGER_MAX_BREAKPOINTS];
 	uint32_t debug_watchpoint_count;
 	DebugWatchpointInfo debug_watchpoints[DEBUGGER_MAX_WATCHPOINTS];
 

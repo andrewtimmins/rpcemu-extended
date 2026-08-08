@@ -65,6 +65,7 @@
 #include "hostfs.h"
 #include "hostcmd.h"
 #include "debugcmd.h"
+#include "debugexpr.h"
 #include "disc.h"
 #include "disc_adf.h"
 #include "disc_hfe.h"
@@ -307,7 +308,7 @@ static FILE *arclog; /* Log file handle */
 
 static int cycles;
 
-static uint32_t debugger_breakpoints[DEBUGGER_MAX_BREAKPOINTS];
+static DebugBreakpointInfo debugger_breakpoints[DEBUGGER_MAX_BREAKPOINTS];
 static uint32_t debugger_breakpoint_count = 0;
 
 static DebugWatchpointInfo debugger_watchpoints[DEBUGGER_MAX_WATCHPOINTS];
@@ -394,7 +395,7 @@ static int
 debugger_breakpoint_index(uint32_t address)
 {
 	for (uint32_t i = 0; i < debugger_breakpoint_count; i++) {
-		if (debugger_breakpoints[i] == address) {
+		if (debugger_breakpoints[i].address == address) {
 			return (int) i;
 		}
 	}
@@ -595,13 +596,50 @@ debugger_clear_breakpoints(void)
 int
 debugger_add_breakpoint(uint32_t address)
 {
-	if (debugger_breakpoint_index(address) >= 0) {
-		return 1;
+	return debugger_add_breakpoint_ex(address, NULL, 0, 0);
+}
+
+/**
+ * Add a breakpoint, or replace the settings of one already at this address.
+ *
+ * Replacing rather than refusing is deliberate: setting a breakpoint again with
+ * a different condition is how a condition gets corrected, and having to remove
+ * it first would be a papercut with no upside. The hit count is reset with it,
+ * since the counts belong to the old condition.
+ *
+ * @param address      Address to halt at
+ * @param condition    Expression that must be true to halt, or NULL for none
+ * @param ignore_count Matches to skip before halting
+ * @param one_shot     Remove the breakpoint once it halts
+ * @return Non-zero on success, zero if the table is full
+ */
+int
+debugger_add_breakpoint_ex(uint32_t address, const char *condition,
+	uint32_t ignore_count, int one_shot)
+{
+	int index = debugger_breakpoint_index(address);
+	DebugBreakpointInfo *bp;
+
+	if (index < 0) {
+		if (debugger_breakpoint_count >= DEBUGGER_MAX_BREAKPOINTS) {
+			return 0;
+		}
+		index = (int) debugger_breakpoint_count++;
 	}
-	if (debugger_breakpoint_count >= DEBUGGER_MAX_BREAKPOINTS) {
-		return 0;
+
+	bp = &debugger_breakpoints[index];
+	memset(bp, 0, sizeof(*bp));
+	bp->address = address;
+	bp->enabled = 1;
+	bp->one_shot = (uint8_t) (one_shot != 0);
+	bp->ignore_count = ignore_count;
+
+	if (condition != NULL && condition[0] != '\0') {
+		strncpy(bp->condition, condition, sizeof(bp->condition) - 1);
+		bp->condition[sizeof(bp->condition) - 1] = '\0';
+		bp->has_condition = 1;
 	}
-	debugger_breakpoints[debugger_breakpoint_count++] = address;
+
 	debugger_refresh_hook_active();
 	return 1;
 }
@@ -616,7 +654,7 @@ debugger_remove_breakpoint(uint32_t address)
 	if ((uint32_t) index < debugger_breakpoint_count - 1) {
 		memmove(&debugger_breakpoints[index],
 		        &debugger_breakpoints[index + 1],
-		        (debugger_breakpoint_count - (uint32_t) index - 1) * sizeof(uint32_t));
+		        (debugger_breakpoint_count - (uint32_t) index - 1) * sizeof(DebugBreakpointInfo));
 	}
 	debugger_breakpoint_count--;
 	debugger_refresh_hook_active();
@@ -627,6 +665,38 @@ int
 debugger_has_breakpoint(uint32_t address)
 {
 	return debugger_breakpoint_index(address) >= 0;
+}
+
+/**
+ * Arm or disarm a breakpoint without forgetting it.
+ *
+ * @return Non-zero if a breakpoint at this address was found
+ */
+int
+debugger_set_breakpoint_enabled(uint32_t address, int enabled)
+{
+	int index = debugger_breakpoint_index(address);
+
+	if (index < 0) {
+		return 0;
+	}
+	debugger_breakpoints[index].enabled = (uint8_t) (enabled != 0);
+	debugger_refresh_hook_active();
+	return 1;
+}
+
+/**
+ * Look up a breakpoint's settings.
+ *
+ * @return The breakpoint, or NULL if there is none at this address. Only valid
+ *         until the breakpoint table is next modified.
+ */
+const DebugBreakpointInfo *
+debugger_get_breakpoint(uint32_t address)
+{
+	int index = debugger_breakpoint_index(address);
+
+	return index < 0 ? NULL : &debugger_breakpoints[index];
 }
 
 void
@@ -679,6 +749,85 @@ debugger_remove_watchpoint(uint32_t address, uint32_t size, int on_read, int on_
 	return 1;
 }
 
+/* ---- breakpoint conditions ---------------------------------------------- */
+
+/* Expressions read the machine through these, never directly, so that a
+   condition cannot reach anything with a side effect. Memory in particular
+   goes via mem_debug_read(), which will not fault, will not touch I/O and will
+   not trip a watchpoint - evaluating a condition has to leave the program
+   being debugged exactly as it found it. */
+
+static uint32_t
+debugger_expr_read_reg(int reg, void *ctx)
+{
+	NOT_USED(ctx);
+	return arm.reg[reg & 15];
+}
+
+static uint32_t
+debugger_expr_read_cpsr(void *ctx)
+{
+	NOT_USED(ctx);
+	return arm.reg[cpsr];
+}
+
+static int
+debugger_expr_read_mem(uint32_t address, uint32_t size, uint32_t *out, void *ctx)
+{
+	NOT_USED(ctx);
+	return mem_debug_read(address, size, out);
+}
+
+static const DebugExprEnv debugger_expr_env = {
+	debugger_expr_read_reg,
+	debugger_expr_read_cpsr,
+	debugger_expr_read_mem,
+	NULL
+};
+
+/**
+ * Decide whether a breakpoint that has been reached should actually halt.
+ *
+ * Order matters. A disabled breakpoint is not reached at all, so it does not
+ * count. The condition is tested before the ignore count, so "the twentieth
+ * time R0 is zero" means what it says rather than "the twentieth time round,
+ * if R0 happens to be zero then".
+ *
+ * @return Non-zero if the machine should stop here
+ */
+static int
+debugger_breakpoint_should_halt(DebugBreakpointInfo *bp)
+{
+	if (!bp->enabled) {
+		return 0;
+	}
+
+	bp->hit_count++;
+
+	if (bp->has_condition) {
+		uint32_t value = 0;
+
+		if (!debugexpr_eval(bp->condition, &debugger_expr_env, &value, NULL)) {
+			/* Almost always a dereference of an address that is not
+			   mapped right now. Carrying on is the least surprising
+			   thing to do, but it is counted so that a breakpoint
+			   which never fires can be explained. */
+			bp->eval_errors++;
+			return 0;
+		}
+		if (value == 0) {
+			return 0;
+		}
+	}
+
+	if (bp->ignore_count > 0) {
+		bp->ignore_count--;
+		return 0;
+	}
+
+	return 1;
+}
+
 int
 debugger_instruction_hook(uint32_t pc, uint32_t opcode)
 {
@@ -691,9 +840,19 @@ debugger_instruction_hook(uint32_t pc, uint32_t opcode)
 
 	debugger_step_active = (debugger_step_remaining > 0) ? 1 : 0;
 
-	if (debugger_breakpoint_count > 0 && debugger_has_breakpoint(pc)) {
-		debugger_pause_requested = 1;
-		debugger_pending_reason = DebugPauseReason_Breakpoint;
+	if (debugger_breakpoint_count > 0) {
+		int index = debugger_breakpoint_index(pc);
+
+		if (index >= 0 &&
+		    debugger_breakpoint_should_halt(&debugger_breakpoints[index])) {
+			/* One-shot breakpoints are the machinery behind step-over,
+			   step-out and run-to, and must not outlive their halt. */
+			if (debugger_breakpoints[index].one_shot) {
+				debugger_remove_breakpoint(pc);
+			}
+			debugger_pause_requested = 1;
+			debugger_pending_reason = DebugPauseReason_Breakpoint;
+		}
 	}
 
 	if (debugger_pause_requested) {
