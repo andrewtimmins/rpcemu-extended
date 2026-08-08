@@ -152,6 +152,24 @@ typedef struct {
 	char condition[DEBUGGER_MAX_CONDITION];
 } DebugBreakpointInfo;
 
+/** Deepest call stack debugger_backtrace() will walk. */
+#define DEBUGGER_MAX_FRAMES 64
+
+/**
+ * One frame of a call stack.
+ *
+ * Recovered by walking the APCS frame-pointer chain from R11, so it depends on
+ * the code having been compiled to keep one. A good deal of RISC OS is
+ * assembler that does not, which is why debugger_backtrace() reports whether
+ * the walk ended cleanly or gave up.
+ */
+typedef struct {
+	uint32_t pc;	/**< Where execution is, or will resume, in this frame */
+	uint32_t lr;	/**< Live link register; only meaningful for frame 0 */
+	uint32_t sp;
+	uint32_t fp;
+} DebugFrame;
+
 /** Categories of event captured by the debug trace ring */
 typedef enum {
 	TraceEvent_Exception = 0,
@@ -473,6 +491,10 @@ extern int debugger_requires_instruction_hook(void);
 extern void debugger_request_pause(DebugPauseReason reason);
 extern void debugger_resume(void);
 extern void debugger_single_step(uint32_t instruction_count);
+extern int debugger_step_over(void);
+extern int debugger_step_out(void);
+extern int debugger_run_to(uint32_t address);
+extern uint32_t debugger_backtrace(DebugFrame *out, uint32_t max, int *truncated);
 extern void debugger_clear_breakpoints(void);
 extern int debugger_add_breakpoint(uint32_t address);
 extern int debugger_add_breakpoint_ex(uint32_t address, const char *condition,

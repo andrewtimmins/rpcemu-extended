@@ -46,6 +46,7 @@
 #include "iomd.h"
 #include "ide.h"
 #include "arm.h"
+#include "arm_disasm.h"
 #include "cmos.h"
 #include "serial_host.h"
 #include "superio.h"
@@ -317,6 +318,15 @@ static uint32_t debugger_watchpoint_count = 0;
 static int debugger_pause_requested = 0;
 static DebugPauseReason debugger_pending_reason = DebugPauseReason_None;
 
+/* The temporary breakpoint behind step-over, step-out and run-to.
+   Deliberately not an entry in the breakpoint table: planting one there would
+   mean either clobbering a breakpoint the user had already set at that address
+   or refusing to step, and both are worse than keeping one address to one
+   side. Cleared by any resume or step, so it can never fire long after the
+   operation that armed it. */
+static int debugger_temp_bp_active = 0;
+static uint32_t debugger_temp_bp_address = 0;
+
 static int debugger_paused = 0;
 static DebugPauseReason debugger_pause_reason = DebugPauseReason_None;
 static uint32_t debugger_halt_pc = 0;
@@ -512,6 +522,9 @@ debugger_compute_hook_active(void)
 	if (debugger_step_remaining > 0) {
 		return 1;
 	}
+	if (debugger_temp_bp_active) {
+		return 1;
+	}
 	if (debugger_breakpoint_count > 0) {
 		return 1;
 	}
@@ -566,6 +579,9 @@ debugger_resume(void)
 	debugger_pause_reason = DebugPauseReason_None;
 	debugger_step_remaining = 0;
 	debugger_step_active = 0;
+	/* An outstanding step-over target is abandoned here rather than left to
+	   fire at some unrelated moment later on. */
+	debugger_temp_bp_active = 0;
 	debugger_reset_hit_info();
 	debugger_refresh_hook_active();
 }
@@ -582,8 +598,215 @@ debugger_single_step(uint32_t instruction_count)
 	debugger_pause_reason = DebugPauseReason_None;
 	debugger_step_remaining = instruction_count;
 	debugger_step_active = 1;
+	debugger_temp_bp_active = 0;
 	debugger_reset_hit_info();
 	debugger_refresh_hook_active();
+}
+
+/* ---- call stack ---------------------------------------------------------- */
+
+/**
+ * Walk the call stack.
+ *
+ * APCS keeps a frame pointer in R11 pointing at a four-word record: the saved
+ * PC at [fp], the return address at [fp,#-4], the caller's stack pointer at
+ * [fp,#-8] and the caller's frame pointer at [fp,#-12]. Frame 0 is taken from
+ * the live registers rather than from memory, since there is no record for the
+ * function currently executing.
+ *
+ * Addresses are masked with arm.r15_mask, which is what makes this work on the
+ * 26-bit cores: there R15 and the saved link register carry PSR bits in the
+ * top and bottom of the word, and an unmasked value is not an address at all.
+ *
+ * Plenty of RISC OS is hand-written assembler that keeps no frame pointer, so
+ * a chain that runs into such a function cannot be followed. Every link is
+ * therefore checked - alignment, readability, and that frames move up the
+ * stack rather than down or in circles - and a walk that gives up says so
+ * through `truncated`. Reporting a short stack honestly is worth much more
+ * than reporting a long invented one.
+ *
+ * @param out       Frames, innermost first
+ * @param max       Capacity of `out`
+ * @param truncated Set non-zero if the walk gave up rather than reaching the
+ *                  end of the chain; may be NULL
+ * @return Number of frames written
+ */
+uint32_t
+debugger_backtrace(DebugFrame *out, uint32_t max, int *truncated)
+{
+	const uint32_t mask = arm.r15_mask;
+	uint32_t count;
+	uint32_t fp;
+
+	if (truncated != NULL) {
+		*truncated = 0;
+	}
+	if (out == NULL || max == 0) {
+		return 0;
+	}
+	if (max > DEBUGGER_MAX_FRAMES) {
+		max = DEBUGGER_MAX_FRAMES;
+	}
+
+	out[0].pc = PC;
+	out[0].lr = arm.reg[14] & mask;
+	out[0].sp = arm.reg[13];
+	out[0].fp = arm.reg[11];
+	count = 1;
+
+	fp = arm.reg[11];
+
+	while (count < max) {
+		uint32_t saved_lr, saved_sp, saved_fp;
+
+		if (fp == 0) {
+			break;		/* clean end of the chain */
+		}
+
+		if ((fp & 3) != 0) {
+			if (truncated != NULL) {
+				*truncated = 1;
+			}
+			break;
+		}
+
+		if (!mem_debug_read(fp - 4, 4, &saved_lr) ||
+		    !mem_debug_read(fp - 8, 4, &saved_sp) ||
+		    !mem_debug_read(fp - 12, 4, &saved_fp)) {
+			if (truncated != NULL) {
+				*truncated = 1;
+			}
+			break;
+		}
+
+		saved_lr &= mask;
+		if (saved_lr == 0) {
+			break;		/* clean end of the chain */
+		}
+
+		out[count].pc = saved_lr;
+		out[count].lr = 0;	/* only frame 0 has a live link register */
+		out[count].sp = saved_sp;
+		out[count].fp = saved_fp;
+		count++;
+
+		/* The stack grows down, so each caller's frame must sit above
+		   the one it called. Anything else is a corrupt or absent chain
+		   being followed into nonsense - and would loop forever. */
+		if (saved_fp != 0 && saved_fp <= fp) {
+			if (truncated != NULL) {
+				*truncated = 1;
+			}
+			break;
+		}
+
+		fp = saved_fp;
+	}
+
+	return count;
+}
+
+/* ---- stepping over, out and to ------------------------------------------- */
+
+/**
+ * Arm the temporary breakpoint and let the machine run to it.
+ */
+static void
+debugger_run_to_temp(uint32_t address)
+{
+	debugger_resume();		/* clears any previous temporary target */
+	debugger_temp_bp_active = 1;
+	debugger_temp_bp_address = address;
+	debugger_refresh_hook_active();
+}
+
+/**
+ * Step one instruction, but run subroutine calls to completion.
+ *
+ * Anything that is not a call is an ordinary single step. A call gets a
+ * temporary breakpoint at the following instruction instead, so the whole
+ * subroutine runs at full speed and execution comes back where the person
+ * stepping expects it.
+ *
+ * Falls back to a plain step whenever the instruction cannot be read or is not
+ * a recognised call. Stepping into is always safe; running away is not, so an
+ * uncertain case must degrade towards the step.
+ *
+ * @return Non-zero if the machine was started
+ */
+int
+debugger_step_over(void)
+{
+	ArmInsnInfo info;
+	uint32_t pc = PC;
+	uint32_t opcode;
+
+	if (!debugger_paused) {
+		return 0;
+	}
+
+	if (!mem_debug_read(pc, 4, &opcode) ||
+	    !arm_decode(opcode, pc, &info) || !info.is_call) {
+		debugger_single_step(1);
+		return 1;
+	}
+
+	debugger_run_to_temp(pc + 4);
+	return 1;
+}
+
+/**
+ * Run until the current function returns.
+ *
+ * The return address comes from the frame chain where there is one, since R14
+ * belongs to the current function and may long since have been saved and
+ * reused. Where there is no frame, R14 is the only candidate left and is
+ * better than refusing.
+ *
+ * @return Non-zero if the machine was started, zero if no return address could
+ *         be found
+ */
+int
+debugger_step_out(void)
+{
+	DebugFrame frames[2];
+	uint32_t count;
+	uint32_t target;
+
+	if (!debugger_paused) {
+		return 0;
+	}
+
+	count = debugger_backtrace(frames, 2, NULL);
+	if (count >= 2 && frames[1].pc != 0) {
+		target = frames[1].pc;
+	} else {
+		target = arm.reg[14] & arm.r15_mask;
+	}
+
+	/* Nowhere to go, or nowhere new: stepping out of the outermost frame is
+	   not a thing, and a target of here would stop immediately. */
+	if (target == 0 || target == PC) {
+		return 0;
+	}
+
+	debugger_run_to_temp(target);
+	return 1;
+}
+
+/**
+ * Run until a given address is reached.
+ *
+ * @return Non-zero if the machine was started
+ */
+int
+debugger_run_to(uint32_t address)
+{
+	if (!debugger_paused) {
+		return 0;
+	}
+	debugger_run_to_temp(address);
+	return 1;
 }
 
 void
@@ -839,6 +1062,14 @@ debugger_instruction_hook(uint32_t pc, uint32_t opcode)
 	}
 
 	debugger_step_active = (debugger_step_remaining > 0) ? 1 : 0;
+
+	/* The step-over/step-out/run-to target. Checked before the breakpoint
+	   table and consumed on arrival, so it cannot fire twice. */
+	if (debugger_temp_bp_active && pc == debugger_temp_bp_address) {
+		debugger_temp_bp_active = 0;
+		debugger_pause_requested = 1;
+		debugger_pending_reason = DebugPauseReason_Step;
+	}
 
 	if (debugger_breakpoint_count > 0) {
 		int index = debugger_breakpoint_index(pc);
