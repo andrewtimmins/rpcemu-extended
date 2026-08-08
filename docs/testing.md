@@ -310,17 +310,24 @@ probing rather than recorded from whatever the first run did.
 ## Slack notifications
 
 The `notify` job posts to a Slack channel through an incoming webhook, held in
-the repository secret `SLACK_WEBHOOK_URL`. Three things are worth saying and
-nothing else is:
+the repository secret `SLACK_WEBHOOK_URL`:
 
 | When | Message |
 | --- | --- |
 | A push to `main` fails | Which jobs failed, the commit, who pushed it, a link to the run |
 | A push to `main` passes after a failure | That it is green again |
+| A push to `main` passes otherwise | That it passed, with the commit |
 | A tag builds and publishes a release | The release page and the build log |
 
-A green run after a green run says nothing. A channel that receives a tick for
-every push stops being read, and the red one is then missed with it.
+Every completed push is reported, so the channel shows CI is running rather
+than only that it once broke. A recovery still reads differently from an
+ordinary green run, coming back from red being the one green result somebody
+is actually waiting for.
+
+Cancelled runs say nothing. Cancelled is neither a pass nor a failure and is
+treated as its own state: the concurrency group cancels superseded runs as a
+matter of course, and calling one of those green would announce a build for a
+commit nobody waited on that never finished.
 
 Two details worth knowing before changing it:
 

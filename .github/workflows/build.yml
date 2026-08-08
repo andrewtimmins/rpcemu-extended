@@ -865,11 +865,18 @@ jobs:
           failed=$(printf '%s' "$RESULTS" \
               | jq -r 'to_entries | map(select(.value.result == "failure") | .key) | join(", ")')
 
-          # Cancelled is deliberately not a failure. The concurrency group above
-          # cancels superseded runs as a matter of course, and announcing those
-          # would be announcing normal operation.
+          # Cancelled is neither a pass nor a failure, and needs saying as its
+          # own state rather than falling through to one of them. The
+          # concurrency group above cancels superseded runs as a matter of
+          # course, so treating cancelled as passed would announce a green
+          # build for a commit nobody waited on and that was never finished.
+          cancelled=$(printf '%s' "$RESULTS" \
+              | jq -r 'to_entries | map(select(.value.result == "cancelled") | .key) | join(", ")')
+
           if [ -n "$failed" ]; then
             state=failed
+          elif [ -n "$cancelled" ]; then
+            state=cancelled
           else
             state=passed
           fi
@@ -887,11 +894,16 @@ jobs:
                 2>/dev/null || echo none)
           fi
 
+          # Every completed push is reported, so the channel shows that CI is
+          # running rather than only that it once broke. A recovery still reads
+          # differently from an ordinary green run: coming back from red is the
+          # one green result anybody is waiting for.
           post=false
           case "$state:$previous" in
-            failed:*)     post=true; kind=broken ;;
+            failed:*)       post=true; kind=broken ;;
             passed:failure) post=true; kind=fixed ;;
-            *)            kind=quiet ;;
+            passed:*)       post=true; kind=passed ;;
+            *)              kind=quiet ;;   # cancelled
           esac
 
           # A release going out is worth saying whatever the previous run did.
@@ -942,6 +954,10 @@ jobs:
             fixed)
               text=$(printf ':large_green_circle: *CI is green again on `%s`*\n<%s|View the run> | `%s` %s\nFixed by %s' \
                   "$GITHUB_REF_NAME" "$run_url" "$short" "$subject" "$GITHUB_ACTOR")
+              ;;
+            passed)
+              text=$(printf ':white_check_mark: *CI passed on `%s`* | `%s` %s\n<%s|View the run> | %s' \
+                  "$GITHUB_REF_NAME" "$short" "$subject" "$run_url" "$GITHUB_ACTOR")
               ;;
             released)
               text=$(printf ':package: *RPCEmu %s has been released*\n<%s/%s/releases/tag/%s|Release page> | <%s|Build log>' \
