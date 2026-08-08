@@ -73,7 +73,8 @@ endif()
 # on Linux and MSYS2. Regenerated on configure; re-run cmake after editing an SVG.
 set(RPCEMU_TOOLBAR_SVGS
     screenshot floppy cdrom reset mute unmute
-    fullscreen settings start pause step inspector)
+    fullscreen settings start pause step inspector
+    power stop)
 set(_svg_header "${CMAKE_CURRENT_BINARY_DIR}/toolbar_icons_svg.h")
 file(WRITE "${_svg_header}"
      "// Generated from src/gui/icons/*.svg by CMake - do not edit.\n#pragma once\n\n")

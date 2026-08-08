@@ -36,4 +36,10 @@ wxBitmap ToolbarIconDebugPause(const wxSize &size = wxSize(24, 24));
 wxBitmap ToolbarIconDebugStep(const wxSize &size = wxSize(24, 24));
 wxBitmap ToolbarIconInspector(const wxSize &size = wxSize(24, 24));
 
+/* Starting and stopping a machine, which the Manager does and a running
+   machine cannot. Deliberately not the debugger's run/pause icons: those now
+   appear on the same toolbar meaning something quite different, and the same
+   picture twice over for two different actions is worse than no picture. */
+wxBitmap ToolbarIconPower(const wxSize &size = wxSize(24, 24), bool on = true);
+
 #endif

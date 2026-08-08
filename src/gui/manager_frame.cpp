@@ -26,10 +26,14 @@
 #include <wx/statbmp.h>
 #include <wx/stdpaths.h>
 #include <wx/textdlg.h>
+#include <wx/filedlg.h>
+#include <wx/tokenzr.h>
 
+#include "about_dialog.h"
 #include "config_paths.h"
 #include "machine_edit_dialog.h"
 #include "new_machine_dialog.h"
+#include "main_frame.h"	/* MainFrameMenuId - the ids these menus forward */
 #include "toolbar_icons.h"
 
 extern "C" {
@@ -149,6 +153,9 @@ ManagerFrame::ManagerFrame()
 	BuildUi();
 	BuildMenus();
 	BuildToolBar();
+	/* Again, now the toolbar exists: BuildMenus() runs before it and so can
+	   only reach the menu items. */
+	UpdateMachineMenuState();
 	RefreshMachineList();
 	DiscoverAlreadyRunningMachines();
 	poll_timer_.Start(kPollIntervalMs);
@@ -270,32 +277,178 @@ void ManagerFrame::BuildMenus()
 	auto *menu_bar = new wxMenuBar();
 	menu_bar->Append(file_menu, "&File");
 	menu_bar->Append(machine_menu, "&Machine");
+	BuildMachineMenus(menu_bar);
 	SetMenuBar(menu_bar);
+	UpdateMachineMenuState();
+}
+
+/*
+ * The machine window's own menus, rebuilt on this window.
+ *
+ * These are the same items, with the same ids, as MainFrame::BuildMenus()
+ * creates - which is what lets every one of them be forwarded by id with no
+ * per-command code at either end. The wording is kept identical too: somebody
+ * who has used the machine window should not have to learn a second vocabulary
+ * for the same commands.
+ *
+ * They are deliberately not built by calling into main_frame_menus.cpp. That
+ * function binds handlers, reads a running machine's configuration and updates
+ * items from emulator state, none of which exists in this process; the shared
+ * thing here is the list of commands, and it is shared through the id enum.
+ */
+void ManagerFrame::BuildMachineMenus(wxMenuBar *menu_bar)
+{
+	machine_file_menu_ = new wxMenu();
+	machine_file_menu_->Append(ID_MENU_SCREENSHOT, "Screenshot...");
+	machine_file_menu_->Append(ID_MENU_SAVE_STATE, "Save State...");
+	machine_file_menu_->Append(ID_MENU_LOAD_STATE, "Load State...");
+	machine_file_menu_->AppendSeparator();
+	machine_file_menu_->Append(ID_MENU_SUSPEND, "Suspend");
+	machine_file_menu_->AppendCheckItem(ID_MENU_SUSPEND_ON_EXIT, "Suspend on Exit");
+
+	machine_disc_menu_ = new wxMenu();
+	auto *floppy_menu = new wxMenu();
+	floppy_menu->Append(ID_MENU_LOAD_DISC0, "Load Drive :0...");
+	floppy_menu->Append(ID_MENU_LOAD_DISC1, "Load Drive :1...");
+	floppy_menu->AppendSeparator();
+	floppy_menu->Append(ID_MENU_EJECT_DISC0, "Eject Drive :0");
+	floppy_menu->Append(ID_MENU_EJECT_DISC1, "Eject Drive :1");
+	floppy_menu->AppendSeparator();
+	floppy_menu->Append(ID_MENU_CREATE_DISC0, "Create Disc in :0...");
+	floppy_menu->Append(ID_MENU_CREATE_DISC1, "Create Disc in :1...");
+	machine_disc_menu_->AppendSubMenu(floppy_menu, "&Floppy");
+
+	auto *cdrom_menu = new wxMenu();
+	cdrom_menu->Append(ID_MENU_CDROM_DISABLED, "Disabled");
+	cdrom_menu->Append(ID_MENU_CDROM_EMPTY, "Empty");
+	cdrom_menu->Append(ID_MENU_CDROM_ISO, "ISO Image...");
+	machine_disc_menu_->AppendSubMenu(cdrom_menu, "&CD-ROM");
+
+	machine_settings_menu_ = new wxMenu();
+	machine_settings_menu_->Append(ID_MENU_MACHINE, "Machine Settings...");
+	machine_settings_menu_->Append(ID_MENU_NAT_LIST, "NAT Port Forwarding...");
+	machine_settings_menu_->Append(ID_MENU_VNC, "VNC Server...");
+	machine_settings_menu_->Append(ID_MENU_SERIAL, "Serial Port...");
+	machine_settings_menu_->Append(ID_MENU_PARALLEL, "Parallel Port...");
+	machine_settings_menu_->Append(ID_MENU_USB, "USB Devices...");
+	machine_settings_menu_->AppendSeparator();
+	machine_settings_menu_->AppendCheckItem(ID_MENU_MUTE, "Mute Sound");
+	machine_settings_menu_->AppendCheckItem(ID_MENU_FULLSCREEN, "Fullscreen");
+	machine_settings_menu_->AppendCheckItem(ID_MENU_INTEGER_SCALING, "Integer Scaling");
+	machine_settings_menu_->AppendCheckItem(ID_MENU_FIT_TO_WINDOW, "Fit to Window");
+	machine_settings_menu_->AppendCheckItem(ID_MENU_FOLLOW_HOST_DISPLAY,
+	    "Follow Host Display");
+	machine_settings_menu_->AppendSeparator();
+	machine_settings_menu_->AppendCheckItem(ID_MENU_MOUSE_TWOBUTTON, "Two-Button Mouse");
+	machine_settings_menu_->AppendCheckItem(ID_MENU_SHARED_CLIPBOARD, "Shared Clipboard");
+	machine_settings_menu_->AppendCheckItem(ID_MENU_CPU_IDLE, "Reduce CPU Usage");
+	machine_settings_menu_->AppendCheckItem(ID_MENU_DEFAULT_MACHINE, "Default Machine");
+
+	machine_tools_menu_ = new wxMenu();
+	machine_tools_menu_->Append(ID_MENU_PACKAGES, "Package Manager...");
+
+	machine_debug_menu_ = new wxMenu();
+	machine_debug_menu_->Append(ID_MENU_DEBUG_RUN, "Run");
+	machine_debug_menu_->Append(ID_MENU_DEBUG_PAUSE, "Pause");
+	machine_debug_menu_->AppendSeparator();
+	machine_debug_menu_->Append(ID_MENU_DEBUG_STEP, "Step");
+	machine_debug_menu_->Append(ID_MENU_DEBUG_STEP5,
+	    wxString::FromUTF8("Step \xC3\x97" "5"));
+	machine_debug_menu_->AppendSeparator();
+	machine_debug_menu_->Append(ID_MENU_MACHINE_INSPECTOR, "Machine Inspector...");
+
+	machine_help_menu_ = new wxMenu();
+	machine_help_menu_->Append(ID_MENU_ONLINE_MANUAL, "Online Manual");
+	machine_help_menu_->Append(ID_MENU_VISIT_WEBSITE, "Visit Website");
+	machine_help_menu_->Append(ID_MENU_REPORT_ISSUE, "Report an Issue");
+	machine_help_menu_->Append(ID_MENU_SUPPORT_BUNDLE, "Create Support Bundle...");
+	machine_help_menu_->Append(ID_MENU_CHECK_UPDATE, "Check for Updates...");
+	machine_help_menu_->AppendSeparator();
+	machine_help_menu_->Append(ID_MENU_ABOUT_RISCOS, "About RISC OS");
+	machine_help_menu_->Append(wxID_ABOUT, "About RPCEmu");
+
+	menu_bar->Append(machine_file_menu_, "&Media");
+	menu_bar->Append(machine_disc_menu_, "&Disc");
+	menu_bar->Append(machine_settings_menu_, "&Settings");
+	menu_bar->Append(machine_tools_menu_, "&Tools");
+	menu_bar->Append(machine_debug_menu_, "De&bug");
+	menu_bar->Append(machine_help_menu_, "&Help");
+
+	/*
+	 * One binding for the lot. Every id in the range belongs to the machine
+	 * window, so there is nothing to decide here beyond which machine to send
+	 * it to - which is what makes a command added to that window in future
+	 * work here without being mentioned.
+	 */
+	Bind(wxEVT_MENU, &ManagerFrame::OnMachineMenuCommand, this,
+	    ID_MENU_SCREENSHOT, ID_MENU_CHECK_UPDATE);
+	Bind(wxEVT_MENU, &ManagerFrame::OnMachineMenuCommand, this, wxID_ABOUT);
 }
 
 void ManagerFrame::BuildToolBar()
 {
 	const wxSize icon_size(24, 24);
 
-	/* Machine power controls only - New/Edit/Clone/Delete already have their
-	   own buttons beside the list, where they act on whichever row is
-	   selected the same way; duplicating them up here added width without
-	   adding anything a user could not already do. */
+	/* New/Edit/Clone/Delete are not here: they already have their own buttons
+	   beside the list, where they act on whichever row is selected the same
+	   way, and duplicating them added width without adding anything a user
+	   could not already do.
+	 *
+	 * Everything after the machine controls mirrors the machine window's own
+	 * toolbar, tool for tool and icon for icon, and forwards by id exactly as
+	 * the menus do. A toolbar that offered a third of what the menus did was
+	 * the most visible half of "not on parity with the machine window".
+	 */
 	tool_bar_ = CreateToolBar(wxTB_HORIZONTAL | wxTB_NODIVIDER);
 	tool_bar_->SetToolBitmapSize(icon_size);
 
-	tool_bar_->AddTool(ID_START, "Start", ToolbarIconDebugRun(icon_size),
+	/* Manager's own: starting and stopping a machine is this window's job,
+	   and has no equivalent in a machine that is already running. */
+	tool_bar_->AddTool(ID_START, "Start", ToolbarIconPower(icon_size, true),
 	    "Start the selected machine");
-	tool_bar_->AddTool(ID_STOP, "Stop", ToolbarIconDebugPause(icon_size),
+	tool_bar_->AddTool(ID_STOP, "Stop", ToolbarIconPower(icon_size, false),
 	    "Stop the selected machine");
 	tool_bar_->AddSeparator();
-	tool_bar_->AddTool(ID_RESET, "Reset", ToolbarIconReset(icon_size),
-	    "Reset the running machine");
+
+	/* The machine window's toolbar, in its order. */
+	tool_bar_->AddTool(ID_MENU_SCREENSHOT, wxEmptyString, ToolbarIconScreenshot(icon_size),
+	    "Save screenshot");
+	tool_bar_->AddSeparator();
+	tool_bar_->AddTool(ID_MENU_LOAD_DISC0, wxEmptyString, ToolbarIconFloppy(icon_size),
+	    "Load floppy disc into drive :0");
+	tool_bar_->AddTool(ID_MENU_CDROM_ISO, wxEmptyString, ToolbarIconCdrom(icon_size),
+	    "Load CD-ROM ISO image");
+	tool_bar_->AddSeparator();
+	tool_bar_->AddTool(ID_MENU_RESET, wxEmptyString, ToolbarIconReset(icon_size),
+	    "Reset machine");
+	tool_bar_->AddSeparator();
+	tool_bar_->AddCheckTool(ID_MENU_MUTE, wxEmptyString,
+	    ToolbarIconMute(false, icon_size), wxNullBitmap, "Toggle sound mute");
+	tool_bar_->AddTool(ID_MENU_FULLSCREEN, wxEmptyString, ToolbarIconFullscreen(icon_size),
+	    "Toggle full-screen mode");
+	tool_bar_->AddTool(ID_MENU_MACHINE, wxEmptyString, ToolbarIconConfigure(icon_size),
+	    "Edit machine settings");
+
+	tool_bar_->AddStretchableSpace();
+	tool_bar_->AddSeparator();
+	tool_bar_->AddTool(ID_MENU_DEBUG_RUN, wxEmptyString, ToolbarIconDebugRun(icon_size),
+	    "Run emulation");
+	tool_bar_->AddTool(ID_MENU_DEBUG_PAUSE, wxEmptyString, ToolbarIconDebugPause(icon_size),
+	    "Pause emulation");
+	tool_bar_->AddTool(ID_MENU_DEBUG_STEP, wxEmptyString, ToolbarIconDebugStep(icon_size),
+	    "Single step");
+	tool_bar_->AddTool(ID_MENU_MACHINE_INSPECTOR, wxEmptyString, ToolbarIconInspector(icon_size),
+	    "Open Machine Inspector");
 	tool_bar_->Realize();
 
 	tool_bar_->Bind(wxEVT_TOOL, &ManagerFrame::OnStart, this, ID_START);
 	tool_bar_->Bind(wxEVT_TOOL, &ManagerFrame::OnStop, this, ID_STOP);
 	tool_bar_->Bind(wxEVT_TOOL, &ManagerFrame::OnReset, this, ID_RESET);
+
+	/* The forwarded tools, over the same id range the menus use, so a tool and
+	   its menu item are the same command by construction. */
+	tool_bar_->Bind(wxEVT_TOOL, &ManagerFrame::OnMachineMenuCommand, this,
+	    ID_MENU_SCREENSHOT, ID_MENU_CHECK_UPDATE);
 }
 
 wxString ManagerFrame::MachineDirFor(const wxString &name) const
@@ -408,6 +561,22 @@ void ManagerFrame::DiscoverAlreadyRunningMachines()
 		if (!machine_lock_read_owner(dir.utf8_str().data(), &pid, &vnc_port) || pid == 0) {
 			continue;
 		}
+
+		/*
+		 * ★ The lock FILE is not evidence that a machine is running.
+		 *
+		 * It is written when the lock is taken and left behind if the holder
+		 * is killed or crashes - the lock underneath is an flock the kernel
+		 * drops on death, but the file stays exactly as it was. Believing it
+		 * meant this window attached to machines that had not existed for
+		 * hours, failed, and announced that they had not started: an error
+		 * about a machine nobody had asked to run, which read as though the
+		 * one they HAD just started was broken.
+		 */
+		if (!machine_lock_owner_alive(pid)) {
+			continue;
+		}
+
 		if (!machine_lock_read_ipc_endpoint(dir.utf8_str().data(), endpoint, sizeof(endpoint)) ||
 		    endpoint[0] == '\0') {
 			continue;	/* running, but not as a --managed child - nothing for us to attach to */
@@ -438,6 +607,14 @@ void ManagerFrame::AttachPanelFor(const wxString &name, const wxString &shared_f
 
 	panel->SetGoneCallback([this, name]() { RemoveRunningEntry(name); });
 
+	/* Only the machine being shown drives the menus; a report from one in the
+	   background would set this window's tick-boxes from the wrong machine. */
+	panel->SetStateCallback([this, name](const wxString &report) {
+		if (name == active_machine_) {
+			ApplyStateReport(report);
+		}
+	});
+
 	auto it = running_.find(name);
 	if (it == running_.end()) {
 		RunningMachine rm;
@@ -465,6 +642,36 @@ void ManagerFrame::StartMachine(const wxString &name)
 	const wxString exe = wxStandardPaths::Get().GetExecutablePath();
 	wxString cmd;
 	cmd << '"' << exe << "\" --managed --machine \"" << name << '"';
+
+	/*
+	 * ★ --datadir is passed on ONLY when it cannot do any harm, which is not
+	 * always.
+	 *
+	 * The child is a fresh process and works its data directory out from
+	 * scratch, so a Manager started with an explicit --datadir would list the
+	 * machines in that folder and then launch them against a different one.
+	 * Passing it on fixes that.
+	 *
+	 * But --datadir does more than name the data directory: it makes the
+	 * resource directory the same folder (DATA_DIR_FROM_CLI in
+	 * data_paths.cpp). In the ordinary installation those are two different
+	 * places - machines and settings under the user's data directory, and
+	 * default/, resources/ and the podule ROMs beside the binary. Passing
+	 * --datadir there sent the child looking for all of that in the data
+	 * directory, where it is not, and the machine failed to find its CMOS
+	 * template, its HostFS defaults and its card ROMs.
+	 *
+	 * The two are only ever the same folder when the directory was given
+	 * explicitly, which is exactly when the child needs telling. So that is
+	 * the test: same folder, pass it on; different folders, say nothing and
+	 * let the child resolve them the way this process did.
+	 */
+	const wxString datadir = wxString::FromUTF8(rpcemu_get_datadir());
+	const wxString resourcedir = wxString::FromUTF8(rpcemu_get_resourcedir());
+
+	if (!datadir.empty() && datadir == resourcedir) {
+		cmd << " --datadir \"" << datadir << '"';
+	}
 
 	auto *process = new ManagerChildProcess(this, name);
 	const long pid = wxExecute(cmd, wxEXEC_ASYNC, process);
@@ -512,7 +719,12 @@ void ManagerFrame::OnPollTimer(wxTimerEvent & /*event*/)
 		long pid = 0;
 		int vnc_port = 0;
 
+		/* machine_lock_owner_alive() for the same reason as in
+		   DiscoverAlreadyRunningMachines(): a machine starting up may still
+		   have the previous run's lock file sitting there, and attaching to
+		   the pid it names would reach a process that has gone. */
 		if (machine_lock_read_owner(dir.utf8_str().data(), &pid, &vnc_port) && pid != 0 &&
+		    machine_lock_owner_alive(pid) &&
 		    machine_lock_read_ipc_endpoint(dir.utf8_str().data(), endpoint, sizeof(endpoint)) &&
 		    endpoint[0] != '\0') {
 			AttachPanelFor(name, wxString::FromUTF8(MachineIpcNameFor(dir.utf8_str().data(), pid)),
@@ -543,11 +755,19 @@ void ManagerFrame::ShowMachinePanel(const wxString &name)
 		active_machine_ = name;
 		display_book_->SetSelection((size_t) it->second.book_page);
 		it->second.panel->SetActive(true);
+
+		/* The menus now belong to a different machine, so ask it what its
+		   tick-boxes say rather than leaving the previous machine's answers
+		   on display. */
+		IpcRequest request;
+		request.type = IpcRequestType::RequestState;
+		it->second.panel->SendRequest(request);
 	} else {
 		active_machine_.clear();
 		display_book_->SetSelection((size_t) placeholder_page_);
 	}
 	UpdateButtons();
+	UpdateMachineMenuState();
 }
 
 void ManagerFrame::StopMachine(const wxString &name)
@@ -756,6 +976,285 @@ void ManagerFrame::OnRestart(wxCommandEvent & /*event*/)
 	IpcRequest request;
 	request.type = IpcRequestType::Restart;
 	it->second.panel->SendRequest(request);
+}
+
+/*
+ * Send a menu command to the machine currently being shown.
+ *
+ * @return true if it was sent, false if there was no machine to send it to
+ */
+bool ManagerFrame::SendMenuCommand(int id, bool checked, const wxString &argument)
+{
+	if (active_machine_.empty()) {
+		return false;
+	}
+
+	auto it = running_.find(active_machine_);
+
+	if (it == running_.end() || it->second.panel == nullptr) {
+		return false;
+	}
+
+	IpcRequest request;
+	request.type = IpcRequestType::MenuCommand;
+	request.arg1 = id;
+	request.arg2 = checked ? 1 : 0;
+
+	const wxScopedCharBuffer utf8 = argument.utf8_str();
+
+	if (utf8.length() >= sizeof(request.path)) {
+		wxMessageBox("That path is too long to send to the machine.",
+		    "RPCEmu", wxOK | wxICON_ERROR, this);
+		return false;
+	}
+	strncpy(request.path, utf8.data(), sizeof(request.path) - 1);
+	request.path[sizeof(request.path) - 1] = '\0';
+
+	it->second.panel->SendRequest(request);
+	return true;
+}
+
+/*
+ * Ask for a file here, and send the machine the answer.
+ *
+ * The dialogue belongs in this process because this is the one with a window:
+ * a managed machine never shows its own, so a file dialogue opened over there
+ * would appear detached from anything the user was looking at.
+ */
+void ManagerFrame::ForwardWithFileDialog(int id, const wxString &title,
+    const wxString &wildcard, bool save)
+{
+	wxFileDialog dialog(this, title, "", "", wildcard,
+	    save ? (wxFD_SAVE | wxFD_OVERWRITE_PROMPT) : (wxFD_OPEN | wxFD_FILE_MUST_EXIST));
+
+	if (dialog.ShowModal() != wxID_OK) {
+		return;
+	}
+	SendMenuCommand(id, false, dialog.GetPath());
+}
+
+/*
+ * A menu command chosen on this window rather than on the machine's.
+ *
+ * Three kinds arrive here. Some are about the application and are answered
+ * without a machine at all. Some need a file, which is asked for here and sent
+ * as an argument. The rest are forwarded as they are, and run in the machine's
+ * own process against its own state.
+ */
+void ManagerFrame::OnMachineMenuCommand(wxCommandEvent &event)
+{
+	const int id = event.GetId();
+
+	/* Answered here: these say nothing about any particular machine, so
+	   requiring one to be running before the manual can be opened would be
+	   an odd thing to insist on. */
+	switch (id) {
+	/* The same constants the machine window's handlers use, rather than the
+	   same addresses typed again - one of the two would eventually be wrong. */
+	case ID_MENU_ONLINE_MANUAL:
+		wxLaunchDefaultBrowser(URL_MANUAL);
+		return;
+	case ID_MENU_VISIT_WEBSITE:
+		wxLaunchDefaultBrowser(URL_WEBSITE);
+		return;
+	case ID_MENU_REPORT_ISSUE:
+		wxLaunchDefaultBrowser(URL_ISSUES);
+		return;
+	case ID_MENU_ABOUT_RISCOS:
+		/* Opens RISC OS Open's website. It says nothing about any machine, so
+		   requiring one to be running before it would work was simply wrong. */
+		wxLaunchDefaultBrowser(URL_RISCOSOPEN);
+		return;
+	case wxID_ABOUT:
+		ShowAboutDialog();
+		return;
+	default:
+		break;
+	}
+
+	if (active_machine_.empty() || running_.find(active_machine_) == running_.end()) {
+		wxMessageBox("Start a machine first - this command acts on the machine "
+		             "being shown.", "RPCEmu", wxOK | wxICON_INFORMATION, this);
+		return;
+	}
+
+	/* Needs a file, which is chosen here. */
+	switch (id) {
+	case ID_MENU_SCREENSHOT:
+		ForwardWithFileDialog(id, "Save Screenshot", "PNG files (*.png)|*.png", true);
+		return;
+	case ID_MENU_SAVE_STATE:
+		ForwardWithFileDialog(id, "Save State",
+		    "RPCEmu state files (*.rpcemu)|*.rpcemu", true);
+		return;
+	case ID_MENU_LOAD_STATE:
+		ForwardWithFileDialog(id, "Load State",
+		    "RPCEmu state files (*.rpcemu)|*.rpcemu", false);
+		return;
+	case ID_MENU_LOAD_DISC0:
+	case ID_MENU_LOAD_DISC1:
+		ForwardWithFileDialog(id, "Load Disc Image",
+		    "Disc images (*.adf;*.hfe;*.img)|*.adf;*.hfe;*.img|All files (*.*)|*.*",
+		    false);
+		return;
+	case ID_MENU_CDROM_ISO:
+		ForwardWithFileDialog(id, "Open ISO Image",
+		    "ISO images (*.iso)|*.iso|All files (*.*)|*.*", false);
+		return;
+	case ID_MENU_CREATE_DISC0:
+	case ID_MENU_CREATE_DISC1:
+		ForwardWithFileDialog(id, "Create Disc Image",
+		    "ADFS disc images (*.adf)|*.adf", true);
+		return;
+	default:
+		break;
+	}
+
+	/* Everything else goes across as it stands. A tick-box has already moved
+	   on this window, so its new state travels with it and the machine sets
+	   its own copy to match before running the handler. */
+	SendMenuCommand(id, event.IsChecked());
+}
+
+/*
+ * Enable the machine menus only while a machine is being shown.
+ *
+ * The Help items that this window answers itself stay enabled: they work with
+ * no machine running, and grey items that would have worked read as a fault.
+ */
+void ManagerFrame::UpdateMachineMenuState()
+{
+	const bool have_machine = !active_machine_.empty() &&
+	    running_.find(active_machine_) != running_.end();
+
+	wxMenuBar *bar = GetMenuBar();
+
+	if (bar == nullptr) {
+		return;
+	}
+
+	/*
+	 * Help stays usable with no machine running.
+	 *
+	 * Four of these are answered by this window and need nothing else. The
+	 * other two do need a machine, and are left enabled anyway: clicking them
+	 * says which machine they act on and that one has to be running, whereas
+	 * greying them out says only that something is wrong, with no way to find
+	 * out what. A menu that explains itself beats one that goes quiet.
+	 */
+	static const int always_enabled[] = {
+		ID_MENU_ONLINE_MANUAL, ID_MENU_VISIT_WEBSITE,
+		ID_MENU_REPORT_ISSUE, ID_MENU_ABOUT_RISCOS, wxID_ABOUT,
+		ID_MENU_SUPPORT_BUNDLE, ID_MENU_CHECK_UPDATE,
+	};
+
+	for (wxMenu *menu : { machine_file_menu_, machine_disc_menu_,
+	                      machine_settings_menu_, machine_tools_menu_,
+	                      machine_debug_menu_, machine_help_menu_ }) {
+		if (menu == nullptr) {
+			continue;
+		}
+		for (const wxMenuItem *item : menu->GetMenuItems()) {
+			if (item->IsSeparator()) {
+				continue;
+			}
+			if (item->IsSubMenu()) {
+				for (const wxMenuItem *sub : item->GetSubMenu()->GetMenuItems()) {
+					if (!sub->IsSeparator()) {
+						bar->Enable(sub->GetId(), have_machine);
+					}
+				}
+				continue;
+			}
+			bar->Enable(item->GetId(), have_machine);
+		}
+	}
+
+	for (int id : always_enabled) {
+		bar->Enable(id, true);
+	}
+
+	/* The forwarded tools go the same way as their menu items - they are the
+	   same commands, so a live tool beside a greyed menu entry would be two
+	   answers to the same question. */
+	if (tool_bar_ != nullptr) {
+		static const int forwarded_tools[] = {
+			ID_MENU_SCREENSHOT, ID_MENU_LOAD_DISC0, ID_MENU_CDROM_ISO,
+			ID_MENU_RESET, ID_MENU_MUTE, ID_MENU_FULLSCREEN,
+			ID_MENU_MACHINE, ID_MENU_DEBUG_RUN, ID_MENU_DEBUG_PAUSE,
+			ID_MENU_DEBUG_STEP, ID_MENU_MACHINE_INSPECTOR,
+		};
+
+		for (int id : forwarded_tools) {
+			tool_bar_->EnableTool(id, have_machine);
+		}
+	}
+}
+
+/*
+ * Set this window's tick-boxes from what the machine says they are.
+ *
+ * Sent by the machine when asked and after every forwarded command. Parsed
+ * loosely on purpose: an id this window does not have is skipped rather than
+ * treated as an error, so the two processes need not be in lockstep about
+ * which items exist.
+ */
+void ManagerFrame::ApplyStateReport(const wxString &report)
+{
+	wxMenuBar *bar = GetMenuBar();
+
+	if (bar == nullptr) {
+		return;
+	}
+
+	wxStringTokenizer pairs(report, " ");
+
+	while (pairs.HasMoreTokens()) {
+		const wxString pair = pairs.GetNextToken();
+		const int equals = pair.Find('=');
+
+		if (equals == wxNOT_FOUND) {
+			continue;
+		}
+
+		long id = 0;
+		long value = 0;
+
+		if (!pair.Left(equals).ToLong(&id) ||
+		    !pair.Mid(equals + 1).ToLong(&value)) {
+			continue;
+		}
+
+		wxMenuItem *item = bar->FindItem((int) id);
+
+		if (item != nullptr && item->IsCheckable()) {
+			item->Check(value != 0);
+		}
+
+		/* Mute also has a toolbar tool, which has to agree with its menu
+		   item or the toolbar shows the opposite of the truth. */
+		if (id == ID_MENU_MUTE && tool_bar_ != nullptr) {
+			tool_bar_->ToggleTool(ID_MENU_MUTE, value != 0);
+		}
+	}
+}
+
+/*
+ * About, shown by this window.
+ *
+ * Deliberately not forwarded, and deliberately not a second About box written
+ * for the Manager. AboutDialog takes any parent, so this is the same dialogue
+ * the machine window shows - which matters because it carries the version and
+ * the credits, and a copy would be wrong the first time either changed.
+ *
+ * It is answered here rather than in a machine because it is about RPCEmu, not
+ * about any machine, and so has to work with none running.
+ */
+void ManagerFrame::ShowAboutDialog()
+{
+	AboutDialog dlg(this);
+
+	dlg.ShowModal();
 }
 
 void ManagerFrame::OnExit(wxCommandEvent & /*event*/)

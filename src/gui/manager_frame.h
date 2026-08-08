@@ -98,6 +98,33 @@ private:
 	void OnClose(wxCloseEvent &event);
 	void OnPollTimer(wxTimerEvent &event);
 
+	/*
+	 * The machine window's own menus, rebuilt here and forwarded to whichever
+	 * machine is being shown. See machine_ipc.h for why this is one message
+	 * rather than a message per command.
+	 */
+	void BuildMachineMenus(wxMenuBar *menu_bar);
+	void OnMachineMenuCommand(wxCommandEvent &event);
+	bool SendMenuCommand(int id, bool checked, const wxString &argument = wxEmptyString);
+	void UpdateMachineMenuState();
+	void ApplyStateReport(const wxString &report);
+
+	/* Commands that ask for a file. The dialogue belongs here, this being the
+	   process with a window to put it over; the machine is sent the path. */
+	void ForwardWithFileDialog(int id, const wxString &title,
+	                           const wxString &wildcard, bool save);
+
+	/* Help items that are about the application rather than about a machine,
+	   and so are answered here whether or not one is running. */
+	void ShowAboutDialog();
+
+	wxMenu *machine_file_menu_ = nullptr;
+	wxMenu *machine_disc_menu_ = nullptr;
+	wxMenu *machine_settings_menu_ = nullptr;
+	wxMenu *machine_tools_menu_ = nullptr;
+	wxMenu *machine_debug_menu_ = nullptr;
+	wxMenu *machine_help_menu_ = nullptr;
+
 	wxListCtrl *machine_list_ = nullptr;
 	wxImageList *status_images_ = nullptr;
 	wxSimplebook *display_book_ = nullptr;
