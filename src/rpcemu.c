@@ -342,6 +342,14 @@ static uint32_t debugger_trace_seq = 0;		/**< monotonic event counter */
 static DebugTraceConfig debugger_trace_config;	/**< zero-initialised: all off */
 int debugger_swi_trace_active = 0;		/**< fast gate read from opSWI() */
 
+/* Fast gate read once per instruction by the interpreter and the recompiler's
+   dispatch, so an idle debugger costs a predictable load rather than a call.
+   Cached because the answer only changes when the debugger's state does; every
+   mutator ends with debugger_refresh_hook_active(). */
+int debugger_hook_active = 0;
+
+static void debugger_refresh_hook_active(void);
+
 static void debugger_trace_push(uint32_t type, uint32_t pc, uint32_t opcode,
 	uint32_t arg0, uint32_t arg1, uint32_t arg2);
 
@@ -448,6 +456,7 @@ debugger_enter_pause(DebugPauseReason reason, uint32_t pc, uint32_t opcode)
 	debugger_pending_reason = DebugPauseReason_None;
 	debugger_step_remaining = 0;
 	debugger_step_active = 0;
+	debugger_refresh_hook_active();
 }
 
 void
@@ -485,8 +494,13 @@ debugger_is_paused(void)
 	return debugger_paused;
 }
 
-int
-debugger_requires_instruction_hook(void)
+/**
+ * Work out whether anything currently wants to see each instruction.
+ *
+ * Not called from the execution path - debugger_hook_active caches the answer.
+ */
+static int
+debugger_compute_hook_active(void)
 {
 	if (debugger_paused) {
 		return 1;
@@ -514,6 +528,22 @@ debugger_requires_instruction_hook(void)
 	return 0;
 }
 
+/**
+ * Recompute the fast gate. Must be called after anything that could change the
+ * answer - every debugger state change funnels through here.
+ */
+static void
+debugger_refresh_hook_active(void)
+{
+	debugger_hook_active = debugger_compute_hook_active();
+}
+
+int
+debugger_requires_instruction_hook(void)
+{
+	return debugger_hook_active;
+}
+
 void
 debugger_request_pause(DebugPauseReason reason)
 {
@@ -523,6 +553,7 @@ debugger_request_pause(DebugPauseReason reason)
 	}
 	debugger_pause_requested = 1;
 	debugger_pending_reason = reason;
+	debugger_refresh_hook_active();
 }
 
 void
@@ -535,6 +566,7 @@ debugger_resume(void)
 	debugger_step_remaining = 0;
 	debugger_step_active = 0;
 	debugger_reset_hit_info();
+	debugger_refresh_hook_active();
 }
 
 void
@@ -550,12 +582,14 @@ debugger_single_step(uint32_t instruction_count)
 	debugger_step_remaining = instruction_count;
 	debugger_step_active = 1;
 	debugger_reset_hit_info();
+	debugger_refresh_hook_active();
 }
 
 void
 debugger_clear_breakpoints(void)
 {
 	debugger_breakpoint_count = 0;
+	debugger_refresh_hook_active();
 }
 
 int
@@ -568,6 +602,7 @@ debugger_add_breakpoint(uint32_t address)
 		return 0;
 	}
 	debugger_breakpoints[debugger_breakpoint_count++] = address;
+	debugger_refresh_hook_active();
 	return 1;
 }
 
@@ -584,6 +619,7 @@ debugger_remove_breakpoint(uint32_t address)
 		        (debugger_breakpoint_count - (uint32_t) index - 1) * sizeof(uint32_t));
 	}
 	debugger_breakpoint_count--;
+	debugger_refresh_hook_active();
 	return 1;
 }
 
@@ -597,6 +633,7 @@ void
 debugger_clear_watchpoints(void)
 {
 	debugger_watchpoint_count = 0;
+	debugger_refresh_hook_active();
 }
 
 int
@@ -621,6 +658,7 @@ debugger_add_watchpoint(uint32_t address, uint32_t size, int on_read, int on_wri
 	wp->on_write = (uint8_t) (on_write != 0);
 	wp->log_only = (uint8_t) (log_only != 0);
 	wp->reserved1 = 0;
+	debugger_refresh_hook_active();
 	return 1;
 }
 
@@ -637,6 +675,7 @@ debugger_remove_watchpoint(uint32_t address, uint32_t size, int on_read, int on_
 		        (debugger_watchpoint_count - (uint32_t) index - 1) * sizeof(DebugWatchpointInfo));
 	}
 	debugger_watchpoint_count--;
+	debugger_refresh_hook_active();
 	return 1;
 }
 
@@ -717,6 +756,7 @@ debugger_after_instruction(uint32_t pc, uint32_t opcode)
 		}
 	}
 	debugger_step_active = (debugger_step_remaining > 0) ? 1 : 0;
+	debugger_refresh_hook_active();
 }
 
 /**
@@ -756,6 +796,7 @@ debugger_set_trace_config(const DebugTraceConfig *cfg)
 	}
 	debugger_trace_config = *cfg;
 	debugger_swi_trace_active = (cfg->swi_trace_enabled || cfg->swi_trace_halt) ? 1 : 0;
+	debugger_refresh_hook_active();
 }
 
 void
@@ -834,6 +875,7 @@ debugger_exception_hook(uint32_t mmode, uint32_t address, uint32_t pc)
 	if (trap && !debugger_paused && !debugger_pause_requested) {
 		debugger_pause_requested = 1;
 		debugger_pending_reason = DebugPauseReason_Exception;
+		debugger_refresh_hook_active();
 	}
 }
 
@@ -862,6 +904,7 @@ debugger_swi_hook(uint32_t swinum, uint32_t opcode)
 	    !debugger_pause_requested) {
 		debugger_pause_requested = 1;
 		debugger_pending_reason = DebugPauseReason_Swi;
+		debugger_refresh_hook_active();
 	}
 
 	return 0;

@@ -137,6 +137,20 @@ target_include_directories(test_arm_disasm PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 rpcemu_add_test(test_arm_disasm)
 
+# The debugger's per-instruction fast gate. Links rpcemu_core because the
+# debugger state is file-static in rpcemu.c and the public API is the only way
+# to reach it - which is the thing worth testing.
+#
+# The interpreter used to call the debugger hook on every instruction whether or
+# not anything was attached. It is now gated on a cached flag, and caching it
+# introduces exactly one silent failure: a state change that forgets to
+# recompute it. Breakpoints then never fire, with no error and no log line, and
+# the person debugging blames their breakpoint address. This checks the flag is
+# raised and lowered again on every route in and out.
+add_executable(test_debugger_gate test_debugger_gate.c test_stubs.c)
+target_link_libraries(test_debugger_gate PRIVATE rpcemu_core m)
+rpcemu_add_test(test_debugger_gate)
+
 # Display mode selection against a VRAM budget. Architecture-neutral and needs
 # no dynarec, so unlike the JIT tests it builds everywhere.
 # Compiles the unit under test directly rather than linking rpcemu_core: the
@@ -461,7 +475,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 28)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 29)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()
