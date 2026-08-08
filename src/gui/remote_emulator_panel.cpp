@@ -21,8 +21,15 @@
 #include "remote_emulator_panel.h"
 
 #include <algorithm>
+#include <cstdio>
+
+#include <wx/graphics.h>
 
 #include "input_helpers.h"
+
+extern "C" {
+#include "rpcemu.h"
+}
 
 wxBEGIN_EVENT_TABLE(RemoteEmulatorPanel, wxPanel)
 	EVT_PAINT(RemoteEmulatorPanel::OnPaint)
@@ -59,14 +66,46 @@ RemoteEmulatorPanel::RemoteEmulatorPanel(wxWindow *parent, const std::string &sh
 
 	live_ = fb_ok && ipc_ok;
 	if (!live_) {
+		/*
+		 * Say which half failed.
+		 *
+		 * Without this the Manager can only report "did not start" for two
+		 * quite different faults - a shared framebuffer it cannot open and a
+		 * control socket it cannot reach - and the machine is meanwhile
+		 * running perfectly well with neither the user nor the log able to
+		 * say why it is not on screen.
+		 */
+		std::fprintf(stderr, "Manager: cannot attach to a machine: "
+		    "framebuffer '%s' %s, control socket '%s' %s\n",
+		    shared_fb_name.c_str(), fb_ok ? "opened" : "FAILED",
+		    ipc_endpoint.c_str(), ipc_ok ? "connected" : "FAILED");
 		ipc_client_.Disconnect();
 		shared_fb_.Close();
 	}
+
+	UpdateCursor();
 }
 
 RemoteEmulatorPanel::~RemoteEmulatorPanel()
 {
 	ipc_client_.Disconnect();
+}
+
+/*
+ * Hide the host arrow while a machine is being shown.
+ *
+ * This panel always runs in the absolute "guest pointer follows the host one"
+ * mode (see the class comment), so RISC OS draws its own pointer wherever the
+ * host pointer is. Leaving the host arrow visible as well put two pointers on
+ * screen, one on top of the other - EmulatorPanel blanks it for exactly this
+ * reason in UpdateMouseCursor().
+ *
+ * The arrow comes back when the machine has gone, where the panel is showing a
+ * "Machine stopped" message and there is no guest pointer to replace it.
+ */
+void RemoteEmulatorPanel::UpdateCursor()
+{
+	SetCursor(wxCursor(live_ ? wxCURSOR_BLANK : wxCURSOR_ARROW));
 }
 
 void RemoteEmulatorPanel::SetActive(bool active)
@@ -76,7 +115,8 @@ void RemoteEmulatorPanel::SetActive(bool active)
 		/* Show whatever the machine last drew immediately, rather than
 		   waiting for the guest to draw something new after the switch -
 		   the shared framebuffer already holds it. */
-		RefreshFrame();
+		frame_dirty_ = true;
+		Refresh(false);
 		SetFocus();
 	}
 }
@@ -86,14 +126,45 @@ void RemoteEmulatorPanel::HandleIpcEvent(const IpcEvent &event)
 	switch (event.type) {
 	case IpcEventType::FrameReady:
 		if (active_) {
-			RefreshFrame();
+			/*
+			 * ★ Mark it stale and ask for a paint; do not build the bitmap
+			 * here.
+			 *
+			 * Building it means a copy out of shared memory, a pass over
+			 * every pixel to convert it, a bilinear rescale to the panel
+			 * size and then a wxBitmap conversion - four passes over the
+			 * whole image, on the GUI thread. Doing that per frame cost a
+			 * whole CPU core to show a machine that was sitting idle, and
+			 * during a live resize the size events piled on top of the
+			 * frames until the window stopped responding.
+			 *
+			 * wx coalesces Refresh() into one paint, so a burst of frames
+			 * now costs one conversion rather than one each.
+			 */
+			frame_dirty_ = true;
+			Refresh(false);
 		}
 		break;
 	case IpcEventType::Fatal:
 	case IpcEventType::Quit:
 		live_ = false;
+		UpdateCursor();
 		if (on_gone_) {
 			on_gone_();
+		}
+		break;
+	case IpcEventType::StateReport:
+		if (on_state_) {
+			/* HandleIpcEvent runs on the client's reader thread; the
+			   callback sets menu items, so it has to reach the GUI
+			   thread first. */
+			const wxString report = wxString::FromUTF8(event.path);
+
+			CallAfter([this, report] {
+				if (on_state_) {
+					on_state_(report);
+				}
+			});
 		}
 		break;
 	case IpcEventType::Error:
@@ -130,17 +201,30 @@ void RemoteEmulatorPanel::RefreshFrame()
 		}
 	}
 
-	const wxSize client = GetClientSize();
-	if (client.GetWidth() > 0 && client.GetHeight() > 0) {
-		image.Rescale(client.GetWidth(), client.GetHeight(), wxIMAGE_QUALITY_BILINEAR);
-	}
+	/*
+	 * ★ Kept at the guest's own size. The scaling is done by the blit.
+	 *
+	 * This used to wxImage::Rescale() to the panel size on every frame, which
+	 * is a full bilinear resample of the whole image in software and was the
+	 * single most expensive thing this panel did - most of a CPU core to show
+	 * a machine doing nothing. EmulatorPanel has always scaled with
+	 * StretchBlit instead, which hands the work to the toolkit; OnPaint now
+	 * does the same, so there is nothing to rescale here.
+	 */
 	display_bitmap_ = wxBitmap(image);
-	Refresh(false);
+
+	/* No Refresh() here: this is called from OnPaint, and asking for another
+	   paint from inside one is how a repaint loop starts. */
 }
 
 void RemoteEmulatorPanel::OnPaint(wxPaintEvent & /*event*/)
 {
 	wxPaintDC dc(this);
+
+	if (live_ && frame_dirty_) {
+		RefreshFrame();
+		frame_dirty_ = false;
+	}
 
 	if (!live_) {
 		dc.SetBackground(*wxBLACK_BRUSH);
@@ -155,7 +239,63 @@ void RemoteEmulatorPanel::OnPaint(wxPaintEvent & /*event*/)
 	}
 
 	if (display_bitmap_.IsOk()) {
-		dc.DrawBitmap(display_bitmap_, 0, 0);
+		const wxSize client = GetClientSize();
+		const int bw = display_bitmap_.GetWidth();
+		const int bh = display_bitmap_.GetHeight();
+
+		if (client.GetWidth() == bw && client.GetHeight() == bh) {
+			/* Nothing to scale, so nothing to lose: straight copy. */
+			wxMemoryDC memDC(display_bitmap_);
+
+			dc.Blit(0, 0, bw, bh, &memDC, 0, 0);
+		} else {
+			/*
+			 * ★ Scaled through a graphics context, and with the aspect
+			 * ratio kept.
+			 *
+			 * StretchBlit is what EmulatorPanel uses, and on GTK it is a
+			 * nearest-neighbour copy: every scale factor that is not a whole
+			 * number drops and duplicates rows and columns, which is what
+			 * made this look pixelated and grainy at any guest resolution.
+			 * wxImage::Rescale would look right but resamples the whole
+			 * frame in software on the way to every paint, which is what
+			 * used to cost a CPU core.
+			 *
+			 * A graphics context is the third option: Cairo (or Direct2D, or
+			 * CoreGraphics) does the filtering itself, so it looks like the
+			 * bilinear version and costs like the blit.
+			 *
+			 * The panel is a fixed shape and the guest's screen is not, so
+			 * without this the picture was also stretched out of shape.
+			 * Fitted to whichever edge runs out first and centred, with the
+			 * background showing through as bars.
+			 */
+			const double scale = std::min(
+			    (double) client.GetWidth() / (double) bw,
+			    (double) client.GetHeight() / (double) bh);
+			const double dw = (double) bw * scale;
+			const double dh = (double) bh * scale;
+			const double dx = ((double) client.GetWidth() - dw) / 2.0;
+			const double dy = ((double) client.GetHeight() - dh) / 2.0;
+
+			dc.SetBackground(*wxBLACK_BRUSH);
+			dc.Clear();
+
+			wxGraphicsContext *gc = wxGraphicsContext::Create(dc);
+
+			if (gc != nullptr) {
+				gc->SetInterpolationQuality(wxINTERPOLATION_GOOD);
+				gc->DrawBitmap(display_bitmap_, dx, dy, dw, dh);
+				delete gc;
+			} else {
+				/* No graphics context available: better a hard-edged
+				   picture than none. */
+				wxMemoryDC memDC(display_bitmap_);
+
+				dc.StretchBlit((int) dx, (int) dy, (int) dw, (int) dh,
+				    &memDC, 0, 0, bw, bh);
+			}
+		}
 	} else {
 		dc.SetBackground(*wxBLACK_BRUSH);
 		dc.Clear();
@@ -171,8 +311,12 @@ void RemoteEmulatorPanel::OnEraseBackground(wxEraseEvent & /*event*/)
 
 void RemoteEmulatorPanel::OnSize(wxSizeEvent &event)
 {
+	/* A live resize sends these continuously. Rebuilding the scaled bitmap on
+	   each one was most of what made the window stop responding while being
+	   dragged; the paint that follows does it once. */
 	if (live_) {
-		RefreshFrame();
+		frame_dirty_ = true;
+		Refresh(false);
 	}
 	event.Skip();
 }

@@ -78,6 +78,11 @@ public:
 	using GoneCallback = std::function<void()>;
 	void SetGoneCallback(GoneCallback callback) { on_gone_ = std::move(callback); }
 
+	/* Called with the machine's tick-box menu state, so the Manager's copies
+	   of those items can agree with it. Runs on the GUI thread. */
+	using StateCallback = std::function<void(const wxString &)>;
+	void SetStateCallback(StateCallback callback) { on_state_ = std::move(callback); }
+
 private:
 	void OnPaint(wxPaintEvent &event);
 	void OnSize(wxSizeEvent &event);
@@ -92,12 +97,18 @@ private:
 
 	void HandleIpcEvent(const IpcEvent &event);
 	void RefreshFrame();
+	void UpdateCursor();
 	int MapClickButton(const wxMouseEvent &event) const;
 	wxPoint PanelPointToGuest(int x, int y) const;
 
 	SharedFramebuffer shared_fb_;
 	MachineIpcClient ipc_client_;
+	/* Set when the shared framebuffer or the panel size has changed, cleared
+	   when the scaled bitmap is rebuilt in OnPaint. See HandleIpcEvent. */
+	bool frame_dirty_ = true;
+
 	GoneCallback on_gone_;
+	StateCallback on_state_;
 
 	bool live_ = false;
 	bool active_ = false;
