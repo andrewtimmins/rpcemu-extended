@@ -194,6 +194,14 @@ empty result.
 `step over`, `step out` and `runto` all report reason `4`, since all three are
 "stopped where you asked", not "stopped at a breakpoint".
 
+## In CI
+
+`tests/boot_smoke.py` uses this socket to watch a real boot for data and
+prefetch aborts, which no other check can see — RISC OS handles the abort and
+the machine boots to a perfect desktop anyway. Aborts while RISC OS is probing
+for hardware are expected and reported; aborts once the machine is up fail the
+build. See *Aborts during the boot test* in [testing.md](testing.md).
+
 ## Safety notes
 
 - **Memory reads and disassembly are side-effect-free.** Virtual addresses are
