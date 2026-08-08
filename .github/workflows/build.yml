@@ -159,6 +159,7 @@ jobs:
           python3 tests/boot_smoke.py \
             --binary releases/linux/amd64/rpcemu-recompiler \
             --datadir "$RUNNER_TEMP/rpcemu-data" \
+            --abort-check require \
             --save vnc-smoke-linux-amd64.png
 
       - name: Upload the boot screenshot
@@ -257,6 +258,7 @@ jobs:
           python3 tests/boot_smoke.py \
             --binary releases/linux/arm64/rpcemu-interpreter \
             --datadir "$RUNNER_TEMP/rpcemu-data" \
+            --abort-check require \
             --save vnc-smoke-linux-arm64.png
 
       - name: Upload the boot screenshot
@@ -404,6 +406,7 @@ jobs:
           python3 tests/boot_smoke.py \
             --binary releases/windows/amd64/rpcemu-recompiler.exe \
             --datadir "$(cygpath -u "$RUNNER_TEMP")/rpcemu-data" \
+            --abort-check require \
             --save vnc-smoke-windows-amd64.png
 
       - name: Upload the boot screenshot
@@ -532,6 +535,7 @@ jobs:
             --datadir "$RUNNER_TEMP/rpcemu-san-data" \
             --boot-timeout 300 --settle 60 \
             --screen-check advisory \
+            --abort-check advisory \
             --save sanitiser-boot.png
 
       - name: Upload the boot screenshot
@@ -771,6 +775,7 @@ jobs:
           python3 tests/boot_smoke.py \
             --binary releases/macos/RPCEmu.app/Contents/MacOS/rpcemu \
             --datadir "$RUNNER_TEMP/rpcemu-data" \
+            --abort-check require \
             --save vnc-smoke-macos-universal.png
 
       - name: Upload the boot screenshot

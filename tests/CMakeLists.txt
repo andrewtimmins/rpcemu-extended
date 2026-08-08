@@ -19,6 +19,17 @@ macro(rpcemu_add_test name)
     list(APPEND RPCEMU_REGISTERED_TESTS ${name})
 endmacro()
 
+# The same, for a test that is a script rather than a compiled target. Kept
+# separate only because add_test() needs an interpreter in front of the file;
+# it appends to the same list, so a script test is counted like any other and
+# cannot go missing quietly.
+macro(rpcemu_add_python_test name script)
+    add_test(NAME ${name}
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/${script} ${ARGN})
+    list(APPEND RPCEMU_REGISTERED_TESTS ${name})
+endmacro()
+
 # The JIT differential testers use the recompiler's test hooks
 # (compiled into rpcemu_core when RPCEMU_JIT_TEST is set, see src/CMakeLists.txt).
 # They compare each recompiled instruction class against the interpreter and are
@@ -237,6 +248,27 @@ if(NOT WIN32)
     add_executable(test_debugcmd test_debugcmd.c test_stubs.c)
     target_link_libraries(test_debugcmd PRIVATE rpcemu_core m)
     rpcemu_add_test(test_debugcmd ${CMAKE_CURRENT_BINARY_DIR})
+endif()
+
+# The CI abort watcher's classification and verdict (tests/abort_watch.py, used
+# by tests/boot_smoke.py). Pure Python, no emulator.
+#
+# That module decides whether the boot job goes red, and everything it needs to
+# do its real work - a ROM, a real boot, a machine taking real aborts - is
+# exactly what the unit suite does not have. Without this, the only thing that
+# ever exercises the logic is the thing it is meant to be checking, and a
+# mistake would show up as a boot test that passes forever. The cases pull in
+# both directions: a healthy RISC OS boot takes aborts on purpose while probing
+# for hardware and must not fail, while an abort once the machine is idle must.
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    set(RPCEMU_PYTHON_TESTS TRUE)
+    rpcemu_add_python_test(test_abort_watch test_abort_watch.py)
+else()
+    set(RPCEMU_PYTHON_TESTS FALSE)
+    message(STATUS
+        "RPCEmu: no Python 3 interpreter here, so the abort-watcher test is "
+        "not registered (tests/boot_smoke.py needs one too)")
 endif()
 
 # Display mode selection against a VRAM budget. Architecture-neutral and needs
@@ -566,6 +598,9 @@ rpcemu_add_test(test_unzip)
 set(RPCEMU_EXPECTED_TESTS 34)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
+endif()
+if(RPCEMU_PYTHON_TESTS)
+    math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 1")	# abort watcher
 endif()
 
 list(LENGTH RPCEMU_REGISTERED_TESTS RPCEMU_ACTUAL_TESTS)

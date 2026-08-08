@@ -191,7 +191,9 @@ typedef struct DebugTraceEvent {
 	uint32_t pc;		/**< Faulting / calling PC */
 	uint32_t opcode;	/**< Instruction word (0 if not available) */
 	uint32_t arg0;		/**< exc: TraceExceptionKind | swi: number | wp: address */
-	uint32_t arg1;		/**< exc: abort address | swi: R0 | wp: value */
+	/* exc: the faulting PC again, not the address that faulted - the
+	   exception hook is passed the vector, which arg0 already says. */
+	uint32_t arg1;		/**< exc: faulting PC | swi: R0 | wp: value */
 	uint32_t arg2;		/**< swi: cpsr flags | wp: (size << 1) | is_write */
 } DebugTraceEvent;
 

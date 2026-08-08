@@ -84,8 +84,8 @@ pointed at the Windows binary, and how the RISC OS 5.31 empty-HostFS screen in
 
 ## What the suite covers
 
-Thirty-four tests, twenty-six of which build on every platform and eight of
-which need a native recompiler backend.
+Forty-three tests: thirty-four that build anywhere, eight that need a native
+recompiler backend, and one that needs a Python 3 interpreter.
 
 | Test | Covers |
 | --- | --- |
@@ -98,6 +98,14 @@ which need a native recompiler backend.
 | `test_jit_fuzz` | random instructions, recompiler against interpreter |
 | `test_jit_seqfuzz` | random programs through `arm_exec`, likewise |
 | `test_mmu_perms` | ARM DDI 0100B page permissions, including after a translation is cached |
+| `test_arm_disasm` | ARM and FPA10 disassembly, and the instruction description step-over is built on |
+| `test_debugger_gate` | the debugger's per-instruction fast gate is raised and lowered on every route |
+| `test_debugexpr` | breakpoint condition expressions: precedence, and refusing malformed ones |
+| `test_backtrace` | walking the APCS frame chain, 26-bit masking, and chains that are not chains |
+| `test_stepping` | step over / out / run to, and that the temporary target never outlives them |
+| `test_debugsym` | guest symbols, and what an address outside the table must *not* be called |
+| `test_debugcmd` | the debugger wire protocol, over a real socket |
+| `test_abort_watch` | how CI decides an abort during a boot is a problem |
 | `test_savestate` | snapshot serialisation, the run-length codec and the CRC-32 |
 | `test_machine_lock` | the lock that stops one machine being run twice |
 | `test_net_slot` | the per-instance slot that gives each guest its own address |
@@ -245,6 +253,60 @@ costs a maintainer ten minutes instead.
 reason - inherited SLiRP, the Arculator-derived podule code, and a handful of
 upstream RPCEmu files. It is a debt register and it is meant to get shorter.
 
+## Aborts during the boot test
+
+`tests/boot_smoke.py` boots a real machine in CI, and as well as checking the
+screen and asking the guest its version, it watches the emulated CPU for data
+and prefetch aborts through the whole run. This is `tests/abort_watch.py`,
+driving the [DebugCmd socket](debugcmd.md).
+
+It exists because an abort is invisible to every other check. RISC OS handles
+the abort and carries on, so an MMU regression, a bad memory decode or a
+recompiled block branching somewhere it should not still boots to a perfect
+desktop and still answers `*FX 0`. The screenshot looks right.
+
+**A healthy boot takes aborts on purpose.** RISC OS sizes memory and probes for
+hardware by reading addresses that may not answer, and an abort is how it finds
+out. A check that failed on "an abort happened" would fail on every green build
+and be switched off within a week. So aborts are split by when they happened:
+
+| Phase | Meaning | Verdict |
+| --- | --- | --- |
+| **boot** — up to the moment RISC OS answers over HostCmd | probing for hardware | reported, does not fail |
+| **running** — after that, with the machine idle | nothing should be faulting | **fails the build** |
+
+That line is drawn from the guest's own behaviour rather than from a clock, so
+it does not drift with how fast the runner is.
+
+**Undefined instructions never fail.** They are routine here: the FPA10 in
+`fpa.c` implements the common operations and raises an undefined-instruction
+exception for the rest, exactly as the real one did, so RISC OS's floating point
+support code can emulate them. A machine with working floating point produces a
+stream of them. The count is reported and nothing more.
+
+Only logging is turned on, never trapping — a trap would engage the debugger's
+per-instruction path and drop the recompiler to interpretation, and a CI boot
+would take far longer than the job allows.
+
+### Baselines
+
+Boot-phase aborts are accepted by default. To be stricter, record the sites a
+known-good boot produces and require the set not to grow:
+
+```sh
+python3 tests/boot_smoke.py --binary … --write-abort-baseline boot-aborts.txt
+# look at what it wrote, then commit it
+python3 tests/boot_smoke.py --binary … --abort-baseline boot-aborts.txt
+```
+
+A site in the baseline that does not occur is not a failure — probing depends on
+what hardware is configured, and demanding every known abort happen would fail
+on a machine with less of it.
+
+No baseline is committed. One is only meaningful against a pinned ROM, and the
+sites would have to be looked at by somebody who can say they are the expected
+probing rather than recorded from whatever the first run did.
+
 ## Known gaps
 
 Said here rather than left to be discovered:
@@ -262,3 +324,7 @@ Said here rather than left to be discovered:
   navigation. wxWidgets dialogues are exercised only by hand.
 - **Windows and macOS have no equivalent of the pre-push hook's warning check**,
   since it runs only where the hook does.
+- **The boot abort check has no baseline committed**, so it only fails on aborts
+  after the machine is up. That is the rule worth having and it needs no
+  maintenance, but a boot-phase regression that adds a new probing site will
+  pass until somebody records one. See *Aborts during the boot test*.
