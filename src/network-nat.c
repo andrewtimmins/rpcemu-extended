@@ -38,6 +38,7 @@
 #include "savestate.h"
 #include "podules.h"
 #include "broadcast_relay.h"
+#include "net_switch.h"
 
 #include "slirp/libslirp.h"
 
@@ -347,6 +348,11 @@ network_nat_init(void)
 	/* One relay per host: the Access ports are fixed by the protocol, so a second
 	   emulator cannot have them. Turning it off deliberately is better than
 	   racing for them and losing quietly. */
+	/* The wire between machines on this host. Independent of the relay: that
+	   carries Access to the real network, this carries everything to the other
+	   guests. See net_switch.h. */
+	net_switch_init();
+
 	if (app_settings_relay_enabled()) {
 		broadcast_relay_init();
 	} else {
@@ -374,6 +380,19 @@ network_nat_poll(void)
 {
 	fd_set rfds, wfds, efds;
 	int fd_max, ret;
+
+	/*
+	 * ★ Before the select below, and not after it.
+	 *
+	 * The switch has a socket of its own and nothing to do with SLiRP's set,
+	 * but it was polled at the end of this function - past an early return
+	 * taken whenever that select() fails. On a second instance it always
+	 * failed, so frames from the other machine arrived, sat in the socket
+	 * buffer and were never read: the first machine could see the second and
+	 * the second could see nothing, which is a confusing shape of broken.
+	 * Polled first, it does not depend on anything else here working.
+	 */
+	net_switch_poll();
 	struct timeval tv;
 
 	/* Networking can be switched on while the emulator thread is running, so
@@ -461,6 +480,20 @@ network_nat_tx(uint32_t errbuf, uint32_t mbufs, uint32_t dest, uint32_t src, uin
 	// duplicate out of SLiRP's NAT with a masqueraded source port, splitting
 	// the ShareFS conversation across two ports and stalling disc opens.
 	// Broadcasts and non-Access traffic return zero and still go to SLiRP.
+	/*
+	 * Every frame also goes to the other machines on this host, whatever
+	 * happens to it below. A hub floods and the receivers decide; working out
+	 * here which frames are "for another guest" would mean keeping a MAC table
+	 * this side of the wire, and getting it wrong means a machine that is
+	 * silently unreachable.
+	 *
+	 * SLiRP still sees it too, and that is correct rather than wasteful: it is
+	 * the uplink, and it answers ARP only for its own addresses (see
+	 * arp_input() in slirp/slirp.c), so it does not answer for another guest
+	 * and cannot hijack a conversation between two of them.
+	 */
+	net_switch_tx(nat.tx_buffer, packet_length);
+
 	if (!broadcast_relay_tx(nat.tx_buffer, packet_length)) {
 		slirp_input(nat.slirp, nat.tx_buffer, packet_length);
 	}
@@ -629,6 +662,7 @@ void
 network_nat_close(void)
 {
 	broadcast_relay_close();
+	net_switch_close();
 	net_slot_release();
 
 	if (nat.capture != NULL) {

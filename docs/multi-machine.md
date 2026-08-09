@@ -108,20 +108,43 @@ nothing at all.
 
 ## What is planned
 
-### A virtual switch, so machines can see each other
+### The wire between machines
 
-Today each machine sits behind its own NAT, so two emulated machines **cannot see
-each other at all**. That defeats ShareFS between them, which is one of the main
-reasons to run two RISC OS machines.
+Each machine used to sit behind its own NAT, so two emulated machines could not see
+each other at all. `net_switch.c` connects them.
 
-The target is closer to VirtualBox's NAT Network than to a bare hub: one virtual LAN
-that the machines sit on, with a shared uplink outwards, since a Risc PC has one
-Ethernet card and expects both from it. The relay then belongs to that LAN, binding
-Access's ports once on behalf of every machine on the switch and bridging them to
-the real network, which is strictly better than the ownership claim described above.
+It is a hub rather than a switch, and deliberately has no owner. Every instance
+already claims a slot of its own (`net_slot.c`); each slot gets a loopback UDP port,
+every instance binds its own and sends each frame the guest transmits to all the
+other slots' ports. Receivers drop what is not addressed to them, exactly as a card
+on a hub does.
 
-MAC addresses have to be allocated, since `macaddress` is a per-machine setting and
-cloned machines will collide.
+That shape was chosen over a switch process - including one living in the Manager -
+because of the questions a central service brings: who starts it, what happens to
+machines started by hand, what happens when it dies with machines still running.
+A machine started any way at all joins this by existing, and an instance that dies
+takes nothing with it but itself. Loopback UDP because it is the only transport
+available on all three platforms; bound and sent to 127.0.0.1 only, so this LAN
+cannot leave the host.
+
+Each machine still keeps its own SLiRP for outbound traffic, which is the "much less
+work and probably indistinguishable in use" option below. SLiRP answers ARP only for
+its own addresses, so it does not answer for another guest and cannot hijack a
+conversation between two of them.
+
+**What is verified.** Frames cross between two running instances, and each machine
+keeps only what is addressed to it (`tests/test_net_switch.c`). What has *not* been
+demonstrated is a guest operating system using it - a ping between two RISC OS
+machines, or ShareFS finding a share on the other - because that needs a guest with
+its TCP/IP stack configured, and it is the obvious next thing to check.
+
+The Access relay still binds its ports on one instance only. Now that there is a LAN
+for the machines to sit on, the relay belongs to it - bound once on behalf of every
+machine and bridged to the real network - which is strictly better than the ownership
+claim described above, and is not done yet.
+
+MAC addresses are derived from the slot (`network-nat.c`), but `macaddress` is still a
+per-machine setting and cloned machines that set it explicitly will collide.
 
 ## Decisions still open
 

@@ -578,6 +578,21 @@ rpcemu_add_test(test_machine_lock ${CMAKE_CURRENT_BINARY_DIR})
 # linked, so the test can bind the same loopback ports the unit does and check the
 # claim is really exclusive. Needs the socket libraries on Windows, which
 # rpcemu_core would otherwise have supplied.
+# The wire between machines on this host: what a machine keeps off it, and that
+# a frame put in one end comes out of the others. Compiles net_switch.c directly
+# rather than linking rpcemu_core, supplying its own network_hwaddr and inject
+# function - the unit needs neither an emulator nor a guest.
+add_executable(test_net_switch test_net_switch.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/net_switch.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/net_slot.c
+               test_log_stub.c)
+target_include_directories(test_net_switch PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+if(WIN32)
+    target_link_libraries(test_net_switch PRIVATE ws2_32)
+endif()
+rpcemu_add_test(test_net_switch)
+
 add_executable(test_net_slot test_net_slot.c)
 target_include_directories(test_net_slot PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src)
@@ -626,7 +641,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 35)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 36)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()
