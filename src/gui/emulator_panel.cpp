@@ -21,6 +21,7 @@
 #include "emulator_panel.h"
 
 #include <algorithm>
+#include <numeric>
 #include <cstdlib>
 #include <cstring>
 
@@ -551,19 +552,46 @@ void EmulatorPanel::OnPaint(wxPaintEvent &event)
 		int sy0 = (blit_dest.y - offset_y_) * image_height_ / scaled_y_;
 		int sy1 = ((blit_dest.y + blit_dest.height - offset_y_) * image_height_ + scaled_y_ - 1) / scaled_y_;
 
-		sx0 = std::max(0, sx0 - 1);
-		sy0 = std::max(0, sy0 - 1);
-		sx1 = std::min(image_width_, sx1 + 1);
-		sy1 = std::min(image_height_, sy1 + 1);
+		/*
+		 * ★ Snap the band out to where the scaling is exact.
+		 *
+		 * StretchBlit scales this band by (dst rows / src rows), and those are
+		 * two small integers. Rounding them independently gives a band whose
+		 * scale is not the scale the rest of the frame was drawn at: for a
+		 * 768-line guest shown at 900, a twelve-row band came out fifteen rows
+		 * tall, a ratio of 1.2500 against the frame's 1.1719. Everything inside
+		 * such a band lands about a pixel from where a full repaint puts it, so
+		 * whatever the pointer passed over appeared to shift as it was
+		 * repainted underneath it.
+		 *
+		 * source_row * scaled / image is exact whenever source_row is a
+		 * multiple of image / gcd(image, scaled), so snapping the edges out to
+		 * that lattice makes the band's scale exactly the frame's scale. The
+		 * band grows - by two to eight rows for most mode and window sizes,
+		 * and in the worst case to the whole axis, which is what this was
+		 * doing before the partial blit existed and so costs nothing that was
+		 * not already being paid.
+		 */
+		const int period_x = image_width_ / std::gcd(image_width_, scaled_x_);
+		const int period_y = image_height_ / std::gcd(image_height_, scaled_y_);
+
+		sx0 = (std::max(0, sx0 - 1) / period_x) * period_x;
+		sy0 = (std::max(0, sy0 - 1) / period_y) * period_y;
+		sx1 = std::min(image_width_,
+		    ((std::min(image_width_, sx1 + 1) + period_x - 1) / period_x) * period_x);
+		sy1 = std::min(image_height_,
+		    ((std::min(image_height_, sy1 + 1) + period_y - 1) / period_y) * period_y);
 
 		if (sx1 <= sx0 || sy1 <= sy0) {
 			return;
 		}
 
+		/* Exact, now the edges are on the lattice: no rounding is left to do,
+		   and the ceiling these used to carry would reintroduce the error. */
 		const int dx0 = offset_x_ + (sx0 * scaled_x_) / image_width_;
-		const int dx1 = offset_x_ + (sx1 * scaled_x_ + image_width_ - 1) / image_width_;
+		const int dx1 = offset_x_ + (sx1 * scaled_x_) / image_width_;
 		const int dy0 = offset_y_ + (sy0 * scaled_y_) / image_height_;
-		const int dy1 = offset_y_ + (sy1 * scaled_y_ + image_height_ - 1) / image_height_;
+		const int dy1 = offset_y_ + (sy1 * scaled_y_) / image_height_;
 
 		dc.StretchBlit(dx0, dy0, dx1 - dx0, dy1 - dy0, &memDC, sx0, sy0,
 		               sx1 - sx0, sy1 - sy0, wxCOPY, false);
