@@ -139,18 +139,6 @@ static void ioctl_null(void)
 {
 }
 
-int ioctl_open(void)
-{
-        atapi=&ioctl_atapi;
-        ioctl_discchanged=1;
-        ioctl_empty=0;
-        return 0;
-}
-
-void ioctl_close(void)
-{
-}
-
 static void ioctl_exit(void)
 {
 }

@@ -38,7 +38,6 @@ extern uint8_t keyboard_status_read(void);
 extern uint8_t keyboard_data_read(void);
 extern uint8_t mouse_status_read(void);
 extern uint8_t mouse_data_read(void);
-extern void keyboard_poll(void);
 extern void keyboard_key_press(const uint8_t *);
 extern void keyboard_key_release(const uint8_t *);
 extern const uint8_t *keyboard_map_key(uint32_t);

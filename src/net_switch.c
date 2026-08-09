@@ -46,12 +46,6 @@ static int switch_fd = -1;
 static int switch_slot = -1;
 
 int
-net_switch_is_joined(void)
-{
-	return switch_fd >= 0;
-}
-
-int
 net_switch_frame_is_for_us(const uint8_t *frame, int frame_len,
     const unsigned char *our_mac)
 {

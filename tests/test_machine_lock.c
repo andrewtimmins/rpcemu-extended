@@ -225,7 +225,11 @@ main(int argc, char *argv[])
 	 */
 	printf("\nis the recorded owner still running?\n");
 	{
-		long self = (long) getpid();
+#ifdef _WIN32
+		const long self = (long) GetCurrentProcessId();
+#else
+		const long self = (long) getpid();
+#endif
 
 		check("this process is alive", machine_lock_owner_alive(self) == 1);
 
