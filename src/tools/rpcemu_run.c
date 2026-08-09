@@ -46,22 +46,6 @@
 #endif
 
 #ifndef _WIN32
-static const char *
-default_socket_path(char *buf, size_t buflen)
-{
-	const char *datadir = getenv("RPCEMU_DATADIR");
-
-	if (datadir != NULL && datadir[0] != '\0') {
-		size_t n = strlen(datadir);
-		const char *sep = (n > 0 && datadir[n - 1] == '/') ? "" : "/";
-
-		snprintf(buf, buflen, "%s%shostcmd.sock", datadir, sep);
-	} else {
-		snprintf(buf, buflen, "hostcmd.sock");
-	}
-	return buf;
-}
-
 /*
  * ★ Which machine's socket, now that each machine has its own.
  *
@@ -94,10 +78,10 @@ find_machine_socket(char *buf, size_t buflen, const char *machine, const char *s
 		const size_t n = strlen(datadir);
 		const char *sep = (n > 0 && datadir[n - 1] == '/') ? "" : "/";
 
-		snprintf(machines, sizeof(machines), "%s%smachines", datadir, sep);
+		snprintf(machines, sizeof(machines), "%.400s%.1smachines", datadir, sep);
 
 		if (machine != NULL && machine[0] != '\0') {
-			snprintf(buf, buflen, "%s/%s/%s", machines, machine, sockname);
+			snprintf(buf, buflen, "%.400s/%.64s/%.40s", machines, machine, sockname);
 			return buf;
 		}
 	}
@@ -109,7 +93,7 @@ find_machine_socket(char *buf, size_t buflen, const char *machine, const char *s
 		const size_t n = strlen(datadir);
 		const char *sep = (n > 0 && datadir[n - 1] == '/') ? "" : "/";
 
-		snprintf(buf, buflen, "%s%s%s", datadir, sep, sockname);
+		snprintf(buf, buflen, "%.400s%.1s%.40s", datadir, sep, sockname);
 		return buf;
 	}
 
@@ -120,7 +104,7 @@ find_machine_socket(char *buf, size_t buflen, const char *machine, const char *s
 		if (ent->d_name[0] == '.') {
 			continue;
 		}
-		snprintf(candidate, sizeof(candidate), "%s/%s/%s", machines,
+		snprintf(candidate, sizeof(candidate), "%.400s/%.64s/%.40s", machines,
 		    ent->d_name, sockname);
 		if (stat(candidate, &st) == 0) {
 			snprintf(found[count], sizeof(found[0]), "%s", ent->d_name);
@@ -130,14 +114,14 @@ find_machine_socket(char *buf, size_t buflen, const char *machine, const char *s
 	closedir(dir);
 
 	if (count == 1) {
-		snprintf(buf, buflen, "%s/%s/%s", machines, found[0], sockname);
+		snprintf(buf, buflen, "%.400s/%.64s/%.40s", machines, found[0], sockname);
 		return buf;
 	}
 	if (count == 0) {
 		const size_t n = strlen(datadir);
 		const char *sep = (n > 0 && datadir[n - 1] == '/') ? "" : "/";
 
-		snprintf(buf, buflen, "%s%s%s", datadir, sep, sockname);
+		snprintf(buf, buflen, "%.400s%.1s%.40s", datadir, sep, sockname);
 		return buf;
 	}
 

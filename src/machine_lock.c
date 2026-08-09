@@ -102,7 +102,7 @@ int
 machine_lock_acquire(const char *machine_dir, int vnc_port)
 {
 	char path[1024];
-	char text[700];
+	char text[1600];
 	DWORD written = 0;
 
 	lock_path(path, sizeof(path), machine_dir);
@@ -142,7 +142,7 @@ machine_lock_acquire(const char *machine_dir, int vnc_port)
 static void
 rewrite_lock_file_win32(void)
 {
-	char text[700];
+	char text[1600];
 	DWORD written = 0;
 
 	if (lock_handle == INVALID_HANDLE_VALUE) {
@@ -198,7 +198,7 @@ int
 machine_lock_acquire(const char *machine_dir, int vnc_port)
 {
 	char path[1024];
-	char text[700];
+	char text[1600];
 	int fd;
 
 	lock_path(path, sizeof(path), machine_dir);
@@ -236,7 +236,7 @@ machine_lock_acquire(const char *machine_dir, int vnc_port)
 static void
 rewrite_lock_file_posix(void)
 {
-	char text[700];
+	char text[1600];
 
 	if (lock_fd < 0) {
 		return;
@@ -329,7 +329,7 @@ machine_lock_read_field(const char *machine_dir, const char *key,
     char *endpoint_out, size_t endpoint_out_size)
 {
 	char path[1024];
-	char line[700];	/* wide enough for "ipc=" plus a full AF_UNIX path */
+	char line[1600];	/* wide enough for a key plus a full AF_UNIX path */
 	FILE *f;
 	int found = 0;
 

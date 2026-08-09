@@ -71,25 +71,6 @@ void rpclog(const char *format, ...)
 }
 
 #ifndef _WIN32
-/**
- * Where the emulator puts its debugger socket by default.
- */
-static const char *
-default_socket_path(char *buf, size_t buflen)
-{
-	const char *datadir = getenv("RPCEMU_DATADIR");
-
-	if (datadir != NULL && datadir[0] != '\0') {
-		size_t n = strlen(datadir);
-		const char *sep = (n > 0 && datadir[n - 1] == '/') ? "" : "/";
-
-		snprintf(buf, buflen, "%s%srpcemu-debug.sock", datadir, sep);
-	} else {
-		snprintf(buf, buflen, "rpcemu-debug.sock");
-	}
-	return buf;
-}
-
 static int
 connect_unix(const char *path)
 {
@@ -153,19 +134,19 @@ find_machine_socket(char *buf, size_t buflen, const char *machine, const char *s
 		const size_t n = strlen(datadir);
 		const char *sep = (n > 0 && datadir[n - 1] == '/') ? "" : "/";
 
-		snprintf(machines, sizeof(machines), "%s%smachines", datadir, sep);
+		snprintf(machines, sizeof(machines), "%.400s%.1smachines", datadir, sep);
 
 		if (machine != NULL && machine[0] != '\0') {
 			char dir[512];
 			char recorded[700];
 
-			snprintf(dir, sizeof(dir), "%s/%s/", machines, machine);
+			snprintf(dir, sizeof(dir), "%.400s/%.64s/", machines, machine);
 			if (machine_lock_read_debug_endpoint(dir, recorded,
 			        sizeof(recorded)) && recorded[0] != '\0') {
-				snprintf(buf, buflen, "%s", recorded);
+				snprintf(buf, buflen, "%.500s", recorded);
 				return buf;
 			}
-			snprintf(buf, buflen, "%s/%s/%s", machines, machine, sockname);
+			snprintf(buf, buflen, "%.400s/%.64s/%.40s", machines, machine, sockname);
 			return buf;
 		}
 	}
@@ -177,7 +158,7 @@ find_machine_socket(char *buf, size_t buflen, const char *machine, const char *s
 		const size_t n = strlen(datadir);
 		const char *sep = (n > 0 && datadir[n - 1] == '/') ? "" : "/";
 
-		snprintf(buf, buflen, "%s%s%s", datadir, sep, sockname);
+		snprintf(buf, buflen, "%.400s%.1s%.40s", datadir, sep, sockname);
 		return buf;
 	}
 
@@ -199,37 +180,37 @@ find_machine_socket(char *buf, size_t buflen, const char *machine, const char *s
 			char dir[512];
 			char recorded[700];
 
-			snprintf(dir, sizeof(dir), "%s/%s/", machines, ent->d_name);
+			snprintf(dir, sizeof(dir), "%.400s/%.64s/", machines, ent->d_name);
 			if (machine_lock_read_debug_endpoint(dir, recorded,
 			        sizeof(recorded)) && recorded[0] == '/' &&
 			    stat(recorded, &st) == 0) {
 				snprintf(found[count], sizeof(found[0]), "%s", ent->d_name);
-				snprintf(found_path[count], sizeof(found_path[0]), "%s",
+				snprintf(found_path[count], sizeof(found_path[0]), "%.690s",
 				    recorded);
 				count++;
 				continue;
 			}
 		}
 
-		snprintf(candidate, sizeof(candidate), "%s/%s/%s", machines,
+		snprintf(candidate, sizeof(candidate), "%.400s/%.64s/%.40s", machines,
 		    ent->d_name, sockname);
 		if (stat(candidate, &st) == 0) {
 			snprintf(found[count], sizeof(found[0]), "%s", ent->d_name);
-			snprintf(found_path[count], sizeof(found_path[0]), "%s", candidate);
+			snprintf(found_path[count], sizeof(found_path[0]), "%.690s", candidate);
 			count++;
 		}
 	}
 	closedir(dir);
 
 	if (count == 1) {
-		snprintf(buf, buflen, "%s", found_path[0]);
+		snprintf(buf, buflen, "%.500s", found_path[0]);
 		return buf;
 	}
 	if (count == 0) {
 		const size_t n = strlen(datadir);
 		const char *sep = (n > 0 && datadir[n - 1] == '/') ? "" : "/";
 
-		snprintf(buf, buflen, "%s%s%s", datadir, sep, sockname);
+		snprintf(buf, buflen, "%.400s%.1s%.40s", datadir, sep, sockname);
 		return buf;
 	}
 
