@@ -61,6 +61,7 @@ private:
 	void OnListActivated(wxListEvent &event);
 
 	EmulatorHost *emulator_host_ = nullptr;
+	wxStaticText *machine_note_ = nullptr;
 	wxListCtrl *rules_list_ = nullptr;
 	NatEditDialog *nat_edit_dialog_ = nullptr;
 };

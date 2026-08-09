@@ -168,8 +168,18 @@ void RemoteEmulatorPanel::HandleIpcEvent(const IpcEvent &event)
 		}
 		break;
 	case IpcEventType::Error:
+		if (on_error_) {
+			const wxString text = wxString::FromUTF8(event.path);
+
+			CallAfter([this, text] {
+				if (on_error_) {
+					on_error_(text);
+				}
+			});
+		}
+		break;
 	case IpcEventType::TitleChanged:
-		/* Nothing shown for these yet in the Manager - see the class
+		/* Nothing shown for this yet in the Manager - see the class
 		   comment for what is deferred. */
 		break;
 	}

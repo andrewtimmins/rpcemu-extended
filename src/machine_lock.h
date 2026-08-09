@@ -129,6 +129,22 @@ extern int machine_lock_read_ipc_endpoint(const char *machine_dir, char *endpoin
  */
 extern int machine_lock_owner_alive(long pid);
 
+/**
+ * Record where this machine's debugger is listening, so a tool can find it.
+ *
+ * A machine may be configured with any socket path, so nothing can work one out
+ * from the outside; this is the machine saying where it actually bound.
+ */
+extern void machine_lock_set_debug_endpoint(const char *debug_endpoint);
+
+/**
+ * The running machine's debugger endpoint, if it recorded one.
+ *
+ * @return 1 if an endpoint was read, 0 otherwise
+ */
+extern int machine_lock_read_debug_endpoint(const char *machine_dir,
+                                            char *endpoint_out, size_t endpoint_out_size);
+
 #ifdef __cplusplus
 }
 #endif

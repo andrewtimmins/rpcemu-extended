@@ -2,7 +2,11 @@
 # rpcemu-run below. That one drives RISC OS's command line; this one drives the
 # processor underneath it, which is a different socket speaking a different
 # protocol. Like rpcemu-run it does not link the emulator core.
-add_executable(rpcemu-debug rpcemu_debug.c)
+# machine_lock.c comes along so the client can read where a running machine
+# recorded its debugger socket - the only way to find one whose configuration
+# named a path of its own.
+add_executable(rpcemu-debug rpcemu_debug.c ${CMAKE_CURRENT_SOURCE_DIR}/../machine_lock.c)
+target_include_directories(rpcemu-debug PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set_target_properties(rpcemu-debug PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 if(WIN32)

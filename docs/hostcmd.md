@@ -25,7 +25,7 @@ host tool (rpcemu-run / your IDE / Claude Code)
    ./build.sh
    ```
 2. Start a machine. HostCmd is **on by default**; the emulator creates a socket
-   at `<data-dir>/hostcmd.sock` and the `RPCEmuSupport` module auto-loads at boot.
+   at `<data-dir>/machines/<machine>/hostcmd.sock` and the `RPCEmuSupport` module auto-loads at boot.
 3. From the host:
    ```bash
    # one-shot: run a command, print its output, exit with the guest return code
@@ -71,17 +71,25 @@ line beats both. See [vnc.md](vnc.md#which-file-wins) for the layering in full.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `hostcmd_enabled` | `1` | Enable the HostCmd socket. |
-| `hostcmd_socket` | *(empty)* | Empty ⇒ `<data-dir>/hostcmd.sock` (AF_UNIX). A path ⇒ that AF_UNIX path. A bare port number ⇒ TCP on `127.0.0.1:<port>`. |
+| `hostcmd_socket` | *(empty)* | Empty ⇒ `<data-dir>/machines/<machine>/hostcmd.sock` (AF_UNIX). A path ⇒ that AF_UNIX path. A bare port number ⇒ TCP on `127.0.0.1:<port>`. |
+
+The socket is per machine, not per data directory. It used to be one path shared
+by every machine in the data directory, so with two running, `rpcemu-run` reached
+whichever had bound it last - commands going to a machine nobody had named.
+
+`rpcemu-run` finds it: with one machine running there is nothing to choose, and
+with several it says which are there and stops rather than guessing. `--machine
+<name>` names one outright.
 
 The host client picks the socket from `--socket PATH`, `--tcp host:port`, or the
-default `$RPCEMU_DATADIR/hostcmd.sock`.
+default, which is now under the machine's own directory.
 
 ## Wire protocol
 
 For anyone integrating without the CLI:
 
 - **Client → server:** one command line terminated by `\n` (RISC OS command
-  lines can't contain newlines). e.g. `printf 'Cat\n' | nc -U <data-dir>/hostcmd.sock`.
+  lines can't contain newlines). e.g. `printf 'Cat\n' | nc -U <data-dir>/machines/<machine>/hostcmd.sock`.
 - **Server → client:** length-prefixed frames `[type:1][len:uint32 BE][payload]`:
   - `O` — output chunk (streamed live).
   - `D` — command done; payload is the 4-byte big-endian return code (the

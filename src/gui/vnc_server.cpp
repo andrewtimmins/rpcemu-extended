@@ -91,7 +91,31 @@ void VncServer::copyFrameLines(const uint32_t *buffer, int width, int start_y, i
 	}
 }
 
+/*
+ * ★ The next free port, rather than nothing at all.
+ *
+ * Every machine's configuration carries the same default port, so the second
+ * machine to start could not bind it and simply had no VNC - reported in the
+ * log and nowhere else, which is a poor way to find out that the thing you were
+ * about to connect to is not there. It moves up instead, says so, and the port
+ * it actually got is what goes into the machine's lock file for anything
+ * looking for it.
+ */
 bool VncServer::start(int port, const std::string &password)
+{
+	for (int attempt = 0; attempt < kPortAttempts; attempt++) {
+		if (startOnPort(port + attempt, password)) {
+			if (attempt > 0) {
+				rpclog("VNC: port %d was in use, listening on %d instead\n",
+				    port, port + attempt);
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
+bool VncServer::startOnPort(int port, const std::string &password)
 {
 	bool restart_needed;
 

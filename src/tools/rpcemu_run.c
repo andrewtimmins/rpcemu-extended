@@ -29,6 +29,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <dirent.h>
+#include <sys/stat.h>
+#endif
 
 #include "vdu_filter.h"
 #include "../socket-compat.h"
@@ -56,6 +60,92 @@ default_socket_path(char *buf, size_t buflen)
 		snprintf(buf, buflen, "hostcmd.sock");
 	}
 	return buf;
+}
+
+/*
+ * ★ Which machine's socket, now that each machine has its own.
+ *
+ * The socket used to be one path under the data directory, shared by every
+ * machine in it; whichever started last owned it, so with two machines running
+ * this tool reached an arbitrary one. Each machine now has its own under its own
+ * directory, which fixes that and leaves this with a question it did not have
+ * before: which one.
+ *
+ * With one machine running there is no question, and the common case keeps
+ * working with no arguments. With several, guessing is precisely the behaviour
+ * being fixed, so it says which are there and stops. --machine names one
+ * outright.
+ */
+static const char *
+find_machine_socket(char *buf, size_t buflen, const char *machine, const char *sockname)
+{
+	const char *datadir = getenv("RPCEMU_DATADIR");
+	char machines[512];
+	DIR *dir;
+	struct dirent *ent;
+	char found[8][256];
+	int count = 0;
+	int i;
+
+	if (datadir == NULL || datadir[0] == '\0') {
+		datadir = ".";
+	}
+	{
+		const size_t n = strlen(datadir);
+		const char *sep = (n > 0 && datadir[n - 1] == '/') ? "" : "/";
+
+		snprintf(machines, sizeof(machines), "%s%smachines", datadir, sep);
+
+		if (machine != NULL && machine[0] != '\0') {
+			snprintf(buf, buflen, "%s/%s/%s", machines, machine, sockname);
+			return buf;
+		}
+	}
+
+	dir = opendir(machines);
+	if (dir == NULL) {
+		/* No machines directory: fall back to where the socket used to be,
+		   so an explicitly configured path or an older layout still works. */
+		const size_t n = strlen(datadir);
+		const char *sep = (n > 0 && datadir[n - 1] == '/') ? "" : "/";
+
+		snprintf(buf, buflen, "%s%s%s", datadir, sep, sockname);
+		return buf;
+	}
+
+	while ((ent = readdir(dir)) != NULL && count < 8) {
+		char candidate[512];
+		struct stat st;
+
+		if (ent->d_name[0] == '.') {
+			continue;
+		}
+		snprintf(candidate, sizeof(candidate), "%s/%s/%s", machines,
+		    ent->d_name, sockname);
+		if (stat(candidate, &st) == 0) {
+			snprintf(found[count], sizeof(found[0]), "%s", ent->d_name);
+			count++;
+		}
+	}
+	closedir(dir);
+
+	if (count == 1) {
+		snprintf(buf, buflen, "%s/%s/%s", machines, found[0], sockname);
+		return buf;
+	}
+	if (count == 0) {
+		const size_t n = strlen(datadir);
+		const char *sep = (n > 0 && datadir[n - 1] == '/') ? "" : "/";
+
+		snprintf(buf, buflen, "%s%s%s", datadir, sep, sockname);
+		return buf;
+	}
+
+	fprintf(stderr, "rpcemu-run: %d machines are running - say which one:\n", count);
+	for (i = 0; i < count; i++) {
+		fprintf(stderr, "    --machine %s\n", found[i]);
+	}
+	return NULL;
 }
 #endif /* !_WIN32 */
 
@@ -326,6 +416,7 @@ main(int argc, char **argv)
 	const char *base = strrchr(argv[0], '/');
 	int interactive;
 	const char *sock_path = NULL;
+	const char *machine = NULL;
 	const char *tcp = NULL;
 	int i;
 	int fd;
@@ -355,6 +446,8 @@ main(int argc, char **argv)
 	for (i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--socket") == 0 && i + 1 < argc) {
 			sock_path = argv[++i];
+		} else if (strcmp(argv[i], "--machine") == 0 && i + 1 < argc) {
+			machine = argv[++i];
 		} else if (strcmp(argv[i], "--tcp") == 0 && i + 1 < argc) {
 			tcp = argv[++i];
 		} else if (strcmp(argv[i], "--raw") == 0) {
@@ -391,8 +484,15 @@ main(int argc, char **argv)
 #else
 	} else {
 		char pathbuf[512];
-		const char *path = sock_path ? sock_path
-		                             : default_socket_path(pathbuf, sizeof(pathbuf));
+		const char *path = sock_path;
+
+		if (path == NULL) {
+			path = find_machine_socket(pathbuf, sizeof(pathbuf), machine,
+			    "hostcmd.sock");
+			if (path == NULL) {
+				return 2;
+			}
+		}
 
 		fd = connect_unix(path);
 	}

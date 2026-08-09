@@ -89,6 +89,11 @@ public:
 	using StateCallback = std::function<void(const wxString &)>;
 	void SetStateCallback(StateCallback callback) { on_state_ = std::move(callback); }
 
+	/* Called with an error the machine could not show itself, having no
+	   window. Runs on the GUI thread. */
+	using ErrorCallback = std::function<void(const wxString &)>;
+	void SetErrorCallback(ErrorCallback callback) { on_error_ = std::move(callback); }
+
 private:
 	void OnPaint(wxPaintEvent &event);
 	void OnSize(wxSizeEvent &event);
@@ -115,6 +120,7 @@ private:
 
 	GoneCallback on_gone_;
 	StateCallback on_state_;
+	ErrorCallback on_error_;
 
 	bool live_ = false;
 	bool active_ = false;

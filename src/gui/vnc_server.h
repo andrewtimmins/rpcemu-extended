@@ -62,6 +62,9 @@ public:
 	void stop();
 	bool isRunning() const { return running_; }
 	int getPort() const { return running_ ? listen_port_ : 0; }
+
+	/* Bind one specific port. start() calls this for each candidate. */
+	bool startOnPort(int port, const std::string &password);
 	int getClientCount() const { return client_count_.load(); }
 
 	void updateFramebuffer(const uint32_t *buffer, int width, int height, int yl, int yh);
@@ -144,6 +147,10 @@ private:
 	std::mutex mutex_;
 	int current_width_ = 640;
 	int current_height_ = 480;
+	/* How many consecutive ports to try before giving up. Enough for every
+	   machine that can run at once (NET_SLOT_MAX) with room to spare. */
+	static constexpr int kPortAttempts = 16;
+
 	int listen_port_ = 5900;
 	std::atomic<int> client_count_{0};
 	std::atomic<bool> force_full_update_{false};

@@ -609,6 +609,14 @@ void ManagerFrame::AttachPanelFor(const wxString &name, const wxString &shared_f
 
 	/* Only the machine being shown drives the menus; a report from one in the
 	   background would set this window's tick-boxes from the wrong machine. */
+	/* A machine with no window cannot show its own errors, so it sends them
+	   here. Named, because the user is looking at a window that lists several
+	   machines and an unattributed error says nothing about which. */
+	panel->SetErrorCallback([this, name](const wxString &message) {
+		wxMessageBox(name + ": " + message, "RPCEmu Extended Manager",
+		    wxOK | wxICON_WARNING, this);
+	});
+
 	panel->SetStateCallback([this, name](const wxString &report) {
 		if (name == active_machine_) {
 			ApplyStateReport(report);

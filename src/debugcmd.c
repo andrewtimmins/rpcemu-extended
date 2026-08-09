@@ -50,6 +50,7 @@
 #include "cp15.h"
 #include "hostclipboard.h"
 #include "mem.h"
+#include "machine_lock.h"
 #include "rpcemu.h"
 #include "savestate.h"
 
@@ -1417,13 +1418,21 @@ debugcmd_init(void)
 				rpclog("DebugCmd: '%s' is not there any more, using the "
 				       "default socket instead\n", path);
 				snprintf(path, sizeof(path), "%srpcemu-debug.sock",
-				    rpcemu_get_datadir());
+				    rpcemu_get_machine_datadir());
 			}
 		} else {
+			/* The machine's own directory - see the same change in
+			   hostcmd.c. A debugger socket shared between machines
+			   attaches to whichever bound it last. */
 			snprintf(path, sizeof(path), "%srpcemu-debug.sock",
-			    rpcemu_get_datadir());
+			    rpcemu_get_machine_datadir());
 		}
 		dc.listen_fd = dc_listen_unix(path);
+		if (dc.listen_fd >= 0) {
+			/* Say where, so rpcemu-debug can find a machine whose
+			   configuration named a path of its own. */
+			machine_lock_set_debug_endpoint(path);
+		}
 	} else {
 		int port = atoi(config.debug_socket);
 

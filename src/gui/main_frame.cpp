@@ -2325,6 +2325,30 @@ void MainFrame::PostFatal(const std::string &message)
 
 void MainFrame::ShowError(const std::string &message)
 {
+	/*
+	 * ★ A managed machine has no window to put this over.
+	 *
+	 * wxMessageBox on a frame that is never shown is modal to something the
+	 * user cannot see: on some platforms it appears with no owner, on others
+	 * behind the Manager, and either way the machine stops until somebody
+	 * finds it. A NAT rule that could not bind its host port - the ordinary
+	 * way two machines collide - reported itself exactly there, so the
+	 * forwarding silently did not work and the explanation was invisible.
+	 *
+	 * Sent to the Manager instead, which has the window.
+	 */
+	if (managed_mode_ && ipc_server_) {
+		IpcEvent event;
+
+		/* Unprefixed: the Manager knows which machine this arrived from
+		   and says so, which it can do and this cannot. */
+		event.type = IpcEventType::Error;
+		strncpy(event.path, message.c_str(), sizeof(event.path) - 1);
+		event.path[sizeof(event.path) - 1] = '\0';
+		ipc_server_->SendEvent(event);
+		return;
+	}
+
 	wxMessageBox(wxString::FromUTF8(message), "RPCEmu Extended Error", wxOK | wxICON_WARNING, this);
 }
 

@@ -549,8 +549,18 @@ hostcmd_init(void)
 			strncpy(path, config.hostcmd_socket, sizeof(path) - 1);
 			path[sizeof(path) - 1] = '\0';
 		} else {
+			/*
+			 * ★ The machine's own directory, not the data directory.
+			 *
+			 * One path under the data directory is one path for every
+			 * machine in it, and the last one to start wins. Two machines
+			 * running meant rpcemu-run reached whichever had bound it -
+			 * commands going to a machine the user did not name, silently.
+			 * The machine directory is where manager.sock already lives and
+			 * where a per-machine channel belongs.
+			 */
 			snprintf(path, sizeof(path), "%shostcmd.sock",
-			    rpcemu_get_datadir());
+			    rpcemu_get_machine_datadir());
 		}
 		hc.listen_fd = hc_listen_unix(path);
 	} else {

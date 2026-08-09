@@ -97,7 +97,10 @@ bool VncAppStart(bool force)
 		rpclog("vnc_app: could not listen on port %d\n", app.vnc_port);
 		return false;
 	}
-	g_port = app.vnc_port;
+	/* What it actually got, which may not be what was asked for - see
+	   VncServer::start(). Recording the requested port would send anyone
+	   reading the lock file to a port nothing is listening on. */
+	g_port = server.getPort();
 
 	/* Now it is real: record it so anything reading the machine's lock file is told
 	   a port that is actually listening. */

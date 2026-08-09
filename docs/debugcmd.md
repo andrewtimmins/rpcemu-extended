@@ -42,7 +42,13 @@ Per-machine `.cfg` keys (under `[General]`):
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `debug_enabled` | `1` | Enable the DebugCmd socket. |
-| `debug_socket` | *(empty)* | Empty ⇒ `<data-dir>/rpcemu-debug.sock` (AF_UNIX). A path ⇒ that AF_UNIX path. A bare port number ⇒ TCP on `127.0.0.1:<port>`. |
+| `debug_socket` | *(empty)* | Empty ⇒ `<data-dir>/machines/<machine>/rpcemu-debug.sock` (AF_UNIX). A path ⇒ that AF_UNIX path. A bare port number ⇒ TCP on `127.0.0.1:<port>`. |
+
+Per machine, for the same reason as HostCmd: one socket for the whole data
+directory meant attaching to whichever machine bound it last. A running machine
+also records the socket it actually bound in its `running.lock`, so `rpcemu-debug`
+can find one whose configuration named a path of its own. `--machine <name>`
+selects between several.
 
 **On Windows** there is no useful AF_UNIX, so the transport is always TCP on the
 loopback. An empty `debug_socket` (or a path, which cannot be honoured) means

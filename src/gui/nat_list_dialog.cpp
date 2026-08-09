@@ -20,6 +20,11 @@
 
 #include "nat_list_dialog.h"
 
+extern "C" {
+#include "net_slot.h"
+#include "rpcemu.h"
+}
+
 #include "nat_edit_dialog.h"
 
 enum {
@@ -29,7 +34,11 @@ enum {
 };
 
 NatListDialog::NatListDialog(wxWindow *parent, EmulatorHost *emulator_host)
-	: wxDialog(parent, wxID_ANY, "Configure NAT Port Forwarding Rules", wxDefaultPosition, wxSize(560, 360),
+	: wxDialog(parent, wxID_ANY,
+	           wxString::Format("NAT Port Forwarding - %s",
+	               config.name[0] != '\0' ? wxString::FromUTF8(config.name)
+	                                      : wxString("this machine")),
+	           wxDefaultPosition, wxSize(560, 360),
 	           wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER | wxCLOSE_BOX)
 	, emulator_host_(emulator_host)
 {
@@ -41,6 +50,41 @@ NatListDialog::NatListDialog(wxWindow *parent, EmulatorHost *emulator_host)
 
 void NatListDialog::BuildUi()
 {
+	/*
+	 * ★ Which machine these rules belong to, and where they point.
+	 *
+	 * The rules are stored per machine and each machine forwards to its own
+	 * guest address, so a dialogue that said neither left the user to
+	 * remember which machine they had opened it from - and, with several
+	 * running, to guess which guest a rule would reach. The address is worth
+	 * stating outright because it is not fixed: it follows the slot this
+	 * machine claimed, so it depends on what else was already running.
+	 */
+	{
+		const int slot = net_slot_get();
+		wxString where;
+
+		if (slot >= 0) {
+			where = wxString::Format(
+			    "Rules for %s. Traffic arriving on the host port is sent to "
+			    "this machine at 10.10.10.%d.",
+			    config.name[0] != '\0' ? wxString::FromUTF8(config.name)
+			                           : wxString("this machine"),
+			    10 + slot);
+		} else {
+			where = wxString::Format(
+			    "Rules for %s. Each machine forwards to its own address, "
+			    "which is decided when it starts.",
+			    config.name[0] != '\0' ? wxString::FromUTF8(config.name)
+			                           : wxString("this machine"));
+		}
+
+		auto *note = new wxStaticText(this, wxID_ANY, where);
+
+		note->Wrap(520);
+		machine_note_ = note;
+	}
+
 	rules_list_ = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
 	                             wxLC_REPORT | wxLC_SINGLE_SEL | wxBORDER_SUNKEN);
 	rules_list_->AppendColumn("Protocol", wxLIST_FORMAT_LEFT, 90);
@@ -63,6 +107,7 @@ void NatListDialog::BuildUi()
 	button_row->Add(close_btn, 0);
 
 	auto *main = new wxBoxSizer(wxVERTICAL);
+	main->Add(machine_note_, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 10);
 	main->Add(rules_list_, 1, wxEXPAND | wxALL, 10);
 	main->Add(button_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
 	SetSizer(main);

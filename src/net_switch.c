@@ -22,6 +22,7 @@
 
 #include "socket-compat.h"
 
+#include "broadcast_relay.h"
 #include "net_slot.h"
 #include "net_switch.h"
 #include "network.h"
@@ -43,6 +44,12 @@
 
 static int switch_fd = -1;
 static int switch_slot = -1;
+
+int
+net_switch_is_joined(void)
+{
+	return switch_fd >= 0;
+}
 
 int
 net_switch_frame_is_for_us(const uint8_t *frame, int frame_len,
@@ -171,6 +178,25 @@ net_switch_poll(void)
 		if (len <= 0) {
 			break;
 		}
+		/*
+		 * ★ Offered to the Access relay before it is filtered.
+		 *
+		 * The relay bridges Access+ to the real network and only one instance
+		 * can hold its ports, so on every other machine those broadcasts had
+		 * nowhere to go: ShareFS between two emulated machines worked over
+		 * this wire, and neither of them could see a real RISC OS machine
+		 * unless it happened to be the one that owned the relay.
+		 *
+		 * The instance that does own it now relays what arrives from the
+		 * others as well, so the whole wire reaches the real network through
+		 * whichever machine holds the ports. Offered before the address
+		 * filter because the relay's business is other machines' traffic, not
+		 * ours.
+		 *
+		 * It cannot loop: what arrives here is never sent back to the wire.
+		 */
+		(void) broadcast_relay_tx(frame, len);
+
 		if (!net_switch_frame_is_for_us(frame, len, network_hwaddr)) {
 			continue;
 		}

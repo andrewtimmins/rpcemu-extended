@@ -103,6 +103,13 @@ extern void net_switch_tx(const uint8_t *frame, int frame_len);
 extern int net_switch_poll(void);
 
 /**
+ * Whether this machine is on the wire at all.
+ *
+ * @return 1 if it joined, 0 if it did not
+ */
+extern int net_switch_is_joined(void);
+
+/**
  * Whether this frame is for us: our own address, or a broadcast/multicast.
  *
  * Exposed for the tests; the poll uses it.

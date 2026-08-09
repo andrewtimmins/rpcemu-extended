@@ -48,6 +48,17 @@ check(const char *what, int ok)
    supplies its own so the switch can be exercised without one. */
 unsigned char network_hwaddr[6] = { 0x06, 0x02, 0x03, 0x04, 0x05, 0x06 };
 
+/* The switch offers frames to the Access relay on their way past; the relay is
+   the emulator's, not this unit's, so it is stubbed out. Returning 0 is "not
+   taken", which is what a machine without the relay would say. */
+int
+broadcast_relay_tx(const uint8_t *pkt, int pkt_len)
+{
+	(void) pkt;
+	(void) pkt_len;
+	return 0;
+}
+
 static unsigned char injected[1522];
 static int injected_len;
 static int injected_count;

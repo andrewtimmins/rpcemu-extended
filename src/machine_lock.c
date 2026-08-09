@@ -40,6 +40,7 @@ static int lock_vnc_port;
    when this process is not running as a managed machine, i.e. every case
    except the manager's own child processes - see machine_ipc.h. */
 static char lock_ipc_endpoint[512];
+static char lock_debug_endpoint[700];
 
 static void
 set_str_field(char *out, size_t size, const char *value)
@@ -58,7 +59,19 @@ format_lock_text(char *out, size_t size, long pid, int vnc_port, const char *ipc
 	int n = snprintf(out, size, "pid=%ld\nvnc_port=%d\n", pid, vnc_port);
 
 	if (ipc_endpoint != NULL && ipc_endpoint[0] != '\0' && n > 0 && (size_t) n < size) {
-		snprintf(out + n, size - (size_t) n, "ipc=%s\n", ipc_endpoint);
+		n += snprintf(out + n, size - (size_t) n, "ipc=%s\n", ipc_endpoint);
+	}
+
+	/*
+	 * ★ Where the debugger is actually listening.
+	 *
+	 * A machine may be given any socket path it likes, so a tool cannot work
+	 * one out - rpcemu-debug looked for the default name and found nothing on
+	 * a machine whose configuration named its own. The machine knows, and this
+	 * file is where it already tells everything else what it is doing.
+	 */
+	if (lock_debug_endpoint[0] != '\0' && n > 0 && (size_t) n < size) {
+		snprintf(out + n, size - (size_t) n, "dbg=%s\n", lock_debug_endpoint);
 	}
 }
 
@@ -158,6 +171,13 @@ machine_lock_set_ipc_endpoint(const char *ipc_endpoint)
 }
 
 void
+machine_lock_set_debug_endpoint(const char *debug_endpoint)
+{
+	set_str_field(lock_debug_endpoint, sizeof(lock_debug_endpoint), debug_endpoint);
+	rewrite_lock_file_win32();
+}
+
+void
 machine_lock_release(void)
 {
 	if (lock_handle != INVALID_HANDLE_VALUE) {
@@ -245,6 +265,13 @@ machine_lock_set_ipc_endpoint(const char *ipc_endpoint)
 }
 
 void
+machine_lock_set_debug_endpoint(const char *debug_endpoint)
+{
+	set_str_field(lock_debug_endpoint, sizeof(lock_debug_endpoint), debug_endpoint);
+	rewrite_lock_file_posix();
+}
+
+void
 machine_lock_release(void)
 {
 	if (lock_fd >= 0) {
@@ -296,8 +323,10 @@ machine_lock_read_owner(const char *machine_dir, long *pid, int *vnc_port)
 	return found;
 }
 
-int
-machine_lock_read_ipc_endpoint(const char *machine_dir, char *endpoint_out, size_t endpoint_out_size)
+/* One reader for both endpoints: the file is the same and only the key differs. */
+static int
+machine_lock_read_field(const char *machine_dir, const char *key,
+    char *endpoint_out, size_t endpoint_out_size)
 {
 	char path[1024];
 	char line[700];	/* wide enough for "ipc=" plus a full AF_UNIX path */
@@ -317,9 +346,9 @@ machine_lock_read_ipc_endpoint(const char *machine_dir, char *endpoint_out, size
 		return 0;
 	}
 	while (fgets(line, sizeof(line), f) != NULL) {
-		const size_t prefix_len = 4;	/* strlen("ipc=") */
+		const size_t prefix_len = strlen(key);
 
-		if (strncmp(line, "ipc=", prefix_len) == 0) {
+		if (strncmp(line, key, prefix_len) == 0) {
 			size_t len = strlen(line + prefix_len);
 
 			while (len > 0 && (line[prefix_len + len - 1] == '\n' ||
@@ -375,4 +404,20 @@ machine_lock_owner_alive(long pid)
 	}
 	return errno == EPERM;
 #endif
+}
+
+int
+machine_lock_read_ipc_endpoint(const char *machine_dir, char *endpoint_out,
+    size_t endpoint_out_size)
+{
+	return machine_lock_read_field(machine_dir, "ipc=", endpoint_out,
+	    endpoint_out_size);
+}
+
+int
+machine_lock_read_debug_endpoint(const char *machine_dir, char *endpoint_out,
+    size_t endpoint_out_size)
+{
+	return machine_lock_read_field(machine_dir, "dbg=", endpoint_out,
+	    endpoint_out_size);
 }
