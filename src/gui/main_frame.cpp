@@ -828,6 +828,23 @@ void MainFrame::EnterFullScreen()
 	ShowFullScreen(true, wxFULLSCREEN_ALL);
 	full_screen_ = true;
 
+	/*
+	 * ★ Ask for the layout again, having changed what the frame contains.
+	 *
+	 * Taking the status bar away and hiding the bars changes how much room the
+	 * panel should have, and ShowFullScreen() changes it again. GTK and Windows
+	 * recompute that themselves; wxOSX does not always, and the panel is then
+	 * left at the height it had before, which shows as a strip along the bottom
+	 * of the screen exactly as deep as the status bar that used to be there -
+	 * the same symptom the removal above was meant to cure, arriving by a
+	 * different route.
+	 *
+	 * Layout() first for the sizer, then SendSizeEvent() so the panel recomputes
+	 * its own scaling from the size it has actually been given.
+	 */
+	Layout();
+	SendSizeEvent();
+
 	/* A static guest desktop sends no fresh video update after the transition,
 	   so force a full repaint once the resize has been processed - otherwise the
 	   panel can be left blank until something on the guest happens to redraw. */
