@@ -30,6 +30,7 @@
 #include <string>
 
 #ifdef __WXMSW__
+#include <winsock2.h>	/* before windows.h, or the old winsock.h clashes */
 #include <windows.h>
 #endif
 
@@ -801,6 +802,21 @@ bool RpcemuApp::OnInit()
 			 * do. A scripted or remote launch that wants exactly one machine
 			 * and nothing else still has --machine for that.
 			 */
+#ifdef __WXMSW__
+			/* This process stops short of rpcemu_prestart(), which is what
+			   starts Winsock, and it still opens a socket to every machine it
+			   shows. Without this those connections failed with
+			   WSANOTINITIALISED and no machine ever appeared. */
+			{
+				WSADATA wsadata;
+
+				if (WSAStartup(MAKEWORD(2, 2), &wsadata) != 0) {
+					wxMessageBox("Could not start Windows Sockets.",
+					    "RPCEmu Extended Manager", wxOK | wxICON_ERROR);
+					return false;
+				}
+			}
+#endif
 			auto *manager = new ManagerFrame();
 			manager->Show(true);
 			SetTopWindow(manager);

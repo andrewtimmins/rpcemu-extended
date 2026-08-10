@@ -1473,6 +1473,21 @@ rpcemu_log_information(void)
 void
 rpcemu_prestart(void)
 {
+#ifdef _WIN32
+	/* Initialise Winsock before anything opens a socket (the Manager control
+	   channel, hostcmd/debugcmd, SLiRP NAT, the TCP modem, the broadcast
+	   relay). Here rather than in rpcemu_start(): a --managed machine publishes
+	   its control channel before that runs, and socket() was failing. */
+	{
+		WSADATA wsadata;
+		int err = WSAStartup(MAKEWORD(2, 2), &wsadata);
+
+		if (err != 0) {
+			fatal("WSAStartup failed: %d", err);
+		}
+	}
+#endif
+
 	/* On startup log additional information about the build and environment */
 	rpcemu_log_information();
 
@@ -1491,17 +1506,6 @@ void
 rpcemu_start(void)
 {
 #ifdef _WIN32
-	/* Initialise Winsock before anything opens a socket (hostcmd/debugcmd
-	   control sockets, SLiRP NAT, the TCP modem, the broadcast relay). */
-	{
-		WSADATA wsadata;
-		int err = WSAStartup(MAKEWORD(2, 2), &wsadata);
-
-		if (err != 0) {
-			fatal("WSAStartup failed: %d", err);
-		}
-	}
-
 	/* Raise the system timer resolution to 1ms. Windows' default granularity is
 	   ~15.6ms, which makes the Sleep(1) in rpcemu_idle() (used by "Reduce CPU
 	   Usage" when RISC OS calls Portable_Idle) sleep for up to ~15ms - long
