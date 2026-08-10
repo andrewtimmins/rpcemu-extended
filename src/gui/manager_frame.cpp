@@ -76,11 +76,11 @@ enum {
 	kStatusIconStopped,
 };
 
-/* How long a --managed child gets to publish its control-channel endpoint
-   before the Manager gives up on it (ROM loading and machine start can
-   legitimately take a few seconds; a genuinely wedged/crashed launch should
-   not hang the UI forever). */
-constexpr int kStartupTimeoutMs = 20000;
+/* How long a --managed child gets to publish its control-channel endpoint and
+   become attachable. Only process startup happens in that window - the child
+   publishes before rpcemu_start(), so ROM loading and booting RISC OS are on
+   the far side of it and a machine reads as "Running" throughout them. */
+constexpr int kStartupTimeoutMs = 10000;
 constexpr int kPollIntervalMs = 200;
 
 /* A small filled circle for the machine list's status column - cheaper and
