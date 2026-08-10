@@ -101,17 +101,41 @@ static void test_shared_framebuffer()
  * to override it, so the managed child (creating the segment, its own pid)
  * and the Manager (opening it, the Manager's own pid) computed two different
  * names for the same machine and OpenExisting() always failed. The name must
- * depend only on the machine directory and an explicitly passed pid - the
- * child's pid, supplied by both sides - never on whichever process happens
- * to be calling.
+ * depend only on what both sides can state exactly - the data directory, the
+ * machine's name, and an explicitly passed pid - never on whichever process
+ * happens to be calling.
  */
 static void test_ipc_name_for()
 {
-	const std::string dir = "/tmp/some/machine/dir/";
+	const std::string data = "/tmp/some/datadir/";
 
-	CHECK(MachineIpcNameFor(dir, 111) == MachineIpcNameFor(dir, 111));
-	CHECK(MachineIpcNameFor(dir, 111) != MachineIpcNameFor(dir, 222));
-	CHECK(MachineIpcNameFor(dir, 111) != MachineIpcNameFor("/tmp/other/dir/", 111));
+	CHECK(MachineIpcNameFor(data, "Alpha", 111) == MachineIpcNameFor(data, "Alpha", 111));
+	CHECK(MachineIpcNameFor(data, "Alpha", 111) != MachineIpcNameFor(data, "Alpha", 222));
+	CHECK(MachineIpcNameFor(data, "Alpha", 111) != MachineIpcNameFor(data, "Beta", 111));
+
+	/* Two RPCEmus on different --datadir trees, each holding a machine of the
+	   same name. */
+	CHECK(MachineIpcNameFor(data, "Alpha", 111) !=
+	      MachineIpcNameFor("/tmp/other/datadir/", "Alpha", 111));
+
+	/* The machine's name is in the segment's, so one can be traced back to the
+	   other. */
+	CHECK(MachineIpcNameFor(data, "Alpha", 111).find("Alpha") != std::string::npos);
+
+	/*
+	 * A name too long to embed whole is cut rather than overrunning the buffer
+	 * or the shortest platform limit. Two machines whose names differ only past
+	 * the cut therefore share a segment name until the pid is taken into
+	 * account - which it always is, and only one of them can be running,
+	 * machine_lock seeing to that.
+	 */
+	const std::string long_a(80, 'a');
+	const std::string long_b = long_a + "-different-tail";
+
+	CHECK(MachineIpcNameFor(data, long_a, 111).size() < 100);
+	CHECK(MachineIpcNameFor(data, long_a, 111) == MachineIpcNameFor(data, long_a, 111));
+	CHECK(MachineIpcNameFor(data, long_a, 111) != MachineIpcNameFor(data, long_a, 222));
+	CHECK(MachineIpcNameFor(data, long_a, 111) == MachineIpcNameFor(data, long_b, 111));
 }
 
 static void test_ipc_roundtrip()

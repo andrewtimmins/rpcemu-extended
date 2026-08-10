@@ -126,10 +126,14 @@ private:
 };
 
 /*
- * A shared-memory segment name unique to one machine run, derived from its
- * own data directory and the owning process's pid so two launches of the
- * same machine (which machine_lock already refuses) can never collide, and a
- * stale segment from a killed process is unambiguous to spot.
+ * A shared-memory segment name unique to one machine run: the data directory
+ * hashed, the machine's name, and the owning process's pid. The pid means two
+ * launches of the same machine (which machine_lock already refuses) can never
+ * collide, and a stale segment from a killed process is unambiguous to spot.
+ *
+ * Both the machine and the Manager work this out separately, so it is built
+ * from the two things each can state exactly rather than from a path one of
+ * them has to reconstruct.
  *
  * `pid` must be the pid of the process that called (or will call)
  * CreateNew() - the managed child - not the caller's own pid. The child
@@ -140,7 +144,8 @@ private:
  * the Manager's pid is never the child's, so the two processes named two
  * different segments and OpenExisting() always failed.
  */
-std::string MachineIpcNameFor(const std::string &machine_dir, long pid = -1);
+std::string MachineIpcNameFor(const std::string &data_dir,
+                              const std::string &machine_name, long pid = -1);
 
 /* ----------------------------------------------------------------------
  * Control channel wire messages

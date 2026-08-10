@@ -332,10 +332,8 @@ void MainFrame::EnableManagedMode()
 {
 	managed_mode_ = true;
 
-	const std::string machine_dir = rpcemu_get_machine_datadir();
-
 	shared_fb_ = std::make_unique<SharedFramebuffer>();
-	if (!shared_fb_->CreateNew(MachineIpcNameFor(machine_dir))) {
+	if (!shared_fb_->CreateNew(MachineIpcNameFor(rpcemu_get_datadir(), config.name))) {
 		rpclog("MainFrame: could not create the shared framebuffer; "
 		       "this machine will not be visible to the Manager\n");
 	}
@@ -345,7 +343,8 @@ void MainFrame::EnableManagedMode()
 #ifdef _WIN32
 	const std::string control_endpoint;	/* --managed always gets an OS-assigned TCP port on Windows */
 #else
-	const std::string control_endpoint = machine_dir + "manager.sock";
+	const std::string control_endpoint =
+	    std::string(rpcemu_get_machine_datadir()) + "manager.sock";
 #endif
 
 	if (ipc_server_->Start(control_endpoint,

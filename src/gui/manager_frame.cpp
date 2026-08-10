@@ -692,7 +692,7 @@ void ManagerFrame::DiscoverAlreadyRunningMachines()
 			continue;	/* running, but not as a --managed child - nothing for us to attach to */
 		}
 
-		AttachPanelFor(name, wxString::FromUTF8(MachineIpcNameFor(dir.utf8_str().data(), pid)),
+		AttachPanelFor(name, wxString::FromUTF8(MachineIpcNameFor(rpcemu_get_datadir(), name.utf8_str().data(), pid)),
 		    wxString::FromUTF8(endpoint), false);
 	}
 	RefreshMachineList();
@@ -863,7 +863,7 @@ void ManagerFrame::OnPollTimer(wxTimerEvent & /*event*/)
 		    machine_lock_owner_alive(pid) &&
 		    machine_lock_read_ipc_endpoint(dir.utf8_str().data(), endpoint, sizeof(endpoint)) &&
 		    endpoint[0] != '\0') {
-			AttachPanelFor(name, wxString::FromUTF8(MachineIpcNameFor(dir.utf8_str().data(), pid)),
+			AttachPanelFor(name, wxString::FromUTF8(MachineIpcNameFor(rpcemu_get_datadir(), name.utf8_str().data(), pid)),
 			    wxString::FromUTF8(endpoint), true);
 
 			/* Still starting means the attempt failed, so fall through to

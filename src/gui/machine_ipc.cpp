@@ -245,10 +245,29 @@ bool SharedFramebuffer::ReadInto(std::vector<uint32_t> *out, int *width, int *he
 	return true;
 }
 
-std::string MachineIpcNameFor(const std::string &machine_dir, long pid)
+/* FNV-1a rather than std::hash, which is only required to agree within one
+   execution - and this name is arrived at separately by two processes. */
+static uint32_t NameHash(const std::string &s)
 {
-	const size_t h = std::hash<std::string>{}(machine_dir);
-	char buf[64];
+	uint32_t h = 2166136261u;
+
+	for (unsigned char c : s) {
+		h = (h ^ c) * 16777619u;
+	}
+	return h;
+}
+
+std::string MachineIpcNameFor(const std::string &data_dir,
+                              const std::string &machine_name, long pid)
+{
+	/* Enough to tell machines apart at a glance, and keeps the whole name
+	   inside the shortest limit: Windows object names are capped at MAX_PATH
+	   including the "Local\" prefix Map() adds. */
+	static const size_t kMaxNameChars = 32;
+
+	const uint32_t h = NameHash(data_dir);
+	const std::string shown = machine_name.substr(0, kMaxNameChars);
+	char buf[128];
 
 	if (pid < 0) {
 #ifdef _WIN32
@@ -258,13 +277,11 @@ std::string MachineIpcNameFor(const std::string &machine_dir, long pid)
 #endif
 	}
 
-#ifdef _WIN32
-	std::snprintf(buf, sizeof(buf), "rpcemu-fb-%08lx-%ld",
-	    (unsigned long) (h & 0xffffffffu), pid);
-#else
-	std::snprintf(buf, sizeof(buf), "/rpcemu-fb-%08lx-%ld",
-	    (unsigned long) (h & 0xffffffffu), pid);
-#endif
+	/* The hash covers the data directory alone: names are unique within one,
+	   and two RPCEmus on different --datadir trees can each hold a machine of
+	   the same name. */
+	std::snprintf(buf, sizeof(buf), "rpcemu-fb-%08lx-%s-%ld",
+	    (unsigned long) h, shown.c_str(), pid);
 	return std::string(buf);
 }
 
