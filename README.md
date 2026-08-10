@@ -91,6 +91,8 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `.githooks/` | The pre-push hook that builds and tests before anything leaves your machine |
 | `docs/release-notes/` | One file per release, published as that release's notes |
 | `build.sh` | Unified build and release script |
+| [`MANUAL.md`](MANUAL.md) | The manual: what everything does, written for people new to RISC OS as well as to this emulator |
+| [`QUICKSTART.md`](QUICKSTART.md) | RISC OS running in about five minutes, with nothing to find first |
 | `docs/dynarec.md` | ARM dynamic recompiler (build, behaviour, limitations) |
 | `docs/arm64-dynarec.md` | AArch64 (arm64) dynarec backend |
 | `docs/peripherals.md` | Serial and parallel ports: file logging, TCP modem, a real host serial port, the virtual printer, and printing on a host printer |
