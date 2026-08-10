@@ -55,6 +55,9 @@
 #ifndef MSG_DONTWAIT
 #define MSG_DONTWAIT 0	/* our sockets are put in non-blocking mode explicitly */
 #endif
+#ifndef SHUT_RDWR
+#define SHUT_RDWR SD_BOTH	/* shutdown()'s "both directions" is spelled differently */
+#endif
 
 /* Socket errors come from WSAGetLastError(), not errno. */
 #define sock_errno()      WSAGetLastError()

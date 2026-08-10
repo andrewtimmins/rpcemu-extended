@@ -598,6 +598,10 @@ void MachineIpcClient::Disconnect()
 {
 	connected_ = false;
 	if (fd_ >= 0) {
+		/* Before the close, not instead of it: WSAPoll() does not report a
+		   handle closed underneath it, so the reader stayed in poll() and the
+		   join below waited for ever. */
+		shutdown(fd_, SHUT_RDWR);
 		closesocket(fd_);
 	}
 	if (read_thread_.joinable()) {
