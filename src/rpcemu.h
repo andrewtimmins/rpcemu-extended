@@ -309,6 +309,17 @@ typedef struct {
 	int mousetwobutton;	/**< Swap the behaviour of the right and middle
 	                             buttons, for mice with two buttons */
 	NetworkType network_type;
+
+	/*
+	 * Charles Ferguson's JSON tun/tap server, which RISC OS Pyromaniac also
+	 * speaks, so machines here and Pyromaniacs elsewhere can share one virtual
+	 * network. See net_json.h. A machine using this does not use the loopback
+	 * wire between local machines: both are hubs, and being on both would
+	 * deliver every frame twice.
+	 */
+	int json_net_enabled;		/**< Join a JSON server rather than the local wire */
+	char json_net_host[256];	/**< Host running the server */
+	int json_net_port;		/**< Its port; 33445 is the server's own default */
 	int cpu_idle;		/**< Attempt to reduce CPU usage */
 	int show_fullscreen_message;	/**< Show explanation of how to leave fullscreen, on entering fullscreen */
 	int integer_scaling;	/**< Use integer scaling (2x, 3x) for sharp pixels instead of smooth scaling */

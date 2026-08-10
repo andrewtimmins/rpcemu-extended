@@ -38,6 +38,7 @@
 #include "savestate.h"
 #include "podules.h"
 #include "broadcast_relay.h"
+#include "net_json.h"
 #include "net_switch.h"
 
 #include "slirp/libslirp.h"
@@ -348,10 +349,18 @@ network_nat_init(void)
 	/* One relay per host: the Access ports are fixed by the protocol, so a second
 	   emulator cannot have them. Turning it off deliberately is better than
 	   racing for them and losing quietly. */
-	/* The wire between machines on this host. Independent of the relay: that
-	   carries Access to the real network, this carries everything to the other
-	   guests. See net_switch.h. */
-	net_switch_init();
+	/*
+	 * The wire this machine is on, and there is only ever one.
+	 *
+	 * A JSON server (net_json.h) and the loopback hub (net_switch.h) are both
+	 * hubs that flood every frame. A machine on both would send each frame to
+	 * its local peers and to the server, which replicates it to those same
+	 * peers if they are connected too, and everything would arrive twice. So a
+	 * machine that names a server uses it, and the loopback wire stays off.
+	 */
+	if (net_json_init() != 0) {
+		net_switch_init();
+	}
 
 	if (app_settings_relay_enabled()) {
 		broadcast_relay_init();
@@ -391,8 +400,15 @@ network_nat_poll(void)
 	 * buffer and were never read: the first machine could see the second and
 	 * the second could see nothing, which is a confusing shape of broken.
 	 * Polled first, it does not depend on anything else here working.
+	 *
+	 * Whichever wire this machine is on: a JSON server if it names one, the
+	 * loopback hub otherwise. Never both - see network_nat_init().
 	 */
-	net_switch_poll();
+	if (net_json_is_connected()) {
+		net_json_poll();
+	} else {
+		net_switch_poll();
+	}
 	struct timeval tv;
 
 	/* Networking can be switched on while the emulator thread is running, so
@@ -492,7 +508,11 @@ network_nat_tx(uint32_t errbuf, uint32_t mbufs, uint32_t dest, uint32_t src, uin
 	 * arp_input() in slirp/slirp.c), so it does not answer for another guest
 	 * and cannot hijack a conversation between two of them.
 	 */
-	net_switch_tx(nat.tx_buffer, packet_length);
+	if (net_json_is_connected()) {
+		net_json_tx(nat.tx_buffer, packet_length);
+	} else {
+		net_switch_tx(nat.tx_buffer, packet_length);
+	}
 
 	if (!broadcast_relay_tx(nat.tx_buffer, packet_length)) {
 		slirp_input(nat.slirp, nat.tx_buffer, packet_length);
@@ -663,6 +683,7 @@ network_nat_close(void)
 {
 	broadcast_relay_close();
 	net_switch_close();
+	net_json_close();
 	net_slot_release();
 
 	if (nat.capture != NULL) {

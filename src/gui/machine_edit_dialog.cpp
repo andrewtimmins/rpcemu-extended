@@ -683,11 +683,68 @@ wxWindow *MachineEditDialog::BuildNetworkPage(wxWindow *parent)
 	note->SetForegroundColour(kHdColourMuted);
 	note->SetFont(note->GetFont().Smaller());
 
+	/*
+	 * Pyromaniac Networking: Charles Ferguson's JSON tun/tap server, which
+	 * RISC OS Pyromaniac speaks. Its own block rather than another entry in the
+	 * Network combo, because it is not an alternative to NAT - the machine
+	 * keeps whatever it has for reaching the outside world and this decides
+	 * which other emulators it can see.
+	 */
+	auto *json_box = new wxStaticBoxSizer(wxVERTICAL, page, "Pyromaniac Networking");
+	wxWindow *json_parent = json_box->GetStaticBox();
+
+	json_net_check_ = new wxCheckBox(json_parent, wxID_ANY,
+	    "Share a network with other emulators through a JSON server");
+	json_net_host_label_ = new wxStaticText(json_parent, wxID_ANY, "Server:");
+	json_net_host_edit_ = new wxTextCtrl(json_parent, wxID_ANY, "localhost");
+	json_net_port_label_ = new wxStaticText(json_parent, wxID_ANY, "Port:");
+	json_net_port_edit_ = new wxSpinCtrl(json_parent, wxID_ANY, wxEmptyString,
+	    wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 1, 65535, 33445);
+
+	auto *json_form = new wxFlexGridSizer(2, 8, 8);
+	json_form->AddGrowableCol(1, 1);
+	json_form->Add(json_net_host_label_, 0, wxALIGN_CENTER_VERTICAL);
+	json_form->Add(json_net_host_edit_, 1, wxEXPAND);
+	json_form->Add(json_net_port_label_, 0, wxALIGN_CENTER_VERTICAL);
+	json_form->Add(json_net_port_edit_, 0);
+
+	auto *json_note = new wxStaticText(json_parent, wxID_ANY,
+	    "Frames are carried to and from a tun/tap JSON server, so this machine "
+	    "shares one virtual network with every other emulator connected to it, "
+	    "RISC OS Pyromaniac included. The server can run on another computer, "
+	    "which is the point: it need not be this one. While this is on, the "
+	    "machine does not use the local wire between machines here - both carry "
+	    "every frame, and being on both would deliver everything twice. "
+	    "Addresses are not handled for you: anything sharing this network needs "
+	    "an address on it that does not collide.");
+	json_note->Wrap(440);
+	json_note->SetForegroundColour(kHdColourMuted);
+	json_note->SetFont(json_note->GetFont().Smaller());
+
+	json_box->Add(json_net_check_, 0, wxALL, 6);
+	json_box->Add(json_form, 0, wxEXPAND | wxLEFT | wxRIGHT, 6);
+	json_box->Add(json_note, 0, wxEXPAND | wxALL, 6);
+
+	json_net_check_->Bind(wxEVT_CHECKBOX,
+	    [this](wxCommandEvent &) { UpdateJsonNetEnabled(); });
+
 	auto *sizer = new wxBoxSizer(wxVERTICAL);
 	sizer->Add(form, 0, wxEXPAND | wxALL, 10);
 	sizer->Add(note, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
+	sizer->Add(json_box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
 	page->SetSizer(sizer);
 	return page;
+}
+
+/** Grey the server fields when the machine is not joining one. */
+void MachineEditDialog::UpdateJsonNetEnabled()
+{
+	const bool on = json_net_check_ != nullptr && json_net_check_->GetValue();
+
+	if (json_net_host_label_ != nullptr) { json_net_host_label_->Enable(on); }
+	if (json_net_host_edit_ != nullptr) { json_net_host_edit_->Enable(on); }
+	if (json_net_port_label_ != nullptr) { json_net_port_label_->Enable(on); }
+	if (json_net_port_edit_ != nullptr) { json_net_port_edit_->Enable(on); }
 }
 
 /** The IDE Drives page: the two emulated hard discs. */
@@ -1617,6 +1674,19 @@ void MachineEditDialog::LoadSettings()
 	settings.Read("ipaddress", &ip, "172.31.0.1");
 	tunnel_edit_->SetValue(ip);
 
+	{
+		long json_on = 0, json_port = 33445;
+		wxString json_host;
+
+		settings.Read("json_net_enabled", &json_on, 0L);
+		settings.Read("json_net_host", &json_host, "localhost");
+		settings.Read("json_net_port", &json_port, 33445L);
+		json_net_check_->SetValue(json_on != 0);
+		json_net_host_edit_->SetValue(json_host);
+		json_net_port_edit_->SetValue(static_cast<int>(json_port));
+		UpdateJsonNetEnabled();
+	}
+
 	settings.Read("hd4_path", &hd4_path_, wxEmptyString);
 
 	{
@@ -1782,6 +1852,11 @@ void MachineEditDialog::SaveSettings()
 	settings.Write("network_type", network_type);
 	settings.Write("bridgename", bridge_edit_->GetValue());
 	settings.Write("ipaddress", tunnel_edit_->GetValue());
+	settings.Write("json_net_enabled",
+	    static_cast<long>(json_net_check_->GetValue() ? 1 : 0));
+	settings.Write("json_net_host", json_net_host_edit_->GetValue());
+	settings.Write("json_net_port",
+	    static_cast<long>(json_net_port_edit_->GetValue()));
 
 	SavePoduleSettings(settings);
 

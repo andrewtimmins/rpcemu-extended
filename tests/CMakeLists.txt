@@ -578,6 +578,21 @@ rpcemu_add_test(test_machine_lock ${CMAKE_CURRENT_BINARY_DIR})
 # linked, so the test can bind the same loopback ports the unit does and check the
 # claim is really exclusive. Needs the socket libraries on Windows, which
 # rpcemu_core would otherwise have supplied.
+# The wire format shared with RISC OS Pyromaniac, which is somebody else's
+# format: if we disagree with it there is nobody on our side to notice. Compiles
+# net_json.c directly with stubs for the emulator it would otherwise reach.
+add_executable(test_net_json test_net_json.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/net_json.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/net_switch.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/net_slot.c
+               test_log_stub.c)
+target_include_directories(test_net_json PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+if(WIN32)
+    target_link_libraries(test_net_json PRIVATE ws2_32)
+endif()
+rpcemu_add_test(test_net_json)
+
 # The wire between machines on this host: what a machine keeps off it, and that
 # a frame put in one end comes out of the others. Compiles net_switch.c directly
 # rather than linking rpcemu_core, supplying its own network_hwaddr and inject
@@ -641,7 +656,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 36)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 37)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()

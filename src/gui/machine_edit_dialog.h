@@ -74,6 +74,7 @@ private:
 	wxWindow *BuildSystemPage(wxWindow *parent);
 	wxWindow *BuildOptionsPage(wxWindow *parent);
 	wxWindow *BuildNetworkPage(wxWindow *parent);
+	void UpdateJsonNetEnabled();
 	wxWindow *BuildDrivesPage(wxWindow *parent);
 	wxWindow *BuildPodulesPage(wxWindow *parent);
 	void BuildHardDiscPanel(wxWindow *parent, wxSizer *parent_sizer, HardDiscPanel &panel, int drive_num,
@@ -186,6 +187,13 @@ private:
 	wxComboBox *network_combo_ = nullptr;
 	wxTextCtrl *bridge_edit_ = nullptr;
 	wxStaticText *bridge_label_ = nullptr;
+	/* Pyromaniac Networking: the JSON tun/tap server this machine joins. */
+	wxCheckBox *json_net_check_ = nullptr;
+	wxStaticText *json_net_host_label_ = nullptr;
+	wxTextCtrl *json_net_host_edit_ = nullptr;
+	wxStaticText *json_net_port_label_ = nullptr;
+	wxSpinCtrl *json_net_port_edit_ = nullptr;
+
 	wxTextCtrl *tunnel_edit_ = nullptr;
 	wxStaticText *tunnel_label_ = nullptr;
 	wxStaticText *mem_note_ = nullptr;

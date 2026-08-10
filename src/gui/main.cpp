@@ -1070,6 +1070,21 @@ int main(int argc, char **argv)
 				return 2;
 			}
 			app_settings_override_debug_socket(value);
+		} else if (strcmp(arg, "--pyromaniac-net") == 0 ||
+		           strncmp(arg, "--pyromaniac-net=", 17) == 0) {
+			/* Charles Ferguson's JSON tun/tap server, which RISC OS
+			   Pyromaniac speaks too - see docs/pyromaniac-networking.md.
+			   Applies to the GUI and to --headless alike, this parsing
+			   being shared. */
+			const char *value = (arg[16] == '=') ? arg + 17
+			                                     : (i + 1 < argc ? argv[++i] : nullptr);
+
+			if (value == nullptr) {
+				ConsoleMessage(true, "error: --pyromaniac-net requires host, host:port or off.\n");
+				ConsoleMessageFlush();
+				return 2;
+			}
+			app_settings_override_json_net(value);
 		} else if (strcmp(arg, "--no-relay") == 0) {
 			app_settings_override_relay(0);
 		} else if (strcmp(arg, "--managed") == 0) {

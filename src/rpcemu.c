@@ -220,6 +220,9 @@ Config config = {
 	1,			/* mousehackon */
 	0,			/* mousetwobutton */
 	NetworkType_Off,	/* network_type */
+	0,			/* json_net_enabled (OFF: needs a server to join) */
+	"",			/* json_net_host */
+	33445,			/* json_net_port (the server's own default) */
 	0,			/* cpu_idle */
 	1,			/* show_fullscreen_message */
 	0,			/* integer_scaling */

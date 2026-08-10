@@ -117,6 +117,16 @@ extern void app_settings_override_hostcmd_socket(const char *spec);
 extern void app_settings_override_debug_socket(const char *spec);
 extern void app_settings_override_relay(int enabled);
 
+/**
+ * Point this run at a Pyromaniac JSON network server, whatever the machine's
+ * own settings say. "host", "host:port" or "off".
+ *
+ * Supplied afresh on each run and never remembered, like the other overrides
+ * here: one scripted run joining a test network must not become the default for
+ * every later interactive one.
+ */
+extern void app_settings_override_json_net(const char *spec);
+
 /** Apply whatever overrides were set. Call after app_settings_load(). */
 extern void app_settings_apply_overrides(Config *cfg);
 

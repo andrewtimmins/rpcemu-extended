@@ -36,6 +36,7 @@
 #include <vector>
 
 #ifdef _WIN32
+#include <winsock2.h>
 #include <process.h>
 #define getpid _getpid
 #else
@@ -298,6 +299,27 @@ void test_menu_command_roundtrip()
 
 int main()
 {
+#ifdef _WIN32
+	/*
+	 * ★ Nothing on Windows can open a socket until Winsock is started, and
+	 * this is not the emulator.
+	 *
+	 * rpcemu.c does this at startup, so the IPC works perfectly well in the
+	 * running program - but a test binary is its own process and had never
+	 * done it. Every socket call here failed, which showed as the server
+	 * simply refusing to start. The test linked, which is as far as anyone had
+	 * checked; it has never actually passed on Windows until now.
+	 */
+	{
+		WSADATA wsadata;
+
+		if (WSAStartup(MAKEWORD(2, 2), &wsadata) != 0) {
+			std::fprintf(stderr, "WSAStartup failed\n");
+			return 1;
+		}
+	}
+#endif
+
 	test_shared_framebuffer();
 	test_ipc_name_for();
 	test_ipc_roundtrip();

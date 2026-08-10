@@ -132,6 +132,11 @@ work and probably indistinguishable in use" option below. SLiRP answers ARP only
 its own addresses, so it does not answer for another guest and cannot hijack a
 conversation between two of them.
 
+**The other wire.** A machine can join a JSON tun/tap server instead of this
+hub, which is how it shares a network with RISC OS Pyromaniac and how machines on
+different hosts reach each other. The two are alternatives, never both at once:
+see [pyromaniac-networking.md](pyromaniac-networking.md).
+
 **What is verified.** Frames cross between two running instances, and each machine
 keeps only what is addressed to it (`tests/test_net_switch.c`). What has *not* been
 demonstrated is a guest operating system using it - a ping between two RISC OS

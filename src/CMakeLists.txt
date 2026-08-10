@@ -70,6 +70,7 @@ set(RPCEMU_CORE_SOURCES
     disc_hfe.c
     disc_mfm_common.c
     network.c
+    net_json.c
     net_switch.c
     network-nat.c
     broadcast_relay.c

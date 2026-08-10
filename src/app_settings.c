@@ -270,10 +270,14 @@ static struct {
 	int relay_enabled;
 	char hostcmd_socket[512];
 	char debug_socket[512];
+	/* Sized to the field it is copied into, so a host name cannot be truncated
+	   on the way through: "host:port" longer than this is not a real one. */
+	char json_net[256];
 	unsigned have_vnc_port : 1;
 	unsigned have_vnc_enabled : 1;
 	unsigned have_hostcmd_socket : 1;
 	unsigned have_debug_socket : 1;
+	unsigned have_json_net : 1;
 	unsigned have_relay : 1;
 } overrides;
 
@@ -297,6 +301,13 @@ app_settings_override_hostcmd_socket(const char *spec)
 	set_str(overrides.hostcmd_socket, sizeof(overrides.hostcmd_socket),
 	    spec ? spec : "");
 	overrides.have_hostcmd_socket = 1;
+}
+
+void
+app_settings_override_json_net(const char *spec)
+{
+	set_str(overrides.json_net, sizeof(overrides.json_net), spec ? spec : "");
+	overrides.have_json_net = 1;
 }
 
 void
@@ -352,6 +363,38 @@ app_settings_apply_overrides(Config *cfg)
 		set_str(cfg->hostcmd_socket, sizeof(cfg->hostcmd_socket),
 		    overrides.hostcmd_socket);
 	}
+	/*
+	 * The Pyromaniac network for this run. "off" turns it off for a machine
+	 * whose configuration has it on, which is how you take one machine out of
+	 * a shared network without editing it.
+	 */
+	if (overrides.have_json_net) {
+		if (overrides.json_net[0] == '\0' ||
+		    strcmp(overrides.json_net, "off") == 0) {
+			cfg->json_net_enabled = 0;
+		} else {
+			const char *colon = strrchr(overrides.json_net, ':');
+
+			cfg->json_net_enabled = 1;
+			if (colon != NULL && colon[1] != '\0') {
+				size_t n = (size_t) (colon - overrides.json_net);
+
+				if (n >= sizeof(cfg->json_net_host)) {
+					n = sizeof(cfg->json_net_host) - 1;
+				}
+				memcpy(cfg->json_net_host, overrides.json_net, n);
+				cfg->json_net_host[n] = '\0';
+				cfg->json_net_port = atoi(colon + 1);
+			} else {
+				set_str(cfg->json_net_host, sizeof(cfg->json_net_host),
+				    overrides.json_net);
+			}
+			if (cfg->json_net_port <= 0 || cfg->json_net_port > 65535) {
+				cfg->json_net_port = 33445;
+			}
+		}
+	}
+
 	if (overrides.have_debug_socket) {
 		set_str(cfg->debug_socket, sizeof(cfg->debug_socket),
 		    overrides.debug_socket);

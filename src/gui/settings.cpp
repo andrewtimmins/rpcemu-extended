@@ -438,6 +438,13 @@ extern "C" void config_sync_machine_edit_to_copy(Config *dest, const Config *src
 	dest->refresh = src->refresh;
 	dest->network_type = src->network_type;
 
+	/* Pyromaniac networking travels with the rest of the machine's networking:
+	   the editor writes it, and this is what carries it to the running copy. */
+	dest->json_net_enabled = src->json_net_enabled;
+	dest->json_net_port = src->json_net_port;
+	strncpy(dest->json_net_host, src->json_net_host, sizeof(dest->json_net_host) - 1);
+	dest->json_net_host[sizeof(dest->json_net_host) - 1] = '\0';
+
 	if (src->bridgename != nullptr) {
 		config_replace_strdup(&dest->bridgename, wxString::FromUTF8(src->bridgename));
 	} else {
@@ -756,6 +763,16 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	strncpy(cfg->debug_socket, sText.utf8_str().data(), sizeof(cfg->debug_socket) - 1);
 	cfg->debug_socket[sizeof(cfg->debug_socket) - 1] = '\0';
 
+	/* Pyromaniac networking: the JSON tun/tap server this machine joins, if
+	   any. See net_json.h. */
+	settings.Read("json_net_enabled", &value, 0L);
+	cfg->json_net_enabled = static_cast<int>(value);
+	settings.Read("json_net_host", &sText, wxEmptyString);
+	strncpy(cfg->json_net_host, sText.utf8_str().data(), sizeof(cfg->json_net_host) - 1);
+	cfg->json_net_host[sizeof(cfg->json_net_host) - 1] = '\0';
+	settings.Read("json_net_port", &value, 33445L);
+	cfg->json_net_port = static_cast<int>(value);
+
 	settings.Read("network_capture", &sText, wxEmptyString);
 	config_replace_strdup(&cfg->network_capture, sText);
 
@@ -856,6 +873,9 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	default:                           snprintf(s, sizeof(s), "off"); break;
 	}
 	settings.Write("network_type", wxString(s, wxConvUTF8));
+	settings.Write("json_net_enabled", static_cast<long>(cfg->json_net_enabled));
+	settings.Write("json_net_host", wxString(cfg->json_net_host, wxConvUTF8));
+	settings.Write("json_net_port", static_cast<long>(cfg->json_net_port));
 
 	settings.Write("username", cfg->username ? wxString(cfg->username, wxConvUTF8) : wxString());
 	settings.Write("ipaddress", cfg->ipaddress ? wxString(cfg->ipaddress, wxConvUTF8) : wxString());
