@@ -153,6 +153,45 @@ static relay_state_t relay = {
     .enabled = 0
 };
 
+/**
+ * Report a failed relay send, once.
+ *
+ * A dropped frame used to be a counter and nothing else, which is the worst
+ * possible outcome for the failure that actually happens: the share is
+ * discovered and then never opens, and there is nothing anywhere to say why.
+ *
+ * EHOSTUNREACH on a LAN peer, on macOS, is almost always the local network
+ * privacy control rather than the network. The system denies local network
+ * access to an application it cannot prompt for - and the denial is partial,
+ * blocking unicast while still allowing broadcast, which is exactly the shape
+ * of "discovery works, connecting does not". The bundle declares
+ * NSLocalNetworkUsageDescription so macOS can ask; if the answer was no, or the
+ * prompt was dismissed, this is what it looks like from in here.
+ */
+static void
+relay_report_send_failure(void)
+{
+    static int reported;
+
+    if (reported) {
+        return;
+    }
+    reported = 1;
+
+#ifdef __APPLE__
+    if (errno == EHOSTUNREACH) {
+        rpclog("broadcast_relay: cannot reach a machine on the local network "
+               "(EHOSTUNREACH). On macOS this is usually local network access "
+               "being denied: check System Settings > Privacy & Security > "
+               "Local Network. Discovery will still appear to work, because "
+               "broadcast is allowed and unicast is not.\n");
+        return;
+    }
+#endif
+    rpclog("broadcast_relay: send failed: %s. Further failures are counted "
+           "(see the relay statistics) but not logged.\n", sock_strerror());
+}
+
 /* Outgoing fragment reassembly, defined further down with the transmit path */
 static void reasm_reset(void);
 
@@ -1139,6 +1178,7 @@ relay_tx_fragment(const uint8_t *ip_hdr, int ip_hdr_len, int avail,
                   (struct sockaddr *) &dest, sizeof(dest));
     if (sent < 0) {
         relay.dropped++;
+        relay_report_send_failure();
     } else {
         relay.tx_count++;
     }
@@ -1325,6 +1365,7 @@ broadcast_relay_tx(const uint8_t *pkt, int pkt_len)
 
     if (sent < 0) {
         relay.dropped++;
+        relay_report_send_failure();
     } else {
         relay.tx_count++;
     }

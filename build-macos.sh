@@ -111,6 +111,21 @@ write_info_plist() {
 	<key>NSSupportsAutomaticGraphicsSwitching</key><true/>
 	<key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
 	<key>NSHumanReadableCopyright</key><string>RPCEmu contributors. Licensed under the GNU GPL v2.</string>
+	<!--
+	  Required, not optional, for anything that talks to other machines on the
+	  same network. Without a usage description macOS has no text to put in the
+	  prompt, so it does not ask - it denies, and says nothing. The denial is
+	  also partial in a way that is easy to misread: unicast to a LAN peer
+	  fails with EHOSTUNREACH while broadcast still goes out. For RISC OS that
+	  means Access/ShareFS discovery works and opening a share never does, so
+	  it presents as "the share is found but will not open" rather than as a
+	  permissions problem. Same binary run from Terminal inherits the grant and
+	  behaves, which makes it look like a bundling fault too.
+
+	  It also covers the VNC server, which listens for connections from other
+	  machines on the same network.
+	-->
+	<key>NSLocalNetworkUsageDescription</key><string>RPCEmu needs access to your local network so the emulated RISC OS machine can reach other computers on it - for file sharing over Access/ShareFS, and to serve its screen over VNC.</string>
 </dict>
 </plist>
 PLIST
