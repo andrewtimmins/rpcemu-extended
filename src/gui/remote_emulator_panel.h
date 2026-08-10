@@ -64,6 +64,9 @@ public:
 
 	bool IsLive() const { return live_; }
 
+	/* Why IsLive() is false, for a caller with a window to say so in. */
+	const wxString &AttachError() const { return attach_error_; }
+
 	/* Whether this is the machine currently shown to the user. Only an
 	   active panel pulls new frames out of shared memory and repaints;
 	   backgrounded machines keep running (this process has no say in
@@ -123,6 +126,7 @@ private:
 	ErrorCallback on_error_;
 
 	bool live_ = false;
+	wxString attach_error_;
 	bool active_ = false;
 	std::vector<uint32_t> frame_pixels_;
 	int frame_width_ = 640;

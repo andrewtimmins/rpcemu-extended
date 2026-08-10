@@ -21,7 +21,6 @@
 #include "remote_emulator_panel.h"
 
 #include <algorithm>
-#include <cstdio>
 
 #include <wx/graphics.h>
 
@@ -75,10 +74,13 @@ RemoteEmulatorPanel::RemoteEmulatorPanel(wxWindow *parent, const std::string &sh
 		 * running perfectly well with neither the user nor the log able to
 		 * say why it is not on screen.
 		 */
-		std::fprintf(stderr, "Manager: cannot attach to a machine: "
-		    "framebuffer '%s' %s, control socket '%s' %s\n",
-		    shared_fb_name.c_str(), fb_ok ? "opened" : "FAILED",
-		    ipc_endpoint.c_str(), ipc_ok ? "connected" : "FAILED");
+		attach_error_ = wxString::Format(
+		    "Framebuffer '%s': %s\nControl socket '%s': %s",
+		    wxString::FromUTF8(shared_fb_name), fb_ok ? "opened" : "FAILED",
+		    wxString::FromUTF8(ipc_endpoint), ipc_ok ? "connected" : "FAILED");
+
+		rpclog("Manager: cannot attach to a machine: %s\n",
+		    attach_error_.utf8_str().data());
 		ipc_client_.Disconnect();
 		shared_fb_.Close();
 	}

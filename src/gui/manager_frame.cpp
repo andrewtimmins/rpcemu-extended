@@ -25,6 +25,7 @@
 #include <wx/dir.h>
 #include <wx/filename.h>
 #include <wx/progdlg.h>
+#include <wx/richmsgdlg.h>
 #include <wx/statbmp.h>
 #include <wx/stdpaths.h>
 #include <wx/textdlg.h>
@@ -704,12 +705,24 @@ void ManagerFrame::AttachPanelFor(const wxString &name, const wxString &shared_f
 
 	if (!panel->IsLive()) {
 		/* Stale lock / the process ended between discovery and here. */
+		const wxString why = panel->AttachError();
+
 		panel->Destroy();
-		if (newly_started) {
-			wxMessageBox("'" + name + "' did not start.", "RPCEmu Extended Manager",
-			    wxOK | wxICON_ERROR, this);
-		}
 		RemoveRunningEntry(name);
+		if (newly_started) {
+			/* What went wrong is names and sockets, which mean nothing to
+			   somebody who only wanted to run a machine - so it goes behind
+			   Details, where it is still there for a bug report. */
+			wxRichMessageDialog dlg(this,
+			    wxString::Format("'%s' started but could not be displayed.", name),
+			    "RPCEmu Extended Manager", wxOK | wxICON_ERROR);
+
+			dlg.SetExtendedMessage(
+			    "The machine may still be running. Stopping it and starting it "
+			    "again usually clears this.");
+			dlg.ShowDetailedText(why);
+			dlg.ShowModal();
+		}
 		return;
 	}
 
@@ -855,9 +868,9 @@ void ManagerFrame::OnPollTimer(wxTimerEvent & /*event*/)
 		}
 
 		if ((wxGetLocalTimeMillis() - it->second.start_time_ms).ToLong() > kStartupTimeoutMs) {
+			RemoveRunningEntry(name);
 			wxMessageBox("'" + name + "' did not finish starting in time.",
 			    "RPCEmu Extended Manager", wxOK | wxICON_ERROR, this);
-			RemoveRunningEntry(name);
 		}
 	}
 }
