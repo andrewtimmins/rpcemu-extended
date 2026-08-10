@@ -134,6 +134,7 @@ private:
 wxBEGIN_EVENT_TABLE(ManagerFrame, wxFrame)
 	EVT_LIST_ITEM_SELECTED(wxID_ANY, ManagerFrame::OnMachineSelected)
 	EVT_LIST_ITEM_ACTIVATED(wxID_ANY, ManagerFrame::OnMachineActivated)
+	EVT_LIST_ITEM_RIGHT_CLICK(wxID_ANY, ManagerFrame::OnMachineRightClick)
 	EVT_BUTTON(ID_NEW, ManagerFrame::OnNew)
 	EVT_BUTTON(ID_EDIT, ManagerFrame::OnEdit)
 	EVT_BUTTON(ID_CLONE, ManagerFrame::OnClone)
@@ -883,6 +884,33 @@ void ManagerFrame::OnMachineActivated(wxListEvent & /*event*/)
 		return;
 	}
 	StartMachine(name);
+}
+
+/* Start and Stop on the machine that was clicked. */
+void ManagerFrame::OnMachineRightClick(wxListEvent &event)
+{
+	/* Right-clicking does not move the selection by itself, so without this the
+	   menu would act on whichever machine happened to be selected rather than
+	   the one under the pointer. */
+	machine_list_->SetItemState(event.GetIndex(),
+	    wxLIST_STATE_SELECTED | wxLIST_STATE_FOCUSED,
+	    wxLIST_STATE_SELECTED | wxLIST_STATE_FOCUSED);
+
+	const wxString name = SelectedMachineName();
+
+	if (name.empty()) {
+		return;
+	}
+
+	const bool is_running = running_.count(name) != 0;
+	wxMenu menu;
+
+	menu.Append(ID_START, "Start");
+	menu.Append(ID_STOP, "Stop");
+	menu.Enable(ID_START, !is_running);
+	menu.Enable(ID_STOP, is_running);
+
+	PopupMenu(&menu);
 }
 
 void ManagerFrame::OnNew(wxCommandEvent & /*event*/)

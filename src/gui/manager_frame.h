@@ -86,6 +86,7 @@ private:
 
 	void OnMachineSelected(wxListEvent &event);
 	void OnMachineActivated(wxListEvent &event);
+	void OnMachineRightClick(wxListEvent &event);
 	void OnNew(wxCommandEvent &event);
 	void OnEdit(wxCommandEvent &event);
 	void OnClone(wxCommandEvent &event);
