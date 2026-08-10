@@ -77,7 +77,7 @@ private:
 	wxString MachineDirFor(const wxString &name) const;
 
 	void DiscoverAlreadyRunningMachines();
-	void StartMachine(const wxString &name);
+	void StartMachine(const wxString &name, bool resume = false);
 	void StopMachine(const wxString &name);
 	void ShowMachinePanel(const wxString &name);
 	void RemoveRunningEntry(const wxString &name);
@@ -91,6 +91,8 @@ private:
 	void OnClone(wxCommandEvent &event);
 	void OnDelete(wxCommandEvent &event);
 	void OnStart(wxCommandEvent &event);
+	void OnResume(wxCommandEvent &event);
+	void OnDataFolder(wxCommandEvent &event);
 	void OnStop(wxCommandEvent &event);
 	void OnReset(wxCommandEvent &event);
 	void OnRestart(wxCommandEvent &event);
@@ -136,6 +138,7 @@ private:
 	wxToolBar *tool_bar_ = nullptr;
 	wxMenuItem *reset_item_ = nullptr;
 	wxMenuItem *restart_item_ = nullptr;
+	wxMenuItem *resume_item_ = nullptr;
 	wxMenuItem *stop_item_ = nullptr;
 	wxMenuItem *start_item_ = nullptr;
 

@@ -35,6 +35,10 @@
 #include "new_machine_dialog.h"
 #include "main_frame.h"	/* MainFrameMenuId - the ids these menus forward */
 #include "toolbar_icons.h"
+/* C++ headers, so outside the extern "C" below - putting them inside gives
+   their functions C linkage at the call site and the link fails. */
+#include "folder_transfer.h"
+#include "gui_preferences.h"
 
 extern "C" {
 #include "machine_lock.h"
@@ -52,6 +56,8 @@ enum {
 	ID_STOP,
 	ID_RESET,
 	ID_RESTART,
+	ID_RESUME,
+	ID_DATA_FOLDER,
 	ID_POLL_TIMER,
 };
 
@@ -136,6 +142,8 @@ wxBEGIN_EVENT_TABLE(ManagerFrame, wxFrame)
 	EVT_MENU(ID_CLONE, ManagerFrame::OnClone)
 	EVT_MENU(ID_DELETE, ManagerFrame::OnDelete)
 	EVT_MENU(ID_START, ManagerFrame::OnStart)
+	EVT_MENU(ID_RESUME, ManagerFrame::OnResume)
+	EVT_MENU(ID_DATA_FOLDER, ManagerFrame::OnDataFolder)
 	EVT_MENU(ID_STOP, ManagerFrame::OnStop)
 	EVT_MENU(ID_RESET, ManagerFrame::OnReset)
 	EVT_MENU(ID_RESTART, ManagerFrame::OnRestart)
@@ -265,10 +273,16 @@ void ManagerFrame::BuildMenus()
 	file_menu->Append(ID_CLONE, "&Clone Machine...");
 	file_menu->Append(ID_DELETE, "&Delete Machine");
 	file_menu->AppendSeparator();
+	file_menu->Append(ID_DATA_FOLDER, "Data Folder...")
+	    ->SetHelp("Where RPCEmu keeps machines, ROMs and settings");
+	file_menu->AppendSeparator();
 	file_menu->Append(wxID_EXIT, "E&xit\tCtrl+Q");
 
 	auto *machine_menu = new wxMenu();
 	start_item_ = machine_menu->Append(ID_START, "&Start\tCtrl+S");
+	resume_item_ = machine_menu->Append(ID_RESUME, "Res&ume");
+	resume_item_->SetHelp(
+	    "Start this machine from the state it was suspended in");
 	stop_item_ = machine_menu->Append(ID_STOP, "S&top");
 	machine_menu->AppendSeparator();
 	reset_item_ = machine_menu->Append(ID_RESET, "&Reset");
@@ -538,6 +552,21 @@ void ManagerFrame::UpdateButtons()
 		tool_bar_->EnableTool(ID_RESET, is_live);
 	}
 	if (start_item_ != nullptr) start_item_->Enable(have_selection && !is_running);
+	/* Resume only offers itself when there is something to resume from: a
+	   machine that has never been suspended has no snapshot, and an item that
+	   silently did nothing would be worse than one that is greyed out. */
+	if (resume_item_ != nullptr) {
+		bool has_snapshot = false;
+
+		if (have_selection && !is_running) {
+			const wxString snapshot = ConfigPathsSnapshotForConfig(
+			    ConfigPathsConfigsDir() + wxFileName::GetPathSeparator() +
+			    name + ".cfg");
+
+			has_snapshot = !snapshot.empty() && wxFileExists(snapshot);
+		}
+		resume_item_->Enable(has_snapshot);
+	}
 	if (stop_item_ != nullptr) stop_item_->Enable(is_running);
 	if (reset_item_ != nullptr) reset_item_->Enable(is_live);
 	if (restart_item_ != nullptr) restart_item_->Enable(is_live);
@@ -639,7 +668,7 @@ void ManagerFrame::AttachPanelFor(const wxString &name, const wxString &shared_f
 	}
 }
 
-void ManagerFrame::StartMachine(const wxString &name)
+void ManagerFrame::StartMachine(const wxString &name, bool resume)
 {
 	auto existing = running_.find(name);
 	if (existing != running_.end()) {
@@ -650,6 +679,12 @@ void ManagerFrame::StartMachine(const wxString &name)
 	const wxString exe = wxStandardPaths::Get().GetExecutablePath();
 	wxString cmd;
 	cmd << '"' << exe << "\" --managed --machine \"" << name << '"';
+
+	/* Resuming is the child's business: it loads the machine's own snapshot
+	   during startup, exactly as it does when started with --resume by hand. */
+	if (resume) {
+		cmd << " --resume";
+	}
 
 	/*
 	 * ★ --datadir is passed on ONLY when it cannot do any harm, which is not
@@ -948,6 +983,186 @@ void ManagerFrame::OnStart(wxCommandEvent & /*event*/)
 	if (!name.empty()) {
 		StartMachine(name);
 	}
+}
+
+/*
+ * Start the selected machine from the state it was suspended in.
+ *
+ * Suspend writes the machine's own snapshot beside it, and without this the
+ * only way back in was Load State... and knowing where that file lives. A
+ * machine set to suspend on exit would otherwise look as though every session
+ * had been lost.
+ */
+void ManagerFrame::OnResume(wxCommandEvent & /*event*/)
+{
+	const wxString name = SelectedMachineName();
+
+	if (name.empty()) {
+		return;
+	}
+	StartMachine(name, true);
+}
+
+
+/*
+ * Is any machine in this data folder being used by a running RPCEmu?
+ *
+ * Asked by trying to take each machine's lock, not by looking for a lock FILE.
+ * The file is only a hint - it survives a crash, so its presence would refuse
+ * the move for a machine that stopped running last Tuesday. The lock underneath
+ * it is an flock, which the kernel drops when the holder dies, so acquiring it
+ * is an accurate answer. Anything taken here is given straight back.
+ */
+static bool AnyMachineInUse(const wxString &datadir)
+{
+	const wxString machines = datadir + wxFileName::GetPathSeparator() +
+	    "machines";
+
+	if (!wxDirExists(machines)) {
+		return false;
+	}
+
+	wxDir dir(machines);
+	if (!dir.IsOpened()) {
+		/* Cannot tell. Say yes: refusing to move somebody's files is a
+		   nuisance, copying them out from under a live machine is not. */
+		return true;
+	}
+
+	wxString name;
+	bool more = dir.GetFirst(&name, wxEmptyString, wxDIR_DIRS);
+	while (more) {
+		const wxString machine_dir = machines +
+		    wxFileName::GetPathSeparator() + name +
+		    wxFileName::GetPathSeparator();
+
+		if (machine_lock_acquire(machine_dir.utf8_str().data(), 0) != 0) {
+			return true;
+		}
+		machine_lock_release();
+		more = dir.GetNext(&name);
+	}
+	return false;
+}
+
+/*
+ * Point RPCEmu at a different data folder, and offer to take the files along.
+ *
+ * ★ THE DIFFERENCE FROM THE OLD MACHINE SELECTOR. That dialogue was shown
+ * before any machine started, so the only machine that could be writing to
+ * these files belonged to somebody else's RPCEmu. This window hosts running
+ * machines itself, and its own children hold their locks for as long as they
+ * run - so AnyMachineInUse() would report the folder busy and give a reason
+ * that reads as though another copy of RPCEmu were at fault. Our own machines
+ * are therefore checked first, by name, and asked to be stopped.
+ *
+ * Beyond that the rules are folder_transfer's: verified before anything is
+ * deleted, and the pointer only moved once the files have arrived.
+ */
+void ManagerFrame::OnDataFolder(wxCommandEvent & /*event*/)
+{
+	const wxString current = wxString::FromUTF8(rpcemu_get_datadir());
+
+	if (!running_.empty()) {
+		wxString names;
+
+		for (const auto &entry : running_) {
+			if (!names.empty()) {
+				names << ", ";
+			}
+			names << entry.first;
+		}
+		wxMessageBox(
+		    wxString::Format(
+		        "Stop the running machine%s first: %s\n\n"
+		        "The data folder holds their discs, and moving those while a "
+		        "machine is writing to them would corrupt the disc.",
+		        running_.size() == 1 ? "" : "s", names),
+		    "RPCEmu Extended - Data Folder", wxOK | wxICON_INFORMATION, this);
+		return;
+	}
+
+	wxDirDialog dlg(this,
+	    "Where should RPCEmu keep its machines, ROMs and settings?",
+	    current, wxDD_DEFAULT_STYLE | wxDD_NEW_DIR_BUTTON);
+
+	if (dlg.ShowModal() != wxID_OK) {
+		return;
+	}
+
+	const wxString chosen = dlg.GetPath();
+
+	if (chosen.empty() ||
+	    wxFileName(chosen, "").SameAs(wxFileName(current, ""))) {
+		return;
+	}
+
+	/*
+	 * The offer comes first, because it decides what the confirmation should
+	 * say. Telling somebody their machines stay behind and then offering to
+	 * move them would be two dialogues arguing with each other.
+	 */
+	unsigned long long bytes = 0;
+	const folder_move_facts facts = FolderTransferGatherFacts(current, chosen,
+	    AnyMachineInUse(current) || AnyMachineInUse(chosen), &bytes);
+	folder_move_reason why = FOLDER_MOVE_OK;
+	const folder_move_offer offer = folder_move_decide(&facts, &why);
+	FolderTransferChoice choice = FolderTransferChoice::Manual;
+
+	if (offer != FOLDER_MOVE_OFFER_NOTHING ||
+	    (why != FOLDER_MOVE_SAME_PLACE && why != FOLDER_MOVE_SOURCE_EMPTY &&
+	     why != FOLDER_MOVE_SOURCE_MISSING)) {
+		choice = FolderTransferAsk(this, "data folder", current, chosen, offer,
+		    why, bytes);
+		if (choice == FolderTransferChoice::Cancel) {
+			return;
+		}
+	}
+
+	if (choice == FolderTransferChoice::Move ||
+	    choice == FolderTransferChoice::Copy) {
+		/* The log lives in the folder being moved and we are holding it open;
+		   Windows will not move an open file. Reopens at the new location on
+		   the next message. */
+		rpclog_close();
+
+		const FolderTransferResult result = FolderTransferRun(this, current,
+		    chosen, choice);
+
+		if (!result.ok) {
+			wxMessageBox(result.message, "The files were not moved",
+			    wxOK | wxICON_ERROR, this);
+			/* Pointer left where it was, so the machines are still found. */
+			return;
+		}
+		SetDataDir(chosen.utf8_string());
+		wxMessageBox(result.message + "\n\nRestart RPCEmu for the new data "
+		    "folder to take effect.", "RPCEmu Extended - Data Folder",
+		    wxOK | wxICON_INFORMATION, this);
+		return;
+	}
+
+	/* Manual: the old behaviour, and the old warning, which is still the right
+	   thing to say when the files are staying where they are. */
+	const wxString message = wxString::Format(
+	    "RPCEmu will use:\n%s\n\n"
+	    "Your existing machines, discs and ROMs are NOT moved. They stay in:\n%s\n\n"
+	    "If the new folder is empty, RPCEmu will start with no machines and set up "
+	    "a fresh folder. You can point it back at any time, and nothing is deleted "
+	    "either way.\n\n"
+	    "This takes effect when RPCEmu is restarted. Change the data folder?",
+	    chosen, current);
+
+	if (wxMessageBox(message, "RPCEmu Extended - Data Folder",
+	                 wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION, this) != wxYES) {
+		return;
+	}
+
+	SetDataDir(chosen.utf8_string());
+
+	wxMessageBox("The data folder has been changed.\n\n"
+	             "Restart RPCEmu for it to take effect.",
+	             "RPCEmu Extended - Data Folder", wxOK | wxICON_INFORMATION, this);
 }
 
 void ManagerFrame::OnStop(wxCommandEvent & /*event*/)
