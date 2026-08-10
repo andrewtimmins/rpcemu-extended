@@ -56,8 +56,20 @@ enum {
 	COL_VERSION,
 	COL_INSTALLED,
 	COL_SECTION,
+	COL_LICENCE,
 	COL_DESCRIPTION,
 };
+
+/*
+ * What to show when a package's record states no licence.
+ *
+ * Not blank: the lists are not uniformly free software - every package from a
+ * games-preservation source can be marked non-free - and an empty cell in a
+ * column headed "Licence" reads as a claim that there is nothing to worry
+ * about. Saying the record does not state one is the honest version, and it is
+ * also the thing a user can act on by going to the homepage.
+ */
+const char LICENCE_UNSTATED[] = "not stated";
 
 /*
  * Ask the machine whether it has the modules a package needs.
@@ -174,7 +186,7 @@ void PackageDialog::BuildUi()
 	search_ = new wxSearchCtrl(this, wxID_ANY);
 	search_->ShowSearchButton(true);
 	search_->ShowCancelButton(true);
-	search_->SetDescriptiveText("Search names, sections and descriptions");
+	search_->SetDescriptiveText("Search names, sections, licences and descriptions");
 
 	auto *refresh = new wxButton(this, wxID_ANY, "Refresh list");
 	auto *sources = new wxButton(this, wxID_ANY, "Sources...");
@@ -185,6 +197,7 @@ void PackageDialog::BuildUi()
 	list_->AppendColumn("Version", wxLIST_FORMAT_LEFT, 90);
 	list_->AppendColumn("Installed", wxLIST_FORMAT_LEFT, 80);
 	list_->AppendColumn("Section", wxLIST_FORMAT_LEFT, 110);
+	list_->AppendColumn("Licence", wxLIST_FORMAT_LEFT, 110);
 	list_->AppendColumn("Description", wxLIST_FORMAT_LEFT, 400);
 
 	/* Its own panel so the buttons can be thrown away and remade whenever the
@@ -274,8 +287,12 @@ void PackageDialog::Populate()
 		    pkg.section.CmpNoCase(section_filter_) != 0) {
 			continue;
 		}
+		/* The licence is searchable so that "non free" narrows the list to
+		   exactly the packages a user might want to think twice about,
+		   which is the question the column exists to answer. */
 		if (!filter.empty() && !pkg.name.Lower().Contains(filter) &&
 		    !pkg.section.Lower().Contains(filter) &&
+		    !pkg.licence.Lower().Contains(filter) &&
 		    !pkg.description.Lower().Contains(filter)) {
 			continue;
 		}
@@ -287,6 +304,8 @@ void PackageDialog::Populate()
 		list_->SetItem(row, COL_INSTALLED,
 		    it == installed_.end() ? wxString() : it->second);
 		list_->SetItem(row, COL_SECTION, pkg.section);
+		list_->SetItem(row, COL_LICENCE,
+		    pkg.licence.empty() ? wxString(LICENCE_UNSTATED) : pkg.licence);
 		list_->SetItem(row, COL_DESCRIPTION, pkg.description);
 		shown_.push_back(static_cast<int>(i));
 	}
