@@ -574,6 +574,17 @@ void MachineIpcClient::ReadLoop()
 
 	while (connected_.load()) {
 		if (!RecvExact(fd_, &ev, sizeof(ev), &connected_)) {
+			/* Losing the connection is the only notice that a machine the
+			   Manager attached to, rather than started, has gone: there is no
+			   process to watch and nothing sends an explicit Quit. Tested
+			   again because Disconnect() clears it, and a disconnection this
+			   end asked for is not news. */
+			if (connected_.load() && on_event_) {
+				IpcEvent gone{};
+
+				gone.type = IpcEventType::Quit;
+				on_event_(gone);
+			}
 			break;
 		}
 		if (on_event_) {
