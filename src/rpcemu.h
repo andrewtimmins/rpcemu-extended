@@ -59,7 +59,10 @@ extern "C" {
 #define VERSION RPCEMU_VERSION
 
 /* URLs used for the help menu weblinks */
-#define URL_MANUAL  "https://github.com/andrewtimmins/rpcemu-extended/tree/main/docs"
+/* Help > Online Manual. Points at the manual, not at the docs directory: that
+   listing is reference material for people who already know what they are
+   looking for, and the menu item promises a manual. */
+#define URL_MANUAL  "https://github.com/andrewtimmins/rpcemu-extended/blob/main/MANUAL.md"
 #define URL_WEBSITE "https://github.com/andrewtimmins/rpcemu-extended"
 #define URL_ISSUES  "https://github.com/andrewtimmins/rpcemu-extended/issues"
 #define URL_RELEASES "https://github.com/andrewtimmins/rpcemu-extended/releases"
