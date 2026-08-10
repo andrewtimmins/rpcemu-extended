@@ -23,6 +23,7 @@
 #include <wx/artprov.h>
 #include <wx/dcmemory.h>
 #include <wx/dir.h>
+#include <wx/fileconf.h>
 #include <wx/filename.h>
 #include <wx/progdlg.h>
 #include <wx/richmsgdlg.h>
@@ -1074,6 +1075,23 @@ void ManagerFrame::OnClone(wxCommandEvent & /*event*/)
 
 	const wxString dest_path = ConfigPathsConfigsDir() + wxFileName::GetPathSeparator() + sanitized + ".cfg";
 	wxCopyFile(source_path, dest_path);
+
+	/*
+	 * The copy still calls itself by the name of the machine it came from, and
+	 * that field is what decides which directory a machine uses
+	 * (rpcemu_set_machine_datadir, via config_load). A clone left as copied
+	 * therefore ran out of the original's directory: the same cmos.ram, the
+	 * same HostFS, the same hard discs, and the lock refusing to start it
+	 * because the original already held it - under the original's name.
+	 */
+	{
+		wxFileConfig settings(wxEmptyString, wxEmptyString, dest_path, wxEmptyString,
+		                      wxCONFIG_USE_RELATIVE_PATH);
+
+		ConfigFileUseGeneralGroup(settings);
+		settings.Write("name", sanitized);
+		settings.Flush();
+	}
 
 	/* Pulsed rather than counted: the copy walks the tree as it goes, and
 	   counting it first would mean walking the whole thing twice to tell
