@@ -299,17 +299,37 @@ main(int argc, char **argv)
 
 	client_send(fd, "Cat\n");
 
-	/* Generous limit: what is asserted is that an answer comes at all, and
-	   roughly when, not the exact millisecond. */
-	waited = wait_for_done(fd, 0, 5000, notice, sizeof(notice));
+	/* Generous limit: what is asserted is that an answer comes at all and
+	   which limit produced it, not the exact millisecond. A slow runner can
+	   take several seconds simply to get the connection accepted. */
+	waited = wait_for_done(fd, 0, 12000, notice, sizeof(notice));
 
 	check(waited >= 0,
 	      "a command with no guest module is answered rather than left waiting");
 	if (waited >= 0) {
 		printf("    (answered after %d ms: %s)\n", (int) waited, notice);
-		check(waited < 3000, "and answered promptly, not after a long wait");
-		check(strstr(notice, "guest module") != NULL,
-		      "with a reason naming the guest module");
+
+		/*
+		 * Which limit fired is the thing worth asserting, and the reason
+		 * text says so exactly: this wording comes only from the
+		 * never-announced branch. The other branch - a module that has
+		 * polled and gone quiet - says something different and waits far
+		 * longer, and confusing the two is the mistake that would matter.
+		 */
+		check(strstr(notice, "no guest module has collected") != NULL,
+		      "because no guest module was ever seen, not because one went quiet");
+
+		/*
+		 * Deliberately loose. An earlier version of this asserted under
+		 * three seconds and failed on a CI runner at 3.1s, which measured
+		 * the runner rather than the emulator: a new connection is only
+		 * looked for every sixty-fourth poll, so on a loaded machine -
+		 * where this loop's 5ms sleep really takes twenty - simply
+		 * accepting the client takes most of a second. The bound that
+		 * carries meaning is the fifteen-second quiet limit, and anything
+		 * comfortably under it proves the short path was taken.
+		 */
+		check(waited < 10000, "in seconds rather than the quiet-guest limit");
 	}
 
 	client_close(fd);
