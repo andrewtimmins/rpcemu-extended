@@ -20,6 +20,7 @@
 
 #include "manager_frame.h"
 
+#include <wx/artprov.h>
 #include <wx/dcmemory.h>
 #include <wx/dir.h>
 #include <wx/filename.h>
@@ -47,6 +48,12 @@ extern "C" {
 }
 
 namespace {
+
+/* Where the sash stops, so a collapsed machine list is still visibly a list
+   rather than an edge, and the width of the status bar field the button that
+   collapses it sits in. */
+const int kMachinesPanelCollapsed = 12;
+const int kCollapseButtonField = 28;
 
 enum {
 	ID_NEW = wxID_HIGHEST + 500,
@@ -216,7 +223,10 @@ void ManagerFrame::BuildUi()
 
 	auto *splitter = new wxSplitterWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
 	    wxSP_LIVE_UPDATE | wxSP_3DSASH);
-	splitter->SetMinimumPaneSize(240);
+	/* As small as the collapsed list, and no smaller: at zero, double-clicking
+	   the sash takes the machine list away altogether. */
+	splitter->SetMinimumPaneSize(kMachinesPanelCollapsed);
+	splitter_ = splitter;
 
 	auto *left_panel = new wxPanel(splitter);
 	auto *left_sizer = new wxBoxSizer(wxVERTICAL);
@@ -264,7 +274,71 @@ void ManagerFrame::BuildUi()
 	root->Add(splitter, 1, wxEXPAND);
 	SetSizer(root);
 
-	CreateStatusBar();
+	/*
+	 * Two fields: a narrow one the collapse button sits over, and the machine
+	 * count. A status bar does not lay out children itself, so the button is
+	 * placed by hand over the first field and moved again whenever the bar is
+	 * resized.
+	 */
+	wxStatusBar *status = CreateStatusBar(2);
+	const int widths[] = { kCollapseButtonField, -1 };
+
+	status->SetStatusWidths(2, widths);
+	SetStatusBarPane(1);
+
+	collapse_button_ = new wxBitmapButton(status, wxID_ANY,
+	    wxArtProvider::GetBitmap(wxART_GO_BACK, wxART_BUTTON, wxSize(16, 16)),
+	    wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+	collapse_button_->SetToolTip("Hide the machine list");
+	collapse_button_->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) {
+		SetMachinesPanelCollapsed(
+		    splitter_->GetSashPosition() > kMachinesPanelCollapsed);
+	});
+	status->Bind(wxEVT_SIZE, &ManagerFrame::OnStatusBarSize, this);
+	PositionCollapseButton();
+}
+
+/* Over the first status bar field, which is sized for it. */
+void ManagerFrame::PositionCollapseButton()
+{
+	wxStatusBar *status = GetStatusBar();
+	wxRect rect;
+
+	if (collapse_button_ == nullptr || status == nullptr ||
+	    !status->GetFieldRect(0, rect)) {
+		return;
+	}
+
+	wxSize size = collapse_button_->GetBestSize();
+
+	size.y = wxMin(size.y, rect.height);
+	collapse_button_->SetSize(rect.x + (rect.width - size.x) / 2,
+	    rect.y + (rect.height - size.y) / 2, size.x, size.y);
+}
+
+void ManagerFrame::OnStatusBarSize(wxSizeEvent &event)
+{
+	PositionCollapseButton();
+	event.Skip();
+}
+
+/* Collapse or restore the machine list, and turn the button round. */
+void ManagerFrame::SetMachinesPanelCollapsed(bool collapsed)
+{
+	if (collapsed) {
+		machines_panel_width_ = splitter_->GetSashPosition();
+		splitter_->SetSashPosition(kMachinesPanelCollapsed);
+	} else {
+		splitter_->SetSashPosition(machines_panel_width_);
+	}
+
+	if (collapse_button_ != nullptr) {
+		collapse_button_->SetBitmap(wxArtProvider::GetBitmap(
+		    collapsed ? wxART_GO_FORWARD : wxART_GO_BACK,
+		    wxART_BUTTON, wxSize(16, 16)));
+		collapse_button_->SetToolTip(collapsed ? "Show the machine list"
+		                                       : "Hide the machine list");
+	}
 }
 
 void ManagerFrame::BuildMenus()
@@ -521,7 +595,7 @@ void ManagerFrame::RefreshMachineList()
 	}
 
 	SetStatusText(wxString::Format("%zu machine%s, %zu running",
-	    machine_names_.size(), machine_names_.size() == 1 ? "" : "s", running_count));
+	    machine_names_.size(), machine_names_.size() == 1 ? "" : "s", running_count), 1);
 
 	UpdateButtons();
 }
