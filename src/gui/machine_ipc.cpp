@@ -73,30 +73,31 @@ bool SharedFramebuffer::Map(const std::string &name, bool create)
 	}
 	file_mapping_handle_ = handle;
 #else
+	const std::string full = "/" + name;	/* shm_open names begin with one */
 	int flags = create ? (O_CREAT | O_RDWR | O_EXCL) : O_RDWR;
-	int fd = shm_open(name.c_str(), flags, 0600);
+	int fd = shm_open(full.c_str(), flags, 0600);
 
 	if (fd < 0 && create && errno == EEXIST) {
 		/* A segment from a previous run of this pid survived somehow (the
 		   name already includes the pid, so a genuine collision would mean
 		   pid reuse racing us, vanishingly unlikely) - clear it rather than
 		   fail outright. */
-		shm_unlink(name.c_str());
-		fd = shm_open(name.c_str(), O_CREAT | O_RDWR | O_EXCL, 0600);
+		shm_unlink(full.c_str());
+		fd = shm_open(full.c_str(), O_CREAT | O_RDWR | O_EXCL, 0600);
 	}
 	if (fd < 0) {
 		return false;
 	}
 	if (create && ftruncate(fd, (off_t) total) != 0) {
 		close(fd);
-		shm_unlink(name.c_str());
+		shm_unlink(full.c_str());
 		return false;
 	}
 	mem = mmap(nullptr, total, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	close(fd);	/* the mapping keeps the segment alive; the fd is not needed after mmap */
 	if (mem == MAP_FAILED) {
 		if (create) {
-			shm_unlink(name.c_str());
+			shm_unlink(full.c_str());
 		}
 		return false;
 	}
@@ -165,7 +166,9 @@ void SharedFramebuffer::Close()
 	   to do here even for the owner. */
 #else
 	if (owner_ && !name_.empty()) {
-		shm_unlink(name_.c_str());
+		const std::string full = "/" + name_;
+
+		shm_unlink(full.c_str());
 	}
 #endif
 	header_ = nullptr;
