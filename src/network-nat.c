@@ -45,6 +45,12 @@
 
 #define HEADERLEN	14
 
+/* Upper bound on how far a transmit mbuf chain is followed. Far above any
+   legitimate chain for a packet that has to fit in a 2048-byte buffer, and low
+   enough that a circular chain - which a guest is free to build - is reported
+   rather than spinning the emulator for ever. */
+#define MAX_MBUF_HOPS	1024
+
 /* Packet queue for incoming packets from broadcast relay */
 #define PKT_QUEUE_SIZE  32      /* Number of packets in queue */
 #define PKT_MAX_SIZE    2048    /* Max size of each packet */
@@ -422,7 +428,14 @@ network_nat_tx(uint32_t errbuf, uint32_t mbufs, uint32_t dest, uint32_t src, uin
 {
 	uint8_t *buf = nat.tx_buffer;
 	struct ro_mbuf_part txb;
-	uint32_t packet_length;
+	/*
+	 * size_t, not uint32_t. m_len is read straight out of an mbuf the guest
+	 * built, so it is a guest-controlled 32-bit value: a large enough segment
+	 * wraps a uint32_t accumulator back past the size check below, after which
+	 * memcpytohost() is asked to copy that length into a fixed buffer.
+	 */
+	size_t packet_length;
+	unsigned hops = 0;
 
 	memcpytohost(buf, dest, 6);
 	buf += 6;
@@ -441,12 +454,33 @@ network_nat_tx(uint32_t errbuf, uint32_t mbufs, uint32_t dest, uint32_t src, uin
 
 	// Copy the mbuf chain as the payload
 	while (mbufs != 0) {
+		/*
+		 * The chain is guest data, so it can be circular. Without a cap this
+		 * loop never ends and the emulator hangs with nothing in the log -
+		 * and the length check below cannot be relied on to break the cycle,
+		 * because a chain of zero-length segments never grows the total.
+		 */
+		if (++hops > MAX_MBUF_HOPS) {
+			strcpyfromhost(errbuf, "RPCEmu: mbuf chain too long");
+			return errbuf;
+		}
+
 		memcpytohost(&txb, mbufs, sizeof(txb));
-		packet_length += txb.m_len;
-		if (packet_length > sizeof(nat.tx_buffer)) {
+
+		/*
+		 * Each segment is bounded in its own right as well as against the
+		 * running total: the total does not bound the copy that follows it,
+		 * and it is that copy - of a guest-supplied length into a fixed
+		 * buffer - which has to be made safe.
+		 */
+		if (txb.m_len > sizeof(nat.tx_buffer) ||
+		    packet_length + txb.m_len > sizeof(nat.tx_buffer))
+		{
 			strcpyfromhost(errbuf, "RPCEmu: Packet too large to send");
 			return errbuf;
 		}
+
+		packet_length += txb.m_len;
 		memcpytohost(buf, mbufs + txb.m_off, txb.m_len);
 		buf += txb.m_len;
 		mbufs = txb.m_next;
