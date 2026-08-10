@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>	/* clock_gettime, for the queued-command timeouts */
 
 #include "socket-compat.h"
 #ifndef _WIN32
@@ -60,6 +61,21 @@
 
 #define HC_PROTOCOL_VERSION	1
 
+/*
+ * How long a queued command waits before the client is told it will not run.
+ *
+ * The two cases are not equally strong, and treating them alike is a mistake in
+ * one direction or the other. "The guest module has never announced itself" is
+ * unambiguous - nothing is there to collect the command, and no amount of
+ * waiting will change that - so a short limit is right. "It announced itself
+ * and has since gone quiet" is not: the module polls from a ticker, and a
+ * machine busy with a redraw, a modal error box or a long SWI can legitimately
+ * stop polling for a while. Holding that case to the same second would report a
+ * working gateway as broken, which is worse than the wait it replaced.
+ */
+#define HC_NO_GUEST_MS		1000	/* never seen: nothing is listening */
+#define HC_GUEST_QUIET_MS	15000	/* seen, then quiet: probably just busy */
+
 #define HC_CMDLINE_MAX	256		/* RISC OS OS_CLI limit is 255 chars + NUL */
 #define HC_IN_BUF_SZ	HC_CMDLINE_MAX
 #define HC_OUT_RING_SZ	(64u * 1024u)	/* MUST be a power of two */
@@ -93,6 +109,14 @@ typedef struct {
 	   can be told there is nothing listening rather than waiting for a
 	   command that will never be collected. Cleared on reset. */
 	int	guest_registered;
+
+	/* Monotonic milliseconds: when the command now waiting was queued, and
+	   when the guest module was last heard from. An outside client used to
+	   get neither answer nor error when nothing was there to collect its
+	   command, and simply waited out its own timeout. See
+	   hc_expire_pending_command(). */
+	int64_t	cmd_queued_ms;
+	int64_t	guest_seen_ms;
 
 	/*
 	 * Commands handed to the guest that nobody is waiting for any more, because
@@ -130,6 +154,22 @@ static size_t
 hc_ring_free(void)
 {
 	return (HC_OUT_RING_SZ - 1) - hc_ring_used();
+}
+
+/* Monotonic milliseconds. Wall clock rather than emulated time: how long a
+   client is prepared to wait is a real-world quantity, and a machine that has
+   been paused or is running slowly is exactly when the answer matters. */
+static int64_t
+hc_now_ms(void)
+{
+#ifdef _WIN32
+	return (int64_t) GetTickCount64();
+#else
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (int64_t) ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+#endif
 }
 
 /* Append len bytes; the caller must have ensured hc_ring_free() >= len. */
@@ -256,6 +296,7 @@ hostcmd(ARMul_State *state)
 		   internal caller be refused straight away rather than waiting for a
 		   command nothing will collect. */
 		hc.guest_registered = 1;
+		hc.guest_seen_ms = hc_now_ms();
 		state->Reg[0] = 0xffffffffu;
 		state->Reg[1] = (hc.client_fd >= 0) ? 1u : 0u;
 		break;
@@ -265,6 +306,11 @@ hostcmd(ARMul_State *state)
 		   R0 out: 0 none / 1 delivered / 2 buffer too small; R1 out: length. */
 		uint32_t bufptr = state->Reg[0];
 		uint32_t bufsize = state->Reg[1];
+
+		/* The module polls from a ticker, so this is the proof that it is
+		   still running, not merely that it once was. */
+		hc.guest_registered = 1;
+		hc.guest_seen_ms = hc_now_ms();
 
 		if (hc.cmd_pending && !hc.cmd_inflight) {
 			if (hc.cmd_len + 1 > bufsize) {
@@ -697,6 +743,7 @@ hc_read_client(void)
 			hc.cmd_line[copy] = '\0';
 			hc.cmd_len = copy;
 			hc.cmd_pending = 1;
+			hc.cmd_queued_ms = hc_now_ms();
 			continue;
 		}
 		if (hc.in_len < HC_CMDLINE_MAX - 1) {
@@ -776,6 +823,7 @@ hostcmd_internal_submit(const char *command, hostcmd_internal_done_fn done,
 	hc.cmd_line[len] = '\0';
 	hc.cmd_len = len;
 	hc.cmd_pending = 1;
+	hc.cmd_queued_ms = hc_now_ms();
 	hc.cmd_inflight = 0;
 
 	hc.internal_active = 1;
@@ -819,6 +867,65 @@ hostcmd_internal_abandon(void)
 	hc_internal_finish(0);
 }
 
+/*
+ * Give up on a command nothing is going to collect.
+ *
+ * A command sits in cmd_pending until the guest module polls for it. If no
+ * module is running - the machine is still booting, its !Boot never loads one,
+ * or its HostFS disc is empty - that poll never comes, and the command used to
+ * wait there in silence while the client wore out its own timeout with no idea
+ * whether the command had run. The guest's silence is the signal; this turns it
+ * into an answer.
+ *
+ * The two limits differ deliberately: see HC_NO_GUEST_MS above.
+ */
+static void
+hc_expire_pending_command(void)
+{
+	int64_t waited;
+	const char *why;
+
+	if (!hc.cmd_pending || hc.cmd_inflight) {
+		return;		/* nothing waiting, or already with the guest */
+	}
+
+	waited = hc_now_ms() - hc.cmd_queued_ms;
+
+	if (!hc.guest_registered) {
+		if (waited < HC_NO_GUEST_MS) {
+			return;
+		}
+		why = "no guest module has collected a command: it is not running, "
+		      "or the machine has not finished booting";
+	} else {
+		if (hc_now_ms() - hc.guest_seen_ms < HC_GUEST_QUIET_MS) {
+			return;
+		}
+		why = "the guest module has stopped polling: the machine may be "
+		      "paused, or stuck in an error box";
+	}
+
+	rpclog("HostCmd: giving up on '%s' after %d ms - %s\n",
+	       hc.cmd_line, (int) waited, why);
+
+	hc.cmd_pending = 0;
+	hc.cmd_len = 0;
+
+	if (hc.internal_active) {
+		hc_internal_finish(0xffffffffu);
+		return;
+	}
+
+	if (hc.client_fd >= 0) {
+		uint8_t rc[4] = { 0xff, 0xff, 0xff, 0xff };
+		char msg[256];
+
+		snprintf(msg, sizeof(msg), "RPCEmu: %s\n", why);
+		hc_notice(msg);
+		hc_push_frame(HC_FRAME_DONE, rc, 4);
+	}
+}
+
 void
 hostcmd_poll(void)
 {
@@ -827,6 +934,8 @@ hostcmd_poll(void)
 	if (hc.listen_fd < 0) {
 		return;
 	}
+
+	hc_expire_pending_command();
 
 	if (hc.client_fd < 0) {
 		/*
