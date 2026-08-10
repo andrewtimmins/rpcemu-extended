@@ -37,6 +37,7 @@
 #include "hostfs.h"
 #include "hostfs_path.h"
 #include "hostfs_internal.h"
+#include "hostfs_filetype.h"
 #include "savestate.h"
 #include "rpcemu-win.h"
 
@@ -721,6 +722,27 @@ hostfs_read_object_info(const char *host_pathname,
         file_type = (ARMword) strtoul(comma + 1, NULL, 16);
         truncate_name = true;
       }
+    }
+  }
+
+  /*
+   * Nothing has said what this file is: no ",xxx" suffix and no load-exec
+   * pair, so it is not a file RISC OS wrote. That is the ordinary state of
+   * one put into the folder from the host, where the extension is the only
+   * statement of type there is, so use it.
+   *
+   * Only when nothing else decided, and only for files - a directory called
+   * "backup.zip" is still a directory. Anything unrecognised keeps the Text
+   * default, which is what source files want in any case. See
+   * hostfs_filetype.c for what is in the table and what is kept out of it.
+   */
+  if (is_timestamped && !truncate_name && file_type == DEFAULT_FILE_TYPE &&
+      object_info->type == OBJECT_TYPE_FILE)
+  {
+    uint32_t guessed;
+
+    if (hostfs_filetype_from_leafname(host_pathname, &guessed)) {
+      file_type = (ARMword) guessed;
     }
   }
 

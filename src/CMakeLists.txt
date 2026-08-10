@@ -31,6 +31,7 @@ set(RPCEMU_CORE_SOURCES
     folder_move.c
     hostfs_advice.c
     hostfs_path.c
+    hostfs_filetype.c
     mem.c
     perfprof.c
     rom_patch.c

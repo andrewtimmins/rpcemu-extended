@@ -368,6 +368,15 @@ target_include_directories(test_hostfs_path PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 rpcemu_add_test(test_hostfs_path)
 
+# Typing a host file from its extension: the numbers, and - more important -
+# everything the table must not claim. Source extensions are Text on RISC OS
+# and are deliberately absent. See src/hostfs_filetype.c.
+add_executable(test_hostfs_filetype test_hostfs_filetype.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/hostfs_filetype.c)
+target_include_directories(test_hostfs_filetype PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_hostfs_filetype)
+
 # Ejecting a CD-ROM image has to forget the handle as well as close it, or the
 # next eject closes a FILE that has already been freed - two menu clicks apart.
 # See src/cdrom-iso.c.
@@ -635,7 +644,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 37)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 38)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()
