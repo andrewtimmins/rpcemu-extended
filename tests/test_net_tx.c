@@ -105,6 +105,9 @@ strcpyfromhost(uint32_t dest, const char *source)
 
 /* Nothing below this point participates in the behaviour under test. */
 void rpclog(const char *fmt, ...) { (void) fmt; }
+/* Explicitly stubbed: glibc happens to export an error() of its own, so
+   leaving this out links on Linux and fails on Windows. */
+void error(const char *fmt, ...) { (void) fmt; }
 void savestate_write_u32(FILE *f, uint32_t v) { (void) f; (void) v; }
 uint32_t savestate_read_u32(FILE *f) { (void) f; return 0; }
 Config config;
@@ -113,7 +116,7 @@ unsigned char network_hwaddr[6] = { 0x00, 0x02, 0x07, 0x06, 0x00, 0x00 };
 podule *network_poduleinfo;
 void network_irq_raise(void) { }
 void network_irq_lower(void) { }
-int network_macaddress_parse(const char *s, uint8_t *m) { (void) s; (void) m; return 0; }
+int network_macaddress_parse(const char *s, uint8_t m[6]) { (void) s; (void) m; return 0; }
 int net_slot_acquire(void) { return 0; }
 void net_slot_release(void) { }
 int app_settings_relay_enabled(void) { return 0; }
