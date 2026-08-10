@@ -144,14 +144,36 @@ iso_open(const char *fn)
 	return 0;
 }
 
+/* Close the image and forget the handle.
+ *
+ * Clearing iso_file is the whole point: without it the stale pointer stays
+ * behind and the next close - another eject, a second image, or the exit
+ * path - calls fclose() on a FILE that has already been freed. Both close
+ * entry points are reachable from the menu (Disc > CD-ROM > Empty calls
+ * atapi->exit() and then iso_init(), which does not itself clear the
+ * handle), so ejecting twice in a row was enough to do it.
+ *
+ * The drive is marked empty at the same time, so a read that arrives after
+ * a close is answered as an empty drive rather than by dereferencing the
+ * handle we have just given up.
+ */
+static void iso_release(void)
+{
+        if (iso_file != NULL) {
+                fclose(iso_file);
+                iso_file = NULL;
+        }
+        iso_empty = 1;
+}
+
 void iso_close(void)
 {
-        if (iso_file) fclose(iso_file);
+        iso_release();
 }
 
 static void iso_exit(void)
 {
-        if (iso_file) fclose(iso_file);
+        iso_release();
 }
 
 void iso_init(void)

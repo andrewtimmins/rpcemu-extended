@@ -255,6 +255,17 @@ if(WIN32)
 endif()
 rpcemu_add_test(test_debugcmd ${CMAKE_CURRENT_BINARY_DIR})
 
+# HostCmd: a command nobody is there to collect has to be answered rather than
+# left waiting, and - the part that is easy to get wrong in the other direction
+# - a guest module that is merely busy must not be given up on. Drives the real
+# socket and calls the SWI handler in place of the guest. See src/hostcmd.c.
+add_executable(test_hostcmd test_hostcmd.c test_stubs.c)
+target_link_libraries(test_hostcmd PRIVATE rpcemu_core m)
+if(WIN32)
+    target_link_libraries(test_hostcmd PRIVATE ws2_32)
+endif()
+rpcemu_add_test(test_hostcmd ${CMAKE_CURRENT_BINARY_DIR})
+
 # The CI abort watcher's classification and verdict (tests/abort_watch.py, used
 # by tests/boot_smoke.py). Pure Python, no emulator.
 #
@@ -356,6 +367,24 @@ add_executable(test_hostfs_path test_hostfs_path.c
 target_include_directories(test_hostfs_path PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 rpcemu_add_test(test_hostfs_path)
+
+# Typing a host file from its extension: the numbers, and - more important -
+# everything the table must not claim. Source extensions are Text on RISC OS
+# and are deliberately absent. See src/hostfs_filetype.c.
+add_executable(test_hostfs_filetype test_hostfs_filetype.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/hostfs_filetype.c)
+target_include_directories(test_hostfs_filetype PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_hostfs_filetype)
+
+# Ejecting a CD-ROM image has to forget the handle as well as close it, or the
+# next eject closes a FILE that has already been freed - two menu clicks apart.
+# See src/cdrom-iso.c.
+add_executable(test_cdrom_iso test_cdrom_iso.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/cdrom-iso.c)
+target_include_directories(test_cdrom_iso PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_cdrom_iso)
 
 # Whether moving somebody's files can be offered at all. Copying a hard disc is the
 # most destructive thing RPCEmu does to the host filesystem, and every condition
@@ -511,6 +540,21 @@ target_compile_definitions(test_relay_reasm PRIVATE CONFIG_SLIRP _DEFAULT_SOURCE
 target_link_libraries(test_relay_reasm PRIVATE ${NET_TEST_LIBS})
 rpcemu_add_test(test_relay_reasm)
 
+# The transmit path against mbuf chains a guest can build: an over-long segment
+# used to wrap the 32-bit length accumulator past the size check and be copied
+# into a fixed buffer regardless, and a circular chain was followed for ever.
+# Links network-nat.c against a stubbed emulator and a plain array standing in
+# for guest RAM, so no SLiRP is needed. See src/network-nat.c.
+add_executable(test_net_tx test_net_tx.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/network-nat.c)
+target_include_directories(test_net_tx PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/slirp
+)
+target_compile_definitions(test_net_tx PRIVATE CONFIG_SLIRP _DEFAULT_SOURCE)
+target_link_libraries(test_net_tx PRIVATE ${NET_TEST_LIBS})
+rpcemu_add_test(test_net_tx)
+
 # The emulated graphics card: its register file, and the checks that stop a
 # guest-supplied mode from making the video code read outside the card's own
 # framestore. Compiles gfxcard.c directly and stubs the backplane, because
@@ -656,7 +700,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 37)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 41)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()

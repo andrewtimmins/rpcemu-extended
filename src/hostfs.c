@@ -37,6 +37,7 @@
 #include "hostfs.h"
 #include "hostfs_path.h"
 #include "hostfs_internal.h"
+#include "hostfs_filetype.h"
 #include "savestate.h"
 #include "rpcemu-win.h"
 
@@ -608,6 +609,27 @@ path_construct(const char *old_path, const char *ro_path,
     /* Place new leaf (bounded to the space remaining in new_path) */
     used = (size_t) (new_leaf - new_path);
     riscos_path_to_host(ro_leaf, new_leaf, len - used);
+
+    /*
+     * A leaf that came out as "." or ".." names a directory rather than an
+     * object inside one, and this is the one place a guest path becomes a
+     * host path without being resolved a component at a time. Everywhere
+     * else that conversion goes through hostfs_path_scan(), which matches
+     * against real directory entries and skips both of those; here the
+     * result is used as it stands.
+     *
+     * It is reachable because the conversion swaps the two characters over:
+     * RISC OS '/' becomes host '.', so a RISC OS leaf of "//" arrives as
+     * "..". rename() would refuse the result, so this is not known to be
+     * exploitable - but relying on the C library to catch a path escape is
+     * not a check, and the guest chooses the leaf.
+     */
+    if (strcmp(new_leaf, ".") == 0 || strcmp(new_leaf, "..") == 0) {
+      rpclog("HostFS: path_construct: leaf '%s' names a directory - ignoring\n",
+             ro_leaf);
+      new_path[0] = '\0';
+      return;
+    }
   }
 
   /* Calculate where to place new comma suffix */
@@ -700,6 +722,27 @@ hostfs_read_object_info(const char *host_pathname,
         file_type = (ARMword) strtoul(comma + 1, NULL, 16);
         truncate_name = true;
       }
+    }
+  }
+
+  /*
+   * Nothing has said what this file is: no ",xxx" suffix and no load-exec
+   * pair, so it is not a file RISC OS wrote. That is the ordinary state of
+   * one put into the folder from the host, where the extension is the only
+   * statement of type there is, so use it.
+   *
+   * Only when nothing else decided, and only for files - a directory called
+   * "backup.zip" is still a directory. Anything unrecognised keeps the Text
+   * default, which is what source files want in any case. See
+   * hostfs_filetype.c for what is in the table and what is kept out of it.
+   */
+  if (is_timestamped && !truncate_name && file_type == DEFAULT_FILE_TYPE &&
+      object_info->type == OBJECT_TYPE_FILE)
+  {
+    uint32_t guessed;
+
+    if (hostfs_filetype_from_leafname(host_pathname, &guessed)) {
+      file_type = (ARMword) guessed;
     }
   }
 
