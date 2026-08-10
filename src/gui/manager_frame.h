@@ -87,6 +87,10 @@ private:
 	void OnMachineSelected(wxListEvent &event);
 	void OnMachineActivated(wxListEvent &event);
 	void OnMachineRightClick(wxListEvent &event);
+	void OnStatusBarSize(wxSizeEvent &event);
+
+	void SetMachinesPanelCollapsed(bool collapsed);
+	void PositionCollapseButton();
 	void OnNew(wxCommandEvent &event);
 	void OnEdit(wxCommandEvent &event);
 	void OnClone(wxCommandEvent &event);
@@ -132,6 +136,12 @@ private:
 	wxImageList *status_images_ = nullptr;
 	wxSimplebook *display_book_ = nullptr;
 	int placeholder_page_ = -1;
+
+	/* The machine list collapses, so the width it had is kept to put it back
+	   where the user had it. */
+	wxSplitterWindow *splitter_ = nullptr;
+	int machines_panel_width_ = 300;
+	wxBitmapButton *collapse_button_ = nullptr;
 	wxButton *new_button_ = nullptr;
 	wxButton *edit_button_ = nullptr;
 	wxButton *clone_button_ = nullptr;
