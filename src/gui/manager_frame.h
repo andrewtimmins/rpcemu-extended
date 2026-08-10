@@ -63,6 +63,7 @@ private:
 		RemoteEmulatorPanel *panel = nullptr;
 		int book_page = -1;
 		bool starting = false;		/* waiting for the child to publish its IPC endpoint */
+		wxString last_attach_error;	/* why the most recent attempt failed */
 		wxLongLong start_time_ms;
 	};
 
