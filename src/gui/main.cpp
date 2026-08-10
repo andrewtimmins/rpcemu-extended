@@ -575,17 +575,26 @@ public:
 					unsuitable++;
 					continue;
 				}
+				/* Matches the licence as well, so "non free" narrows the
+				   list to what a user might want to think twice about -
+				   the same search the window offers. */
 				if (!filter.empty() &&
 				    !pkg.name.Lower().Contains(filter) &&
 				    !pkg.section.Lower().Contains(filter) &&
+				    !pkg.licence.Lower().Contains(filter) &&
 				    !pkg.description.Lower().Contains(filter)) {
 					continue;
 				}
 
-				ConsoleMessage(false, "%-24s %-14s %-16s %s\n",
+				/* A record stating no licence says so, rather than leaving a
+				   gap that reads as "nothing to worry about". */
+				ConsoleMessage(false, "%-24s %-14s %-16s %-16s %s\n",
 				    static_cast<const char *>(pkg.name.utf8_str()),
 				    static_cast<const char *>(pkg.version.utf8_str()),
 				    static_cast<const char *>(pkg.section.utf8_str()),
+				    static_cast<const char *>(pkg.licence.empty()
+				        ? wxString("not stated").utf8_str()
+				        : pkg.licence.utf8_str()),
 				    static_cast<const char *>(pkg.description.utf8_str()));
 				shown++;
 			}
