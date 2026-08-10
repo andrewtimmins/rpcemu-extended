@@ -23,6 +23,7 @@
 #include <wx/dcmemory.h>
 #include <wx/dir.h>
 #include <wx/filename.h>
+#include <wx/progdlg.h>
 #include <wx/statbmp.h>
 #include <wx/stdpaths.h>
 #include <wx/textdlg.h>
@@ -937,7 +938,32 @@ void ManagerFrame::OnClone(wxCommandEvent & /*event*/)
 
 	const wxString dest_path = ConfigPathsConfigsDir() + wxFileName::GetPathSeparator() + sanitized + ".cfg";
 	wxCopyFile(source_path, dest_path);
-	ConfigPathsCopyDirectory(MachineDirFor(name), MachineDirFor(sanitized));
+
+	/* Pulsed rather than counted: the copy walks the tree as it goes, and
+	   counting it first would mean walking the whole thing twice to tell
+	   somebody a number they are not waiting on. */
+	bool copied;
+	{
+		wxProgressDialog progress("Clone Machine",
+		    wxString::Format("Copying '%s'...", name), 100, this,
+		    wxPD_APP_MODAL | wxPD_AUTO_HIDE | wxPD_ELAPSED_TIME);
+		int seen = 0;
+
+		copied = ConfigPathsCopyDirectory(MachineDirFor(name),
+		    MachineDirFor(sanitized),
+		    [&progress, &seen](const wxString &) {
+			    if ((++seen & 0x1f) == 0) {
+				    progress.Pulse();
+			    }
+		    });
+	}
+
+	if (!copied) {
+		wxRemoveFile(dest_path);
+		wxMessageBox("Could not copy the machine's files.", "Clone Machine",
+		             wxOK | wxICON_ERROR, this);
+		return;
+	}
 
 	RefreshMachineList();
 }
@@ -958,20 +984,44 @@ void ManagerFrame::OnDelete(wxCommandEvent & /*event*/)
 
 	wxRemoveFile(ConfigPathsConfigsDir() + wxFileName::GetPathSeparator() + name + ".cfg");
 
-	wxArrayString files;
+	/*
+	 * The files go one at a time so there is something to report: a machine's
+	 * hard disc is thousands of them, and the window answers nothing while they
+	 * are removed. What is left afterwards is the empty directories they were
+	 * in, which the recursive remove clears in one quick pass - GetAllFiles()
+	 * reports files only, so nothing here would otherwise take them.
+	 */
 	const wxString dir = MachineDirFor(name);
 	if (wxDirExists(dir)) {
+		wxArrayString files;
+
 		wxDir::GetAllFiles(dir, &files);
-		files.Sort();
-		std::reverse(files.begin(), files.end());
-		for (const auto &f : files) {
-			if (wxDirExists(f)) {
-				wxRmdir(f);
-			} else {
-				wxRemoveFile(f);
+
+		{
+			wxProgressDialog progress("Delete Machine",
+			    wxString::Format("Deleting '%s'...", name),
+			    static_cast<int>(files.GetCount()), this,
+			    wxPD_APP_MODAL | wxPD_AUTO_HIDE | wxPD_ELAPSED_TIME);
+
+			for (size_t i = 0; i < files.GetCount(); i++) {
+				wxRemoveFile(files[i]);
+				/* Every so often rather than every file: the update costs more
+				   than the unlink, and a bar moving in steps of one is no more
+				   informative. */
+				if ((i & 0x1f) == 0) {
+					progress.Update(static_cast<int>(i));
+				}
 			}
 		}
-		wxRmdir(dir);
+
+		if (!wxFileName::Rmdir(dir, wxPATH_RMDIR_RECURSIVE)) {
+			wxMessageBox(wxString::Format(
+			                 "'%s' has been removed from the list, but its data "
+			                 "could not be deleted from\n\n%s\n\nYou may want to "
+			                 "remove that folder yourself.",
+			                 name, dir),
+			             "Delete Machine", wxOK | wxICON_WARNING, this);
+		}
 	}
 
 	RefreshMachineList();
