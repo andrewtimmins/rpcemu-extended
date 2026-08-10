@@ -694,7 +694,7 @@ wxWindow *MachineEditDialog::BuildNetworkPage(wxWindow *parent)
 	wxWindow *json_parent = json_box->GetStaticBox();
 
 	json_net_check_ = new wxCheckBox(json_parent, wxID_ANY,
-	    "Share a network with other emulators through a JSON server");
+	    "Enable Pyromaniac Networking Support");
 	json_net_host_label_ = new wxStaticText(json_parent, wxID_ANY, "Server:");
 	json_net_host_edit_ = new wxTextCtrl(json_parent, wxID_ANY, "localhost");
 	json_net_port_label_ = new wxStaticText(json_parent, wxID_ANY, "Port:");
