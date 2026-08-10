@@ -67,6 +67,10 @@ public:
 	/* Why IsLive() is false, for a caller with a window to say so in. */
 	const wxString &AttachError() const { return attach_error_; }
 
+	/* Drop the connection to the machine. Safe to call twice; the destructor
+	   does it too. */
+	void CloseConnection();
+
 	/* Whether this is the machine currently shown to the user. Only an
 	   active panel pulls new frames out of shared memory and repaints;
 	   backgrounded machines keep running (this process has no say in

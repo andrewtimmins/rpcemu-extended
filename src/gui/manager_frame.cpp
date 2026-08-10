@@ -1692,6 +1692,12 @@ void ManagerFrame::OnClose(wxCloseEvent &event)
 			proc->Forget();
 			proc->Detach();
 		}
+		/* Here rather than in the panel's destructor: closing a connection
+		   waits for its reader thread, and doing that as the window came down
+		   stopped the window coming down at all. */
+		if (entry.second.panel != nullptr) {
+			entry.second.panel->CloseConnection();
+		}
 	}
 	poll_timer_.Stop();
 	event.Skip();

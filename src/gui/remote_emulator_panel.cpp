@@ -88,6 +88,12 @@ RemoteEmulatorPanel::RemoteEmulatorPanel(wxWindow *parent, const std::string &sh
 	UpdateCursor();
 }
 
+void RemoteEmulatorPanel::CloseConnection()
+{
+	live_ = false;
+	ipc_client_.Disconnect();
+}
+
 RemoteEmulatorPanel::~RemoteEmulatorPanel()
 {
 	ipc_client_.Disconnect();
