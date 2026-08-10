@@ -704,24 +704,24 @@ void ManagerFrame::AttachPanelFor(const wxString &name, const wxString &shared_f
 	    ipc_endpoint.utf8_str().data());
 
 	if (!panel->IsLive()) {
-		/* Stale lock / the process ended between discovery and here. */
 		const wxString why = panel->AttachError();
 
 		panel->Destroy();
-		RemoveRunningEntry(name);
-		if (newly_started) {
-			/* What went wrong is names and sockets, which mean nothing to
-			   somebody who only wanted to run a machine - so it goes behind
-			   Details, where it is still there for a bug report. */
-			wxRichMessageDialog dlg(this,
-			    wxString::Format("'%s' started but could not be displayed.", name),
-			    "RPCEmu Extended Manager", wxOK | wxICON_ERROR);
 
-			dlg.SetExtendedMessage(
-			    "The machine may still be running. Stopping it and starting it "
-			    "again usually clears this.");
-			dlg.ShowDetailedText(why);
-			dlg.ShowModal();
+		/* Kept for the deadline to report, this being the only account of why
+		   a machine that never appeared did not. */
+		auto failed = running_.find(name);
+		if (failed != running_.end()) {
+			failed->second.last_attach_error = why;
+		}
+
+		/* A machine we started is left for the next poll to try again -
+		   giving up on the first attempt lost it from the window for the rest
+		   of the session, still running and no longer listed. OnPollTimer's
+		   deadline decides when to stop. Discovery has no entry to leave: the
+		   lock file it was found by is stale. */
+		if (!newly_started) {
+			RemoveRunningEntry(name);
 		}
 		return;
 	}
@@ -864,13 +864,31 @@ void ManagerFrame::OnPollTimer(wxTimerEvent & /*event*/)
 		    endpoint[0] != '\0') {
 			AttachPanelFor(name, wxString::FromUTF8(MachineIpcNameFor(dir.utf8_str().data(), pid)),
 			    wxString::FromUTF8(endpoint), true);
-			continue;
+
+			/* Still starting means the attempt failed, so fall through to
+			   the deadline rather than trying for ever. */
+			it = running_.find(name);
+			if (it == running_.end() || !it->second.starting) {
+				continue;
+			}
 		}
 
 		if ((wxGetLocalTimeMillis() - it->second.start_time_ms).ToLong() > kStartupTimeoutMs) {
+			const wxString why = it->second.last_attach_error;
+
 			RemoveRunningEntry(name);
-			wxMessageBox("'" + name + "' did not finish starting in time.",
-			    "RPCEmu Extended Manager", wxOK | wxICON_ERROR, this);
+
+			wxRichMessageDialog dlg(this,
+			    wxString::Format("'%s' started but could not be displayed.", name),
+			    "RPCEmu Extended Manager", wxOK | wxICON_ERROR);
+
+			dlg.SetExtendedMessage(
+			    "The machine may still be running. Stopping it and starting it "
+			    "again usually clears this.");
+			if (!why.empty()) {
+				dlg.ShowDetailedText(why);
+			}
+			dlg.ShowModal();
 		}
 	}
 }
