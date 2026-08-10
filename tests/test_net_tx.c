@@ -128,6 +128,31 @@ void broadcast_relay_poll(void) { }
    The SLiRP stub below records it instead. */
 int broadcast_relay_tx(const uint8_t *pkt, int pkt_len) { (void) pkt; (void) pkt_len; return 0; }
 
+/* The hub that carries frames to other emulators on this host. Stubbed rather
+   than linked so the test opens no sockets: what is under test is the bounds
+   on the mbuf walk, and a frame that reaches the hub has already passed them.
+   net_json_is_connected() answers no, so the switch is the branch taken - the
+   same one an ordinary machine uses. */
+int  net_json_is_connected(void) { return 0; }
+void net_json_tx(const uint8_t *frame, int frame_len) { (void) frame; (void) frame_len; }
+int  net_json_init(void) { return -1; }
+void net_json_close(void) { }
+int  net_json_poll(void) { return 0; }
+int  net_switch_init(void) { return 0; }
+void net_switch_close(void) { }
+int  net_switch_poll(void) { return 0; }
+
+static size_t switch_len;
+static int    switch_count;
+
+void
+net_switch_tx(const uint8_t *frame, int frame_len)
+{
+	(void) frame;
+	switch_len = (size_t) frame_len;
+	switch_count++;
+}
+
 static size_t sent_len;
 static int    sent_count;
 
@@ -188,6 +213,8 @@ reset(void)
 	memset(guest_ram, 0, sizeof(guest_ram));
 	sent_len = 0;
 	sent_count = 0;
+	switch_len = 0;
+	switch_count = 0;
 }
 
 int
@@ -211,6 +238,8 @@ main(void)
 	r = network_nat_tx(ERRBUF_ADDR, MBUF_BASE, 0, 0, 0x0800);
 	check(r == 0, "an ordinary chain is accepted");
 	check(sent_count == 1, "and is handed on once");
+	check(switch_count == 1 && switch_len == sent_len,
+	      "and reaches the other machines on this host as the same frame");
 	check(sent_len == 14u + 32u + 16u,
 	      "with the header and both segments in it");
 
@@ -223,7 +252,8 @@ main(void)
 	r = network_nat_tx(ERRBUF_ADDR, MBUF_BASE, 0, 0, 0x0800);
 	check(reported_error(r), "a segment length that wraps the total is rejected");
 	printf("    (reported: %s)\n", reported_error(r) ? error_text() : "nothing");
-	check(sent_count == 0, "and nothing is transmitted");
+	check(sent_count == 0 && switch_count == 0,
+	      "and nothing is transmitted, to SLiRP or to the other machines");
 
 	/* --- a segment that is merely too big ------------------------------ */
 	reset();
@@ -231,7 +261,8 @@ main(void)
 
 	r = network_nat_tx(ERRBUF_ADDR, MBUF_BASE, 0, 0, 0x0800);
 	check(reported_error(r), "an oversized segment is rejected");
-	check(sent_count == 0, "and nothing is transmitted");
+	check(sent_count == 0 && switch_count == 0,
+	      "and nothing is transmitted, to SLiRP or to the other machines");
 
 	/* --- a total that is too big, in segments that each fit ------------ */
 	reset();
@@ -240,7 +271,8 @@ main(void)
 
 	r = network_nat_tx(ERRBUF_ADDR, MBUF_BASE, 0, 0, 0x0800);
 	check(reported_error(r), "segments that fit individually but not together are rejected");
-	check(sent_count == 0, "and nothing is transmitted");
+	check(sent_count == 0 && switch_count == 0,
+	      "and nothing is transmitted, to SLiRP or to the other machines");
 
 	/* --- a circular chain ---------------------------------------------
 	 * Zero-length segments, so the running total never grows and the size
@@ -254,7 +286,8 @@ main(void)
 	r = network_nat_tx(ERRBUF_ADDR, MBUF_BASE, 0, 0, 0x0800);
 	check(reported_error(r), "a circular chain is reported rather than followed for ever");
 	printf("    (reported: %s)\n", reported_error(r) ? error_text() : "nothing");
-	check(sent_count == 0, "and nothing is transmitted");
+	check(sent_count == 0 && switch_count == 0,
+	      "and nothing is transmitted, to SLiRP or to the other machines");
 
 	if (failures != 0) {
 		printf("%d check(s) failed\n", failures);
