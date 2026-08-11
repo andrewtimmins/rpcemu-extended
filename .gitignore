@@ -65,6 +65,17 @@
 /riscos-progs/*/resfs.inc
 /riscos-progs/RPCEmuGfx/gfxapp
 
+# Output from building EtherRPCEm with the RISC OS makefile system (riscos-amu,
+# or amu on the build service). h.ModHdr comes from cmhg.ModHdr and c.AutoSense
+# from the tokenised BASIC in AutoSense.EtherRPCEm, so neither is source.
+/riscos-progs/EtherRPCEm/o32/
+/riscos-progs/EtherRPCEm/oz32/
+/riscos-progs/EtherRPCEm/aof32/
+/riscos-progs/EtherRPCEm/rm32/
+/riscos-progs/EtherRPCEm/Artifacts/
+/riscos-progs/EtherRPCEm/c/AutoSense
+/riscos-progs/EtherRPCEm/h/ModHdr
+
 # Editor swap files / patch leftovers
 *.swp
 *~

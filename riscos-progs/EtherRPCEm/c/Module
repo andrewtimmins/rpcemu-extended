@@ -427,7 +427,7 @@ finalise(int fatal, int podule, void *pw)
  * @param frame_type Frame type of received frame (or length if IEEE)
  * @return Pointer to Claim information, or NULL if not claimed by a Protocol Module
  */
-static inline const ClaimBuf *
+static const ClaimBuf *
 find_protocol(int frame_type)
 {
 	const ClaimBuf *c;
