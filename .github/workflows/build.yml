@@ -849,11 +849,18 @@ jobs:
             version="$(git rev-parse --short HEAD)"
           fi
           leafname="rpcemu-interface-docs-$version.zip"
-          if [ -z "$(ls -A prm-output 2>/dev/null)" ]; then
-            echo "::error::the documentation build produced no output"
+          # pages/ only. The rest of what the indexed build leaves behind - its
+          # logs, temporary files, per-chapter headers and index data - is build
+          # working, and a reader opening the release asset should find the
+          # manual rather than have to pick it out. The XML sources are inside
+          # pages/ beside their HTML, and are kept: they are the machine-readable
+          # form of the same thing.
+          pages=prm-output/indexed/pages
+          if [ ! -s "$pages/index.html" ]; then
+            echo "::error::the documentation build produced no manual"
             exit 1
           fi
-          ( cd prm-output && zip -q9r "../$leafname" . )
+          ( cd "$pages" && zip -q9r "$OLDPWD/$leafname" . )
           echo "leafname=$leafname" >> "$GITHUB_OUTPUT"
           ls -l "$leafname"
 
