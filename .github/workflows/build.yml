@@ -905,8 +905,15 @@ jobs:
       # returned archive at 'output'. An absolute path is given for that,
       # because 'directory' is applied with a cd and everything relative is
       # resolved inside it.
+      #
+      # v1.1 or later, not v1: v1 downloaded the client into the workspace root
+      # and then invoked it as ./riscos-build-online after changing into
+      # 'directory', so it could only ever find it when 'directory' was the
+      # default. That is what took this job - and main with it - red the first
+      # time it was merged. v1.1 keeps the client in RUNNER_TEMP and calls it by
+      # absolute path.
       - name: Build EtherRPCEm on the RISC OS Build Service
-        uses: gerph/riscos-build-service-action@v1
+        uses: gerph/riscos-build-service-action@v1.1
         with:
           directory: riscos-progs/EtherRPCEm
           architecture: aarch32
