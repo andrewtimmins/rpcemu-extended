@@ -50,10 +50,12 @@ module. RISC OS finds and starts the module during expansion card enumeration,
 exactly as it would from a real card.
 </item>
 <item>
+<p>
 The <em>guest driver</em>, <filename>EtherRPCEm</filename>. A DCI4 driver that registers
 itself with the Internet stack under the interface name <filename>rpcem</filename>. It
 implements the DCI4 SWIs the stack calls, and turns them into the calls
 described in this chapter. It owns no hardware.
+</p>
 </item>
 <item>
 The <em>host implementation</em>. The emulator's SWI handler, which converts
