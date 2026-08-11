@@ -73,6 +73,7 @@ private:
 	void BuildStatusImages();
 	wxPanel *BuildPlaceholderPage();
 	void RefreshMachineList();
+	void UpdateStatusText();
 	wxString SelectedMachineName() const;
 	void UpdateButtons();
 	wxString MachineDirFor(const wxString &name) const;
@@ -164,6 +165,7 @@ private:
 	std::map<wxString, RunningMachine> running_;
 	std::vector<wxString> machine_names_;	/* same order as machine_list_'s rows */
 	wxString active_machine_;
+	size_t running_count_ = 0;
 	wxTimer poll_timer_;
 
 	wxDECLARE_EVENT_TABLE();
