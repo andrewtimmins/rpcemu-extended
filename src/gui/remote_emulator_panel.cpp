@@ -221,14 +221,13 @@ void RemoteEmulatorPanel::RefreshFrame()
 	}
 
 	/*
-	 * ★ Kept at the guest's own size. The scaling is done by the blit.
+	 * ★ Kept at the guest's own size. OnPaint does the scaling.
 	 *
 	 * This used to wxImage::Rescale() to the panel size on every frame, which
-	 * is a full bilinear resample of the whole image in software and was the
-	 * single most expensive thing this panel did - most of a CPU core to show
-	 * a machine doing nothing. EmulatorPanel has always scaled with
-	 * StretchBlit instead, which hands the work to the toolkit; OnPaint now
-	 * does the same, so there is nothing to rescale here.
+	 * is a full resample of the whole image in software and was the single
+	 * most expensive thing this panel did - most of a CPU core to show a
+	 * machine doing nothing. The toolkit does that work now, so there is
+	 * nothing to rescale here.
 	 */
 	display_bitmap_ = wxBitmap(image);
 
@@ -275,7 +274,7 @@ void RemoteEmulatorPanel::OnPaint(wxPaintEvent & /*event*/)
 			 * ★ Scaled through a graphics context, and with the aspect
 			 * ratio kept.
 			 *
-			 * StretchBlit is what EmulatorPanel uses, and on GTK it is a
+			 * StretchBlit is what EmulatorPanel uses, and is a
 			 * nearest-neighbour copy: every scale factor that is not a whole
 			 * number drops and duplicates rows and columns, which is what
 			 * made this look pixelated and grainy at any guest resolution.
@@ -283,9 +282,10 @@ void RemoteEmulatorPanel::OnPaint(wxPaintEvent & /*event*/)
 			 * frame in software on the way to every paint, which is what
 			 * used to cost a CPU core.
 			 *
-			 * A graphics context is the third option: Cairo (or Direct2D, or
-			 * CoreGraphics) does the filtering itself, so it looks like the
-			 * bilinear version and costs like the blit.
+			 * A graphics context is the third option: the platform's own
+			 * renderer does the filtering, so it looks like the resampled
+			 * version without the software cost. Which renderer that is
+			 * matters on Windows - see below.
 			 *
 			 * The panel is a fixed shape and the guest's screen is not, so
 			 * without this the picture was also stretched out of shape.
@@ -303,10 +303,24 @@ void RemoteEmulatorPanel::OnPaint(wxPaintEvent & /*event*/)
 			dc.SetBackground(*wxBLACK_BRUSH);
 			dc.Clear();
 
-			wxGraphicsContext *gc = wxGraphicsContext::Create(dc);
+			/* Direct2D rather than the GDI+ default, which is slow enough to
+			   create per paint that typing felt laggy. */
+			wxGraphicsRenderer *renderer = nullptr;
+
+#ifdef __WXMSW__
+			renderer = wxGraphicsRenderer::GetDirect2DRenderer();
+#endif
+			if (renderer == nullptr) {
+				renderer = wxGraphicsRenderer::GetDefaultRenderer();
+			}
+
+			wxGraphicsContext *gc =
+			    renderer != nullptr ? renderer->CreateContext(dc) : nullptr;
 
 			if (gc != nullptr) {
-				gc->SetInterpolationQuality(wxINTERPOLATION_GOOD);
+				/* BEST, not GOOD: the guest screen is usually scaled down,
+				   and GOOD is bilinear, which breaks single-pixel text. */
+				gc->SetInterpolationQuality(wxINTERPOLATION_BEST);
 				gc->DrawBitmap(display_bitmap_, dx, dy, dw, dh);
 				delete gc;
 			} else {
