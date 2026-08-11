@@ -812,10 +812,11 @@ jobs:
   # not have to check out the tree and install a toolchain to read what the
   # interface does.
   #
-  # Both forms are published: each chapter on its own, and the indexed manual,
-  # which adds the contents page and the generated SWI index that lets a reader
-  # find a call without knowing which interface it belongs to. The chapter list
-  # here must be kept in step with docs/prminxml/index.xml and its Makefile.
+  # docs/prminxml/index.xml names the chapters, their order and where the output
+  # goes, so this job does not: adding a chapter is a change to that file alone.
+  # The indexed build renders every chapter as well as the contents page and the
+  # generated SWI index, which is what lets a reader find a call without already
+  # knowing which interface it belongs to.
   docs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -826,30 +827,15 @@ jobs:
         with:
           fetch-tags: true
 
-      - name: Render the PRM-in-XML chapters
+      # No style: input. index.xml sets its own page and index CSS variants, and
+      # style: would prepend a second set of them.
+      - name: Render the host interfaces manual
         uses: gerph/riscos-prminxml-action@v1
         with:
-          files: >-
-            docs/prminxml/front/title-page.xml
-            docs/prminxml/01-overview.xml
-            docs/prminxml/02-hostfs.xml
-            docs/prminxml/03-hostcmd.xml
-            docs/prminxml/04-clipboard.xml
-            docs/prminxml/05-network.xml
-            docs/prminxml/appendix/a1-reserved.xml
+          files: docs/prminxml/index.xml
+          format: index
           output: prm-output
-          style: prm
-
-      # The indexed build is driven from index.xml, whose paths are relative to
-      # its own directory, so it is run from there rather than through the
-      # action, which has no input for an index. riscos-prminxml is on PATH by
-      # this point: the action's install step appends its tool directory to
-      # GITHUB_PATH, which reaches every later step in the job.
-      - name: Build the indexed manual
-        run: |
-          cd docs/prminxml
-          mkdir -p ../../prm-output/indexed/logs
-          riscos-prminxml -f index -L ../../prm-output/indexed/logs index.xml
+          log-directory: prm-output/indexed/logs
 
       # Named from VERSION rather than the tag, so the archive matches the
       # binaries beside it in a release. version-matches-tag has already

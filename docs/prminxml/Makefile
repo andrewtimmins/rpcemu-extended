@@ -1,55 +1,63 @@
 # Build the RPCEmu host interfaces manual.
 #
-# The sources are PRM-in-XML; riscos-prminxml renders them. CI does the same
-# thing through gerph/riscos-prminxml-action and publishes the result with each
-# release, so this Makefile is for working on the manual locally.
+# The sources are PRM-in-XML; riscos-prminxml renders them. CI builds the same
+# manual through gerph/riscos-prminxml-action and publishes it with each
+# release, so this is for working on it locally.
 #
 #   make lint      check every chapter
 #   make html      render each chapter on its own
-#   make indexed   render the whole thing as one navigable manual
+#   make indexed   render the whole manual, with contents and the SWI index
 #   make           all three
+#   make pdf       and a PDF, if Prince is installed
 #
 # Output goes to prm-output/ at the top of the tree, which is gitignored.
+#
+# Chapters are found by wildcard, so adding one means adding the file and
+# listing it in index.xml - nothing here needs changing. The numeric prefixes
+# are for the reader; index.xml is what actually fixes the order.
 
 OUTPUT = ../../prm-output
 
-# Explicit, and in reading order: the index lists these chapters in this
-# sequence and the manual is meant to be read that way.
-XMLS = \
-	front/title-page.xml \
-	01-overview.xml \
-	02-hostfs.xml \
-	03-hostcmd.xml \
-	04-clipboard.xml \
-	05-network.xml \
-	appendix/a1-reserved.xml
+# Every document except index.xml, which is the manifest rather than a chapter.
+CHAPTERS = $(filter-out index.xml, \
+             $(wildcard *.xml) $(wildcard front/*.xml) $(wildcard appendix/*.xml))
+
+# riscos-prminxml flattens its output, so front/title-page.xml becomes
+# title-page.html at the top of the output directory.
+HTML   = $(patsubst %.xml,$(OUTPUT)/%.html,$(notdir $(CHAPTERS)))
+STAMPS = $(patsubst %.xml,$(OUTPUT)/lint/%.stamp,$(notdir $(CHAPTERS)))
+
+# So the pattern rules can find a chapter without caring which directory it
+# lives in.
+vpath %.xml . front appendix
 
 .PHONY: all lint html lint-indexed indexed pdf clean
 
 all: lint html indexed
 
-lint:
-	@for file in $(XMLS); do \
-		echo "Linting $$file"; \
-		riscos-prminxml -f lint "$$file" || exit 1; \
-	done
+lint: $(STAMPS)
 
-html:
+html: $(HTML)
+
+$(OUTPUT)/lint/%.stamp: %.xml
+	@mkdir -p $(dir $@)
+	riscos-prminxml -f lint $<
+	@touch $@
+
+$(OUTPUT)/%.html: %.xml
 	@mkdir -p $(OUTPUT)
-	@for file in $(XMLS); do \
-		echo "Building $$file"; \
-		riscos-prminxml -f html5+xml -O $(OUTPUT) "$$file" || exit 1; \
-	done
+	riscos-prminxml -f html5+xml -O $(OUTPUT) $<
 
-lint-indexed:
+# The indexed build takes its paths from index.xml, and depends on every
+# chapter because any of them can change what the contents and the SWI index
+# contain.
+lint-indexed: $(CHAPTERS) index.xml
 	@mkdir -p $(OUTPUT)/indexed/logs
-	@echo "Linting the indexed manual"
-	@riscos-prminxml --lint -f index -L $(OUTPUT)/indexed/logs index.xml
+	riscos-prminxml --lint -f index -L $(OUTPUT)/indexed/logs index.xml
 
-indexed:
+indexed: $(CHAPTERS) index.xml
 	@mkdir -p $(OUTPUT)/indexed/logs
-	@echo "Building the indexed manual"
-	@riscos-prminxml -f index -L $(OUTPUT)/indexed/logs index.xml
+	riscos-prminxml -f index -L $(OUTPUT)/indexed/logs index.xml
 
 # Prince is not assumed to be installed: it is a commercial tool and nothing
 # else here needs it.
