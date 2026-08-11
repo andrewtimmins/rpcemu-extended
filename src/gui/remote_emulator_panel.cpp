@@ -478,6 +478,15 @@ void RemoteEmulatorPanel::OnKeyDown(wxKeyEvent &event)
 		return;
 	}
 
+	/* A click rather than a keystroke, as in a machine's own window. */
+	if (InputIsThirdMouseButtonKey(event)) {
+		IpcRequest request;
+		request.type = IpcRequestType::MousePress;
+		request.arg1 = 4;
+		SendRequest(request);
+		return;
+	}
+
 	const unsigned key_id = InputKeyIdentityFromKeyEvent(event);
 	const unsigned scan_code = InputNativeScancodeFromKeyEvent(event);
 
@@ -493,6 +502,14 @@ void RemoteEmulatorPanel::OnKeyUp(wxKeyEvent &event)
 {
 	if (!live_) {
 		event.Skip();
+		return;
+	}
+
+	if (InputIsThirdMouseButtonKey(event)) {
+		IpcRequest request;
+		request.type = IpcRequestType::MouseRelease;
+		request.arg1 = 4;
+		SendRequest(request);
 		return;
 	}
 
