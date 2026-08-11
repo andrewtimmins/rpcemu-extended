@@ -606,10 +606,28 @@ void ManagerFrame::RefreshMachineList()
 		    wxLIST_STATE_SELECTED | wxLIST_STATE_FOCUSED);
 	}
 
-	SetStatusText(wxString::Format("%zu machine%s, %zu running",
-	    machine_names_.size(), machine_names_.size() == 1 ? "" : "s", running_count), 1);
+	running_count_ = running_count;
+	UpdateStatusText();
 
 	UpdateButtons();
+}
+
+/*
+ * Which machine is being shown, as well as how many there are.
+ *
+ * Clicking the empty part of the list deselects it without changing which
+ * machine is displayed, and that highlight was the only thing saying which.
+ */
+void ManagerFrame::UpdateStatusText()
+{
+	SetTitle(active_machine_.empty()
+	    ? wxString("RPCEmu Extended")
+	    : wxString::Format("RPCEmu Extended - %s", active_machine_));
+
+	SetStatusText(wxString::Format("Current machine: %s   |   %zu machine%s, %zu running",
+	    active_machine_.empty() ? wxString("None") : active_machine_,
+	    machine_names_.size(), machine_names_.size() == 1 ? "" : "s",
+	    running_count_), 1);
 }
 
 wxString ManagerFrame::SelectedMachineName() const
@@ -927,6 +945,7 @@ void ManagerFrame::ShowMachinePanel(const wxString &name)
 		active_machine_.clear();
 		display_book_->SetSelection((size_t) placeholder_page_);
 	}
+	UpdateStatusText();
 	UpdateButtons();
 	UpdateMachineMenuState();
 }
