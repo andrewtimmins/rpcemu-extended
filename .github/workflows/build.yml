@@ -798,13 +798,69 @@ jobs:
             releases/macos/*.tar.gz
           if-no-files-found: error
 
+  # Render the interface documentation under docs/prminxml/.
+  #
+  # These are PRM-in-XML: the format the RISC OS Programmer's Reference Manuals
+  # are written in, and the right one for an interface somebody else has to
+  # implement against, because it fixes the register contract in a structured
+  # form rather than in prose. docs/ is otherwise Markdown, which stays the
+  # right choice for notes about how this repository works; the distinction is
+  # between describing an interface and describing an implementation.
+  #
+  # The HTML is a release asset. Somebody writing a host-side implementation of
+  # the network SWI is not necessarily building the emulator, and should not
+  # have to check out the tree and install a toolchain to read what the
+  # interface does.
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      leafname: ${{ steps.package.outputs.leafname }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-tags: true
+
+      - name: Render the PRM-in-XML documentation
+        uses: gerph/riscos-prminxml-action@v1
+        with:
+          files: docs/prminxml/network-swi.xml
+          output: prm-output
+          style: prm
+
+      # Named from VERSION rather than the tag, so the archive matches the
+      # binaries beside it in a release. version-matches-tag has already
+      # insisted the two agree before any release is published.
+      - name: Package the documentation
+        id: package
+        run: |
+          if [ -s VERSION ]; then
+            version="$(tr -d ' \t\r\n' < VERSION)"
+          else
+            version="$(git rev-parse --short HEAD)"
+          fi
+          leafname="rpcemu-interface-docs-$version.zip"
+          if [ -z "$(ls -A prm-output 2>/dev/null)" ]; then
+            echo "::error::the documentation build produced no output"
+            exit 1
+          fi
+          ( cd prm-output && zip -q9r "../$leafname" . )
+          echo "leafname=$leafname" >> "$GITHUB_OUTPUT"
+          ls -l "$leafname"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rpcemu-interface-docs
+          path: ${{ steps.package.outputs.leafname }}
+          if-no-files-found: error
+
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     # The sanitiser job gates a release too. It is the only thing that looks at
     # whether the emulator's C is well defined rather than merely producing the
     # expected answer, and shipping past a report from it would mean shipping
     # something known to be relying on the compiler's goodwill.
-    needs: [version-matches-tag, linux-amd64, linux-arm64, windows-amd64, macos-universal, sanitisers]
+    needs: [version-matches-tag, linux-amd64, linux-arm64, windows-amd64, macos-universal, sanitisers, docs]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -846,7 +902,7 @@ jobs:
   # unreachable would be reporting on itself rather than on the emulator.
   notify:
     if: always() && github.event_name == 'push'
-    needs: [version-matches-tag, linux-amd64, linux-arm64, windows-amd64, macos-universal, sanitisers, release]
+    needs: [version-matches-tag, linux-amd64, linux-arm64, windows-amd64, macos-universal, sanitisers, docs, release]
     runs-on: ubuntu-latest
     permissions:
       contents: read

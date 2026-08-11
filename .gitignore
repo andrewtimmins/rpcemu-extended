@@ -65,6 +65,10 @@
 /riscos-progs/*/resfs.inc
 /riscos-progs/RPCEmuGfx/gfxapp
 
+# Rendered PRM-in-XML documentation. The XML under docs/prminxml/ is the source;
+# the HTML is built by CI and published as a release asset.
+/prm-output/
+
 # Editor swap files / patch leftovers
 *.swp
 *~
