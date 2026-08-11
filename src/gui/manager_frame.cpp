@@ -545,15 +545,12 @@ void ManagerFrame::BuildToolBar()
 
 wxString ManagerFrame::MachineDirFor(const wxString &name) const
 {
-	/* Matches rpcemu_set_machine_datadir()'s convention exactly (see
-	   rpc-machdep.c) - this process never loads any machine's config, so it
-	   has to compute the directory the same way rather than ask the core
-	   for "the" machine directory, which is a single-machine notion.
+	/* Named, not current: this process never loads any machine's
+	   configuration, so rpcemu_get_machine_datadir() has nothing to answer. */
+	char dir[1024];
 
-	   Forward slashes, as that function writes them, rather than the host's
-	   separator: the string is hashed to name the shared framebuffer, so on
-	   Windows a backslash here named one the machine had not created. */
-	return wxString::FromUTF8(rpcemu_get_datadir()) + "machines/" + name + "/";
+	rpcemu_machine_datadir_for(dir, sizeof(dir), name.utf8_str().data());
+	return wxString::FromUTF8(dir);
 }
 
 void ManagerFrame::RefreshMachineList()

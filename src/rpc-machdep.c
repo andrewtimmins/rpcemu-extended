@@ -139,15 +139,19 @@ rpcemu_set_resourcedir(const char *path)
 }
 
 void
+rpcemu_machine_datadir_for(char *out, size_t size, const char *machine_name)
+{
+	if (out == NULL || size == 0) {
+		return;
+	}
+	snprintf(out, size, "%smachines/%s/", rpcemu_get_datadir(),
+	         (machine_name && machine_name[0] != '\0') ? machine_name : "Default");
+}
+
+void
 rpcemu_set_machine_datadir(const char *machine_name)
 {
-	if (machine_name && machine_name[0] != '\0') {
-		snprintf(machinedir, sizeof(machinedir), "%smachines/%s/",
-		         rpcemu_get_datadir(), machine_name);
-	} else {
-		snprintf(machinedir, sizeof(machinedir), "%smachines/Default/",
-		         rpcemu_get_datadir());
-	}
+	rpcemu_machine_datadir_for(machinedir, sizeof(machinedir), machine_name);
 	logpath[0] = '\0';
 
 	ensure_machine_dirs();
