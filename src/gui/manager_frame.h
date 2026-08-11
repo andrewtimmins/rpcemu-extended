@@ -77,6 +77,8 @@ private:
 	void UpdateButtons();
 	wxString MachineDirFor(const wxString &name) const;
 
+	void StopAllAndClose();
+
 	void DiscoverAlreadyRunningMachines();
 	void StartMachine(const wxString &name, bool resume = false);
 	void StopMachine(const wxString &name);
@@ -153,6 +155,10 @@ private:
 	wxMenuItem *resume_item_ = nullptr;
 	wxMenuItem *stop_item_ = nullptr;
 	wxMenuItem *start_item_ = nullptr;
+
+	/* Set while waiting for the machines to stop so the window can close
+	   behind them; suppresses the warning when that close arrives. */
+	bool closing_after_stop_ = false;
 
 	std::map<wxString, RunningMachine> running_;
 	std::vector<wxString> machine_names_;	/* same order as machine_list_'s rows */
