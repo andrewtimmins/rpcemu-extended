@@ -144,6 +144,7 @@ private:
 	   where the user had it. */
 	wxSplitterWindow *splitter_ = nullptr;
 	int machines_panel_width_ = 300;
+	bool machines_panel_collapsed_ = false;
 	wxBitmapButton *collapse_button_ = nullptr;
 	wxButton *new_button_ = nullptr;
 	wxButton *edit_button_ = nullptr;
