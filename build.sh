@@ -394,6 +394,24 @@ build_podules() {
 	fi
 	echo "✓ Podule ROMs copied to poduleroms/"
 
+	# EtherRPCEm is the guest half of the emulated network card. It goes in
+	# netroms/, not poduleroms/: the emulator builds that card's ROM around it
+	# at run time (src/network.c) and loads it by name, while poduleroms/ is
+	# scanned into the general-purpose expansion card. Until this module was
+	# converted to assembler it could only be built with the Acorn DDE inside a
+	# running guest, so build.sh could not touch it at all.
+	local ether_dir="riscos-progs/EtherRPCEm"
+	if [ -d "$ether_dir" ]; then
+		echo "Building EtherRPCEm network driver..."
+		(
+			cd "$ether_dir"
+			make clean
+			make AS=arm-linux-gnueabi-as LD=arm-linux-gnueabi-ld OBJCOPY=arm-linux-gnueabi-objcopy
+			cp -f "EtherRPCEm,ffa" "$SCRIPT_DIR/netroms/"
+		)
+		echo "✓ Network driver copied to netroms/"
+	fi
+
 	# The graphics card's display driver goes in gfxroms/, NOT poduleroms/: it
 	# is carried in that card's own ROM, and poduleroms/ is scanned into the
 	# general-purpose expansion card, which would present the module twice.

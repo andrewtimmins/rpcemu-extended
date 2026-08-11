@@ -1,61 +1,60 @@
-# Project:   EtherRPCEm
+#
+# EtherRPCEm - the guest network driver, assembled with GNU ARM binutils.
+# (build.sh overrides AS/LD/OBJCOPY with the arm-linux-gnueabi- toolchain.)
+#
+# This replaces the Acorn DDE build that had to run inside a guest: the module
+# is now assembler, like the other guest modules, so it builds on the host and
+# in CI. The C sources it was transcribed from (c.Module, s.intveneer,
+# cmhg.ModHdr, s.errors and the h. headers) are kept in this directory as the
+# reference the offsets and the DCI4 behaviour came from, along with the DDE
+# recipe in MkEther,feb - see README.md.
+#
+# The result belongs in netroms/, not poduleroms/: the emulator builds the
+# network card's ROM around it at run time (src/network.c), while poduleroms/ is
+# scanned into the general-purpose expansion card.
+#
 
+AS = armas
+LD = armld
+OBJCOPY = armobjcopy
 
-# Toolflags:
-CCflags = -depend !Depend -IC: -throwback -zM -Wp
-Linkflags = -rmf
-ObjAsmflags = -throwback -NoCache -depend !Depend
-CMHGflags = -d h.ModHdr  -throwback
-LibFileflags = -c -o $@
-Squeezeflags = -o $@
+MODULE = etherrpcem
 
-OBJS = o.Module o.errors o.intveneer o.ModHdr
+# The emulator loads this file by name when it builds the network card's ROM
+# (src/network.c), so the case matters here in a way it does not for poduleroms/,
+# which is scanned as a directory.
+ROM_IMAGE = EtherRPCEm,ffa
 
-# Final targets:
-EtherRPCEm: $(OBJS)
-	Link $(Linkflags) -o $@ $(OBJS) C:o.stubsg
+# The name *Help and *Modules show, and who wrote what. The original authors'
+# credit was in the cmhg help string and has to stay somewhere the user can see
+# it, so it stays here.
+TITLE = EtherRPCEm
+COPYRIGHT = \xa9 Alex Waugh and John Ballance/Castle
 
-.c.o:
-	cc $(CCflags) -c -o $@ $<
+# Version and date come from VersionNum. Either can be overridden on the command
+# line, e.g. make MODULE_DATE="$(shell date +'%d %b %Y')" for a true build stamp.
+MODULE_VERSION := $(shell awk '$$1 == "Module_MajorVersion" { print $$2 }' VersionNum)
+MODULE_DATE := $(shell awk '/^Module_Date/ { $$1 = ""; sub(/^[ \t]+/, ""); print }' VersionNum)
 
-.s.o:
-	objasm $(ObjAsmflags) -o $@ $<
+all: $(ROM_IMAGE)
 
-# User-editable dependencies:
+# The help string, generated so the version and date come from VersionNum alone.
+version.inc: VersionNum Makefile
+	@printf '@ Generated from VersionNum by the Makefile - do not edit.\n' > $@
+	@printf 'help:\n\t.string\t"%s\\t%s (%s) %s"\n\t.align\n' \
+		'$(TITLE)' '$(MODULE_VERSION)' '$(MODULE_DATE)' '$(COPYRIGHT)' >> $@
+	@echo "version.inc: $(TITLE) $(MODULE_VERSION) ($(MODULE_DATE))"
+
+$(ROM_IMAGE): $(MODULE).elf
+	$(OBJCOPY) -O binary $< $@
+
+%.elf: %.o
+	$(LD) --section-start .text=0 -o $@ $<
+
+# AutoSense/EtherRPCEm,ffb is .incbin'd, so a change to it has to rebuild the
+# module just as a change to the source does.
+$(MODULE).o: $(MODULE).s version.inc AutoSense/EtherRPCEm,ffb
+	$(AS) -o $@ $<
+
 clean:
-	remove c.AutoSense
-	remove h.ModHdr
-	remove o.errors
-	remove o.intveneer
-	remove o.ModHdr
-	remove o.Module
-
-c.AutoSense: AutoSense.EtherRPCEm
-	bin2c -t "const unsigned char" -n autosense_file $? $@
-
-o.Module: c.AutoSense
-
-# A dependency with dummy action, because the cmhg file produces two
-# outputs (h.ModHdr and o.ModHdr)
-h.ModHdr: cmhg.ModHdr
-	|echo
-
-o.ModHdr: cmhg.ModHdr
-	cmhg $(CMHGflags) cmhg.ModHdr -o o.ModHdr
-
-
-# Dynamic dependencies:
-o.intveneer: s.intveneer
-o.errors: s.errors
-o.Module:	c.Module
-o.Module:	C:h.kernel
-o.Module:	C:h.swis
-o.Module:	h.ModHdr
-o.Module:	h.dcistructs
-o.Module:	h.Defines
-o.Module:	h.errors
-o.Module:	C:h.kernel
-o.Module:	h.Structs
-o.Module:	h.dcistructs
-o.Module:	h.mbuf_c
-o.Module:	c.AutoSense
+	rm -f *.o *.elf "$(ROM_IMAGE)" version.inc

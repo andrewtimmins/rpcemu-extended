@@ -83,6 +83,7 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `poduleroms/` | Compiled extension ROM images (HostFS, ScrollWheel — the built-in Support podule) |
 | `podules/` | Expansion-card (podule) ROMs — shipped system components, selectable per machine |
 | `gfxroms/` | The graphics card's display driver, carried in that card's own ROM |
+| `netroms/` | The network card's DCI4 driver (EtherRPCEm), carried in that card's own ROM |
 | `usbroms/` | RISC OS Open's USB stack (USBDriver, OHCIDriver) and the modules a USB drive needs (RTSupport, SCSISwitch, SCSISoftUSB, SCSIFS), carried in the USB card's own ROM — not ours and not GPL, see `usbroms/LICENCES.txt` |
 | `riscos-progs/` | RISC OS module source (HostFS, HostFSFiler, ScrollWheel, EtherRPCEm, RPCEmuSupport, RPCEmuGfx, SyncClock, RPCEmuUSBSupport, RPCEmuPCIEmulator) |
 | `riscos-patches/` | Our changes to RISC OS components that are not ours, as patches against a named upstream revision (currently OHCIDriver) |

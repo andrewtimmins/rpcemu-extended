@@ -76,8 +76,27 @@ jobs:
         with:
           fetch-tags: true
 
+      # --podules adds the ARM binutils, so this job builds the guest modules
+      # under riscos-progs/ as well as the emulator. Without them build.sh says
+      # "Guest ROMs: skipped - using the committed ones" and carries on, which
+      # meant no CI job had ever assembled a single one of them.
       - name: Install dependencies
-        run: bash setup-build-env.sh
+        run: bash setup-build-env.sh --podules
+
+      # Rebuild every guest module and check it against the image committed
+      # beside it. The assembled modules are committed because a user building
+      # RPCEmu is not asked for a cross-assembler, and the failure that arrangement
+      # invites is silent: edit the source, forget to rebuild, and the emulator
+      # goes on loading the old module for months.
+      #
+      # Before the build, deliberately: build.sh rebuilds these itself now that
+      # the tools are here, and copies them over the committed images, so
+      # comparing afterwards would only ever compare a file with itself.
+      #
+      # Only this job. The modules are ARM binaries and identical whatever host
+      # builds them, so once is enough.
+      - name: Guest modules match their sources
+        run: bash tests/check-guest-modules.sh
 
       # Piped through tee so the compiler's output can be examined afterwards.
       # pipefail so a failed build still fails the step rather than being masked

@@ -16,9 +16,33 @@ builds a podule ROM around it at run time (`src/network.c`).
 
 ## Building it
 
-There is no RISC OS C toolchain on the host, so this is built **inside the
-emulator** with the Acorn DDE (`cc`, `objasm`, `cmhg`, `link`), exactly as
-`SharedClipboard` is. `build.sh` cannot rebuild it.
+`etherrpcem.s` is assembled on the host with the ARM binutils, like the other
+guest modules:
+
+    ./build.sh --podules          # or: make AS=arm-linux-gnueabi-as ...
+
+Install the tools with `./setup-build-env.sh --podules`. The result lands in
+`netroms/`, and `tests/check-guest-modules.sh` rebuilds it and fails if what is
+committed no longer matches the source - a check CI runs, so a change to this
+file that is not rebuilt cannot go unnoticed.
+
+`tests/test_etherrpcem_layout.c` reads the structure offsets back out of the
+assembler source and checks them against `src/network.h` and against Acorn's
+DCI4 headers in `h/`. That is not ceremony: assembler cannot include those
+headers, so a wrong offset assembles perfectly and shows up as a data abort in
+the middle of a boot.
+
+### The C it was ported from
+
+The module was C until 2026, built **inside the emulator** with the Acorn DDE
+(`cc`, `objasm`, `cmhg`, `link`) exactly as `SharedClipboard` still is, because
+there is no RISC OS C toolchain on the host. `build.sh` could not touch it, so
+nobody could change the driver without first setting up a DDE inside a guest.
+
+Those sources are kept in this directory as the reference the port was made
+from - `c/Module`, `s/intveneer`, `s/errors`, `cmhg/ModHdr`, the `h/` headers,
+and the `Makefile` and `MkEther,feb` that built them. They are no longer built
+by anything. What follows is how that build worked, for anyone comparing the two.
 
 1. Copy this directory into a machine's HostFS as `$.EtherBld`. It is already in
    RISC OS layout (`c.Module`, `s.intveneer`, `h.*`, `cmhg.ModHdr`, `o.`), so no
@@ -38,12 +62,14 @@ nothing in a headless build. The `Makefile` is kept for building under the deskt
 with `!Make`, but note it names `C:o.stubsg`, which the DDE in use here does not
 have; `MkEther` links `C:o.stubs`. See below.
 
-## The stubs the module is linked against
+## The stubs the C module was linked against
 
-Worth knowing before comparing a rebuild with what is committed, because the two
-will not match and that is expected.
+History now, since the assembler module needs no C library at all - which is
+worth having, because the module loads out of a podule ROM before `System:`
+exists. It also accounts for most of the size: 4,624 bytes assembled against
+9,952 for the last C build.
 
-The committed binary (12884 bytes, built 17 Oct 2024) was linked against
+The original binary (12884 bytes, built 17 Oct 2024) was linked against
 `stubsg`, a C library stubs variant that carries 26-bit veneers and pulls in
 library code (`qsort`, `bsearch`, `partition_sort`, `atexit`, signal veneers).
 The DDE installed in the OS-530 machine has only `C:o.stubs`, so a rebuild there
@@ -68,6 +94,23 @@ Whatever is behind that predates this work.
 
 ## Changes made in this fork
 
+The assembler port, 2026, is the largest: same behaviour, built on the host. What
+it deliberately does differently from the C is listed at the top of
+`etherrpcem.s`, and comes to five things - no shared C library, workspace claimed
+in the RMA rather than living in the module's static data, the expansion card base
+saved at initialisation instead of trusting R11 at finalisation, the
+initialisation callback removed at finalisation, and a failed initialisation
+undoing what it had already done (RISC OS never calls the finalisation entry of a
+module whose initialisation returned an error, so the C left the Mbuf session open
+and the device vector claimed).
+
+Verified against the C build on a real boot of RISC OS 5.30 at both 256MB and
+128MB: same module list entry, byte-identical `*ERPCEmInfo` output including all
+four filter claims, 4/4 ping, an 8,008-byte ping (six inbound fragments) and a
+`*RMKill` / `*RMReInit` cycle after which networking still worked.
+
+Before that:
+
 - `s.intveneer`: `networktxswi` tested its result with `TST a1, #0`. `TST` is a
   bitwise AND, so with `#0` the result is always zero and Z is always set, which
   made the `LDRNE a1, =errbuf` on the next line dead code. A transmit error
@@ -85,9 +128,20 @@ Whatever is behind that predates this work.
 Not defects introduced here, but things the driver claims and does not do:
 
 - `INQUIRE_FLAGS` advertises `INQ_MULTICAST` and `INQ_PROMISCUOUS`. Neither is
-  implemented. `work.flags` is computed from the claims list and then never used
-  or passed to the host, and `DCI4MulticastRequest` is a stub.
+  implemented. The interface flags are computed from the claims list and then
+  never used or passed to the host, and `Multicastreq` accepts and ignores.
 - `DCI4Stats` reports three frame counters. Byte counts and every error counter
-  are permanently zero, while the `supported` table says they are gathered.
-- Only unit 0 exists, and the MTU is fixed at 1500 (`DCI4SetNetworkMTU` returns
+  are permanently zero, while the "what is gathered" table says they are
+  gathered.
+- Only unit 0 exists, and the MTU is fixed at 1500 (`SetNetworkMTU` returns
   "not supported").
+- `init_chip` clears the claims list. It is called again if the Mbuf manager
+  restarts, so on that path any existing claims are dropped without being freed.
+  Carried over from the C rather than changed, because every protocol module has
+  to re-register across a manager restart anyway.
+- The AutoSense file is saved with the file type alone in the load address, so it
+  ends up untyped rather than as a BASIC file. Carried over from the C; what
+  reads it back finds it by name.
+- Kept from the C and still true: the module does not appear in `*Modules` on
+  RISC OS 3.71 at all. Verified by A/B with the C build, so the assembler port
+  did not cause it, and it predates both.

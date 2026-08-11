@@ -1,0 +1,18 @@
+# EtherRPCEm module version, in the RISC OS VersionNum style.
+#
+# The Makefile turns this into version.inc, which supplies the module's help
+# string. Bump both fields together when the module changes.
+#
+# 1.05 was the version of the C module inherited from Castle's EtherY by way of
+# Alex Waugh's RPCEmu adaptation, and 1.06 is the first assembler build: the
+# port changed how the module is built rather than what it does, but it is a
+# different binary with different dependencies (no shared C library), so the
+# number had to move rather than claim to be the same module.
+#
+# The date is deliberate rather than a true build stamp, as with the other
+# modules here: the assembled module is committed as netroms/EtherRPCEm,ffa and
+# only rebuilt when someone runs build.sh --podules, so a real build date would
+# record when that last happened. Override with `make MODULE_DATE="..."`.
+
+Module_MajorVersion	1.06
+Module_Date		11 Aug 2026
