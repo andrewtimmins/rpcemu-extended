@@ -320,7 +320,13 @@ void ManagerFrame::PositionCollapseButton()
 
 void ManagerFrame::OnStatusBarSize(wxSizeEvent &event)
 {
+	wxStatusBar *status = GetStatusBar();
+
 	PositionCollapseButton();
+	/* Moving the button by hand leaves the fields unpainted. */
+	if (status != nullptr) {
+		status->Refresh();
+	}
 	event.Skip();
 }
 
