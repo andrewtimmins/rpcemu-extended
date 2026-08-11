@@ -293,8 +293,7 @@ void ManagerFrame::BuildUi()
 	    wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
 	collapse_button_->SetToolTip("Hide the machine list");
 	collapse_button_->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) {
-		SetMachinesPanelCollapsed(
-		    splitter_->GetSashPosition() > kMachinesPanelCollapsed);
+		SetMachinesPanelCollapsed(!machines_panel_collapsed_);
 	});
 	status->Bind(wxEVT_SIZE, &ManagerFrame::OnStatusBarSize, this);
 	PositionCollapseButton();
@@ -334,11 +333,16 @@ void ManagerFrame::OnStatusBarSize(wxSizeEvent &event)
 void ManagerFrame::SetMachinesPanelCollapsed(bool collapsed)
 {
 	if (collapsed) {
-		machines_panel_width_ = splitter_->GetSashPosition();
+		const int width = splitter_->GetSashPosition();
+
+		if (width > kMachinesPanelCollapsed) {
+			machines_panel_width_ = width;
+		}
 		splitter_->SetSashPosition(kMachinesPanelCollapsed);
 	} else {
 		splitter_->SetSashPosition(machines_panel_width_);
 	}
+	machines_panel_collapsed_ = collapsed;
 
 	if (collapse_button_ != nullptr) {
 		collapse_button_->SetBitmap(wxArtProvider::GetBitmap(
