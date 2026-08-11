@@ -798,6 +798,77 @@ jobs:
             releases/macos/*.tar.gz
           if-no-files-found: error
 
+  # The guest side of the emulated network card. riscos-progs/EtherRPCEm is a
+  # RISC OS relocatable module written in C and ARM assembler, so nothing on a
+  # GitHub runner can compile it; it is built by build.riscos.online, which runs
+  # the Acorn toolchain (cc, objasm, cmunge, link) under emulation and hands back
+  # the linked module. riscos-progs/EtherRPCEm/.robuild.yaml says what to run
+  # there, and MakefileROBS is the makefile it drives.
+  #
+  # This does not gate the release, and that is deliberate rather than an
+  # oversight. What the emulator ships is the assembled module committed as
+  # netroms/EtherRPCEm,ffa - src/network.c builds a podule ROM around that file
+  # at run time - so a rebuild here is a check that the sources still compile,
+  # not the thing being packaged. Gating a tag on a third-party build service
+  # being reachable would block releases for a reason that has nothing to do
+  # with what is in them. It does report to Slack through 'notify', so a driver
+  # that stops compiling is still noticed.
+  #
+  # The two binaries also will not match byte for byte, which is expected: the
+  # committed one was linked against the stubsg C library variant and this links
+  # stubsGS. README.md in that directory has the detail.
+  #
+  # The concurrency group is the build service itself, which is a single shared
+  # instance. Without it, two pushes in quick succession queue against each
+  # other inside the service rather than here, where the wait is visible.
+  etherrpcem-riscos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: riscos-build-server
+    steps:
+      - uses: actions/checkout@v7
+
+      # The action wraps the riscos-build-online client: it fetches the client,
+      # zips the directory up with its .robuild.yaml, submits it, and leaves the
+      # returned archive at 'output'. An absolute path is given for that,
+      # because 'directory' is applied with a cd and everything relative is
+      # resolved inside it.
+      - name: Build EtherRPCEm on the RISC OS Build Service
+        uses: gerph/riscos-build-service-action@v1
+        with:
+          directory: riscos-progs/EtherRPCEm
+          architecture: aarch32
+          timeout: 120
+          colour: 'no'
+          output: /tmp/built
+
+      - name: Unpack the built module
+        run: |
+          # The service returns a RISC OS Zip of whatever .robuild.yaml named as
+          # its artifact, filetyped &a91. A build can succeed and still return
+          # nothing if that path is wrong, so the archive is checked rather than
+          # only the exit code.
+          if [ ! -s /tmp/built,a91 ]; then
+            echo "::error::the build service returned no archive"
+            exit 1
+          fi
+          mkdir -p riscos-build-output
+          unzip -o -q /tmp/built,a91 -d riscos-build-output
+          # The module's filetype travels in the archive's Acorn extra field,
+          # which unzip drops, so restore it as the ,ffa suffix the host side
+          # uses. That is also the name it takes in netroms/, so anybody using
+          # this artifact to update the committed module need not guess.
+          mv riscos-build-output/EtherRPCEm 'riscos-build-output/EtherRPCEm,ffa'
+          ls -l riscos-build-output
+
+      - name: Upload the built module
+        uses: actions/upload-artifact@v7
+        with:
+          name: etherrpcem-riscos
+          path: riscos-build-output/EtherRPCEm,ffa
+          if-no-files-found: error
+
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     # The sanitiser job gates a release too. It is the only thing that looks at
@@ -846,7 +917,7 @@ jobs:
   # unreachable would be reporting on itself rather than on the emulator.
   notify:
     if: always() && github.event_name == 'push'
-    needs: [version-matches-tag, linux-amd64, linux-arm64, windows-amd64, macos-universal, sanitisers, release]
+    needs: [version-matches-tag, linux-amd64, linux-arm64, windows-amd64, macos-universal, sanitisers, etherrpcem-riscos, release]
     runs-on: ubuntu-latest
     permissions:
       contents: read

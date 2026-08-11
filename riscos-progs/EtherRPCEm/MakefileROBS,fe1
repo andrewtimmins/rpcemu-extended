@@ -1,0 +1,81 @@
+#!/usr/bin/env riscos-amu -f
+# Makefile for EtherRPCEm
+#
+# This is the makefile used by the RISC OS Build Service (and by riscos-amu
+# in the build environment). The older `Makefile` builds the same sources
+# under the desktop with !Make inside an emulated machine; see README.md.
+#
+
+#
+# Program specific options:
+#
+COMPONENT  = EtherRPCEm
+
+# Specifies additional targets for startup
+INITTARGET = inittarget
+
+# Specifies additional targets for clean
+CLEANTARGET = cleantarget
+
+# Nothing is exported: the module's SWIs are private to the emulator.
+EXPORTS    =
+
+# Comma-separated list of paths to use for includes, such as:
+#	C:LibName.
+INCLUDES   =
+
+# Space separated list of libraries to link against, eg C:LibName.o.libLibName
+# (${CLIB} is implicit, unless NOCLIB = yes)
+LIBS       =
+
+# Space separated list of defines to set, eg -DDEBUG
+CDEFINES   =
+
+# How to turn a binary file into a C array.
+#
+# bin2c is a RISC OS absolute committed in this directory, so this only runs
+# where RISC OS does - on the build service, or in an emulated machine. A host
+# build with riscos-amu must override it with something that produces the same
+# array, eg:
+#
+#   riscos-amu -f MakefileROBS,fe1 BUILD32=1 BIN2C="path/to/host/bin2c"
+#
+BIN2C     ?= Run @.bin2c
+
+# Objects to build, using the format o.<name> (will be varied for build type)
+OBJS       = o.errors \
+             o.intveneer \
+             o.ModHdr \
+             o.Module
+
+# By default we don't build Fortify in.
+# To include fortify in your module, #include "fortify.h" at the top of your C files
+# and call Fortify_EnterScope in your initialisation, and Fortify_LeaveScope in the
+# finalisation.
+FORTIFY    = no
+
+include CModule
+
+# Additional dependencies
+#
+# c.AutoSense holds the AutoSense file as a C array; it is generated from the
+# tokenised BASIC in AutoSense.EtherRPCEm, so that the BASIC remains the only
+# copy that has to be edited.
+$(OZDIR).Module: h.ModHdr c.AutoSense
+
+h.ModHdr: cmhg.ModHdr
+	${CMHG} ${BUILD_CMHGFLAGS} -d $@ cmhg.ModHdr
+
+c.AutoSense: AutoSense.EtherRPCEm
+	${BIN2C} -t "const unsigned char" -n autosense_file AutoSense.EtherRPCEm $@
+
+cleantarget:
+	${DESTROY} h.ModHdr
+	${DESTROY} c.AutoSense
+# This clean target removes the generated module header and AutoSense array.
+inittarget:
+	${MKDIR} h
+# This init target ensures that the header directory is created
+
+#---------------------------------------------------------------------------
+# Dynamic dependencies:

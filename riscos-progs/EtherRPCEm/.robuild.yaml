@@ -1,0 +1,41 @@
+%YAML 1.0
+---
+
+# RISC OS build file to execute on https://build.riscos.online/
+#
+# Builds the EtherRPCEm DCI4 driver from MakefileROBS and returns the module
+# in an Artifacts directory.
+#
+# Note that this deliberately does not alias AMU to HostAMU. The build has to
+# run bin2c, which is a RISC OS absolute committed in this directory, and the
+# host toolchain cannot execute it.
+
+jobs:
+  build:
+    # Env defines system variables which will be used within the environment.
+    env:
+      "Sys$Environment": ROBuild
+      "BUILD32": 1
+
+    # Commands which should be executed to perform the build.
+    # The build will terminate if any command returns a non-0 return code or an error.
+    script:
+      - echo
+      - echo *** Build EtherRPCEm ***
+      - amu -f MakefileROBS BUILD32=1
+
+      - echo
+      - echo *** Collect the module ***
+      # link -rmf types its output as Module (&FFA) already, and Copy keeps
+      # that, so the returned archive carries the right filetype in its Acorn
+      # extra field. `unzip -l` does not show it; `zipinfo -v` does.
+      - CDir Artifacts
+      - Copy rm32.EtherRPCEm Artifacts.EtherRPCEm ~C~V
+
+      # Done!
+      - echo
+      - echo *** SUCCESS ***
+
+    # Outputs from the build are defined in artifacts
+    artifacts:
+      - path: Artifacts
