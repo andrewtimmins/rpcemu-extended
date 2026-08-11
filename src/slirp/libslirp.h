@@ -9,6 +9,10 @@
 #include <netinet/in.h>
 #endif
 
+#if defined(__OpenBSD__)
+#include <sys/select.h>
+#endif
+
 struct Slirp;
 typedef struct Slirp Slirp;
 
