@@ -1,0 +1,791 @@
+<?xml version="1.0"?>
+<!DOCTYPE riscos-prm PUBLIC "-//Gerph//DTD PRM documentation 1.03//EN"
+                            "http://gerph.org/dtd/103/prm.dtd">
+
+<riscos-prm>
+<chapter title="HostFS">
+
+<section title="Introduction">
+<p>
+HostFS gives the emulated machine access to a folder on the machine the emulator
+is running on. From inside RISC OS it is an ordinary filing system: applications
+open, read, write and enumerate through it without knowing that the objects they
+are working on are files in a folder belonging to some other operating system.
+</p>
+<p>
+It is what makes the emulator usable for development. Source can be edited with
+the host's tools and compiled inside RISC OS, and a file saved by a RISC OS
+application appears on the host immediately, with no image to mount and nothing
+to transfer.
+</p>
+</section>
+
+<section title="Overview">
+<p>
+The guest half is a RISC OS filing system module which registers with FileSwitch
+in the ordinary way. FileSwitch calls it through the standard filing system
+entry points, and it forwards each of those calls almost unaltered to the host
+through SWI &hex;56AC1.
+</p>
+<p>
+That is the shape of this interface, and the thing to hold on to when reading
+the rest of this chapter: <em>the operations are the FileSwitch entry points</em>.
+Reason code 0 is <function>FSEntry_Open</function>, reason code 5 is
+<function>FSEntry_File</function>, and the registers each carries are the registers
+FileSwitch defined for it. Where this chapter is silent about what a register
+means, the filing system documentation in the RISC OS Programmer's Reference
+Manual is the reference, because the guest module passes them straight through.
+</p>
+<p>
+This is not a FileCore filing system, and the distinction matters to anyone
+implementing the host half. A FileCore-based filing system such as ADFS presents
+a block device - sectors, disc records, a free space map - and FileCore builds
+the directory structure on top of it. HostFS presents no blocks at all. The host
+implements the file operations directly, on whatever storage it has, and there
+is no disc structure anywhere in the interface. The only trace of FileCore is in
+the error numbers, which are borrowed because RISC OS already knows what they
+mean.
+</p>
+<p>
+The consequence is that a host implementation needs a filesystem-like backing
+store with named files, not a disc image. It also means the guest cannot do
+anything FileSwitch does not ask for: there is no way to read a raw sector, and
+nothing that depends on FileCore's disc format will work through HostFS.
+</p>
+</section>
+
+<section title="Technical details">
+
+<subsection title="Calling convention">
+<p>
+The operation is in <em>R9</em>, not R0. R0 onwards carry the FileSwitch entry
+point's own registers, which is the reason for the unusual choice: it lets the
+guest module pass the call through without shuffling registers.
+</p>
+<p>
+<value-table head-number="R9" head-value="Operation">
+<value number="0">FSEntry_Open</value>
+<value number="1">FSEntry_GetBytes</value>
+<value number="2">FSEntry_PutBytes</value>
+<value number="3">FSEntry_Args</value>
+<value number="4">FSEntry_Close</value>
+<value number="5">FSEntry_File</value>
+<value number="6">FSEntry_Func</value>
+<value number="7">FSEntry_GBPB</value>
+<value number="FFFFFFFF">Register with the host</value>
+</value-table>
+</p>
+<p>
+FSEntry_Args, FSEntry_File and FSEntry_Func each take a further reason code in
+R0, again as FileSwitch defines it. Those are listed in the sections below.
+</p>
+</subsection>
+
+<subsection title="Registration and protocol version">
+<p>
+Nothing works until the guest has registered. The module calls with
+R9 = &hex;FFFFFFFF and R0 holding the protocol version it implements; the host
+answers with R0 = &hex;FFFFFFFF if it supports that version.
+</p>
+<p>
+The current protocol version is 3. A host receiving a version it does not
+implement must refuse, and must then ignore every subsequent operation rather
+than attempt to serve a guest expecting a different contract.
+</p>
+<p>
+A call arriving before registration is also ignored, and a host implementation
+should log that once rather than on every call: an unregistered guest that keeps
+calling would otherwise fill the log. Registration is attempted regardless of
+the current state, so a guest that has been refused can try again with a
+different version.
+</p>
+</subsection>
+
+<subsection title="Object types and catalogue information">
+<p>
+Objects are described by the same four values RISC OS uses throughout its filing
+system interfaces, and the host fills them in from whatever its own storage can
+tell it.
+</p>
+<p>
+<definition-table head-name="Value" head-value="Meaning">
+ <definition name="Type">0 for an object that does not exist, 1 for a file, 2 for a directory</definition>
+ <definition name="Load address">The filetype and the top of the timestamp, or a load address for an untyped file</definition>
+ <definition name="Exec address">The rest of the timestamp, or an execution address</definition>
+ <definition name="Length">The size of the file in bytes</definition>
+ <definition name="Attributes">The RISC OS access attributes</definition>
+</definition-table>
+</p>
+</subsection>
+
+<subsection title="How filetypes are carried">
+<p>
+The host has nowhere to keep a RISC OS filetype, so it is carried in the
+filename, using the convention RISC OS users already know from other systems: a
+file's name ends with a comma and three hexadecimal digits giving the type.
+</p>
+<p>
+A file whose type is &hex;FFF - Text, the default - carries no suffix, so
+ordinary host files appear in RISC OS as text files and text files created in
+RISC OS appear on the host under their plain name. That is what makes the folder
+usable from both sides: a source file edited on the host does not acquire a
+suffix, and does not need one.
+</p>
+<p>
+When the type or timestamp of a file changes, the host renames the underlying
+file to match. An implementation must therefore expect the name of a file to
+change as a consequence of an operation that RISC OS thinks of as setting
+metadata.
+</p>
+<p>
+The timestamp is carried by the host file's own modification time rather than in
+the name, and is converted to and from the RISC OS load and exec address form.
+</p>
+</subsection>
+
+<subsection title="Reporting errors">
+<p>
+An operation that fails returns a FileCore error number in R9. The guest module
+turns that into a RISC OS error for FileSwitch. R9 is left alone when the
+operation succeeded, so a host implementation must write it only on the failing
+paths.
+</p>
+<p>
+<value-table head-number="Number" head-value="Error">
+<value number="B0">Bad rename</value>
+<value number="B4">Directory not empty</value>
+<value number="C0">Too many open files</value>
+<value number="C2">File open</value>
+<value number="C3">Locked</value>
+<value number="C4">Already exists</value>
+<value number="C6">Disc full</value>
+<value number="D4">Disc not found</value>
+<value number="D6">Not found</value>
+<value number="FF">Not implemented</value>
+</value-table>
+</p>
+<p>
+Not every failure has an error number to report. A file that cannot be opened is
+reported as not found, by returning zero as the handle, because that is what
+FileSwitch expects of the entry point; and several operations simply do nothing
+when they cannot proceed. Where that is the case it is stated in the operation's
+description.
+</p>
+</subsection>
+
+<subsection title="File handles">
+<p>
+The host allocates its own handle for each open file and returns it to
+FileSwitch, which passes it back on every subsequent operation. Handles run from
+1 to 255; zero is never a valid handle and is what the open operation returns to
+report that the file was not found.
+</p>
+<p>
+A handle arriving from the guest is entirely under the guest's control and must
+be validated before it is used to index anything. RISC OS constrains the number
+of open files, so a well behaved guest will not exceed the range, but a host
+implementation cannot rely on that: an out-of-range or stale handle used as an
+index reads host memory the guest chose. Every operation taking a handle checks
+it, and ignores the call if it does not name an open file.
+</p>
+</subsection>
+
+<subsection title="Directory enumeration">
+<p>
+The three directory-reading operations differ only in how much they return per
+entry. Each takes an offset into the directory and returns a count of entries
+read together with the offset to resume from, so FileSwitch can walk a large
+directory in pieces.
+</p>
+<p>
+Because the host's directory ordering is not RISC OS's, the host sorts the
+entries and holds the sorted result while an enumeration is in progress. That
+cache is refreshed when the enumeration restarts from offset zero or when a
+different directory is asked for. A host implementation needs something
+equivalent, or entries will be repeated or skipped when a directory changes
+during a walk.
+</p>
+<p>
+An offset of &hex;FFFFFFFF returned to the caller means the enumeration is
+complete. That value is also returned when the object named is not a directory.
+</p>
+</subsection>
+</section>
+
+<section title="SWI calls">
+
+<swi-definition name="RPCEmu_HostFS"
+                number="56AC1"
+                description="Performs a filing system operation on the host"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="9">Operation:
+  <p>
+  <value-table head-number="R9" head-value="Operation">
+   <value number="0"><reference type='swi' name='RPCEmu_HostFS' reason='0' use-description='yes'/></value>
+   <value number="1"><reference type='swi' name='RPCEmu_HostFS' reason='1' use-description='yes'/></value>
+   <value number="2"><reference type='swi' name='RPCEmu_HostFS' reason='2' use-description='yes'/></value>
+   <value number="3"><reference type='swi' name='RPCEmu_HostFS' reason='3' use-description='yes'/></value>
+   <value number="4"><reference type='swi' name='RPCEmu_HostFS' reason='4' use-description='yes'/></value>
+   <value number="5"><reference type='swi' name='RPCEmu_HostFS' reason='5' use-description='yes'/></value>
+   <value number="6"><reference type='swi' name='RPCEmu_HostFS' reason='6' use-description='yes'/></value>
+   <value number="7"><reference type='swi' name='RPCEmu_HostFS' reason='7' use-description='yes'/></value>
+   <value number="FFFFFFFF"><reference type='swi' name='RPCEmu_HostFS' reason='FFFFFFFF' use-description='yes'/></value>
+  </value-table>
+  </p>
+ </register-use>
+ <register-use number="0-8">As the corresponding FileSwitch entry point defines them</register-use>
+</entry>
+<exit>
+ <register-use number="9">A FileCore error number if the operation failed, otherwise preserved</register-use>
+ <register-use number="0-8">As the corresponding FileSwitch entry point defines them</register-use>
+</exit>
+
+<use>
+<p>
+Carries out a filing system operation on the host's storage on behalf of the
+guest's HostFS module. The operation is selected by R9, and the remaining
+registers are those of the FileSwitch entry point of the same name.
+</p>
+<p>
+Every operation except registration is ignored until the guest has registered.
+</p>
+</use>
+</swi-definition>
+
+<swi-definition name="RPCEmu_HostFS"
+                number="56AC1"
+                reason="FFFFFFFF" reasonname="Register"
+                description="Registers the guest filing system with the host"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">Protocol version the guest implements (currently 3)</register-use>
+ <register-use number="9">&hex;FFFFFFFF (operation)</register-use>
+</entry>
+<exit>
+ <register-use number="0">&hex;FFFFFFFF if the host accepted the registration, otherwise preserved</register-use>
+</exit>
+
+<use>
+<p>
+Declares the guest's HostFS module to the host and agrees the protocol version.
+The host answers with &hex;FFFFFFFF in R0 if it implements the version asked
+for.
+</p>
+<p>
+A registration for an unsupported version is refused, and the host then ignores
+every subsequent operation. A guest must not proceed on a refusal.
+</p>
+<p>
+This is the only operation accepted before registration, so a guest whose first
+attempt was refused may call again with a different version.
+</p>
+</use>
+</swi-definition>
+
+<swi-definition name="RPCEmu_HostFS"
+                number="56AC1"
+                reason="0" reasonname="Open"
+                description="Opens a file, as FSEntry_Open"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">Open mode:
+  <p>
+  <value-table head-number="Mode" head-value="Meaning">
+   <value number="0">Open for reading</value>
+   <value number="1">Create and open for update (RISC OS 2 only; not implemented)</value>
+   <value number="2">Open for update</value>
+  </value-table>
+  </p>
+ </register-use>
+ <register-use number="1">Pointer to the pathname, terminated by a control character</register-use>
+ <register-use number="3">The handle FileSwitch will use for this file</register-use>
+ <register-use number="6">Pointer to the special field, or 0 if there is none</register-use>
+ <register-use number="9">0 (operation)</register-use>
+</entry>
+<exit>
+ <register-use number="0">Information word:
+  <p>
+  <bitfield-table>
+   <bit number="31" state='set'>The file may be written to</bit>
+   <bit number="30" state='set'>The file may be read from</bit>
+   <bit number="29" state='set'>The object is a directory</bit>
+   <bit number="28" state='set'>Unbuffered access is allowed</bit>
+   <bit number="27" state='set'>The stream is interactive</bit>
+   <bit number="0-26" state="reserved" />
+  </bitfield-table>
+  </p>
+ </register-use>
+ <register-use number="1">The host's handle for the file, or 0 if it could not be opened</register-use>
+ <register-use number="2">Recommended buffer size; a power of two between 64 and 1024</register-use>
+ <register-use number="3">Extent of the file in bytes</register-use>
+ <register-use number="4">Space allocated to the file, in bytes</register-use>
+</exit>
+
+<use>
+<p>
+Opens an existing file and allocates a handle for it.
+</p>
+<p>
+A handle of zero returned in R1 means the file could not be opened, which
+FileSwitch reads as "not found". That is the only failure this operation
+reports: a file that exists but cannot be opened for any other reason is
+reported the same way, and no error number is returned in R9.
+</p>
+<p>
+Mode 1 is not implemented, since only RISC OS 2 used it. The call returns
+without opening anything and without reporting an error.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_HostFS' reason='4'/>
+</related>
+</swi-definition>
+
+<swi-definition name="RPCEmu_HostFS"
+                number="56AC1"
+                reason="1" reasonname="GetBytes"
+                description="Reads bytes from an open file, as FSEntry_GetBytes"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="1">The host's handle for the file</register-use>
+ <register-use number="2">Address of the buffer to read into</register-use>
+ <register-use number="3">Number of bytes to read</register-use>
+ <register-use number="4">Offset in the file to read from</register-use>
+ <register-use number="9">1 (operation)</register-use>
+</entry>
+<exit>
+ <register-use number="0-8" state="preserved" />
+</exit>
+
+<use>
+<p>
+Reads from an absolute position in the file, rather than from a current
+position: FileSwitch tracks the file pointer itself and supplies the offset on
+every call.
+</p>
+<p>
+A call naming a handle that is not open is ignored.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_HostFS' reason='2'/>
+</related>
+</swi-definition>
+
+<swi-definition name="RPCEmu_HostFS"
+                number="56AC1"
+                reason="2" reasonname="PutBytes"
+                description="Writes bytes to an open file, as FSEntry_PutBytes"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="1">The host's handle for the file</register-use>
+ <register-use number="2">Address of the buffer to write from</register-use>
+ <register-use number="3">Number of bytes to write</register-use>
+ <register-use number="4">Offset in the file to write at</register-use>
+ <register-use number="9">2 (operation)</register-use>
+</entry>
+<exit>
+ <register-use number="0-8" state="preserved" />
+</exit>
+
+<use>
+<p>
+Writes at an absolute position in the file. As with reading, FileSwitch supplies
+the offset on every call.
+</p>
+<p>
+A call naming a handle that is not open is ignored.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_HostFS' reason='1'/>
+</related>
+</swi-definition>
+
+<swi-definition name="RPCEmu_HostFS"
+                number="56AC1"
+                reason="3" reasonname="Args"
+                description="Reads and sets attributes of an open file, as FSEntry_Args"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">Reason code:
+  <p>
+  <value-table head-number="Reason" head-value="Action">
+   <value number="3">Write the file extent; R2 holds the new extent</value>
+   <value number="7">Ensure the file is at least a given size; R2 holds the size wanted</value>
+   <value number="8">Write zeros to the file; R2 holds the offset, R3 the count</value>
+   <value number="9">Read the file datestamp</value>
+  </value-table>
+  </p>
+ </register-use>
+ <register-use number="1">The host's handle for the file</register-use>
+ <register-use number="2-3">Dependent on the reason code</register-use>
+ <register-use number="9">3 (operation)</register-use>
+</entry>
+<exit>
+ <register-use number="2">For reason 7, the resulting size of the file</register-use>
+</exit>
+
+<use>
+<p>
+Reason 3 truncates or extends the file to the given extent. Extending a file
+this way does not define what the new bytes contain.
+</p>
+<p>
+Reason 7 returns the file's current size rather than changing it, so a host
+implementation should treat it as a query.
+</p>
+<p>
+Reason 8 writes a run of zero bytes at the given offset, which is how RISC OS
+extends a file with defined contents.
+</p>
+<p>
+Reason 9 is accepted and does nothing. The datestamp is carried by the host
+file's modification time and is reported through the catalogue information
+operations instead.
+</p>
+<p>
+Any other reason code is not implemented. A call naming a handle that is not
+open is ignored.
+</p>
+</use>
+</swi-definition>
+
+<swi-definition name="RPCEmu_HostFS"
+                number="56AC1"
+                reason="4" reasonname="Close"
+                description="Closes an open file, as FSEntry_Close"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="1">The host's handle for the file</register-use>
+ <register-use number="2">New load address, or 0 to leave it alone</register-use>
+ <register-use number="3">New exec address, or 0 to leave it alone</register-use>
+ <register-use number="9">4 (operation)</register-use>
+</entry>
+<exit>
+ <register-use number="0-8" state="preserved" />
+</exit>
+
+<use>
+<p>
+Closes the file and releases its handle. If both R2 and R3 are zero there is
+nothing further to do; otherwise they give the load and exec addresses to record
+against the file.
+</p>
+<p>
+A call naming a handle that is not open is ignored.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_HostFS' reason='0'/>
+</related>
+</swi-definition>
+
+<swi-definition name="RPCEmu_HostFS"
+                number="56AC1"
+                reason="5" reasonname="File"
+                description="Operates on a whole file by name, as FSEntry_File"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">Reason code:
+  <p>
+  <value-table head-number="Reason" head-value="Action">
+   <value number="0">Save a block of memory as a file</value>
+   <value number="1">Write catalogue information</value>
+   <value number="5">Read catalogue information</value>
+   <value number="6">Delete an object</value>
+   <value number="7">Create an empty file</value>
+   <value number="8">Create a directory</value>
+   <value number="FF">Load a file into memory</value>
+  </value-table>
+  </p>
+ </register-use>
+ <register-use number="1">Pointer to the pathname</register-use>
+ <register-use number="2">Load address, or for reason &hex;FF the address to load at</register-use>
+ <register-use number="3">Exec address</register-use>
+ <register-use number="4">For reasons 0 and 7, the start of the data; for reason 8, the number of entries wanted</register-use>
+ <register-use number="5">For reasons 0 and 7, the end of the data; for reason 1, the new attributes</register-use>
+ <register-use number="6">Pointer to the special field, or 0 if there is none</register-use>
+ <register-use number="9">5 (operation)</register-use>
+</entry>
+<exit>
+ <register-use number="0">For reasons 5, 6 and &hex;FF, the object type: 0 not found, 1 file, 2 directory</register-use>
+ <register-use number="2">Load address</register-use>
+ <register-use number="3">Exec address</register-use>
+ <register-use number="4">Length of the file in bytes</register-use>
+ <register-use number="5">Object attributes</register-use>
+</exit>
+
+<use>
+<p>
+Reason 0 writes the block of memory between R4 and R5 to a new file. Reason 7 is
+the same operation without data, creating a file of that length filled with
+zeros. Both will rename an existing file of that name to match the new filetype
+rather than refusing.
+</p>
+<p>
+Reason 1 sets the load address, exec address and attributes of an existing
+object, which for a file means renaming it to carry the new filetype and setting
+the host file's modification time. An object that does not exist is not an error
+and the call does nothing. Directories are not altered.
+</p>
+<p>
+Reason 5 returns the object's type and catalogue information. It is the
+operation behind <command>*FileInfo</command> and everything else that asks what an
+object is.
+</p>
+<p>
+Reason 6 returns the object's information and then deletes it. Deleting a
+directory that is not empty returns error &hex;B4.
+</p>
+<p>
+Reason 8 creates a directory. The number of entries in R4 is advisory and is not
+used. An attempt to create the root directory is ignored.
+</p>
+<p>
+Reason &hex;FF loads the whole file to the address in R2 and returns its
+catalogue information. A file that cannot be opened returns its information
+with nothing loaded.
+</p>
+<p>
+Any other reason code is not implemented.
+</p>
+</use>
+</swi-definition>
+
+<swi-definition name="RPCEmu_HostFS"
+                number="56AC1"
+                reason="6" reasonname="Func"
+                description="Performs a filing system function, as FSEntry_Func"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">Reason code:
+  <p>
+  <value-table head-number="Reason" head-value="Action">
+   <value number="0">Set the current directory</value>
+   <value number="8">Rename an object</value>
+   <value number="B">Read the disc name and boot option (not implemented)</value>
+   <value number="E">Read directory entries</value>
+   <value number="F">Read directory entries and information</value>
+   <value number="13">Read directory entries, information and timestamps</value>
+   <value number="17">Canonicalise the special field and disc name</value>
+   <value number="18">Resolve a wildcarded name</value>
+   <value number="1B">Read the boot option</value>
+   <value number="1E">Read free space, 32-bit</value>
+   <value number="23">Read free space, 64-bit</value>
+  </value-table>
+  </p>
+ </register-use>
+ <register-use number="1-6">Dependent on the reason code</register-use>
+ <register-use number="9">6 (operation)</register-use>
+</entry>
+<exit>
+ <register-use number="0-6">Dependent on the reason code</register-use>
+ <register-use number="9">A FileCore error number if the operation failed, otherwise preserved</register-use>
+</exit>
+
+<use>
+<p>
+Reason 0 sets the current directory. A name that does not resolve to an existing
+directory is ignored.
+</p>
+<p>
+Reason 8 renames an object, with R1 pointing at the old name and R2 at the new
+one.
+</p>
+<p>
+Reasons &hex;E, &hex;F and &hex;13 read directory entries, returning
+progressively more per entry: names alone, names with catalogue information, and
+names with catalogue information and timestamps. All three take the directory in
+R1, a buffer in R2, the number of entries wanted in R3, the offset to start at
+in R4 and the buffer length in R5; they return the number of entries read in R3
+and the offset to resume from in R4. An offset of &hex;FFFFFFFF means there are
+no more, and is also returned when the named object is not a directory.
+</p>
+<p>
+Reason &hex;17 canonicalises a disc name. With R4 = 0 it returns the length of
+buffer required in R4; otherwise it writes the canonical name to the buffer R4
+points at, whose length is given in R6. A disc name that is not valid returns
+error &hex;D4.
+</p>
+<p>
+Reason &hex;18 resolves a wildcarded name and returns &hex;FFFFFFFF in R4.
+</p>
+<p>
+Reason &hex;1B returns a boot option of 2 in R2.
+</p>
+<p>
+Reason &hex;1E returns the free space as a 32-bit value in R0, the largest
+creatable object in R1, and the disc size in R2. Reason &hex;23 returns the same
+as 64-bit values, free space across R0 and R1, the largest object in R2, and the
+size across R3 and R4. Both are capped at what the host reports for the storage
+holding the folder.
+</p>
+<p>
+Reason &hex;B is not implemented and returns &hex;FF in R9. Any other reason
+code is not implemented.
+</p>
+</use>
+</swi-definition>
+
+<swi-definition name="RPCEmu_HostFS"
+                number="56AC1"
+                reason="7" reasonname="GBPB"
+                description="Multiple byte transfer, as FSEntry_GBPB"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="9">7 (operation)</register-use>
+</entry>
+<exit>
+ <register-use number="0-8" state="preserved" />
+</exit>
+
+<use>
+<p>
+Accepted and does nothing. FileSwitch is able to carry out multiple byte
+transfers itself using the byte-level operations, and does so, since this entry
+point is optional for a filing system.
+</p>
+<p>
+A host implementation need do no more than accept the call.
+</p>
+</use>
+</swi-definition>
+
+</section>
+
+<section title="Examples">
+<p>
+Dispatching an operation, with the registration state that guards it:
+</p>
+
+<extended-example type='pseudo'>
+hostfs_handler():
+
+    if R9 == 0xffffffff then                 /* always allowed */
+        if R0 == PROTOCOL_VERSION then
+            R0 = 0xffffffff                  /* accepted */
+            state = REGISTERED
+        else
+            state = IGNORE                   /* wrong version: refuse for good */
+        return
+
+    if state != REGISTERED then
+        if state == UNREGISTERED then
+            log("used before registration")  /* once only */
+            state = IGNORE
+        return
+
+    case R9 of
+    0: open()          1: get_bytes()      2: put_bytes()     3: args()
+    4: close()         5: file()           6: func()          7: gbpb()
+    otherwise: log("unknown operation")
+</extended-example>
+
+<p>
+Opening a file, which shows both the handle validation every later operation
+depends on and the way "not found" is reported:
+</p>
+
+<extended-example type='pseudo'>
+open():
+
+    path = string_from_guest(R1)
+    host_path, info = resolve(path)          /* applies the ,xxx convention */
+
+    if info.type == NOT_FOUND then
+        R1 = 0                               /* FileSwitch reads this as not found */
+        return
+
+    handle = allocate_handle()               /* 1..255, or 0 if none free */
+    if handle == 0 then
+        fail("RISC OS should have stopped this")
+
+    case R0 of
+    0:  file = host_open(host_path, read only)
+        R0 = READ_OK
+    2:  file = host_open(host_path, read and write)
+        R0 = READ_OK or WRITE_OK
+    1:  return                               /* RISC OS 2 only; not implemented */
+
+    if file could not be opened then
+        R1 = 0                               /* same answer as not found */
+        return
+
+    R1 = handle
+    R2 = 1024                                /* buffer size: power of 2, 64..1024 */
+    R3 = size of file
+    R4 = 0                                   /* allocated space */
+
+
+get_bytes():
+
+    file = handle_to_file(R1)                /* R1 is guest-controlled */
+    if file is invalid then
+        log("bad handle")
+        return                               /* never index with it */
+
+    seek(file, R4)                           /* absolute: FileSwitch tracks position */
+    data = read(file, R3)
+    write_to_guest(R2, data)
+</extended-example>
+</section>
+
+</chapter>
+
+<!-- MetaData -->
+<meta>
+ <maintainer>
+  <email name="Charles Ferguson" address="gerph@gerph.org" />
+ </maintainer>
+ <disclaimer>
+    <p>
+        This documentation describes the interface between the RPCEmu emulator
+        and the HostFS filing system module which runs inside the emulated
+        machine. RPCEmu is distributed under the GNU General Public License,
+        version 2.
+    </p>
+ </disclaimer>
+
+ <history>
+  <revision number="1" author="Charles Ferguson" date="11 Aug 2026" title="Initial version">
+    <change>Documented the &hex;56AC1 filing system interface, protocol version 3.</change>
+  </revision>
+ </history>
+</meta>
+</riscos-prm>

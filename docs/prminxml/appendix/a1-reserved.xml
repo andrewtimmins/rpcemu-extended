@@ -1,0 +1,93 @@
+<?xml version="1.0"?>
+<!DOCTYPE riscos-prm PUBLIC "-//Gerph//DTD PRM documentation 1.03//EN"
+                            "http://gerph.org/dtd/103/prm.dtd">
+
+<riscos-prm>
+<chapter title="Reserved SWI numbers">
+
+<section title="Overview">
+<p>
+Three numbers in the emulator's SWI chunk are allocated but are not implemented.
+They are recorded here so that a host implementation knows not to expect them,
+and so that nobody reuses a number for something else and then finds a guest
+built against the original meaning.
+</p>
+<p>
+None of the three is intercepted. A guest issuing one of them reaches RISC OS,
+which reports an unknown SWI, exactly as it would for any other unallocated
+number.
+</p>
+</section>
+
+<section title="Technical details">
+
+<subsection title="The numbers">
+<p>
+<value-table head-number="Number" head-value="Allocation">
+<value number="56AC0">Shutdown. Inherited from ArcEm, where it stopped the emulator from inside the emulated machine. Not implemented here</value>
+<value number="56AC2">Debug. Inherited from ArcEm, where it wrote diagnostics to the emulator's own output. Not implemented here</value>
+<value number="56AC3">Reserved. Never allocated a meaning in either emulator, and never used</value>
+</value-table>
+</p>
+</subsection>
+
+<subsection title="Shutdown">
+<p>
+&hex;56AC0 stopped the emulator when called from inside the emulated machine.
+RPCEmu reaches the same end differently and without a SWI of its own: the RISC OS
+Switcher is patched at run time to advertise that the machine supports power
+control, so the desktop's Shutdown finishes by calling
+<reference type="swi" name="OS_Reset"/> with the documented request to power the
+machine off. The emulator recognises that and closes itself. Any other
+<reference type="swi" name="OS_Reset"/> is a genuine reset and is passed through
+untouched.
+</p>
+<p>
+The effect is that shutting the machine down from the desktop closes the
+emulator, with nothing needed inside the machine to arrange it. A host
+implementation wanting the same behaviour should follow the same route rather
+than implement this SWI.
+</p>
+</subsection>
+
+<subsection title="Debug">
+<p>
+&hex;56AC2 wrote diagnostics from the emulated machine to the emulator's output.
+RPCEmu has its own debugging facilities which do not need the guest's
+cooperation - a debugger driven over a socket, exception trapping, SWI tracing
+and logging watchpoints - so nothing has required this.
+</p>
+</subsection>
+
+<subsection title="Reusing them">
+<p>
+Both numbers should be treated as spent rather than free. Guest software built
+for ArcEm may still issue them, and a number given a new meaning here would be
+called with the old one's registers by anything that had not been rebuilt. A new
+interface should take a new number in the chunk instead; &hex;56AC6 onwards are
+unused, as is everything between &hex;56AC6 and &hex;56AD0 aside from the
+clipboard's number itself.
+</p>
+</subsection>
+</section>
+
+</chapter>
+
+<!-- MetaData -->
+<meta>
+ <maintainer>
+  <email name="Charles Ferguson" address="gerph@gerph.org" />
+ </maintainer>
+ <disclaimer>
+    <p>
+        RPCEmu is distributed under the GNU General Public License, version 2.
+    </p>
+ </disclaimer>
+
+ <history>
+  <revision number="1" author="Charles Ferguson" date="11 Aug 2026" title="Initial version">
+    <change>Recorded the allocated but unimplemented numbers in the emulator SWI chunk.</change>
+  </revision>
+ </history>
+</meta>
+</riscos-prm>

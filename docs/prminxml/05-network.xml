@@ -9,7 +9,7 @@
 <p>
 RPCEmu presents an Ethernet interface to the emulated machine. There is no
 emulated network chip behind it. Instead the guest is given an expansion card
-whose ROM contains a DCI4 network driver, <code>EtherRPCEm</code>, and that
+whose ROM contains a DCI4 network driver, <filename>EtherRPCEm</filename>, and that
 driver moves frames by calling a single SWI which the emulator intercepts
 before RISC OS ever sees it.
 </p>
@@ -50,8 +50,8 @@ module. RISC OS finds and starts the module during expansion card enumeration,
 exactly as it would from a real card.
 </item>
 <item>
-The <em>guest driver</em>, <code>EtherRPCEm</code>. A DCI4 driver that registers
-itself with the Internet stack under the interface name <code>rpcem</code>. It
+The <em>guest driver</em>, <filename>EtherRPCEm</filename>. A DCI4 driver that registers
+itself with the Internet stack under the interface name <filename>rpcem</filename>. It
 implements the DCI4 SWIs the stack calls, and turns them into the calls
 described in this chapter. It owns no hardware.
 </item>
@@ -179,18 +179,18 @@ words of each mbuf, and ignores the rest of the structure:
 </p>
 <p>
 All six are 32-bit little-endian words. The payload of an mbuf begins at the
-mbuf's own address plus <code>m_off</code>, not at a separately stored pointer.
+mbuf's own address plus <variable>m_off</variable>, not at a separately stored pointer.
 </p>
 <p>
-On transmission the chain is followed through <code>m_next</code> and each
-segment's <code>m_len</code> bytes are appended to the frame in turn.
-<code>m_list</code> is not followed: the driver walks that itself and calls once
+On transmission the chain is followed through <variable>m_next</variable> and each
+segment's <variable>m_len</variable> bytes are appended to the frame in turn.
+<variable>m_list</variable> is not followed: the driver walks that itself and calls once
 per chain.
 </p>
 <p>
-On reception a single mbuf is filled in. The host sets <code>m_off</code> to
-<code>m_inioff</code>, copies the payload to that offset, sets
-<code>m_len</code> to the payload length, and writes all six words back.
+On reception a single mbuf is filled in. The host sets <variable>m_off</variable> to
+<variable>m_inioff</variable>, copies the payload to that offset, sets
+<variable>m_len</variable> to the payload length, and writes all six words back.
 </p>
 <p>
 Both chain and contents are guest-controlled, and a host implementation must
@@ -199,7 +199,7 @@ followed forever, and a segment length taken at face value will overrun a fixed
 host buffer - neither of which the total-length check catches on its own,
 since a cycle of zero-length segments never grows the total. RPCEmu bounds both:
 it abandons a chain after 1024 segments with the message
-<code>RPCEmu: mbuf chain too long</code>, and checks each segment's length
+<systemoutput>RPCEmu: mbuf chain too long</systemoutput>, and checks each segment's length
 against the buffer size in its own right as well as against the running total.
 </p>
 </subsection>
@@ -345,7 +345,7 @@ larger than 1514 bytes should not arise from the guest in normal use.
 
 <use>
 <p>
-This SWI is the whole of the interface between the <code>EtherRPCEm</code>
+This SWI is the whole of the interface between the <filename>EtherRPCEm</filename>
 driver running in the emulated machine and the emulator hosting it. The reason
 code in R0 selects the operation.
 </p>
@@ -355,7 +355,7 @@ the technical details above before writing a caller.
 </p>
 <p>
 An unrecognised reason code writes the message
-<code>Unknown RPCEmu network SWI</code> to the buffer addressed by R1 and
+<systemoutput>Unknown RPCEmu network SWI</systemoutput> to the buffer addressed by R1 and
 returns that address in R0. R1 must therefore address a writable buffer of at
 least 27 bytes whenever a reason code that might not be recognised is used.
 </p>
@@ -450,7 +450,7 @@ the host chose to drop return R0 = 0 with R1 = 0.
 Frames that cannot be delivered are dropped rather than reported. A frame is
 undeliverable if no mbuf was supplied, if it has no payload beyond the
 Ethernet header, or if its payload is larger than the supplied mbuf's
-<code>m_inilen</code>. In each case the frame is consumed, the guest's receive
+<variable>m_inilen</variable>. In each case the frame is consumed, the guest's receive
 header is left untouched, and the next queued frame is promoted.
 </p>
 <p>
@@ -736,7 +736,7 @@ afresh when it is promoted out of the queue.
  <disclaimer>
     <p>
         This documentation describes the interface between the RPCEmu emulator
-        and the <code>EtherRPCEm</code> network driver which runs inside the
+        and the <filename>EtherRPCEm</filename> network driver which runs inside the
         emulated machine. RPCEmu is distributed under the GNU General Public
         License, version 2.
     </p>

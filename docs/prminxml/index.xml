@@ -1,0 +1,54 @@
+<?xml version="1.0"?>
+<index>
+<dirs output="../../prm-output/indexed/pages"
+      index="../../prm-output/indexed"
+      help="../../prm-output/indexed/help"
+      header="../../prm-output/indexed/header"
+      input="."
+      temp="../../prm-output/indexed/tmp" />
+<options
+    hide-empty="no"
+    include-source="no"
+    make-contents="no"
+    include-sections="no"
+    include-sections-depth="1"
+    catalog-version="103"
+    page-format="html5"
+    page-css-base="standard"
+    page-css-variant="prm body-fraunces heading-raleway webfont-fraunces webfont-raleway large-bullets"
+    page-css-file="none"
+    index-css-base="standard"
+    index-css-variant="prm body-fraunces heading-raleway webfont-fraunces webfont-raleway large-bullets no-edge-index"
+    index-css-file="none"
+    docgroup-name="RPCEmu host interfaces"
+    docgroup-part=""
+    chapter-numbers="yes"
+    chapter-contents="no"
+    edgeindex-max="4"
+    />
+
+<make-index type="swi" />
+<make-indexdata/>
+<make-filelist/>
+
+<footer>
+Copyright (c) the RPCEmu contributors. RPCEmu is distributed under the GNU
+General Public License, version 2. These interfaces are private to the emulator
+and are not part of RISC OS; they are documented as implemented, and an
+operation not described here is not implemented.
+</footer>
+
+<front-matter type="title" href="front/title-page"/>
+
+<section title="Host interfaces">
+    <page href="01-overview">The emulator host interfaces</page>
+    <page href="02-hostfs">HostFS</page>
+    <page href="03-hostcmd">HostCmd</page>
+    <page href="04-clipboard">Clipboard</page>
+    <page href="05-network">The RPCEmu network interface</page>
+</section>
+
+<section title="Appendices" dir="appendix">
+    <page href="a1-reserved">Reserved SWI numbers</page>
+</section>
+</index>

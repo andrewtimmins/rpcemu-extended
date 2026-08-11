@@ -808,9 +808,14 @@ jobs:
   # between describing an interface and describing an implementation.
   #
   # The HTML is a release asset. Somebody writing a host-side implementation of
-  # the network SWI is not necessarily building the emulator, and should not
-  # have to check out the tree and install a toolchain to read what the
+  # one of these interfaces is not necessarily building the emulator, and should
+  # not have to check out the tree and install a toolchain to read what the
   # interface does.
+  #
+  # Both forms are published: each chapter on its own, and the indexed manual,
+  # which adds the contents page and the generated SWI index that lets a reader
+  # find a call without knowing which interface it belongs to. The chapter list
+  # here must be kept in step with docs/prminxml/index.xml and its Makefile.
   docs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -821,12 +826,30 @@ jobs:
         with:
           fetch-tags: true
 
-      - name: Render the PRM-in-XML documentation
+      - name: Render the PRM-in-XML chapters
         uses: gerph/riscos-prminxml-action@v1
         with:
-          files: docs/prminxml/network-swi.xml
+          files: >-
+            docs/prminxml/front/title-page.xml
+            docs/prminxml/01-overview.xml
+            docs/prminxml/02-hostfs.xml
+            docs/prminxml/03-hostcmd.xml
+            docs/prminxml/04-clipboard.xml
+            docs/prminxml/05-network.xml
+            docs/prminxml/appendix/a1-reserved.xml
           output: prm-output
           style: prm
+
+      # The indexed build is driven from index.xml, whose paths are relative to
+      # its own directory, so it is run from there rather than through the
+      # action, which has no input for an index. riscos-prminxml is on PATH by
+      # this point: the action's install step appends its tool directory to
+      # GITHUB_PATH, which reaches every later step in the job.
+      - name: Build the indexed manual
+        run: |
+          cd docs/prminxml
+          mkdir -p ../../prm-output/indexed/logs
+          riscos-prminxml -f index -L ../../prm-output/indexed/logs index.xml
 
       # Named from VERSION rather than the tag, so the archive matches the
       # binaries beside it in a release. version-matches-tag has already
