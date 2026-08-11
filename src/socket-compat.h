@@ -95,6 +95,24 @@
 #endif /* _WIN32 */
 
 /**
+ * Send small writes at once rather than coalescing them.
+ *
+ * For a control channel carrying one keystroke or mouse position at a time,
+ * where Nagle's algorithm holds each one back waiting for company.
+ *
+ * @param fd Socket descriptor
+ * @return   0 on success, non-zero on error
+ */
+static inline int
+socket_set_nodelay(int fd)
+{
+	int on = 1;
+
+	return setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char *) &on,
+	                  sizeof(on));
+}
+
+/**
  * Put a socket into non-blocking mode.
  *
  * @param fd Socket descriptor

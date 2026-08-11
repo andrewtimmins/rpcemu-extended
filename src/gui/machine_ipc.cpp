@@ -448,6 +448,9 @@ void MachineIpcServer::AcceptLoop()
 		if (cfd < 0) {
 			continue;
 		}
+#ifdef _WIN32
+		socket_set_nodelay(cfd);	/* the other platforms use AF_UNIX */
+#endif
 
 		/* One client at a time - the Manager. A fresh connection (e.g. the
 		   Manager restarting after a crash) replaces whatever was there,
@@ -563,6 +566,7 @@ bool MachineIpcClient::Connect(const std::string &endpoint,
 		closesocket(fd);
 		return false;
 	}
+	socket_set_nodelay(fd);
 #else
 	struct sockaddr_un addr;
 	if (endpoint.empty() || endpoint.size() >= sizeof(addr.sun_path)) {
