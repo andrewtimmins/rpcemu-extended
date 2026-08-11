@@ -1,0 +1,63 @@
+<?xml version="1.0"?>
+<!DOCTYPE riscos-prm PUBLIC "-//Gerph//DTD PRM documentation 1.03//EN"
+                            "http://gerph.org/dtd/103/prm.dtd">
+
+<riscos-prm>
+<chapter title="RPCEmu host interfaces">
+
+<section title="About this manual">
+<p>
+This manual describes the interfaces between the RPCEmu emulator and the modules
+which run inside the machine it emulates: the filing system that reaches the
+host's storage, the network driver that has no network card, the shared
+clipboard, and the channel that lets the host run commands inside RISC OS.
+</p>
+<p>
+It is written for somebody implementing the host half of one of these
+interfaces - another emulator wanting to run the same guest modules, a test
+harness standing in for the emulator, or anyone maintaining RPCEmu who needs to
+know what the guest is entitled to rely on. It is not a guide to using RPCEmu;
+the emulator's own documentation covers that.
+</p>
+<p>
+The interfaces are private contracts between one module and the emulator hosting
+it. They are not RISC OS APIs, they are not registered with RISC OS Open, and
+software running on real hardware will not find them.
+</p>
+</section>
+
+<section title="How this manual is arranged">
+<p>
+Read the first chapter before any of the others. It describes the SWI chunk the
+interfaces occupy and the conventions they share - and, more usefully, the
+several places where they do not share one, such as which register carries the
+reason code and how each reports a failure.
+</p>
+<p>
+The remaining chapters are independent of each other and may be read in any
+order. Each describes one interface, giving the reason it exists, the technical
+detail needed to implement it, a definition of every operation, and worked
+pseudo-code for the host side.
+</p>
+</section>
+
+</chapter>
+
+<!-- MetaData -->
+<meta>
+ <maintainer>
+  <email name="Charles Ferguson" address="gerph@gerph.org" />
+ </maintainer>
+ <disclaimer>
+    <p>
+        RPCEmu is distributed under the GNU General Public License, version 2.
+    </p>
+ </disclaimer>
+
+ <history>
+  <revision number="1" author="Charles Ferguson" date="11 Aug 2026" title="Initial version">
+    <change>Created the manual.</change>
+  </revision>
+ </history>
+</meta>
+</riscos-prm>

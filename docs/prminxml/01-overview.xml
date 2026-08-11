@@ -1,0 +1,260 @@
+<?xml version="1.0"?>
+<!DOCTYPE riscos-prm PUBLIC "-//Gerph//DTD PRM documentation 1.03//EN"
+                            "http://gerph.org/dtd/103/prm.dtd">
+
+<riscos-prm>
+<chapter title="The emulator host interfaces">
+
+<section title="Introduction">
+<p>
+RPCEmu emulates a Risc PC faithfully enough that RISC OS does not know it is
+being emulated. Several of the things people want from an emulator, though, are
+not things a Risc PC could do at all: reading a folder on the machine the
+emulator is running on, pasting text copied from a web browser, or running a
+command from a script on the host and seeing what it printed.
+</p>
+<p>
+Those are provided by a small number of interfaces which the emulator exposes to
+software running inside the emulated machine. Each is a SWI that the emulator
+intercepts in its instruction decoder, before RISC OS is given the chance to
+handle it, and each has a module running in the guest which calls it and
+presents the result to RISC OS in whatever form RISC OS expects - a filing
+system, a network driver, a Wimp task.
+</p>
+<p>
+This manual describes those interfaces. It is written for somebody implementing
+the host half rather than for somebody using RPCEmu: another emulator that wants
+to run the same guest modules, a test harness that wants to stand in for the
+emulator, or anyone maintaining RPCEmu itself who needs to know what the guest
+is entitled to rely on.
+</p>
+</section>
+
+<section title="Overview">
+<p>
+Every interface here follows the same broad shape. A module inside the emulated
+machine issues a SWI whose number the real RISC OS knows nothing about. The
+emulator recognises the number as its own, performs the operation on the host,
+writes any results back into the emulated machine's registers and memory, and
+returns without RISC OS ever seeing the instruction. Nothing is emulated at the
+hardware level, and there is no device for RISC OS to find.
+</p>
+<p>
+The guest module is the part that makes this look like RISC OS. HostFS presents
+a filing system, so applications open and read files without knowing where they
+are; the network driver presents a DCI4 interface, so the Internet stack sends
+frames without knowing there is no card. The interfaces in this manual are
+therefore not APIs for applications. They are the private contract between one
+module and the emulator hosting it.
+</p>
+</section>
+
+<section title="Technical details">
+
+<subsection title="The SWI chunk">
+<p>
+The interfaces occupy a block of SWI numbers based at &hex;56AC0, which RPCEmu
+inherits from ArcEm. The numbers are not registered with RISC OS Open, have no
+names known to <reference type="swi" name="OS_SWINumberFromString"/>, and are
+issued numerically.
+</p>
+<p>
+<value-table head-number="Number" head-value="Interface">
+<value number="56AC0">Shutdown. Allocated but not implemented; see the appendix</value>
+<value number="56AC1">HostFS - files and directories on the host</value>
+<value number="56AC2">Debug. Allocated but not implemented; see the appendix</value>
+<value number="56AC3">Reserved, and never used</value>
+<value number="56AC4">Network - Ethernet frames to and from the host</value>
+<value number="56AC5">HostCmd - running commands from the host</value>
+<value number="56AD0">Clipboard - the shared clipboard</value>
+</value-table>
+</p>
+<p>
+The emulator masks the SWI operand to its bottom 20 bits, which includes the X
+bit, so a call made in either form reaches the same handler. It also resolves
+<reference type="swi" name="OS_CallASWI"/> and
+<reference type="swi" name="OS_CallASWIR12"/> to the number held in R10 or R12
+before comparing, so the interfaces are reachable through those as well.
+</p>
+</subsection>
+
+<subsection title="Where the reason code lives">
+<p>
+The interfaces do not agree on this, and it is the single most common thing to
+get wrong when implementing one of them. HostFS and HostCmd were derived from
+ArcEm, where the operation was passed in R9 so that R0 upwards could carry the
+filing system's own arguments unaltered. The network and clipboard interfaces
+were written later and put the reason code in R0.
+</p>
+<p>
+<definition-table head-name="Interface" head-extra="Reason in" head-value="Notes">
+ <definition name="HostFS" extra="R9">R0 onwards carry the FileSwitch entry point's own registers</definition>
+ <definition name="HostCmd" extra="R9">R0 onwards carry the operation's arguments</definition>
+ <definition name="Network" extra="R0">R1 is an error buffer</definition>
+ <definition name="Clipboard" extra="R0">R1 onwards carry the operation's arguments</definition>
+</definition-table>
+</p>
+</subsection>
+
+<subsection title="How failures are reported">
+<p>
+None of these interfaces uses the standard RISC OS error convention of setting
+V and returning a pointer to an error block. Each reports failure its own way,
+and a host implementation must follow whichever applies:
+</p>
+<p>
+<definition-table head-name="Interface" head-value="Failure is reported by">
+ <definition name="HostFS">A FileCore error number in R9. The guest module turns that into a RISC OS error. R9 is left alone when the operation succeeded</definition>
+ <definition name="HostCmd">Nothing fails. Every operation returns a status in R0 which the caller interprets</definition>
+ <definition name="Network">A non-zero R0, with the message written into a buffer the caller supplied</definition>
+ <definition name="Clipboard">Nothing fails. An operation that cannot be carried out returns zero in R0 and does nothing</definition>
+</definition-table>
+</p>
+<p>
+The V flag is untouched throughout. The emulator does clear V after the
+clipboard and HostCmd interfaces, so that a guest calling them in the X form
+sees success, but it never sets V to report an error.
+</p>
+</subsection>
+
+<subsection title="When an interface is switched off">
+<p>
+Each interface can be disabled in the emulator's configuration, and what happens
+then differs in a way that matters to the guest module.
+</p>
+<p>
+The clipboard and HostCmd interfaces fall through to RISC OS when disabled, so
+the SWI is reported as unknown and the guest module can detect that it is not
+available and withdraw. That is deliberate: both are optional conveniences whose
+guest modules should not be running at all if the host is not offering them.
+</p>
+<p>
+The network interface behaves differently. When networking is off the emulator
+swallows the SWI and returns with every register unchanged, so it reports
+neither success nor an unknown SWI. See the network chapter for why that is
+awkward and what a caller can conclude from it.
+</p>
+</subsection>
+
+<subsection title="Registration">
+<p>
+HostFS and HostCmd both require the guest module to register before anything
+else will work, and both use &hex;FFFFFFFF as the operation for it, answering
+with &hex;FFFFFFFF in R0 to acknowledge. HostFS additionally checks a protocol
+version and refuses a guest asking for one it does not implement.
+</p>
+<p>
+Registration exists so the host knows the guest half is present. Its absence is
+what lets the emulator refuse work that nothing would collect, rather than
+queueing it for a module that is not there. The clipboard has an equivalent in
+its setup operation, and the network interface in its readiness reason code,
+though neither calls it registration.
+</p>
+</subsection>
+
+<subsection title="Reading and writing the emulated machine's memory">
+<p>
+Every interface passes addresses in the emulated machine's address space, and a
+host implementation reads and writes them through the emulator's own memory
+access path rather than by any direct mapping. Two consequences are worth
+stating, because both have caused defects here:
+</p>
+<p>
+<list>
+<item>
+Addresses and lengths come from the guest and must be treated as hostile. A
+length is not bounded by anything the host controls, and a structure the guest
+builds may contain a cycle. Every copy into a fixed host buffer needs its own
+check, and every chain needs a limit.
+</item>
+<item>
+Guest memory is little-endian, and a multi-byte value read from it needs
+assembling accordingly. Data that travels onward to a network or a file may have
+its own byte order, which is not the same question.
+</item>
+</list>
+</p>
+</subsection>
+
+<subsection title="Suspend and resume">
+<p>
+The emulator can snapshot a running machine and restore it later, and each
+interface has state that must travel with the snapshot or the resumed machine
+will misbehave in ways that are hard to diagnose. HostFS must restore its
+registration state and its open file handles; the network interface must restore
+whether the driver declared itself ready, or the resumed machine never receives
+another frame. A host implementation that does not support snapshots need not do
+any of this, but one that does should treat these as part of the machine state
+rather than as host-side bookkeeping.
+</p>
+</subsection>
+</section>
+
+<section title="Examples">
+<p>
+The emulator's instruction decoder recognises its own SWI numbers before
+raising the exception that would let RISC OS see them:
+</p>
+
+<extended-example type='pseudo'>
+execute_swi(opcode):
+
+    swinum = opcode AND 0xdffff              /* 20 bits, including the X bit */
+
+    if swinum == OS_CallASWI then
+        swinum = R10 AND 0xdffff
+    else if swinum == OS_CallASWIR12 then
+        swinum = R12 AND 0xdffff
+
+    case swinum of
+
+    HOSTFS:                                  /* &hex;56AC1 */
+        hostfs_handler()                     /* reason in R9 */
+
+    NETWORK:                                 /* &hex;56AC4 */
+        if networking is configured then
+            network_handler()                /* reason in R0 */
+        /* else: fall through, registers untouched, no error */
+
+    HOSTCMD:                                 /* &hex;56AC5 */
+        if hostcmd is enabled then
+            hostcmd_handler()                /* reason in R9 */
+            clear V                          /* X-form: report success */
+        else
+            goto real_swi                    /* guest detects absence */
+
+    CLIPBOARD:                               /* &hex;56AD0 */
+        if clipboard is enabled then
+            clipboard_handler()              /* reason in R0 */
+            clear V
+        else
+            goto real_swi
+
+    otherwise:
+    real_swi:
+        raise the SWI exception               /* RISC OS handles it */
+</extended-example>
+</section>
+
+</chapter>
+
+<!-- MetaData -->
+<meta>
+ <maintainer>
+  <email name="Charles Ferguson" address="gerph@gerph.org" />
+ </maintainer>
+ <disclaimer>
+    <p>
+        This documentation describes the interfaces between the RPCEmu emulator
+        and the modules which run inside the machine it emulates. RPCEmu is
+        distributed under the GNU General Public License, version 2.
+    </p>
+ </disclaimer>
+
+ <history>
+  <revision number="1" author="Charles Ferguson" date="11 Aug 2026" title="Initial version">
+    <change>Described the emulator SWI chunk and the conventions common to its interfaces.</change>
+  </revision>
+ </history>
+</meta>
+</riscos-prm>
