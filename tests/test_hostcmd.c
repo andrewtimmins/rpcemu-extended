@@ -41,6 +41,7 @@
 #include "socket-compat.h"
 #ifndef _WIN32
 #include <sys/un.h>
+#include <unistd.h>
 #endif
 
 #include "rpcemu.h"
@@ -280,6 +281,30 @@ main(int argc, char **argv)
 	snprintf(spec, sizeof(spec), "15597");
 #else
 	snprintf(spec, sizeof(spec), "%s/test_hostcmd.sock", dir);
+
+	/* AF_UNIX paths are limited by the kernel to the size of sun_path: 104
+	   bytes on macOS, 108 on Linux. hostcmd_init() refuses a path longer
+	   than that rather than binding a truncated one - see hostcmd_listen_unix()
+	   - so the socket is never created and the connect below fails, reporting
+	   this as a broken socket when it is really a path that was too long.
+
+	   The build directory is deep enough for that to be reachable. A checkout
+	   on a GitHub runner is ".../work/<repo>/<repo>/...", spending the
+	   repository name twice: this repository's own path comes to 90 bytes,
+	   13 short of the macOS limit, and a fork whose name is 14 characters
+	   longer overruns it by 14.
+
+	   Fall back to a short path rather than fail a test that is not about
+	   paths. test_debugcmd does the same, for the same reason. */
+	{
+		struct sockaddr_un sa;
+
+		if (strlen(spec) >= sizeof(sa.sun_path)) {
+			snprintf(spec, sizeof(spec),
+			    "/tmp/rpcemu-test-hostcmd-%ld.sock", (long) getpid());
+		}
+	}
+
 	remove(spec);
 #endif
 
