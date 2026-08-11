@@ -22,6 +22,7 @@
 
 #include <algorithm>
 
+#include <wx/dcbuffer.h>
 #include <wx/graphics.h>
 
 #include "input_helpers.h"
@@ -237,7 +238,10 @@ void RemoteEmulatorPanel::RefreshFrame()
 
 void RemoteEmulatorPanel::OnPaint(wxPaintEvent & /*event*/)
 {
-	wxPaintDC dc(this);
+	/* Buffered, as EmulatorPanel's own paint is: the letterboxed case clears
+	   the panel and draws the picture over it, and unbuffered that black frame
+	   reached the screen on its own first. */
+	wxBufferedPaintDC dc(this);
 
 	if (live_ && frame_dirty_) {
 		RefreshFrame();
