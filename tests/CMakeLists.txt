@@ -660,6 +660,18 @@ if(WIN32)
 endif()
 rpcemu_add_test(test_net_slot)
 
+# The structure offsets the guest network driver hardcodes. It reads the equates
+# out of riscos-progs/EtherRPCEm/etherrpcem.s and checks them against the host's
+# own declarations in src/network.h and against models of Acorn's DCI4 headers,
+# so the source path is passed as an argument. Nothing is compiled from the
+# module: the assembler source is the input, and it does not need the ARM tools
+# to be installed for this test to run.
+add_executable(test_etherrpcem_layout test_etherrpcem_layout.c)
+target_include_directories(test_etherrpcem_layout PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_etherrpcem_layout
+                ${CMAKE_CURRENT_SOURCE_DIR}/../riscos-progs/EtherRPCEm/etherrpcem.s)
+
 # The serialisation primitives snapshots are built from, and the run-length codec
 # that carries RAM and VRAM. Links rpcemu_core: savestate.c calls into every
 # module's own save/load function, so unlike most of the tests here it cannot be
@@ -700,7 +712,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 41)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 42)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()

@@ -84,8 +84,10 @@ pointed at the Windows binary, and how the RISC OS 5.31 empty-HostFS screen in
 
 ## What the suite covers
 
-Forty-three tests: thirty-four that build anywhere, eight that need a native
-recompiler backend, and one that needs a Python 3 interpreter.
+Fifty-one tests: forty-two that build anywhere, eight that need a native
+recompiler backend, and one that needs a Python 3 interpreter. (The count in
+`tests/CMakeLists.txt` is the one that is enforced; this sentence is prose and
+had fallen behind it, which is worth knowing before trusting it.)
 
 | Test | Covers |
 | --- | --- |
@@ -130,12 +132,46 @@ recompiler backend, and one that needs a Python 3 interpreter.
 | `test_machine_selector` | the VNC machine selector's navigation and drawing |
 | `test_app_settings` | emulator settings, and the migration from per-machine ones |
 | `test_vdu_filter` | turning guest VDU output into host text |
+| `test_etherrpcem_layout` | the DCI4 structure offsets the guest network driver hardcodes, read back out of its assembler source |
 
 Beyond the unit tests, every CI job runs `tests/cli_smoke.sh` against the staged
 binary and then `tests/boot_smoke.py`, which boots a real machine with a real ROM
 and checks over VNC that RISC OS drew something, asks the guest its version over
 HostCmd, and checks its clock. That is the test that covers the CPU, memory,
 VIDC, ROM loading and the VNC server together.
+
+## The guest modules
+
+The RISC OS modules under `riscos-progs/` run inside the emulated machine: HostFS
+and its filer, RPCEmuSupport, SyncClock, the USB and PCI support modules, the
+graphics card's display driver and the network driver. They are assembled with the
+ARM binutils, and the assembled images are committed — under `poduleroms/`,
+`gfxroms/` and `netroms/` — because somebody building RPCEmu is not asked to
+install a cross-assembler.
+
+That invites one quiet failure: edit a module's source, forget to rebuild it, and
+the emulator goes on loading the stale image. Nothing fails, and the source stops
+describing what the machine runs.
+
+```bash
+./setup-build-env.sh --podules        # arm-linux-gnueabi binutils
+bash tests/check-guest-modules.sh     # rebuild all eight images and compare
+```
+
+A difference is an error naming the file. `--rebuild-only` copies the rebuilds
+over the committed images instead, for when the source has deliberately moved on.
+
+The `linux-amd64` job runs this **before** `build.sh`, because `build.sh` rebuilds
+these itself when the tools are present and copies them over the committed images
+— comparing afterwards would compare a file with itself. Only that job runs it:
+the modules are ARM binaries and come out the same whatever host builds them.
+
+Two things this does not cover. `ScrollWheel` is not in the list, because its
+makefile wants clang and `build.sh` does not build it either; its image is
+committed as it stands. And `SharedClipboard` is C built with the Acorn DDE inside
+a guest, so it cannot be rebuilt on the host at all — see
+`riscos-progs/SharedClipboard/README.md`. EtherRPCEm used to be in that position
+and is not any more.
 
 ## Writing a test
 
