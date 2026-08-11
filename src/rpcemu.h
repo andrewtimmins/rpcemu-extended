@@ -439,6 +439,7 @@ extern void rpcemu_set_datadir(const char *path);
 extern void rpcemu_set_resourcedir(const char *path);
 extern const char *rpcemu_get_machine_datadir(void);
 extern void rpcemu_set_machine_datadir(const char *machine_name);
+extern void rpcemu_machine_datadir_for(char *out, size_t size, const char *machine_name);
 extern const char *rpcemu_get_log_path(void);
 
 /**

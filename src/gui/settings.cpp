@@ -102,11 +102,12 @@ static void peripheral_config_save(wxFileConfig &settings)
 
 static void machine_cmos_sync(const char *machine_name, Model model, unsigned mem_size, unsigned vram_size)
 {
-	char meta_path[512];
+	char machine_dir[512];
+	char meta_path[560];	/* the directory plus the longest name below */
 	char cmos_path[512];
 
-	snprintf(meta_path, sizeof(meta_path), "%smachines/%s/emulator.meta",
-	         rpcemu_get_datadir(), machine_name);
+	rpcemu_machine_datadir_for(machine_dir, sizeof(machine_dir), machine_name);
+	snprintf(meta_path, sizeof(meta_path), "%semulator.meta", machine_dir);
 
 	wxFileConfig meta(wxEmptyString, wxEmptyString,
 	                  wxString::FromUTF8(meta_path), wxEmptyString,
