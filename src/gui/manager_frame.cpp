@@ -938,6 +938,23 @@ void ManagerFrame::StopMachine(const wxString &name)
 	   whatever state it is in. Asking twice is harmless. */
 }
 
+/* Ask every machine to stop, and close once they have. */
+void ManagerFrame::StopAllAndClose()
+{
+	closing_after_stop_ = true;
+
+	std::vector<wxString> names;
+
+	for (const auto &entry : running_) {
+		names.push_back(entry.first);
+	}
+	for (const wxString &name : names) {
+		StopMachine(name);
+	}
+
+	UpdateButtons();
+}
+
 void ManagerFrame::RemoveRunningEntry(const wxString &name)
 {
 	auto it = running_.find(name);
@@ -966,6 +983,13 @@ void ManagerFrame::RemoveRunningEntry(const wxString &name)
 
 	running_.erase(it);
 	RefreshMachineList();
+
+	/* The last one asked to stop before closing has gone, so the window can
+	   follow it. Queued rather than closed here: this runs from a panel
+	   callback, and Close() would take that panel down underneath it. */
+	if (closing_after_stop_ && running_.empty()) {
+		CallAfter([this]() { Close(true); });
+	}
 }
 
 void ManagerFrame::OnChildProcessEnded(const wxString &machine_name, int /*pid*/, int /*status*/)
@@ -1713,6 +1737,35 @@ void ManagerFrame::OnExit(wxCommandEvent & /*event*/)
 
 void ManagerFrame::OnClose(wxCloseEvent &event)
 {
+	/*
+	 * A machine outliving this window is the intended behaviour, but not an
+	 * obvious one: nothing on screen afterwards says the machine is still
+	 * there. Say so, and offer the other choice.
+	 */
+	if (!running_.empty() && !closing_after_stop_) {
+		const size_t count = running_.size();
+		wxRichMessageDialog dlg(this,
+		    wxString::Format("%zu machine%s still running.", count,
+		        count == 1 ? " is" : "s are"),
+		    "RPCEmu Extended Manager", wxOK | wxCANCEL | wxICON_QUESTION);
+
+		dlg.SetExtendedMessage(
+		    "Closing this window leaves them running in the background.\n\n"
+		    "Opening RPCEmu Extended again reconnects to them.");
+		dlg.ShowCheckBox("Stop the running machines first", false);
+
+		if (dlg.ShowModal() != wxID_OK) {
+			event.Veto();
+			return;
+		}
+
+		if (dlg.IsCheckBoxChecked()) {
+			StopAllAndClose();
+			event.Veto();	/* closes itself once they have gone */
+			return;
+		}
+	}
+
 	/* Running machines are independent processes and are left running,
 	   exactly as closing VirtualBox's or VMware Workstation's manager
 	   window does not stop the VMs it was showing - only Stop, or closing
