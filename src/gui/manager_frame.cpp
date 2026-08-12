@@ -1565,12 +1565,53 @@ void ManagerFrame::OnDataFolder(wxCommandEvent & /*event*/)
 	             "RPCEmu Extended - Data Folder", wxOK | wxICON_INFORMATION, this);
 }
 
+/*
+ * Ask before stopping a machine.
+ *
+ * Stop is a button on the toolbar, an item on the Machine menu and an item on a
+ * machine's context menu, and until now all three shut the machine down on the
+ * first click with nothing in between. Next to Start on the same toolbar, that is
+ * an easy thing to hit by accident, and what it costs is whatever RISC OS had not
+ * written to disc.
+ *
+ * Deliberately shaped like the warning for closing this window with machines
+ * running: the same kind of dialogue, saying what will happen and what the other
+ * choice is. Cancel is the default button (wxNO_DEFAULT), so a stray Return or
+ * Space after the click does not confirm it - which is the same misfire the
+ * dialogue exists to catch.
+ *
+ * Not asked when the machine is not running: there is nothing to lose, and a
+ * question with no consequence teaches people to dismiss questions.
+ */
+bool ManagerFrame::ConfirmStop(const wxString &name)
+{
+	if (running_.find(name) == running_.end()) {
+		return true;
+	}
+
+	wxRichMessageDialog dlg(this,
+	    wxString::Format("Stop %s?", name),
+	    "RPCEmu Extended Manager", wxYES_NO | wxNO_DEFAULT | wxICON_EXCLAMATION);
+
+	dlg.SetYesNoLabels("Stop", "Cancel");
+	dlg.SetExtendedMessage(
+	    "The machine is asked to shut down, and anything RISC OS has not "
+	    "written to disc is lost - unless this machine is set to suspend on "
+	    "exit, in which case its state is saved.\n\n"
+	    "A machine left running can be shown again from this window at any "
+	    "time, including after this window is closed.");
+
+	return dlg.ShowModal() == wxID_YES;
+}
+
 void ManagerFrame::OnStop(wxCommandEvent & /*event*/)
 {
 	const wxString name = SelectedMachineName();
-	if (!name.empty()) {
-		StopMachine(name);
+
+	if (name.empty() || !ConfirmStop(name)) {
+		return;
 	}
+	StopMachine(name);
 }
 
 void ManagerFrame::OnReset(wxCommandEvent & /*event*/)

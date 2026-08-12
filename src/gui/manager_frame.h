@@ -84,6 +84,10 @@ private:
 	void StartMachine(const wxString &name, bool resume = false);
 	void StopMachine(const wxString &name);
 
+	/* Ask before stopping a running machine - Stop sits next to Start on the
+	   toolbar and shutting a machine down by accident costs unsaved work.
+	   Answers true when there is nothing running to lose. */
+	bool ConfirmStop(const wxString &name);
 	void ShowMachinePanel(const wxString &name);
 	void RemoveRunningEntry(const wxString &name);
 	void AttachPanelFor(const wxString &name, const wxString &shared_fb_name,
