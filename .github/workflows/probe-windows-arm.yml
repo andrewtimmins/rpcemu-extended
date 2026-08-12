@@ -1,0 +1,98 @@
+# Does a Windows-on-ARM build have somewhere to happen?
+#
+# A throwaway, run by hand (workflow_dispatch), that establishes the four facts a
+# windows-arm64 job would rest on before any of the build scripts are touched:
+#
+#   1. the windows-11-arm runner label exists and this repository may use it;
+#   2. it really is ARM64 rather than an x86_64 machine wearing the label;
+#   3. MSYS2's CLANGARM64 environment installs there, with the packages RPCEmu
+#      needs - wxWidgets, SDL2, libvncserver and libusb, which is the set that
+#      decides whether the emulator can be built at all rather than merely
+#      compiled;
+#   4. that toolchain produces a NATIVE ARM64 executable. This is the fact worth
+#      proving rather than assuming: MSYS2's own runtime is x86_64 and runs under
+#      Windows' Prism emulation on these machines, so a build can look perfectly
+#      healthy while emitting x86-64 binaries.
+#
+# Deliberately separate from build.yml and deliberately manual: it is an
+# experiment, and it should be deleted once the real windows-arm64 job exists or
+# once it has proved the idea will not work. Nothing here builds RPCEmu.
+
+name: Probe Windows on ARM
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-11-arm
+    steps:
+      # Before MSYS2, so the machine describes itself in Windows' own terms.
+      # PROCESSOR_ARCHITECTURE is what a native process sees; an emulated one is
+      # told AMD64 instead, so both are printed.
+      - name: What machine is this
+        shell: pwsh
+        run: |
+          Write-Host "PROCESSOR_ARCHITECTURE      = $env:PROCESSOR_ARCHITECTURE"
+          Write-Host "PROCESSOR_ARCHITEW6432      = $env:PROCESSOR_ARCHITEW6432"
+          Write-Host "OS architecture (WMI)       = $((Get-CimInstance Win32_OperatingSystem).OSArchitecture)"
+          Write-Host "Processor name              = $((Get-CimInstance Win32_Processor).Name)"
+
+      - name: Set up MSYS2 / CLANGARM64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          update: true
+          install: >-
+            git
+            mingw-w64-clang-aarch64-toolchain
+            mingw-w64-clang-aarch64-cmake
+            mingw-w64-clang-aarch64-ninja
+            mingw-w64-clang-aarch64-pkgconf
+            mingw-w64-clang-aarch64-wxwidgets3.2-msw
+            mingw-w64-clang-aarch64-SDL2
+            mingw-w64-clang-aarch64-libvncserver
+            mingw-w64-clang-aarch64-libusb
+
+      # The dependencies matter as much as the compiler: wx and libvncserver are
+      # the two that would send this back to the drawing board.
+      - name: What the toolchain and the dependencies say
+        shell: msys2 {0}
+        run: |
+          set -x
+          uname -a
+          clang --version
+          clang -dumpmachine
+          cmake --version | head -1
+          wx-config --version || true
+          wx-config --selected-config || true
+          pkg-config --modversion sdl2 libvncserver libusb-1.0 || true
+
+      # The fact the rest of it rests on. A trivial program, compiled and then
+      # identified: "PE32+ ... Aarch64" is the answer that makes a native build
+      # worth pursuing, and anything mentioning x86-64 means the environment is
+      # not what it claims.
+      - name: Does it emit a native ARM64 binary
+        shell: msys2 {0}
+        run: |
+          printf 'int main(void) { return 0; }\n' > probe.c
+          clang -O2 -o probe.exe probe.c
+          file probe.exe
+          file probe.exe | grep -qi 'aarch64\|arm64' \
+            || { echo "NOT a native ARM64 binary - a windows-arm64 job would be pointless"; exit 1; }
+          echo "native ARM64 confirmed"
+
+      # Cheap and worth knowing while we are here: whether the emulator's own
+      # sources configure at all in this environment, without building them.
+      # Failures here are information, not a verdict, so it does not fail the job.
+      - name: Would RPCEmu even configure here
+        shell: msys2 {0}
+        continue-on-error: true
+        run: |
+          cmake -B build-probe -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DRPCEMU_DYNAREC=OFF \
+            -DRPCEMU_ENABLE_VNC=ON 2>&1 | tail -30
