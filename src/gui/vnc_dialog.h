@@ -51,6 +51,7 @@ private:
 	wxCheckBox *enable_checkbox_ = nullptr;
 	wxSpinCtrl *port_spin_ = nullptr;
 	wxTextCtrl *password_edit_ = nullptr;
+	wxTextCtrl *password_readonly_edit_ = nullptr;
 	wxStaticText *status_label_ = nullptr;
 	wxStaticText *clients_label_ = nullptr;
 };

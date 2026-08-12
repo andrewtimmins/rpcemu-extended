@@ -703,6 +703,7 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	cfg->vnc_enabled = 0;
 	cfg->vnc_port = 5900;
 	cfg->vnc_password[0] = '\0';
+	cfg->vnc_password_readonly[0] = '\0';
 	cfg->hostcmd_enabled = 1;
 	cfg->hostcmd_socket[0] = '\0';
 
@@ -736,6 +737,12 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 		settings.Read("vnc_password", &sText, wxEmptyString);
 		strncpy(cfg->vnc_password, sText.utf8_str().data(), sizeof(cfg->vnc_password) - 1);
 		cfg->vnc_password[sizeof(cfg->vnc_password) - 1] = '\0';
+	}
+	if (settings.HasEntry("vnc_password_readonly")) {
+		settings.Read("vnc_password_readonly", &sText, wxEmptyString);
+		strncpy(cfg->vnc_password_readonly, sText.utf8_str().data(),
+		    sizeof(cfg->vnc_password_readonly) - 1);
+		cfg->vnc_password_readonly[sizeof(cfg->vnc_password_readonly) - 1] = '\0';
 	}
 	if (settings.HasEntry("hostcmd_enabled")) {
 		settings.Read("hostcmd_enabled", &value, 1L);
@@ -875,7 +882,7 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	settings.Write("start_fullscreen", static_cast<long>(cfg->start_fullscreen));
 	settings.Write("suspend_on_exit", static_cast<long>(cfg->suspend_on_exit));
 	/* The ways in to this machine, written with it: two machines can each have
-	   their own VNC port and password and their own HostCmd socket, and keep them
+	   their own VNC port and passwords and their own HostCmd socket, and keep them
 	   without being told again on the command line every time. The app settings
 	   file supplies these before a machine is chosen, and as the default for a
 	   machine whose file has not got them yet. */
@@ -918,6 +925,8 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 		write_or_restore("vnc_port",
 		    wxString::Format("%ld", static_cast<long>(cfg->vnc_port)));
 		settings.Write("vnc_password", wxString(cfg->vnc_password, wxConvUTF8));
+		settings.Write("vnc_password_readonly",
+		    wxString(cfg->vnc_password_readonly, wxConvUTF8));
 		settings.Write("hostcmd_enabled", static_cast<long>(cfg->hostcmd_enabled));
 		write_or_restore("hostcmd_socket",
 		    wxString(cfg->hostcmd_socket, wxConvUTF8));

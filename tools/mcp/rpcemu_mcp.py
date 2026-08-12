@@ -24,6 +24,7 @@ Configuration (environment variables):
                          (Guest sees it as HostFS::HostFS.$)
   RPCEMU_VNC_HOST        VNC host (default 127.0.0.1).
   RPCEMU_VNC_PORT        VNC port (default 5900).
+  RPCEMU_VNC_PASSWORD    VNC control password (empty by default).
 
 Run:  python rpcemu_mcp.py         (stdio transport, for Claude Code / Desktop)
 """
@@ -39,6 +40,7 @@ from pathlib import Path
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP, Image
+from Crypto.Cipher import DES
 
 # --------------------------------------------------------------------------
 # Configuration
@@ -48,6 +50,7 @@ HOSTCMD_SOCKET = os.environ.get("RPCEMU_HOSTCMD_SOCKET", "")
 HOSTFS_DIR = os.environ.get("RPCEMU_HOSTFS_DIR", "")
 VNC_HOST = os.environ.get("RPCEMU_VNC_HOST", "127.0.0.1")
 VNC_PORT = int(os.environ.get("RPCEMU_VNC_PORT", "5900"))
+VNC_PASSWORD = os.environ.get("RPCEMU_VNC_PASSWORD", "")
 DEBUG_SOCKET = os.environ.get("RPCEMU_DEBUG_SOCKET", "")
 
 mcp = FastMCP("rpcemu")
@@ -275,8 +278,15 @@ def _safe_join(rel: str) -> Path:
 
 
 # --------------------------------------------------------------------------
-# Minimal VNC/RFB client (screenshot + input). RFB 3.3, security None, Raw.
+# Minimal VNC/RFB client (screenshot + input). RFB 3.3, None/VNC auth, Raw.
 # --------------------------------------------------------------------------
+
+
+def _vnc_auth_response(challenge: bytes, password: str) -> bytes:
+    """Encrypt an RFB challenge with the protocol's bit-reversed DES key."""
+    key = password.encode("utf-8")[:8].ljust(8, b"\0")
+    key = bytes(int(f"{byte:08b}"[::-1], 2) for byte in key)
+    return DES.new(key, DES.MODE_ECB).encrypt(challenge)
 
 
 def _vnc_connect() -> tuple[socket.socket, int, int]:
@@ -298,10 +308,19 @@ def _vnc_connect() -> tuple[socket.socket, int, int]:
     if sec == 0:
         (n,) = struct.unpack(">I", recvn(4))
         raise HostCmdError("VNC connection failed: " + recvn(n).decode("latin-1"))
-    if sec != 1:
+    if sec == 2:
+        if not VNC_PASSWORD:
+            raise HostCmdError(
+                "VNC server requires authentication; set RPCEMU_VNC_PASSWORD "
+                "to its control password."
+            )
+        s.sendall(_vnc_auth_response(recvn(16), VNC_PASSWORD))
+        (auth_result,) = struct.unpack(">I", recvn(4))
+        if auth_result != 0:
+            raise HostCmdError("VNC authentication failed")
+    elif sec != 1:
         raise HostCmdError(
-            f"VNC server requires authentication (security type {sec}); this tool "
-            "only supports passwordless VNC."
+            f"VNC server offered unsupported security type {sec}."
         )
     s.sendall(b"\x01")  # ClientInit, shared
     w, h = struct.unpack(">HH", recvn(4))

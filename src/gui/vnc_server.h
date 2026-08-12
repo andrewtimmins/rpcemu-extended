@@ -41,7 +41,8 @@ public:
 	explicit VncServer(EmulatorHost *emulator_host);
 	~VncServer();
 
-	bool start(int port, const std::string &password);
+	bool start(int port, const std::string &password,
+	           const std::string &password_readonly);
 
 	/*
 	 * Divert keysyms away from the guest.
@@ -154,8 +155,9 @@ private:
 	   server's event thread. */
 	std::set<uint32_t> keys_down_;
 	bool running_ = false;
-	char *password_list_[2] = {nullptr, nullptr};
+	char *password_list_[3] = {nullptr, nullptr, nullptr};
 	std::string current_password_;
+	std::string current_password_readonly_;
 	std::string desktop_name_;
 };
 

@@ -107,10 +107,10 @@ CPU (directly, or via a breakpoint/watchpoint hit) freezes the whole machine
   screen/input tools, the **VNC server enabled** (`vnc_enabled=1` in the
   machine's `.cfg`). A `--headless` machine works out of the box: headless
   implies VNC and starts the server whatever that setting says.
-- The screen/input tools only speak **passwordless VNC**, so leave `vnc_password`
-  empty on a machine you drive from here. Set `RPCEMU_VNC_PORT` to match the
-  machine's `vnc_port` when it is not the 5900 default — each machine needs its
-  own port, so this matters as soon as you run more than one.
+- Set `RPCEMU_VNC_PASSWORD` to the machine's VNC control password when it has
+  one. Set `RPCEMU_VNC_PORT` to match the machine's `vnc_port` when it is not the
+  5900 default — each machine needs its own port, so this matters as soon as you
+  run more than one.
 
 ## Configuration (environment variables)
 
@@ -120,6 +120,7 @@ CPU (directly, or via a breakpoint/watchpoint hit) freezes the whole machine
 | `RPCEMU_HOSTFS_DIR` | Host directory backing the machine's HostFS drive (the guest sees it as `HostFS::HostFS.$`). Usually `<data-dir>/machines/<name>/hostfs`. |
 | `RPCEMU_VNC_HOST` | VNC host (default `127.0.0.1`). |
 | `RPCEMU_VNC_PORT` | VNC port (default `5900`; matches the machine's `vnc_port`). |
+| `RPCEMU_VNC_PASSWORD` | VNC control password (empty by default). Use the control password, not the read-only one, because the MCP tools send keyboard and mouse input. |
 | `RPCEMU_DEBUG_SOCKET` | The machine's DebugCmd socket (AF_UNIX path e.g. `<data-dir>/rpcemu-debug.sock`, or `host:port` for TCP). Needed only for the `riscos_debug_*` tools; on by default (`debug_enabled=1`). |
 
 ## Wiring into Claude Code
@@ -143,6 +144,7 @@ Run standalone (stdio transport) for testing:
 RPCEMU_HOSTCMD_SOCKET=/path/hostcmd.sock \
 RPCEMU_HOSTFS_DIR=/path/machines/Default/hostfs \
 RPCEMU_VNC_PORT=5900 \
+RPCEMU_VNC_PASSWORD=control-password \
 python3 rpcemu_mcp.py
 ```
 

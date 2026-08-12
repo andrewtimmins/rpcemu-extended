@@ -168,6 +168,7 @@ private:
 	wxCheckBox *vnc_check_ = nullptr;
 	wxSpinCtrl *vnc_port_spin_ = nullptr;
 	wxTextCtrl *vnc_password_text_ = nullptr;
+	wxTextCtrl *vnc_password_readonly_text_ = nullptr;
 	wxCheckBox *hostcmd_check_ = nullptr;
 	wxTextCtrl *hostcmd_socket_text_ = nullptr;
 	/* Called after the values are loaded, so the fields start greyed out to match

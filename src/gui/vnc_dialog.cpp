@@ -32,6 +32,8 @@ VncDialog::VncDialog(wxWindow *parent, VncServer *server, const wxString &curren
 {
 	BuildUi();
 	password_edit_->SetValue(current_password);
+	password_readonly_edit_->SetValue(
+	    wxString::FromUTF8(config_copy_->vnc_password_readonly));
 	port_spin_->SetValue(config_copy_->vnc_port > 0 ? config_copy_->vnc_port : 5900);
 	enable_checkbox_->SetValue(config_copy_->vnc_enabled != 0);
 	UpdateStatus();
@@ -45,6 +47,13 @@ void VncDialog::BuildUi()
 	port_spin_ = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(100, -1),
 	                            wxSP_ARROW_KEYS, 1024, 65535, 5900);
 	password_edit_ = new wxTextCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(200, -1), wxTE_PASSWORD);
+	password_readonly_edit_ = new wxTextCtrl(this, wxID_ANY, wxEmptyString,
+	    wxDefaultPosition, wxSize(200, -1), wxTE_PASSWORD);
+	password_edit_->SetToolTip(
+	    "Password for clients that may control the keyboard and mouse.");
+	password_readonly_edit_->SetToolTip(
+	    "Optional password for clients that may watch but not send input. "
+	    "Requires a control password.");
 	status_label_ = new wxStaticText(this, wxID_ANY, "Stopped");
 	clients_label_ = new wxStaticText(this, wxID_ANY, "Clients: 0");
 
@@ -54,8 +63,11 @@ void VncDialog::BuildUi()
 	form->AddStretchSpacer();
 	form->Add(new wxStaticText(this, wxID_ANY, "Port:"), 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(port_spin_, 0, wxEXPAND);
-	form->Add(new wxStaticText(this, wxID_ANY, "Password:"), 0, wxALIGN_CENTER_VERTICAL);
+	form->Add(new wxStaticText(this, wxID_ANY, "Control password:"), 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(password_edit_, 1, wxEXPAND);
+	form->Add(new wxStaticText(this, wxID_ANY, "Read-only password:"), 0,
+	    wxALIGN_CENTER_VERTICAL);
+	form->Add(password_readonly_edit_, 1, wxEXPAND);
 	form->Add(new wxStaticText(this, wxID_ANY, "Status:"), 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(status_label_, 1, wxEXPAND);
 	form->Add(new wxStaticText(this, wxID_ANY, ""), 0);
@@ -103,13 +115,33 @@ bool VncDialog::ApplySettings()
 	const int port = port_spin_->GetValue();
 	const wxString password_wx = password_edit_->GetValue();
 	const std::string password = password_wx.utf8_str().data();
+	const wxString password_readonly_wx = password_readonly_edit_->GetValue();
+	const std::string password_readonly =
+	    password_readonly_wx.utf8_str().data();
+	if (enable_checkbox_->GetValue() && password.empty() &&
+	    !password_readonly.empty()) {
+		wxMessageBox("A read-only password requires a control password.", "VNC",
+		    wxOK | wxICON_ERROR, this);
+		return false;
+	}
+	if (enable_checkbox_->GetValue() && !password_readonly.empty() &&
+	    password.substr(0, 8) == password_readonly.substr(0, 8)) {
+		wxMessageBox("The control and read-only passwords must differ in their "
+		    "first eight bytes.", "VNC", wxOK | wxICON_ERROR, this);
+		return false;
+	}
 
 	config_copy_->vnc_port = port;
 	strncpy(config_copy_->vnc_password, password_wx.utf8_str().data(), sizeof(config_copy_->vnc_password) - 1);
 	config_copy_->vnc_password[sizeof(config_copy_->vnc_password) - 1] = '\0';
+	strncpy(config_copy_->vnc_password_readonly,
+	    password_readonly_wx.utf8_str().data(),
+	    sizeof(config_copy_->vnc_password_readonly) - 1);
+	config_copy_->vnc_password_readonly[
+	    sizeof(config_copy_->vnc_password_readonly) - 1] = '\0';
 
 	if (enable_checkbox_->GetValue()) {
-		if (!vnc_server_->start(port, password)) {
+		if (!vnc_server_->start(port, password, password_readonly)) {
 			wxMessageBox("Failed to start VNC server.", "VNC", wxOK | wxICON_ERROR, this);
 			enable_checkbox_->SetValue(false);
 			config_copy_->vnc_enabled = 0;

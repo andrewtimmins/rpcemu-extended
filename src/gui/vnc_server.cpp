@@ -91,14 +91,31 @@ void VncServer::copyFrameLines(const uint32_t *buffer, int width, int start_y, i
 	}
 }
 
-bool VncServer::start(int port, const std::string &password)
+bool VncServer::start(int port, const std::string &password,
+                      const std::string &password_readonly)
 {
 	bool restart_needed;
+
+	/* rfbCheckPasswordByList treats the first password as read-write and every
+	   later one as view-only. Without a first password there is no authenticated
+	   list to put the view-only password in, and falling back to passwordless
+	   read-write access would be a dangerous surprise. */
+	if (password.empty() && !password_readonly.empty()) {
+		rpclog("VNC: a read-only password requires a control password\n");
+		return false;
+	}
+	if (!password_readonly.empty() &&
+	    password.substr(0, 8) == password_readonly.substr(0, 8)) {
+		rpclog("VNC: control and read-only passwords must differ in their first "
+		       "eight bytes\n");
+		return false;
+	}
 
 	{
 		std::lock_guard<std::mutex> lock(mutex_);
 
-		if (running_ && listen_port_ == port && current_password_ == password) {
+		if (running_ && listen_port_ == port && current_password_ == password &&
+		    current_password_readonly_ == password_readonly) {
 			return true;
 		}
 		restart_needed = running_;
@@ -115,8 +132,10 @@ bool VncServer::start(int port, const std::string &password)
 	std::lock_guard<std::mutex> lock(mutex_);
 
 	current_password_ = password;
+	current_password_readonly_ = password_readonly;
 	password_list_[0] = nullptr;
 	password_list_[1] = nullptr;
+	password_list_[2] = nullptr;
 
 	int argc = 0;
 	char *argv[] = {nullptr};
@@ -152,8 +171,12 @@ bool VncServer::start(int port, const std::string &password)
 
 	if (!current_password_.empty()) {
 		password_list_[0] = strdup(current_password_.c_str());
-		password_list_[1] = nullptr;
+		if (!current_password_readonly_.empty()) {
+			password_list_[1] = strdup(current_password_readonly_.c_str());
+		}
+		password_list_[2] = nullptr;
 		rfb_screen_->authPasswdData = password_list_;
+		rfb_screen_->authPasswdFirstViewOnly = 1;
 		rfb_screen_->passwordCheck = rfbCheckPasswordByList;
 	} else {
 		rfb_screen_->authPasswdData = nullptr;
@@ -176,6 +199,10 @@ bool VncServer::start(int port, const std::string &password)
 		if (password_list_[0] != nullptr) {
 			free(password_list_[0]);
 			password_list_[0] = nullptr;
+		}
+		if (password_list_[1] != nullptr) {
+			free(password_list_[1]);
+			password_list_[1] = nullptr;
 		}
 		return false;
 	}
@@ -216,7 +243,12 @@ void VncServer::stop()
 		free(password_list_[0]);
 		password_list_[0] = nullptr;
 	}
+	if (password_list_[1]) {
+		free(password_list_[1]);
+		password_list_[1] = nullptr;
+	}
 	current_password_.clear();
+	current_password_readonly_.clear();
 	client_count_.store(0);
 	force_full_update_.store(false);
 	rpclog("VNC: server stopped\n");
@@ -515,6 +547,10 @@ unsigned int VncServer::keysymToScanCode(rfbKeySym keysym) const
 
 void vnc_kbd_callback(rfbBool down, rfbKeySym keysym, rfbClientPtr cl)
 {
+	if (cl->viewOnly) {
+		return;
+	}
+
 	auto *server = static_cast<VncServer *>(cl->screen->screenData);
 	if (!server) {
 		return;
@@ -559,6 +595,10 @@ void vnc_kbd_callback(rfbBool down, rfbKeySym keysym, rfbClientPtr cl)
 
 void vnc_ptr_callback(int buttonMask, int x, int y, rfbClientPtr cl)
 {
+	if (cl->viewOnly) {
+		return;
+	}
+
 	auto *server = static_cast<VncServer *>(cl->screen->screenData);
 	EmulatorHost *host = server ? server->emulator_host_.load() : nullptr;
 
