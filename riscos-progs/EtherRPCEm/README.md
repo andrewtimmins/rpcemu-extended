@@ -5,11 +5,35 @@ itself to the Internet stack as an Ethernet interface and moves frames with a
 private SWI (`&56AC4`) the emulator intercepts. There is no NIC chip to drive,
 so the hardware-specific half of a real driver is simply absent.
 
-It is Castle's **EtherY** driver with the hardware removed, by J Ballance, and
-adapted for RPCEmu by Alex Waugh. Their copyright and GPL v2 terms are retained
-in each file; `Notes` has the original EtherY notes, including the fact that the
-driver name (`EtherRPCEm`, `rpcem`), the SWI chunk and the error chunk are
-allocated to RPCEmu.
+## Whose work this is
+
+It is Castle Technology's **EtherY** driver with the hardware removed, by
+**J Ballance**, adapted for RPCEmu by **Alex Waugh**, and transcribed into
+assembler for this fork by **Andy Timmins** in 2026. The DCI4 structure layouts
+it hardcodes are **Acorn Computers Ltd's**, from their published DCI4 headers.
+
+    Copyright (C) 2003 J Ballance / Castle Technology   (as EtherY)
+    Copyright (C) 2007 Alex Waugh                       (adaptation for RPCEmu)
+    Copyright (C) 2026 Andy Timmins                     (this assembler port)
+
+Released under **GPL v2**, the terms EtherY was released under. That chain and
+the licence notice head `etherrpcem.s`; the full licence is in `LICENSE`; and the
+credit is also in the module's own help string, so `*Help EtherRPCEm` shows it
+inside the machine.
+
+Two things from the original EtherY release notes, which are worth stating here
+because they are allocations rather than history. The driver name (`EtherRPCEm`
+and `rpcem`), the SWI chunk and the error chunk are allocated to **RPCEmu**, not
+to this fork, and not to Castle: EtherY's own name (`EtherY`, `ey`) and chunks
+stayed with Castle, and anyone adapting this driver for different hardware needs
+their own allocation rather than reusing either set. Castle released their
+snapshot with no warranty that it would even build. The notes themselves are in
+git history at `9e44930:riscos-progs/EtherRPCEm/Notes`.
+
+The assembler is a transcription, not new work built from a description: the
+behaviour, the structure offsets and the DCI4 protocol are theirs. Only the five
+deliberate departures listed below, and the two bugs noted with them, are this
+fork's.
 
 The assembled module is committed as `netroms/EtherRPCEm,ffa` and the emulator
 builds a podule ROM around it at run time (`src/network.c`).
@@ -27,10 +51,13 @@ committed no longer matches the source - a check CI runs, so a change to this
 file that is not rebuilt cannot go unnoticed.
 
 `tests/test_etherrpcem_layout.c` reads the structure offsets back out of the
-assembler source and checks them against `src/network.h` and against Acorn's
-DCI4 headers in `h/`. That is not ceremony: assembler cannot include those
-headers, so a wrong offset assembles perfectly and shows up as a data abort in
-the middle of a boot.
+assembler source and checks them against `src/network.h` and against its own
+models of Acorn's DCI4 structures, transcribed from Acorn's own headers and
+pinned during the port by compiling them with `gcc -m32` (see below for where
+those headers are now). It does not include them, and nothing in the build does:
+assembler cannot include a C header, which is the whole reason for the test - a
+wrong offset assembles perfectly and shows up as a data abort in the middle of a
+boot.
 
 ### The C it was ported from
 
@@ -39,58 +66,32 @@ The module was C until 2026, built **inside the emulator** with the Acorn DDE
 there is no RISC OS C toolchain on the host. `build.sh` could not touch it, so
 nobody could change the driver without first setting up a DDE inside a guest.
 
-Those sources are kept in this directory as the reference the port was made
-from - `c/Module`, `s/intveneer`, `s/errors`, `cmhg/ModHdr`, the `h/` headers,
-and the `Makefile` and `MkEther,feb` that built them. They are no longer built
-by anything. What follows is how that build worked, for anyone comparing the two.
+Those sources are not kept here. `c/Module`, `s/intveneer`, `s/errors`,
+`cmhg/ModHdr`, the `h/` headers, the `MkEther,feb` Obey file and the DDE
+`!Make` project file that drove them are in git history, complete, at the
+commit that made the port:
 
-1. Copy this directory into a machine's HostFS as `$.EtherBld`. It is already in
-   RISC OS layout (`c.Module`, `s.intveneer`, `h.*`, `cmhg.ModHdr`, `o.`), so no
-   renaming is needed. `bin2c,ff8`, `AutoSense/` and `MkEther,feb` must come too;
-   `bin2c_src/`, `Makefile` and the `.md` files are not needed in the guest.
-2. With the machine running, from the host:
-   `./build/bin/rpcemu-run --socket <datadir>/hostcmd.sock -- "Obey HostFS::HostFS.$.EtherBld.MkEther"`
-3. Every tool's output lands in `$.EtherBld.log.*`, never through the command
-   channel, which a compiler's output will otherwise block. `log.finished` only
-   appears if the whole Obey file ran, so a build that fell over part way
-   through cannot be mistaken for one that completed.
-4. The module appears as `$.EtherBld.EtherRPCEm`. Copy it to `netroms/`.
+    git show 9e44930:riscos-progs/EtherRPCEm/c/Module
+    git ls-tree -r 9e44930 riscos-progs/EtherRPCEm
 
-`MkEther,feb` runs the tools in order. Its commands are the `Makefile`'s own,
-minus `-throwback` and `-depend`: those want SrcEdit and a `!Depend` file and buy
-nothing in a headless build. The `Makefile` is kept for building under the desktop
-with `!Make`, but note it names `C:o.stubsg`, which the DDE in use here does not
-have; `MkEther` links `C:o.stubs`. See below.
+Anyone comparing the two should read them there. Nothing in the tree built them
+after the port, and keeping a second copy of code the emulator cannot compile
+invited it drifting out of step with `etherrpcem.s`, which is the file that is
+actually built.
 
-## The stubs the C module was linked against
+Two things about the C are worth carrying forward, because they are the argument
+for the port rather than history:
 
-History now, since the assembler module needs no C library at all - which is
-worth having, because the module loads out of a podule ROM before `System:`
-exists. It also accounts for most of the size: 4,624 bytes assembled against
-9,952 for the last C build.
-
-The original binary (12884 bytes, built 17 Oct 2024) was linked against
-`stubsg`, a C library stubs variant that carries 26-bit veneers and pulls in
-library code (`qsort`, `bsearch`, `partition_sort`, `atexit`, signal veneers).
-The DDE installed in the OS-530 machine has only `C:o.stubs`, so a rebuild there
-comes out **3 KB smaller** and instead RMEnsures its dependencies at
-initialisation:
-
-```
-RMEnsure SharedCLibrary 5.17 RMLoad System:Modules.CLib
-RMEnsure FPEmulator 4.03 RMLoad System:Modules.FPEmulator
-RMEnsure UtilityModule 3.70 RMEnsure CallASWI 0.02 RMLoad System:Modules.CallASWI
-```
-
-That matters because the module loads from a podule ROM early in the boot, when
-`System:` does not exist yet: if one of those RMEnsures were not already
-satisfied by the ROM, the RMLoad would fail and the module would not
-initialise. Checked, and satisfied without any RMLoad, on **RISC OS 5.30** and
-**RISC OS 3.71** (both have SharedCLibrary 5.17 or newer).
-
-Separately, and not caused by this: the module does not appear in `*Modules` on
-the RISC OS 3.71 machine at all, with either the committed binary or a rebuild.
-Whatever is behind that predates this work.
+- **It needed the shared C library**, from a module that loads out of a podule
+  ROM before `System:` exists. It RMEnsured `SharedCLibrary` 5.17, `FPEmulator`
+  4.03 and `CallASWI` 0.02 at initialisation, and an RMLoad would have failed
+  that early if the ROM had not already satisfied them. It always did, on RISC OS
+  5.30 and 3.71 both. The assembler needs no C library at all, so the question
+  does not arise.
+- **Size.** 4,624 bytes assembled, against 9,952 for the last C build, and 12,884
+  for the binary shipped in October 2024, which was linked against `stubsg` and
+  so carried 26-bit veneers and library code (`qsort`, `bsearch`,
+  `partition_sort`, `atexit`, signal veneers) the driver never called.
 
 ## Changes made in this fork
 
@@ -109,7 +110,8 @@ Verified against the C build on a real boot of RISC OS 5.30 at both 256MB and
 four filter claims, 4/4 ping, an 8,008-byte ping (six inbound fragments) and a
 `*RMKill` / `*RMReInit` cycle after which networking still worked.
 
-Before that:
+Before that, two bugs fixed in the C itself (both at `9e44930`, if you want to
+see them):
 
 - `s.intveneer`: `networktxswi` tested its result with `TST a1, #0`. `TST` is a
   bitwise AND, so with `#0` the result is always zero and Z is always set, which
