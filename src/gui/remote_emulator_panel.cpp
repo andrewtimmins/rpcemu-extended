@@ -489,6 +489,17 @@ void RemoteEmulatorPanel::OnKeyDown(wxKeyEvent &event)
 		return;
 	}
 
+	/*
+	 * Alt+Enter leaves full screen, the same key a machine's own window uses,
+	 * and does not reach the guest. Nothing else is intercepted: every other
+	 * key belongs to RISC OS.
+	 */
+	if (InputIsReleaseMouseCaptureKey(event) && on_leave_full_screen_) {
+		if (on_leave_full_screen_()) {
+			return;
+		}
+	}
+
 	/* A click rather than a keystroke, as in a machine's own window. */
 	if (InputIsThirdMouseButtonKey(event)) {
 		IpcRequest request;

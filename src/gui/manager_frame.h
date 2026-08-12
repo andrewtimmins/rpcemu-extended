@@ -95,6 +95,22 @@ private:
 
 	void SetMachinesPanelCollapsed(bool collapsed);
 	void PositionCollapseButton();
+
+	/*
+	 * Full screen, done by this window rather than asked of the machine.
+	 *
+	 * Forwarding it, as every other machine command is forwarded, put the
+	 * machine's own window full screen - and a managed machine's window never
+	 * receives frames, because they go to shared memory for this window to
+	 * draw instead (PostVideoUpdate, managed_mode_). So the command worked
+	 * exactly as written and produced a full screen of black.
+	 *
+	 * Left with Alt+Enter, the same key a machine's own window uses.
+	 */
+	void EnterFullScreen();
+	void ExitFullScreen();
+	void SetFullScreenMenuChecked(bool checked);
+	bool IsShowingFullScreen() const { return full_screen_; }
 	void OnNew(wxCommandEvent &event);
 	void OnEdit(wxCommandEvent &event);
 	void OnClone(wxCommandEvent &event);
@@ -147,6 +163,10 @@ private:
 	int machines_panel_width_ = 300;
 	bool machines_panel_collapsed_ = false;
 	wxBitmapButton *collapse_button_ = nullptr;
+
+	/* Full screen, and what to put back when leaving it. */
+	bool full_screen_ = false;
+	bool collapsed_before_full_screen_ = false;
 	wxButton *new_button_ = nullptr;
 	wxButton *edit_button_ = nullptr;
 	wxButton *clone_button_ = nullptr;

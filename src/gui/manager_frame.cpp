@@ -353,6 +353,98 @@ void ManagerFrame::SetMachinesPanelCollapsed(bool collapsed)
 	}
 }
 
+/*
+ * Full screen: the machine being shown, and nothing else.
+ *
+ * The machine list, the toolbar and the status bar all go, because full screen
+ * that keeps its furniture is not full screen. The panel is left holding the
+ * whole window, and takes focus so the keyboard reaches the guest.
+ */
+void ManagerFrame::EnterFullScreen()
+{
+	if (full_screen_) {
+		return;
+	}
+
+	auto it = running_.find(active_machine_);
+	RemoteEmulatorPanel *panel =
+	    it != running_.end() ? it->second.panel : nullptr;
+
+	if (panel == nullptr) {
+		wxMessageBox("Start a machine first - there is nothing to show full "
+		             "screen.", "RPCEmu", wxOK | wxICON_INFORMATION, this);
+		SetFullScreenMenuChecked(false);
+		return;
+	}
+
+	collapsed_before_full_screen_ = machines_panel_collapsed_;
+	SetMachinesPanelCollapsed(true);
+
+	if (tool_bar_ != nullptr) {
+		tool_bar_->Hide();
+	}
+	if (GetStatusBar() != nullptr) {
+		GetStatusBar()->Hide();
+	}
+
+	full_screen_ = true;
+	ShowFullScreen(true, wxFULLSCREEN_ALL);
+	Layout();
+	panel->SetFocus();
+	SetFullScreenMenuChecked(true);
+}
+
+void ManagerFrame::ExitFullScreen()
+{
+	if (!full_screen_) {
+		return;
+	}
+
+	full_screen_ = false;
+	ShowFullScreen(false);
+
+	if (tool_bar_ != nullptr) {
+		tool_bar_->Show();
+	}
+	if (GetStatusBar() != nullptr) {
+		GetStatusBar()->Show();
+	}
+	SetMachinesPanelCollapsed(collapsed_before_full_screen_);
+	Layout();
+	PositionCollapseButton();
+	SetFullScreenMenuChecked(false);
+
+	auto it = running_.find(active_machine_);
+
+	if (it != running_.end() && it->second.panel != nullptr) {
+		it->second.panel->SetFocus();
+	}
+}
+
+/*
+ * Keep the tick-box and the toolbar button agreeing with reality.
+ *
+ * Both are ordinarily set from the machine's own state report, which is no use
+ * here: full screen is this window's business now, and the machine has no
+ * opinion about it.
+ */
+void ManagerFrame::SetFullScreenMenuChecked(bool checked)
+{
+	wxMenuBar *bar = GetMenuBar();
+
+	if (bar != nullptr) {
+		wxMenuItem *item = bar->FindItem(ID_MENU_FULLSCREEN);
+
+		if (item != nullptr && item->IsCheckable()) {
+			item->Check(checked);
+		}
+	}
+	if (tool_bar_ != nullptr && tool_bar_->GetToolsCount() > 0) {
+		/* Added with AddTool rather than AddCheckTool, so there is no state
+		   to set - nothing to do here beyond not pretending otherwise. */
+	}
+}
+
 void ManagerFrame::BuildMenus()
 {
 	auto *file_menu = new wxMenu();
@@ -768,6 +860,16 @@ void ManagerFrame::AttachPanelFor(const wxString &name, const wxString &shared_f
 		if (name == active_machine_) {
 			ApplyStateReport(report);
 		}
+	});
+
+	/* Alt+Enter leaves full screen. Answered false when there is none, so the
+	   key goes to the guest as any other would. */
+	panel->SetLeaveFullScreenCallback([this]() {
+		if (!full_screen_) {
+			return false;
+		}
+		ExitFullScreen();
+		return true;
 	});
 
 	auto it = running_.find(name);
@@ -1547,6 +1649,20 @@ void ManagerFrame::OnMachineMenuCommand(wxCommandEvent &event)
 		return;
 	default:
 		break;
+	}
+
+	/*
+	 * Answered here rather than forwarded. A managed machine's own window never
+	 * receives frames - they go to shared memory for this window to draw - so
+	 * asking it to go full screen filled the screen with its empty window.
+	 */
+	if (id == ID_MENU_FULLSCREEN) {
+		if (full_screen_) {
+			ExitFullScreen();
+		} else {
+			EnterFullScreen();
+		}
+		return;
 	}
 
 	if (active_machine_.empty() || running_.find(active_machine_) == running_.end()) {

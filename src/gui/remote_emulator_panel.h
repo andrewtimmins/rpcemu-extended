@@ -101,6 +101,17 @@ public:
 	using ErrorCallback = std::function<void(const wxString &)>;
 	void SetErrorCallback(ErrorCallback callback) { on_error_ = std::move(callback); }
 
+	/*
+	 * Asked to leave full screen, on Alt+Enter. Returns true if it did, in
+	 * which case the key is not passed to the guest; false means there was no
+	 * full screen to leave and RISC OS should have the key after all.
+	 */
+	using LeaveFullScreenCallback = std::function<bool()>;
+	void SetLeaveFullScreenCallback(LeaveFullScreenCallback callback)
+	{
+		on_leave_full_screen_ = std::move(callback);
+	}
+
 private:
 	void OnPaint(wxPaintEvent &event);
 	void OnSize(wxSizeEvent &event);
@@ -128,6 +139,7 @@ private:
 	GoneCallback on_gone_;
 	StateCallback on_state_;
 	ErrorCallback on_error_;
+	LeaveFullScreenCallback on_leave_full_screen_;
 
 	bool live_ = false;
 	wxString attach_error_;
