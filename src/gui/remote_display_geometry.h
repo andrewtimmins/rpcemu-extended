@@ -143,4 +143,50 @@ remote_display_point_to_guest(struct remote_display_rect rect,
 	*guest_y = gy;
 }
 
+/*
+ * A movement in the panel to a movement on the guest's screen, for captured-
+ * pointer mode - where the guest is sent how far the mouse went rather than
+ * where it ended up.
+ *
+ * Scaled by the drawn rectangle, like the mapping above: a hand movement across
+ * the picture should be a pointer movement across the guest's screen whatever
+ * size the picture is being shown at. Without that the pointer crawls on a
+ * scaled-down display, the guest screen being larger than its picture.
+ *
+ * ★ The remainder is carried between calls, which is the part that cannot be
+ * left out. A movement smaller than one guest pixel - every single-pixel
+ * movement when the picture is magnified - divides to zero, so dropping the
+ * remainder would make slow, careful movement do nothing at all while fast
+ * movement worked, and in a game that is exactly when precision is wanted.
+ * Truncation toward zero and a remainder that keeps the numerator's sign are
+ * what make it come out symmetrically for movement in either direction.
+ *
+ * carry_x/carry_y must be the same pair of variables on every call for one
+ * captured session, zeroed when capture begins (a stale remainder is at most one
+ * guest pixel, so this matters for tidiness rather than correctness).
+ */
+static inline void
+remote_display_delta_to_guest(struct remote_display_rect rect,
+                              int frame_w, int frame_h,
+                              int panel_dx, int panel_dy,
+                              int *carry_x, int *carry_y,
+                              int *guest_dx, int *guest_dy)
+{
+	if (rect.w <= 0 || rect.h <= 0 || frame_w <= 0 || frame_h <= 0) {
+		*guest_dx = 0;
+		*guest_dy = 0;
+		return;
+	}
+
+	{
+		const int numerator_x = panel_dx * frame_w + *carry_x;
+		const int numerator_y = panel_dy * frame_h + *carry_y;
+
+		*guest_dx = numerator_x / rect.w;
+		*carry_x = numerator_x % rect.w;
+		*guest_dy = numerator_y / rect.h;
+		*carry_y = numerator_y % rect.h;
+	}
+}
+
 #endif /* REMOTE_DISPLAY_GEOMETRY_H */

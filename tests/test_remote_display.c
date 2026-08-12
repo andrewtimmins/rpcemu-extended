@@ -176,6 +176,133 @@ main(void)
 		check("frame of no size gives an empty rectangle", r2.w == 0 && r2.h == 0);
 	}
 
+	printf("\nMovement, for a captured pointer\n");
+
+	/*
+	 * The other half of the mouse: in captured mode - which games need, because
+	 * they drive the pointer themselves - the machine is sent how far the mouse
+	 * went rather than where it is. Same rectangle, so the same scaling, and the
+	 * two must agree for the same reason the file exists.
+	 */
+	{
+		int cx = 0, cy = 0, dx = 0, dy = 0;
+
+		/* 1:1 - the picture is the panel, so a movement is itself. */
+		{
+			const struct remote_display_rect r =
+			    remote_display_rect_for(1600, 1200, 1600, 1200);
+
+			cx = cy = 0;
+			remote_display_delta_to_guest(r, 1600, 1200, 7, -4, &cx, &cy, &dx, &dy);
+			check_eq("1:1, moved 7 right: guest dx", dx, 7);
+			check_eq("1:1, moved 4 up: guest dy", dy, -4);
+			check("1:1 leaves nothing over", cx == 0 && cy == 0);
+		}
+
+		/* Scaled down by half: the guest screen is twice its picture, so the
+		   pointer must travel twice as far as the hand or it crawls - which is
+		   the fault this scaling exists to avoid. */
+		{
+			const struct remote_display_rect r =
+			    remote_display_rect_for(800, 600, 1600, 1200);
+
+			cx = cy = 0;
+			remote_display_delta_to_guest(r, 1600, 1200, 3, 5, &cx, &cy, &dx, &dy);
+			check_eq("shown at half size, moved 3: guest dx", dx, 6);
+			check_eq("shown at half size, moved 5: guest dy", dy, 10);
+		}
+
+		/*
+		 * ★ Magnified, one host pixel at a time - the case the remainder is for.
+		 *
+		 * A 640x480 guest drawn at 1280x960 makes one host pixel half a guest
+		 * one, which divides to nothing. Without the carry, moving the mouse
+		 * slowly would move the RISC OS pointer not at all while moving it
+		 * quickly worked, and slow is precisely when a game wants precision.
+		 */
+		{
+			const struct remote_display_rect r =
+			    remote_display_rect_for(1280, 960, 640, 480);
+			int total = 0;
+			int i;
+
+			check("a 640x480 guest fills a 1280x960 panel", r.w == 1280 && r.h == 960);
+
+			cx = cy = 0;
+			remote_display_delta_to_guest(r, 640, 480, 1, 0, &cx, &cy, &dx, &dy);
+			check_eq("magnified, first single-pixel move: guest dx", dx, 0);
+			check("but it is remembered rather than lost", cx != 0);
+
+			remote_display_delta_to_guest(r, 640, 480, 1, 0, &cx, &cy, &dx, &dy);
+			check_eq("magnified, second single-pixel move: guest dx", dx, 1);
+
+			/* And no drift over a long slow drag: 100 host pixels at half a
+			   guest pixel each is exactly 50, not 49 or 51. */
+			cx = cy = 0;
+			for (i = 0; i < 100; i++) {
+				remote_display_delta_to_guest(r, 640, 480, 1, 0, &cx, &cy, &dx, &dy);
+				total += dx;
+			}
+			check_eq("100 slow steps come to exactly half of them", total, 50);
+		}
+
+		/* Symmetric: dragging back must undo dragging out, exactly, or the
+		   pointer walks in one direction over a long session. */
+		{
+			const struct remote_display_rect r =
+			    remote_display_rect_for(1280, 960, 640, 480);
+			int total = 0;
+			int i;
+
+			cx = cy = 0;
+			for (i = 0; i < 25; i++) {
+				remote_display_delta_to_guest(r, 640, 480, -1, 0, &cx, &cy, &dx, &dy);
+				total += dx;
+			}
+			check_eq("25 slow steps the other way", total, -12);
+			for (i = 0; i < 25; i++) {
+				remote_display_delta_to_guest(r, 640, 480, 1, 0, &cx, &cy, &dx, &dy);
+				total += dx;
+			}
+			check_eq("and back again comes to nothing", total, 0);
+		}
+
+		/*
+		 * The two mappings agreeing, stated as one check: a jump from the middle
+		 * of the picture to its right-hand edge must be worth the same as the
+		 * distance between those two points measured by the absolute mapping.
+		 * Off by a pixel from the rounding, no more.
+		 */
+		{
+			const struct remote_display_rect r =
+			    remote_display_rect_for(1200, 900, 1600, 1200);
+			int centre_gx = 0, centre_gy = 0, edge_gx = 0, edge_gy = 0;
+			const int centre_x = r.x + r.w / 2;
+
+			remote_display_point_to_guest(r, 1600, 1200, centre_x, r.y + r.h / 2,
+			    &centre_gx, &centre_gy);
+			remote_display_point_to_guest(r, 1600, 1200, r.x + r.w - 1, r.y + r.h / 2,
+			    &edge_gx, &edge_gy);
+
+			cx = cy = 0;
+			remote_display_delta_to_guest(r, 1600, 1200,
+			    (r.x + r.w - 1) - centre_x, 0, &cx, &cy, &dx, &dy);
+
+			check("a movement is worth the same as the positions it spans",
+			      dx >= (edge_gx - centre_gx) - 1 && dx <= (edge_gx - centre_gx) + 1);
+		}
+
+		/* A panel not laid out yet must not divide by zero here either. */
+		{
+			const struct remote_display_rect r = remote_display_rect_for(0, 0, 1600, 1200);
+
+			cx = cy = 0;
+			dx = dy = 99;
+			remote_display_delta_to_guest(r, 1600, 1200, 10, 10, &cx, &cy, &dx, &dy);
+			check("movement against an empty rectangle gives nothing", dx == 0 && dy == 0);
+		}
+	}
+
 	printf("\nScaling a machine's screen down to the panel\n");
 
 	/* A screen of one colour must come out that colour, whatever the scale:
