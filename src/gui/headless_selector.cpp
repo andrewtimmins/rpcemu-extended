@@ -27,7 +27,7 @@
  * the process and starting it with different arguments.
  *
  * This puts the list on the VNC display instead. It runs before any machine
- * exists, which is only possible because the port and password are now the
+ * exists, which is only possible because the port and passwords are now the
  * emulator's own settings rather than a machine's (see src/app_settings.c), and
  * because the VNC server can be built with no EmulatorHost and its keys diverted
  * to a hook.
@@ -118,7 +118,7 @@ std::string HeadlessChooseMachine(const std::vector<std::string> &names)
 	}
 
 	/*
-	 * The port and password come from the app settings, because there is no
+	 * The port and passwords come from the app settings, because there is no
 	 * machine to ask. This is the case that made moving them worthwhile.
 	 */
 	app.vnc_port = 5900;

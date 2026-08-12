@@ -526,7 +526,7 @@ wxWindow *MachineEditDialog::BuildOptionsPage(wxWindow *parent)
 
 	vnc_check_ = new wxCheckBox(page, wxID_ANY, "VNC server");
 	vnc_check_->SetToolTip(
-	    "Serve this machine's display over VNC. The port and password below "
+	    "Serve this machine's display over VNC. The port and passwords below "
 	    "belong to this machine, so several machines can each have their own and "
 	    "run at the same time.");
 	vnc_port_spin_ = new wxSpinCtrl(page, wxID_ANY, wxEmptyString,
@@ -537,8 +537,14 @@ wxWindow *MachineEditDialog::BuildOptionsPage(wxWindow *parent)
 	vnc_password_text_ = new wxTextCtrl(page, wxID_ANY, wxEmptyString,
 	    wxDefaultPosition, wxDefaultSize, wxTE_PASSWORD);
 	vnc_password_text_->SetToolTip(
-	    "Password VNC clients must give. Empty means no password, which is only "
+	    "Password VNC clients must give for keyboard and mouse control. Empty "
+	    "means no password, which is only "
 	    "reasonable on a machine nobody else can reach.");
+	vnc_password_readonly_text_ = new wxTextCtrl(page, wxID_ANY, wxEmptyString,
+	    wxDefaultPosition, wxDefaultSize, wxTE_PASSWORD);
+	vnc_password_readonly_text_->SetToolTip(
+	    "Optional password for clients that may watch the display but cannot "
+	    "use the keyboard, mouse or VNC control menu. Requires a control password.");
 
 	hostcmd_check_ = new wxCheckBox(page, wxID_ANY, "Command socket (HostCmd)");
 	hostcmd_check_->SetToolTip(
@@ -589,7 +595,7 @@ wxWindow *MachineEditDialog::BuildOptionsPage(wxWindow *parent)
 	add_group(sizer, "Behaviour", { cpu_idle_check_, suspend_on_exit_check_ });
 
 	/* Host access has fields as well as switches, so it is built here rather than
-	   through add_group(), which takes checkboxes alone. The port and password are
+	   through add_group(), which takes checkboxes alone. The port and passwords are
 	   indented under the checkbox that turns them on, and greyed out with it. */
 	{
 		auto *box = new wxStaticBoxSizer(wxVERTICAL, page, "Host access");
@@ -601,9 +607,12 @@ wxWindow *MachineEditDialog::BuildOptionsPage(wxWindow *parent)
 		vnc_form->Add(new wxStaticText(page, wxID_ANY, "Port:"), 0,
 		    wxALIGN_CENTER_VERTICAL);
 		vnc_form->Add(vnc_port_spin_, 0);
-		vnc_form->Add(new wxStaticText(page, wxID_ANY, "Password:"), 0,
+		vnc_form->Add(new wxStaticText(page, wxID_ANY, "Control password:"), 0,
 		    wxALIGN_CENTER_VERTICAL);
 		vnc_form->Add(vnc_password_text_, 1, wxEXPAND);
+		vnc_form->Add(new wxStaticText(page, wxID_ANY, "Read-only password:"), 0,
+		    wxALIGN_CENTER_VERTICAL);
+		vnc_form->Add(vnc_password_readonly_text_, 1, wxEXPAND);
 		box->Add(vnc_form, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 24);
 
 		box->Add(hostcmd_check_, 0, wxLEFT | wxRIGHT | wxTOP, 6);
@@ -620,7 +629,7 @@ wxWindow *MachineEditDialog::BuildOptionsPage(wxWindow *parent)
 		sizer->Add(box, 0, wxEXPAND | wxBOTTOM, 8);
 	}
 
-	/* A port and password mean nothing with the server off, and a socket path
+	/* A port and passwords mean nothing with the server off, and a socket path
 	   means nothing with the channel off, so they follow their checkbox. */
 	/* Takes the fields by value in a vector, and the stored lambda captures that
 	   vector. Not an initializer_list: it does not own its backing array, which
@@ -640,7 +649,8 @@ wxWindow *MachineEditDialog::BuildOptionsPage(wxWindow *parent)
 		return apply;
 	};
 
-	vnc_fields_follow_ = follow_check(vnc_check_, { vnc_port_spin_, vnc_password_text_ });
+	vnc_fields_follow_ = follow_check(vnc_check_, { vnc_port_spin_,
+	    vnc_password_text_, vnc_password_readonly_text_ });
 	hostcmd_fields_follow_ = follow_check(hostcmd_check_, { hostcmd_socket_text_ });
 
 	auto *outer = new wxBoxSizer(wxVERTICAL);
@@ -1580,6 +1590,9 @@ void MachineEditDialog::LoadSettings()
 		settings.Read("vnc_password", &text,
 		    wxString::FromUTF8(defaults.vnc_password));
 		vnc_password_text_->SetValue(text);
+		settings.Read("vnc_password_readonly", &text,
+		    wxString::FromUTF8(defaults.vnc_password_readonly));
+		vnc_password_readonly_text_->SetValue(text);
 		settings.Read("hostcmd_socket", &text,
 		    wxString::FromUTF8(defaults.hostcmd_socket));
 		hostcmd_socket_text_->SetValue(text);
@@ -1761,6 +1774,8 @@ void MachineEditDialog::SaveSettings()
 	write_flag("vnc_enabled", vnc_check_->GetValue());
 	settings.Write("vnc_port", static_cast<long>(vnc_port_spin_->GetValue()));
 	settings.Write("vnc_password", vnc_password_text_->GetValue());
+	settings.Write("vnc_password_readonly",
+	    vnc_password_readonly_text_->GetValue());
 	write_flag("hostcmd_enabled", hostcmd_check_->GetValue());
 	settings.Write("hostcmd_socket", hostcmd_socket_text_->GetValue());
 	write_flag("clipboard_enabled", clipboard_check_->GetValue());
@@ -1850,6 +1865,15 @@ void MachineEditDialog::ApplySavedSettingsToGlobalConfig(const wxString &rom_dir
 	config.cpu_idle = cpu_idle_check_->GetValue() ? 1 : 0;
 	config.suspend_on_exit = suspend_on_exit_check_->GetValue() ? 1 : 0;
 	config.vnc_enabled = vnc_check_->GetValue() ? 1 : 0;
+	config.vnc_port = vnc_port_spin_->GetValue();
+	strncpy(config.vnc_password, vnc_password_text_->GetValue().utf8_str().data(),
+	    sizeof(config.vnc_password) - 1);
+	config.vnc_password[sizeof(config.vnc_password) - 1] = '\0';
+	strncpy(config.vnc_password_readonly,
+	    vnc_password_readonly_text_->GetValue().utf8_str().data(),
+	    sizeof(config.vnc_password_readonly) - 1);
+	config.vnc_password_readonly[
+	    sizeof(config.vnc_password_readonly) - 1] = '\0';
 	config.clipboard_enabled = clipboard_check_->GetValue() ? 1 : 0;
 }
 
@@ -2120,6 +2144,22 @@ void MachineEditDialog::OnOk(wxCommandEvent &)
 	const Model model = CurrentModelSelection();
 	const wxString rom_dir = SelectedRomDir();
 	const wxScopedCharBuffer rom_dir_utf8 = rom_dir.utf8_str();
+	const std::string vnc_password =
+	    vnc_password_text_->GetValue().utf8_str().data();
+	const std::string vnc_password_readonly =
+	    vnc_password_readonly_text_->GetValue().utf8_str().data();
+	if (vnc_check_->GetValue() && vnc_password.empty() &&
+	    !vnc_password_readonly.empty()) {
+		wxMessageBox("A read-only VNC password requires a control password.",
+		    "VNC", wxOK | wxICON_ERROR, this);
+		return;
+	}
+	if (vnc_check_->GetValue() && !vnc_password_readonly.empty() &&
+	    vnc_password.substr(0, 8) == vnc_password_readonly.substr(0, 8)) {
+		wxMessageBox("The control and read-only VNC passwords must differ in "
+		    "their first eight bytes.", "VNC", wxOK | wxICON_ERROR, this);
+		return;
+	}
 	if (!rom_model_is_compatible(model, rom_dir_utf8.data(), msg, sizeof(msg))) {
 		wxMessageBox(wxString::FromUTF8(msg), "ROM compatibility", wxOK | wxICON_WARNING, this);
 		return;

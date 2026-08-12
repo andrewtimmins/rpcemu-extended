@@ -53,7 +53,7 @@ class VncServer;
 extern VncServer &VncAppServer();
 
 /**
- * Start listening, using the app settings for the port and password.
+ * Start listening, using the app settings for the port and passwords.
  *
  * @param force Start even when the settings say VNC is disabled, which is what
  *              --headless wants: without a window there is no other way in.

@@ -11,6 +11,7 @@
         "RPCEMU_HOSTFS_DIR": "/ABSOLUTE/PATH/TO/DATA-DIR/machines/Default/hostfs",
         "RPCEMU_VNC_HOST": "127.0.0.1",
         "RPCEMU_VNC_PORT": "5900",
+        "RPCEMU_VNC_PASSWORD": "",
         "RPCEMU_DEBUG_SOCKET": "/ABSOLUTE/PATH/TO/DATA-DIR/rpcemu-debug.sock"
       }
     }

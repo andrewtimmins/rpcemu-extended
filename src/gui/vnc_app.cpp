@@ -37,7 +37,7 @@ namespace {
 
 /*
  * Created on first use rather than at static-initialisation time, so it cannot
- * race the data directory being resolved - the port and password come from a file
+ * race the data directory being resolved - the port and passwords come from a file
  * whose location is not known until then.
  */
 std::unique_ptr<VncServer> g_server;
@@ -81,10 +81,13 @@ bool VncAppStart(bool force)
 		app.vnc_port = (config.vnc_port > 0) ? config.vnc_port : 5900;
 		snprintf(app.vnc_password, sizeof(app.vnc_password), "%s",
 		    config.vnc_password);
+		snprintf(app.vnc_password_readonly, sizeof(app.vnc_password_readonly), "%s",
+		    config.vnc_password_readonly);
 	} else {
 		app.vnc_enabled = 0;
 		app.vnc_port = 5900;
 		app.vnc_password[0] = '\0';
+		app.vnc_password_readonly[0] = '\0';
 		app_settings_load(rpcemu_get_datadir(), &app);
 	}
 	app_settings_apply_overrides(&app);
@@ -93,7 +96,8 @@ bool VncAppStart(bool force)
 		return false;
 	}
 
-	if (!server.start(app.vnc_port, std::string(app.vnc_password))) {
+	if (!server.start(app.vnc_port, std::string(app.vnc_password),
+	                  std::string(app.vnc_password_readonly))) {
 		rpclog("vnc_app: could not listen on port %d\n", app.vnc_port);
 		return false;
 	}

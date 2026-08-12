@@ -1515,6 +1515,10 @@ void MainFrame::OnVnc(wxCommandEvent &)
 		config.vnc_port = config_copy_.vnc_port;
 		strncpy(config.vnc_password, config_copy_.vnc_password, sizeof(config.vnc_password) - 1);
 		config.vnc_password[sizeof(config.vnc_password) - 1] = '\0';
+		strncpy(config.vnc_password_readonly, config_copy_.vnc_password_readonly,
+		    sizeof(config.vnc_password_readonly) - 1);
+		config.vnc_password_readonly[
+		    sizeof(config.vnc_password_readonly) - 1] = '\0';
 		config_save(&config_copy_);
 	}
 }

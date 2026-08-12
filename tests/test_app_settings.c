@@ -59,6 +59,8 @@ preset(Config *cfg)
 	cfg->vnc_enabled = 0;
 	cfg->vnc_port = 5900;
 	snprintf(cfg->vnc_password, sizeof(cfg->vnc_password), "from-machine");
+	snprintf(cfg->vnc_password_readonly, sizeof(cfg->vnc_password_readonly),
+	    "view-from-machine");
 	cfg->hostcmd_enabled = 1;
 	snprintf(cfg->hostcmd_socket, sizeof(cfg->hostcmd_socket), "machine.sock");
 }
@@ -77,15 +79,20 @@ main(int argc, char *argv[])
 	check("the machine's value is untouched", cfg.vnc_port == 5900);
 	check("...including strings",
 	    strcmp(cfg.vnc_password, "from-machine") == 0);
+	check("...including the read-only password",
+	    strcmp(cfg.vnc_password_readonly, "view-from-machine") == 0);
 	check("has() says no", app_settings_has(dir, "vnc_port") == 0);
 
 	printf("\nkeys present in the file win\n");
-	write_settings("vnc_enabled=1\nvnc_port=5905\nvnc_password=secret\n");
+	write_settings("vnc_enabled=1\nvnc_port=5905\nvnc_password=secret\n"
+	               "vnc_password_readonly=watch\n");
 	preset(&cfg);
-	check("three keys applied", app_settings_load(dir, &cfg) == 3);
+	check("four keys applied", app_settings_load(dir, &cfg) == 4);
 	check("enabled overridden", cfg.vnc_enabled == 1);
 	check("port overridden", cfg.vnc_port == 5905);
 	check("password overridden", strcmp(cfg.vnc_password, "secret") == 0);
+	check("read-only password overridden",
+	    strcmp(cfg.vnc_password_readonly, "watch") == 0);
 	check("has() says yes", app_settings_has(dir, "vnc_port") == 1);
 
 	printf("\nkeys absent from the file do NOT clobber what was there\n");
@@ -132,6 +139,12 @@ main(int argc, char *argv[])
 	preset(&cfg);
 	check("the empty value is applied", app_settings_load(dir, &cfg) == 1);
 	check("...clearing the password", cfg.vnc_password[0] == '\0');
+	write_settings("vnc_password_readonly=\n");
+	preset(&cfg);
+	check("an empty read-only password is applied",
+	    app_settings_load(dir, &cfg) == 1);
+	check("...disabling view-only access",
+	    cfg.vnc_password_readonly[0] == '\0');
 
 	printf("\nsave then load round-trips\n");
 	remove_settings();
@@ -139,6 +152,8 @@ main(int argc, char *argv[])
 	cfg.vnc_enabled = 1;
 	cfg.vnc_port = 5910;
 	snprintf(cfg.vnc_password, sizeof(cfg.vnc_password), "round trip");
+	snprintf(cfg.vnc_password_readonly, sizeof(cfg.vnc_password_readonly),
+	    "watch round trip");
 	cfg.hostcmd_enabled = 0;
 	snprintf(cfg.hostcmd_socket, sizeof(cfg.hostcmd_socket), "/tmp/hc.sock");
 	check("save succeeds", app_settings_save(dir, &cfg) == 0);
@@ -146,10 +161,12 @@ main(int argc, char *argv[])
 		Config back;
 
 		memset(&back, 0, sizeof(back));
-		check("all five keys come back", app_settings_load(dir, &back) == 5);
+		check("all six keys come back", app_settings_load(dir, &back) == 6);
 		check("vnc_enabled", back.vnc_enabled == 1);
 		check("vnc_port", back.vnc_port == 5910);
 		check("vnc_password", strcmp(back.vnc_password, "round trip") == 0);
+		check("vnc_password_readonly",
+		    strcmp(back.vnc_password_readonly, "watch round trip") == 0);
 		check("hostcmd_enabled", back.hostcmd_enabled == 0);
 		check("hostcmd_socket",
 		    strcmp(back.hostcmd_socket, "/tmp/hc.sock") == 0);
