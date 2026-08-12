@@ -69,6 +69,183 @@ jobs:
           fi
           echo "found $notes ($(wc -l < "$notes") lines)"
 
+  sanitisers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-tags: true
+
+      - name: Install dependencies
+        run: bash setup-build-env.sh
+
+      # The interpreter, not the recompiler. AddressSanitizer instruments memory
+      # accesses in code the compiler generated; the recompiler's output is
+      # written at run time into a page it maps itself, so it is invisible to the
+      # instrumentation and its code cache looks like a stranger writing over
+      # executable memory. The interpreter runs the same CPU semantics through
+      # code the sanitisers can see, which is what is wanted here. The JIT has its
+      # own answer to this: eight differential tests that check it against the
+      # interpreter instruction by instruction.
+      #
+      # -fno-sanitize-recover=all makes the first report fatal. Without it a
+      # fault in the emulation loop prints thousands of times and the run still
+      # succeeds.
+      #
+      # GhostPDL is off: it is a large third-party library reached only by
+      # printing, and instrumenting it would spend the runner's time on somebody
+      # else's code.
+      - name: Configure with ASan and UBSan
+        run: |
+          cmake -S . -B build-san \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DRPCEMU_DYNAREC=OFF \
+            -DRPCEMU_ENABLE_GHOSTPDL=OFF \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build
+        timeout-minutes: 15
+        run: cmake --build build-san -j"$(nproc)"
+
+      - name: Unit tests under the sanitisers
+        timeout-minutes: 10
+        env:
+          # Leak checking is off. The emulator holds its guest RAM, ROM and
+          # framestore for the life of the process and frees none of it on the
+          # way out, which is deliberate and which LeakSanitizer would report as
+          # hundreds of megabytes of leaks. Turning it on wants those exits
+          # tidied first; it is not a reason to have no sanitiser job at all.
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: bash tests/run-ctest.sh build-san sanitisers
+
+      - name: Cache the RISC OS ROM
+        uses: actions/cache@v6
+        with:
+          path: ci-rom
+          key: rpcemu-rom-stable-v1
+
+      # The unit tests reach a codec, a parser and a register file. A boot reaches
+      # the CPU core, the MMU, IOMD, VIDC, the IDE and floppy controllers, HostFS
+      # and the video path, with a real operating system driving them - which is
+      # where the interesting undefined behaviour has actually been.
+      - name: Fetch a ROM for the boot
+        run: |
+          set -eu
+          export RPCEMU_DATADIR="$RUNNER_TEMP/rpcemu-san-data"
+          export RPCEMU_NO_GUI_MESSAGES=1
+          export ASAN_OPTIONS=detect_leaks=0
+          mkdir -p "$RPCEMU_DATADIR" ci-rom
+          cp -r default configs "$RPCEMU_DATADIR/"
+          if ! ls ci-rom/ROM* >/dev/null 2>&1; then
+            build-san/bin/rpcemu-interpreter --fetch-riscos --no-disc --accept-licence
+            cp "$RPCEMU_DATADIR"/roms/ROM* ci-rom/
+          fi
+          mkdir -p "$RPCEMU_DATADIR/roms"
+          cp ci-rom/ROM* "$RPCEMU_DATADIR/roms/"
+
+      # --screen-check advisory: an instrumented interpreter is tens of times
+      # slower than the recompiler a user runs, so how far RISC OS gets in a fixed
+      # time measures the runner rather than the code. The verdict here is what
+      # the sanitisers said; whether the desktop is reached is judged by the four
+      # ordinary boot tests, on every platform, on real builds.
+      - name: Boot under the sanitisers
+        timeout-minutes: 15
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: |
+          python3 tests/boot_smoke.py \
+            --binary build-san/bin/rpcemu-interpreter \
+            --datadir "$RUNNER_TEMP/rpcemu-san-data" \
+            --boot-timeout 300 --settle 60 \
+            --screen-check advisory \
+            --abort-check advisory \
+            --save sanitiser-boot.png
+
+      - name: Upload the boot screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sanitiser-boot
+          path: sanitiser-boot.png
+          archive: false
+          if-no-files-found: ignore
+
+  # Render the interface documentation under docs/prminxml/.
+  #
+  # These are PRM-in-XML: the format the RISC OS Programmer's Reference Manuals
+  # are written in, and the right one for an interface somebody else has to
+  # implement against, because it fixes the register contract in a structured
+  # form rather than in prose. docs/ is otherwise Markdown, which stays the
+  # right choice for notes about how this repository works; the distinction is
+  # between describing an interface and describing an implementation.
+  #
+  # The HTML is a release asset. Somebody writing a host-side implementation of
+  # one of these interfaces is not necessarily building the emulator, and should
+  # not have to check out the tree and install a toolchain to read what the
+  # interface does.
+  #
+  # docs/prminxml/index.xml names the chapters, their order and where the output
+  # goes, so this job does not: adding a chapter is a change to that file alone.
+  # The indexed build renders every chapter as well as the contents page and the
+  # generated SWI index, which is what lets a reader find a call without already
+  # knowing which interface it belongs to.
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      leafname: ${{ steps.package.outputs.leafname }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-tags: true
+
+      # No style: input. index.xml sets its own page and index CSS variants, and
+      # style: would prepend a second set of them.
+      - name: Render the host interfaces manual
+        uses: gerph/riscos-prminxml-action@v1
+        with:
+          files: docs/prminxml/index.xml
+          format: index
+          output: prm-output
+          log-directory: prm-output/indexed/logs
+
+      # Named from VERSION rather than the tag, so the archive matches the
+      # binaries beside it in a release. version-matches-tag has already
+      # insisted the two agree before any release is published.
+      - name: Package the documentation
+        id: package
+        run: |
+          if [ -s VERSION ]; then
+            version="$(tr -d ' \t\r\n' < VERSION)"
+          else
+            version="$(git rev-parse --short HEAD)"
+          fi
+          leafname="rpcemu-interface-docs-$version.zip"
+          # pages/ only. The rest of what the indexed build leaves behind - its
+          # logs, temporary files, per-chapter headers and index data - is build
+          # working, and a reader opening the release asset should find the
+          # manual rather than have to pick it out. The XML sources are inside
+          # pages/ beside their HTML, and are kept: they are the machine-readable
+          # form of the same thing.
+          pages=prm-output/indexed/pages
+          if [ ! -s "$pages/index.html" ]; then
+            echo "::error::the documentation build produced no manual"
+            exit 1
+          fi
+          ( cd "$pages" && zip -q9r "$OLDPWD/$leafname" . )
+          echo "leafname=$leafname" >> "$GITHUB_OUTPUT"
+          ls -l "$leafname"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rpcemu-interface-docs
+          path: ${{ steps.package.outputs.leafname }}
+          if-no-files-found: error
+
   linux-amd64:
     runs-on: ubuntu-latest
     steps:
@@ -300,6 +477,34 @@ jobs:
             releases/linux/*.tar.gz
             releases/linux/arm64/*.deb
           if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Per-platform gates.
+  #
+  # These do no work. They exist for two reasons, one practical and one about
+  # being able to read the thing:
+  #
+  #   - GitHub draws the run's graph from the dependency edges, and groups jobs
+  #     that share the same set of dependents. Without a gate per platform,
+  #     every build job with no dependency of its own lands in one box together -
+  #     Linux, Windows and the checks all mixed up - while the two macOS slices
+  #     group on their own only because macos-universal happens to need both of
+  #     them. A gate per platform makes the graph read as: the checks, then
+  #     Linux, then Windows, then macOS.
+  #   - "Did Linux pass?" becomes one answer rather than two, which is what a
+  #     branch protection rule wants to require.
+  #
+  # There is no macos gate because macos-universal already is one: it needs both
+  # slices and does real work with them (lipo, the .app, the DMG). Adding a
+  # fourth gate to sit beside it would be a job that exists only to look tidy.
+  #
+  # A gate is skipped when anything it needs fails, so the release below is
+  # skipped too - the same behaviour as depending on the jobs directly.
+  linux:
+    needs: [linux-amd64, linux-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Linux amd64 and arm64 both built and passed their tests."
 
   windows-amd64:
     # Native Windows build with MinGW-w64 via MSYS2 (MINGW64). Ships the
@@ -546,110 +751,11 @@ jobs:
       # release either. Adding it is one line here and one in the release job's
       # needs, once it has been used in anger.
 
-  sanitisers:
+  windows:
+    needs: [windows-amd64, windows-arm64]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-tags: true
-
-      - name: Install dependencies
-        run: bash setup-build-env.sh
-
-      # The interpreter, not the recompiler. AddressSanitizer instruments memory
-      # accesses in code the compiler generated; the recompiler's output is
-      # written at run time into a page it maps itself, so it is invisible to the
-      # instrumentation and its code cache looks like a stranger writing over
-      # executable memory. The interpreter runs the same CPU semantics through
-      # code the sanitisers can see, which is what is wanted here. The JIT has its
-      # own answer to this: eight differential tests that check it against the
-      # interpreter instruction by instruction.
-      #
-      # -fno-sanitize-recover=all makes the first report fatal. Without it a
-      # fault in the emulation loop prints thousands of times and the run still
-      # succeeds.
-      #
-      # GhostPDL is off: it is a large third-party library reached only by
-      # printing, and instrumenting it would spend the runner's time on somebody
-      # else's code.
-      - name: Configure with ASan and UBSan
-        run: |
-          cmake -S . -B build-san \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DRPCEMU_DYNAREC=OFF \
-            -DRPCEMU_ENABLE_GHOSTPDL=OFF \
-            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all" \
-            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all" \
-            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
-
-      - name: Build
-        timeout-minutes: 15
-        run: cmake --build build-san -j"$(nproc)"
-
-      - name: Unit tests under the sanitisers
-        timeout-minutes: 10
-        env:
-          # Leak checking is off. The emulator holds its guest RAM, ROM and
-          # framestore for the life of the process and frees none of it on the
-          # way out, which is deliberate and which LeakSanitizer would report as
-          # hundreds of megabytes of leaks. Turning it on wants those exits
-          # tidied first; it is not a reason to have no sanitiser job at all.
-          ASAN_OPTIONS: detect_leaks=0
-          UBSAN_OPTIONS: print_stacktrace=1
-        run: bash tests/run-ctest.sh build-san sanitisers
-
-      - name: Cache the RISC OS ROM
-        uses: actions/cache@v6
-        with:
-          path: ci-rom
-          key: rpcemu-rom-stable-v1
-
-      # The unit tests reach a codec, a parser and a register file. A boot reaches
-      # the CPU core, the MMU, IOMD, VIDC, the IDE and floppy controllers, HostFS
-      # and the video path, with a real operating system driving them - which is
-      # where the interesting undefined behaviour has actually been.
-      - name: Fetch a ROM for the boot
-        run: |
-          set -eu
-          export RPCEMU_DATADIR="$RUNNER_TEMP/rpcemu-san-data"
-          export RPCEMU_NO_GUI_MESSAGES=1
-          export ASAN_OPTIONS=detect_leaks=0
-          mkdir -p "$RPCEMU_DATADIR" ci-rom
-          cp -r default configs "$RPCEMU_DATADIR/"
-          if ! ls ci-rom/ROM* >/dev/null 2>&1; then
-            build-san/bin/rpcemu-interpreter --fetch-riscos --no-disc --accept-licence
-            cp "$RPCEMU_DATADIR"/roms/ROM* ci-rom/
-          fi
-          mkdir -p "$RPCEMU_DATADIR/roms"
-          cp ci-rom/ROM* "$RPCEMU_DATADIR/roms/"
-
-      # --screen-check advisory: an instrumented interpreter is tens of times
-      # slower than the recompiler a user runs, so how far RISC OS gets in a fixed
-      # time measures the runner rather than the code. The verdict here is what
-      # the sanitisers said; whether the desktop is reached is judged by the four
-      # ordinary boot tests, on every platform, on real builds.
-      - name: Boot under the sanitisers
-        timeout-minutes: 15
-        env:
-          ASAN_OPTIONS: detect_leaks=0
-          UBSAN_OPTIONS: print_stacktrace=1
-        run: |
-          python3 tests/boot_smoke.py \
-            --binary build-san/bin/rpcemu-interpreter \
-            --datadir "$RUNNER_TEMP/rpcemu-san-data" \
-            --boot-timeout 300 --settle 60 \
-            --screen-check advisory \
-            --abort-check advisory \
-            --save sanitiser-boot.png
-
-      - name: Upload the boot screenshot
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: sanitiser-boot
-          path: sanitiser-boot.png
-          archive: false
-          if-no-files-found: ignore
+      - run: echo "Windows amd64 and arm64 both built and passed their tests."
 
   macos-x86_64:
     # Free Intel (macos-13) runners are effectively unavailable, so build the
@@ -921,112 +1027,6 @@ jobs:
             releases/macos/*.dmg
             releases/macos/*.tar.gz
           if-no-files-found: error
-
-  # Render the interface documentation under docs/prminxml/.
-  #
-  # These are PRM-in-XML: the format the RISC OS Programmer's Reference Manuals
-  # are written in, and the right one for an interface somebody else has to
-  # implement against, because it fixes the register contract in a structured
-  # form rather than in prose. docs/ is otherwise Markdown, which stays the
-  # right choice for notes about how this repository works; the distinction is
-  # between describing an interface and describing an implementation.
-  #
-  # The HTML is a release asset. Somebody writing a host-side implementation of
-  # one of these interfaces is not necessarily building the emulator, and should
-  # not have to check out the tree and install a toolchain to read what the
-  # interface does.
-  #
-  # docs/prminxml/index.xml names the chapters, their order and where the output
-  # goes, so this job does not: adding a chapter is a change to that file alone.
-  # The indexed build renders every chapter as well as the contents page and the
-  # generated SWI index, which is what lets a reader find a call without already
-  # knowing which interface it belongs to.
-  docs:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    outputs:
-      leafname: ${{ steps.package.outputs.leafname }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-tags: true
-
-      # No style: input. index.xml sets its own page and index CSS variants, and
-      # style: would prepend a second set of them.
-      - name: Render the host interfaces manual
-        uses: gerph/riscos-prminxml-action@v1
-        with:
-          files: docs/prminxml/index.xml
-          format: index
-          output: prm-output
-          log-directory: prm-output/indexed/logs
-
-      # Named from VERSION rather than the tag, so the archive matches the
-      # binaries beside it in a release. version-matches-tag has already
-      # insisted the two agree before any release is published.
-      - name: Package the documentation
-        id: package
-        run: |
-          if [ -s VERSION ]; then
-            version="$(tr -d ' \t\r\n' < VERSION)"
-          else
-            version="$(git rev-parse --short HEAD)"
-          fi
-          leafname="rpcemu-interface-docs-$version.zip"
-          # pages/ only. The rest of what the indexed build leaves behind - its
-          # logs, temporary files, per-chapter headers and index data - is build
-          # working, and a reader opening the release asset should find the
-          # manual rather than have to pick it out. The XML sources are inside
-          # pages/ beside their HTML, and are kept: they are the machine-readable
-          # form of the same thing.
-          pages=prm-output/indexed/pages
-          if [ ! -s "$pages/index.html" ]; then
-            echo "::error::the documentation build produced no manual"
-            exit 1
-          fi
-          ( cd "$pages" && zip -q9r "$OLDPWD/$leafname" . )
-          echo "leafname=$leafname" >> "$GITHUB_OUTPUT"
-          ls -l "$leafname"
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: rpcemu-interface-docs
-          path: ${{ steps.package.outputs.leafname }}
-          if-no-files-found: error
-
-  # ---------------------------------------------------------------------------
-  # Per-platform gates.
-  #
-  # These do no work. They exist for two reasons, one practical and one about
-  # being able to read the thing:
-  #
-  #   - GitHub draws the run's graph from the dependency edges, and groups jobs
-  #     that share the same set of dependents. Without a gate per platform,
-  #     every build job with no dependency of its own lands in one box together -
-  #     Linux, Windows and the checks all mixed up - while the two macOS slices
-  #     group on their own only because macos-universal happens to need both of
-  #     them. A gate per platform makes the graph read as: the checks, then
-  #     Linux, then Windows, then macOS.
-  #   - "Did Linux pass?" becomes one answer rather than two, which is what a
-  #     branch protection rule wants to require.
-  #
-  # There is no macos gate because macos-universal already is one: it needs both
-  # slices and does real work with them (lipo, the .app, the DMG). Adding a
-  # fourth gate to sit beside it would be a job that exists only to look tidy.
-  #
-  # A gate is skipped when anything it needs fails, so the release below is
-  # skipped too - the same behaviour as depending on the jobs directly.
-  linux:
-    needs: [linux-amd64, linux-arm64]
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Linux amd64 and arm64 both built and passed their tests."
-
-  windows:
-    needs: [windows-amd64, windows-arm64]
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Windows amd64 and arm64 both built and passed their tests."
 
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
