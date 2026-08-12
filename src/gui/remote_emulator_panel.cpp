@@ -196,8 +196,8 @@ void RemoteEmulatorPanel::CaptureThePointer(int x, int y)
 }
 
 /*
- * The counters in the log now and then, the same as a machine's own window does
- * and sharing the decision with it (captured_pointer.h). Labelled differently
+ * The counters in the log now and then when asked for, the same as a machine's
+ * own window does and sharing the decision with it. Labelled differently
  * because the two windows handle the mouse in different processes, and a report
  * that did not say which would be no use for answering "the Manager feels slow".
  */
@@ -261,7 +261,9 @@ void RemoteEmulatorPanel::SendCapturedMotion(const wxMouseEvent &event)
 		return;
 	}
 
-	ReportCapturedPointerRate();
+	if (captured_pointer_debug_wanted()) {
+		ReportCapturedPointerRate();
+	}
 
 	const struct remote_display_rect rect = remote_display_rect_for(
 	    client.GetWidth(), client.GetHeight(), frame_width_, frame_height_);

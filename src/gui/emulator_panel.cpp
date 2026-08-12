@@ -180,8 +180,8 @@ void EmulatorPanel::ReleaseMouseCapture()
 }
 
 /*
- * The counters in the log now and then; the decision when is shared with the
- * Manager's panel, in captured_pointer.h.
+ * The counters in the log now and then, when asked for - see
+ * captured_pointer_debug_wanted().
  */
 void EmulatorPanel::ReportCapturedPointerRate()
 {
@@ -709,14 +709,16 @@ void EmulatorPanel::OnMouseMove(wxMouseEvent &event)
 			dx = (dx * host_xsize_) / scaled_x_;
 			dy = (dy * host_ysize_) / scaled_y_;
 		}
-		if (getenv("RPCEMU_MOUSEDBG") != nullptr) {
+		if (captured_pointer_debug_wanted()) {
 			rpclog("MOUSEDBG ev=%d,%d mid=%d,%d raw=%d,%d sent=%d,%d host=%dx%d scaled=%dx%d off=%d,%d full=%d fit=%d moves=%lu recentres=%lu\n",
 			       event.GetX(), event.GetY(), middle.x, middle.y, rawdx, rawdy, dx, dy,
 			       host_xsize_, host_ysize_, scaled_x_, scaled_y_, offset_x_, offset_y_,
 			       full_screen_, fit_to_window_,
 			       captured_pointer_.moves, captured_pointer_.recentres);
 		}
-		ReportCapturedPointerRate();
+		if (captured_pointer_debug_wanted()) {
+			ReportCapturedPointerRate();
+		}
 		emulator_.MouseMoveRelative(dx, dy);
 	} else if (pconfig_copy->mousehackon) {
 		SyncMousePosition(event.GetX(), event.GetY());

@@ -21,6 +21,8 @@
 #ifndef CAPTURED_POINTER_H
 #define CAPTURED_POINTER_H
 
+#include <stdlib.h>
+
 /*
  * Turning host pointer movement into movement for a guest whose pointer is
  * captured, without warping the pointer on every single event.
@@ -59,8 +61,34 @@ struct captured_pointer {
 	unsigned long reported_moves;	/* the count it carried */
 };
 
-/* How often the counters are worth a line in the log. */
+/* How often the counters are worth a line in the log, when they are wanted. */
 #define CAPTURED_POINTER_REPORT_MS 5000
+
+/*
+ * Whether anything about the mouse should be written to the log at all.
+ *
+ * ★ Off unless asked for, and the answer is worked out once.
+ *
+ * Nothing here belongs in an ordinary run: a captured pointer's whole problem
+ * was work done per motion event, so diagnostics on that path have to be off by
+ * default or they become the next version of the same fault. This was on, and it
+ * was worse than it looked - the environment was being read on every event, not
+ * only when logging.
+ *
+ * Set RPCEMU_MOUSEDBG to get a line per movement and the counters every few
+ * seconds. Read once and remembered, so an ordinary run costs one test of a
+ * static int per event and nothing else.
+ */
+static inline int
+captured_pointer_debug_wanted(void)
+{
+	static int wanted = -1;
+
+	if (wanted < 0) {
+		wanted = getenv("RPCEMU_MOUSEDBG") != NULL ? 1 : 0;
+	}
+	return wanted;
+}
 
 /*
  * Whether the counters are worth reporting now, the caller doing the logging.
