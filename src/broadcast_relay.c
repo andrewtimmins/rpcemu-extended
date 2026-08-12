@@ -69,6 +69,7 @@ typedef int relay_socket_t;
 #include "broadcast_relay.h"
 #include "rpcemu.h"
 #include "network.h"
+#include "net_switch.h"
 #include "network-nat.h"
 
 #ifdef _WIN32
@@ -721,6 +722,41 @@ ip_checksum(const uint8_t *hdr, int len)
 static uint16_t ip_id_counter = 0x8000;
 
 /**
+ * Deliver a frame that arrived from the real network.
+ *
+ * ★ To this machine's guest AND to the other emulated machines on this host.
+ *
+ * The second half is what was missing, and it is why only one machine could ever
+ * see a share offered on the real network. Only one instance can hold the Access+
+ * ports, so only that instance hears a real RISC OS machine announce itself; the
+ * others were never told. The virtual switch already carried the opposite
+ * direction - net_switch_poll() hands frames from the other machines to
+ * broadcast_relay_tx(), so the whole wire reaches the network through whichever
+ * instance owns the ports - and this completes the pair.
+ *
+ * It cannot loop, and the reason is structural rather than a flag on the frame:
+ * an instance that loses the ownership claim never enables its relay
+ * (broadcast_relay_init returns early), and broadcast_relay_tx() does nothing
+ * while disabled. So a frame put on the switch here can only be received by
+ * instances that will not relay it back out, and net_switch_tx() never sends to
+ * the sender's own slot.
+ *
+ * @return non-zero if this machine's own guest accepted the frame; putting it on
+ *         the switch is best-effort and deliberately does not affect that answer,
+ *         because the other machines' interest in a frame is not this machine's
+ *         business.
+ */
+static int
+relay_deliver_inbound(const uint8_t *frame, int frame_len)
+{
+    const int accepted = network_nat_inject_packet(frame, frame_len);
+
+    net_switch_tx(frame, frame_len);
+
+    return accepted;
+}
+
+/**
  * Inject a large UDP payload as multiple IP fragments.
  * This is needed when the payload exceeds Ethernet MTU.
  * 
@@ -880,7 +916,7 @@ inject_fragmented_udp(const struct sockaddr_in *from,
         }
 
         /* Inject this fragment */
-        if (!network_nat_inject_packet(frame, frame_len)) {
+        if (!relay_deliver_inbound(frame, frame_len)) {
             return frag_count;
         }
 
@@ -1068,8 +1104,8 @@ poll_socket(int sock_idx)
         return 0;
     }
 
-    /* Inject into guest via direct buffer delivery */
-    if (network_nat_inject_packet(frame, frame_len)) {
+    /* To this guest, and to the other machines on this host. */
+    if (relay_deliver_inbound(frame, frame_len)) {
         relay.rx_count++;
         return 1;
     } else {

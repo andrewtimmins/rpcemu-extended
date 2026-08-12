@@ -100,6 +100,20 @@ network_nat_inject_packet(const uint8_t *pkt, int pkt_len)
 	return 1;
 }
 
+/*
+ * The relay now offers every frame it delivers to the virtual switch as well, so
+ * the other emulated machines on the host see a share announced on the real
+ * network. Stubbed here rather than linked: what this test covers is reassembly
+ * of guest-originated datagrams, and the switch would drag in sockets, a slot
+ * claim and a second machine to be interesting.
+ */
+void
+net_switch_tx(const uint8_t *frame, int frame_len)
+{
+	(void) frame;
+	(void) frame_len;
+}
+
 int
 network_nat_inject_space(void)
 {
