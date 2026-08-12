@@ -175,7 +175,25 @@ void EmulatorPanel::ReleaseMouseCapture()
 		return;
 	}
 	mouse_captured = 0;
+	captured_pointer_end(&captured_pointer_);
 	UpdateMouseCursor();
+}
+
+/*
+ * The counters in the log now and then; the decision when is shared with the
+ * Manager's panel, in captured_pointer.h.
+ */
+void EmulatorPanel::ReportCapturedPointerRate()
+{
+	const unsigned long now_ms = (unsigned long)
+	    std::chrono::duration_cast<std::chrono::milliseconds>(
+	        std::chrono::steady_clock::now().time_since_epoch()).count();
+
+	if (captured_pointer_should_report(&captured_pointer_, now_ms)) {
+		rpclog("mouse: captured in the machine's own window - %lu movements, "
+		       "%lu re-centres\n",
+		       captured_pointer_.moves, captured_pointer_.recentres);
+	}
 }
 
 wxPoint EmulatorPanel::PanelPointToHost(int x, int y) const
@@ -659,26 +677,28 @@ void EmulatorPanel::OnMouseMove(wxMouseEvent &event)
 
 	if (!pconfig_copy->mousehackon && mouse_captured) {
 		const wxPoint middle = CaptureCentre();
-
-		int dx = event.GetX() - middle.x;
-		int dy = event.GetY() - middle.y;
+		const wxSize client = GetClientSize();
+		int dx = 0, dy = 0, recentre = 0;
+		const int moved = captured_pointer_motion(&captured_pointer_,
+		    event.GetX(), event.GetY(),
+		    client.GetWidth(), client.GetHeight(), middle.x, middle.y,
+		    &dx, &dy, &recentre);
 
 		/*
-		 * Nothing to report, and - the point of checking before warping - no
-		 * warp either.
+		 * ★ Warped only when the pointer is nearing an edge, not on every event.
 		 *
-		 * Every warp back to the centre is itself a movement, so it comes back
-		 * as another motion event. Warping again in answer to that one, as this
-		 * did, kept the pair going: hundreds of events for a handful of real
-		 * movements, all of them worth zero. Measured at 708 of them across a
-		 * few seconds of moving the mouse.
+		 * Warping every time is what made captured mode slower than the ordinary
+		 * one: a warp per motion event, each with an X call and an extra event of
+		 * its own, on the same thread that paints the machine's screen. See
+		 * captured_pointer.h.
 		 */
-		if (dx == 0 && dy == 0) {
+		if (recentre) {
+			WarpPointer(middle.x, middle.y);
+		}
+		if (!moved) {
 			event.Skip();
 			return;
 		}
-
-		WarpPointer(middle.x, middle.y);
 
 		const int rawdx = dx, rawdy = dy;
 		/* The captured pointer delta is measured in host-window pixels; when the
@@ -690,11 +710,13 @@ void EmulatorPanel::OnMouseMove(wxMouseEvent &event)
 			dy = (dy * host_ysize_) / scaled_y_;
 		}
 		if (getenv("RPCEMU_MOUSEDBG") != nullptr) {
-			rpclog("MOUSEDBG ev=%d,%d mid=%d,%d raw=%d,%d sent=%d,%d host=%dx%d scaled=%dx%d off=%d,%d full=%d fit=%d\n",
+			rpclog("MOUSEDBG ev=%d,%d mid=%d,%d raw=%d,%d sent=%d,%d host=%dx%d scaled=%dx%d off=%d,%d full=%d fit=%d moves=%lu recentres=%lu\n",
 			       event.GetX(), event.GetY(), middle.x, middle.y, rawdx, rawdy, dx, dy,
 			       host_xsize_, host_ysize_, scaled_x_, scaled_y_, offset_x_, offset_y_,
-			       full_screen_, fit_to_window_);
+			       full_screen_, fit_to_window_,
+			       captured_pointer_.moves, captured_pointer_.recentres);
 		}
+		ReportCapturedPointerRate();
 		emulator_.MouseMoveRelative(dx, dy);
 	} else if (pconfig_copy->mousehackon) {
 		SyncMousePosition(event.GetX(), event.GetY());
@@ -761,6 +783,9 @@ void EmulatorPanel::OnMouseDown(wxMouseEvent &event)
 
 	if (pconfig_copy != nullptr && !pconfig_copy->mousehackon && !mouse_captured) {
 		mouse_captured = 1;
+		/* From where the pointer is, not from the middle: the click that captures
+		   should not make the mouse jump. */
+		captured_pointer_begin(&captured_pointer_, event.GetX(), event.GetY());
 		UpdateMouseCursor();
 		if (auto *frame = wxDynamicCast(wxGetTopLevelParent(this), MainFrame)) {
 			frame->UpdateMachineStatus();

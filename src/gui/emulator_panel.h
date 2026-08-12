@@ -25,6 +25,7 @@
 
 #include <wx/wx.h>
 
+#include "captured_pointer.h"
 #include "emulator_host.h"
 #include "host_types.h"
 
@@ -69,6 +70,10 @@ private:
 	wxPoint CaptureCentre() const;
 	void MarkUserPointerActivity();
 
+	/* Movements and re-centres, logged every few seconds while the pointer is
+	   captured and moving. See the definition. */
+	void ReportCapturedPointerRate();
+
 	EmulatorHost &emulator_;
 	wxImage display_image_;
 	wxBitmap display_bitmap_;	/**< Cached bitmap of display_image_, rebuilt only when the frame changes */
@@ -86,6 +91,13 @@ private:
 	int last_press_button_ = 0;
 	int held_buttons_ = 0;		/**< Bitmask of buttons currently forwarded as pressed */
 	bool pointer_captured_ = false;	/**< True while we hold the wx mouse capture for a drag */
+
+	/*
+	 * Captured-pointer movement: where the pointer was last seen, and how often
+	 * it has had to be put back in the middle. See captured_pointer.h for why
+	 * that is not every event.
+	 */
+	struct captured_pointer captured_pointer_{};
 	std::chrono::steady_clock::time_point last_press_time_{};
 	bool integer_scaling_ = false;
 	bool fit_to_window_ = false;

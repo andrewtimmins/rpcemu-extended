@@ -28,6 +28,7 @@
 #include <wx/timer.h>
 #include <wx/wx.h>
 
+#include "captured_pointer.h"
 #include "gl_display_canvas.h"
 #include "machine_ipc.h"
 
@@ -170,17 +171,21 @@ private:
 	int MapClickButton(const wxMouseEvent &event) const;
 	wxPoint PanelPointToGuest(int x, int y) const;
 
-	/* Take the pointer, on a click in captured mode. */
-	void CaptureThePointer();
+	/* Take the pointer, on a click in captured mode, at the point clicked. */
+	void CaptureThePointer(int x, int y);
 
-	/* Where the pointer is pinned while captured: the middle of the picture, not
-	   of the panel, so the deltas are measured from a point inside the guest's
-	   screen rather than from somewhere in the bars beside it. */
+	/* Where the pointer is put back to when it nears an edge: the middle of the
+	   picture, not of the panel, so it lands inside the guest's screen rather
+	   than in the bars beside it. */
 	wxPoint CaptureCentre() const;
 
-	/* Warp the pointer back to the centre and send the machine how far it moved
-	   to get away from there. */
+	/* Send the machine how far the pointer has moved since it was last seen,
+	   re-centring it if it is getting close to an edge. */
 	void SendCapturedMotion(const wxMouseEvent &event);
+
+	/* Movements and re-centres in the log every few seconds, so a report of
+	   captured mode feeling slow can be answered with a number. */
+	void ReportCapturedPointerRate();
 
 	/*
 	 * Where in the panel the guest's screen is actually drawn: aspect-fitted
@@ -255,13 +260,12 @@ private:
 	 *
 	 * follow_host_mouse_ starts true so a machine whose state has not arrived yet
 	 * behaves as it always has, rather than ignoring the mouse until it does.
-	 * The carries belong to remote_display_delta_to_guest(); see that comment for
-	 * why they exist.
+	 * captured_pointer_ holds where the pointer was last seen and the
+	 * sub-pixel remainder; see captured_pointer.h.
 	 */
 	bool follow_host_mouse_ = true;
 	bool pointer_captured_ = false;
-	int capture_carry_x_ = 0;
-	int capture_carry_y_ = 0;
+	struct captured_pointer captured_pointer_{};
 
 	bool live_ = false;
 	wxString attach_error_;

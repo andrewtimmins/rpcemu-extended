@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "captured_pointer.h"
 #include "display_acceleration.h"
 #include "remote_display_geometry.h"
 #include "remote_display_scale.h"
@@ -300,6 +301,141 @@ main(void)
 			dx = dy = 99;
 			remote_display_delta_to_guest(r, 1600, 1200, 10, 10, &cx, &cy, &dx, &dy);
 			check("movement against an empty rectangle gives nothing", dx == 0 && dy == 0);
+		}
+	}
+
+	printf("\nA captured pointer, and how seldom it is warped\n");
+
+	/*
+	 * The fault these checks exist for: captured mode put the host pointer back
+	 * in the middle after every single movement, and each warp is a host call
+	 * that also produces another motion event, all on the thread that paints the
+	 * machine's screen. It was reported as captured mode being slower than the
+	 * ordinary one - a stuttering pointer and windows that dragged badly.
+	 *
+	 * So the property worth testing is not only that the movement adds up, but
+	 * that crossing the panel takes very few warps.
+	 */
+	{
+		struct captured_pointer cp;
+		int dx = 0, dy = 0, recentre = 0, moved;
+
+		/* Nothing to measure from until the first event, which therefore reports
+		   no movement rather than a jump from wherever the pointer happened to
+		   be. */
+		memset(&cp, 0, sizeof(cp));
+		moved = captured_pointer_motion(&cp, 500, 400, 1000, 800, 500, 400,
+		    &dx, &dy, &recentre);
+		check("the first event after capture reports nothing",
+		      moved == 0 && dx == 0 && dy == 0 && recentre == 0);
+
+		/* Then movement is the distance from where it was last seen. */
+		moved = captured_pointer_motion(&cp, 512, 396, 1000, 800, 500, 400,
+		    &dx, &dy, &recentre);
+		check_eq("moved 12 right: dx", dx, 12);
+		check_eq("moved 4 up: dy", dy, -4);
+		check("and no warp for it", recentre == 0 && moved != 0);
+
+		/* A run across the middle of the panel adds up exactly, and warps not at
+		   all: 300 single-pixel steps from the centre, well inside the margin. */
+		{
+			int total = 0, warps = 0;
+			int x = 500;
+			int i;
+
+			memset(&cp, 0, sizeof(cp));
+			captured_pointer_begin(&cp, x, 400);
+			for (i = 0; i < 300; i++) {
+				x++;
+				captured_pointer_motion(&cp, x, 400, 1000, 800, 500, 400,
+				    &dx, &dy, &recentre);
+				total += dx;
+				warps += recentre;
+			}
+			check_eq("300 steps across the middle add up", total, 300);
+			check_eq("and are worth this many warps", warps, 0);
+		}
+
+		/*
+		 * ★ Reaching the edge: the movement is still reported in full, and the
+		 * warp happens once rather than for every step that follows.
+		 *
+		 * Ten times across a 1000-pixel panel in 50-pixel steps - a fast hand
+		 * for several seconds - and the count of warps is what the old code
+		 * would have done in a twentieth of the time.
+		 */
+		{
+			int warps = 0, total = 0;
+			int x = 500;
+			int i;
+
+			memset(&cp, 0, sizeof(cp));
+			captured_pointer_begin(&cp, x, 400);
+			for (i = 0; i < 200; i++) {
+				x += 50;
+				if (x > 990) {
+					x = 990;	/* the pointer cannot leave the panel */
+				}
+				captured_pointer_motion(&cp, x, 400, 1000, 800, 500, 400,
+				    &dx, &dy, &recentre);
+				total += dx;
+				if (recentre) {
+					warps++;
+					x = 500;	/* as the caller's warp does */
+				}
+			}
+			check("dragging to the edge and back warps a few times, not 200",
+			      warps > 0 && warps < 30);
+			check("and every pixel of movement was still reported",
+			      total > 0);
+		}
+
+		/* The margin has to leave a usable middle on a small panel, and must not
+		   swallow it whole. */
+		{
+			const int small_margin = captured_pointer_margin(320, 240);
+			const int big_margin = captured_pointer_margin(2560, 1440);
+
+			check("a small panel keeps a middle to move in",
+			      small_margin > 0 && small_margin * 2 < 240);
+			check("a large panel's margin is generous but not most of it",
+			      big_margin >= 64 && big_margin * 2 < 1440);
+		}
+
+		/* The counters reach the log every few seconds while something is
+		   moving, and never when nothing is - a still mouse and an idle machine
+		   must write nothing at all, or the log fills with lines saying so. */
+		{
+			memset(&cp, 0, sizeof(cp));
+			check("the first ask only starts the clock",
+			      captured_pointer_should_report(&cp, 1000) == 0);
+			cp.moves = 500;
+			check("and nothing is said before the interval is up",
+			      captured_pointer_should_report(&cp, 1000 +
+			          CAPTURED_POINTER_REPORT_MS - 1) == 0);
+			check("after it, with movement, there is something to say",
+			      captured_pointer_should_report(&cp, 1000 +
+			          CAPTURED_POINTER_REPORT_MS) != 0);
+			check("but a still mouse says nothing however long it waits",
+			      captured_pointer_should_report(&cp, 1000 +
+			          CAPTURED_POINTER_REPORT_MS * 10) == 0);
+			cp.moves = 900;
+			check("and it speaks again once the mouse moves again",
+			      captured_pointer_should_report(&cp, 1000 +
+			          CAPTURED_POINTER_REPORT_MS * 20) != 0);
+		}
+
+		/* Released and captured again: no movement carried over from before, or
+		   the guest pointer would jump by however far the mouse had been moved
+		   while it was free. */
+		{
+			memset(&cp, 0, sizeof(cp));
+			captured_pointer_begin(&cp, 100, 100);
+			captured_pointer_end(&cp);
+			moved = captured_pointer_motion(&cp, 900, 700, 1000, 800, 500, 400,
+			    &dx, &dy, &recentre);
+			check("re-capturing does not report the movement in between",
+			      moved == 0 && dx == 0 && dy == 0);
 		}
 	}
 

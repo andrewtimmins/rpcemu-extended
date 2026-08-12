@@ -181,19 +181,35 @@ wxPoint RemoteEmulatorPanel::CaptureCentre() const
 	return wxPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
 }
 
-void RemoteEmulatorPanel::CaptureThePointer()
+void RemoteEmulatorPanel::CaptureThePointer(int x, int y)
 {
 	pointer_captured_ = true;
-	capture_carry_x_ = 0;
-	capture_carry_y_ = 0;
 
-	const wxPoint centre = CaptureCentre();
-
-	WarpPointer(centre.x, centre.y);
+	/* Measured from where the pointer is, and deliberately not warped to the
+	   middle: the click that captures should not make the mouse jump. */
+	captured_pointer_begin(&captured_pointer_, x, y);
 	UpdateCursor();
 
 	if (on_capture_changed_) {
 		on_capture_changed_();
+	}
+}
+
+/*
+ * The counters in the log now and then, the same as a machine's own window does
+ * and sharing the decision with it (captured_pointer.h). Labelled differently
+ * because the two windows handle the mouse in different processes, and a report
+ * that did not say which would be no use for answering "the Manager feels slow".
+ */
+void RemoteEmulatorPanel::ReportCapturedPointerRate()
+{
+	const unsigned long now_ms = (unsigned long)
+	    std::chrono::duration_cast<std::chrono::milliseconds>(
+	        std::chrono::steady_clock::now().time_since_epoch()).count();
+
+	if (captured_pointer_should_report(&captured_pointer_, now_ms)) {
+		rpclog("mouse: captured in the Manager - %lu movements, %lu re-centres\n",
+		       captured_pointer_.moves, captured_pointer_.recentres);
 	}
 }
 
@@ -203,6 +219,7 @@ bool RemoteEmulatorPanel::ReleaseCapturedPointer()
 		return false;
 	}
 	pointer_captured_ = false;
+	captured_pointer_end(&captured_pointer_);
 	UpdateCursor();
 
 	if (on_capture_changed_) {
@@ -214,35 +231,44 @@ bool RemoteEmulatorPanel::ReleaseCapturedPointer()
 /*
  * Movement while the pointer is captured.
  *
- * The pointer is put back in the middle after every movement, so the distance it
- * managed to get from there is how far the hand went - the same trick
- * EmulatorPanel uses in a machine's own window, and for the same reason: RISC OS
- * is being told about movement, so the host pointer must never run out of room
- * to move in.
- *
- * The warp is what makes the next event's coordinates meaningful, so it happens
- * whether or not this movement amounted to a whole guest pixel.
+ * How far the pointer has come since it was last seen, which is what RISC OS is
+ * told about - and the host pointer is put back in the middle of the picture when
+ * it nears an edge, so it never runs out of room to move in. The same scheme
+ * EmulatorPanel uses in a machine's own window, sharing captured_pointer.h with
+ * it, including the reason it is not warped on every event.
  */
 void RemoteEmulatorPanel::SendCapturedMotion(const wxMouseEvent &event)
 {
 	const wxPoint centre = CaptureCentre();
-	const int panel_dx = event.GetX() - centre.x;
-	const int panel_dy = event.GetY() - centre.y;
+	const wxSize client = GetClientSize();
+	int panel_dx = 0, panel_dy = 0, recentre = 0;
+	const int moved = captured_pointer_motion(&captured_pointer_,
+	    event.GetX(), event.GetY(), client.GetWidth(), client.GetHeight(),
+	    centre.x, centre.y, &panel_dx, &panel_dy, &recentre);
 
-	if (panel_dx == 0 && panel_dy == 0) {
-		/* Our own warp coming back to us. */
+	/*
+	 * ★ Warped only when the pointer nears an edge - see captured_pointer.h.
+	 *
+	 * Warping on every event is what made captured mode slower than the ordinary
+	 * one, and this panel can afford it least: its motion events are handled on
+	 * the same thread that reads the machine's frames out of shared memory and
+	 * scales them.
+	 */
+	if (recentre) {
+		WarpPointer(centre.x, centre.y);
+	}
+	if (!moved) {
 		return;
 	}
 
-	WarpPointer(centre.x, centre.y);
+	ReportCapturedPointerRate();
 
-	const wxSize client = GetClientSize();
 	const struct remote_display_rect rect = remote_display_rect_for(
 	    client.GetWidth(), client.GetHeight(), frame_width_, frame_height_);
 	int guest_dx = 0, guest_dy = 0;
 
 	remote_display_delta_to_guest(rect, frame_width_, frame_height_,
-	    panel_dx, panel_dy, &capture_carry_x_, &capture_carry_y_,
+	    panel_dx, panel_dy, &captured_pointer_.carry_x, &captured_pointer_.carry_y,
 	    &guest_dx, &guest_dy);
 
 	if (guest_dx == 0 && guest_dy == 0) {
@@ -1014,7 +1040,7 @@ void RemoteEmulatorPanel::OnMouseDown(wxMouseEvent &event)
 	 */
 	if (!follow_host_mouse_ && !pointer_captured_) {
 		NoteInput();
-		CaptureThePointer();
+		CaptureThePointer(event.GetX(), event.GetY());
 		return;
 	}
 
