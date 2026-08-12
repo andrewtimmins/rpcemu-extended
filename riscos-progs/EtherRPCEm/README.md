@@ -17,9 +17,16 @@ it hardcodes are **Acorn Computers Ltd's**, from their published DCI4 headers.
     Copyright (C) 2026 Andy Timmins                     (this assembler port)
 
 Released under **GPL v2**, the terms EtherY was released under. That chain and
-the licence notice head `etherrpcem.s`; the full licence is in `LICENSE`; and the
-credit is also in the module's own help string, so `*Help EtherRPCEm` shows it
-inside the machine.
+the licence notice head `etherrpcem.s`, and the full licence is in `LICENSE`.
+All three names are in the module's own help string as well, so the credit is
+visible inside the machine and not only in the source:
+
+    *Help EtherRPCEm
+    ==> EtherRPCEm  1.06 (11 Aug 2026) (C) John Ballance/Castle, Alex Waugh, Andy Timmins
+
+That string is built from `VersionNum` and the `COPYRIGHT` line in the `Makefile`,
+so it cannot drift from the version. It is the only guest module here that
+carries a copyright in its help string; the rest are this fork's own work.
 
 Two things from the original EtherY release notes, which are worth stating here
 because they are allocations rather than history. The driver name (`EtherRPCEm`
@@ -88,7 +95,7 @@ for the port rather than history:
   that early if the ROM had not already satisfied them. It always did, on RISC OS
   5.30 and 3.71 both. The assembler needs no C library at all, so the question
   does not arise.
-- **Size.** 4,624 bytes assembled, against 9,952 for the last C build, and 12,884
+- **Size.** 4,636 bytes assembled, against 9,952 for the last C build, and 12,884
   for the binary shipped in October 2024, which was linked against `stubsg` and
   so carried 26-bit veneers and library code (`qsort`, `bsearch`,
   `partition_sort`, `atexit`, signal veneers) the driver never called.
