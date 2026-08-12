@@ -659,10 +659,27 @@ void EmulatorPanel::OnMouseMove(wxMouseEvent &event)
 
 	if (!pconfig_copy->mousehackon && mouse_captured) {
 		const wxPoint middle = CaptureCentre();
-		WarpPointer(middle.x, middle.y);
 
 		int dx = event.GetX() - middle.x;
 		int dy = event.GetY() - middle.y;
+
+		/*
+		 * Nothing to report, and - the point of checking before warping - no
+		 * warp either.
+		 *
+		 * Every warp back to the centre is itself a movement, so it comes back
+		 * as another motion event. Warping again in answer to that one, as this
+		 * did, kept the pair going: hundreds of events for a handful of real
+		 * movements, all of them worth zero. Measured at 708 of them across a
+		 * few seconds of moving the mouse.
+		 */
+		if (dx == 0 && dy == 0) {
+			event.Skip();
+			return;
+		}
+
+		WarpPointer(middle.x, middle.y);
+
 		const int rawdx = dx, rawdy = dy;
 		/* The captured pointer delta is measured in host-window pixels; when the
 		   display is scaled down the guest is larger than the window, so scale
