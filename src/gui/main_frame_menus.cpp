@@ -193,9 +193,12 @@ void MainFrame::BuildMenus()
 	follow_host_display_menu_item_ =
 	    settings_menu->AppendCheckItem(ID_MENU_FOLLOW_HOST_DISPLAY,
 	                                   "Follow Host Display Size");
-	/* Follow-mouse is now always on (it works windowed, scaled and full-screen),
-	   so that toggle is hidden. The mouse-capture / relative path is left in the
-	   code (OnMouseMove, mouse_captured) and can be re-exposed here if needed. */
+	mouse_hack_menu_item_ =
+	    settings_menu->AppendCheckItem(ID_MENU_MOUSE_HACK, "Mouse Follows Host Pointer");
+	mouse_hack_menu_item_->SetHelp(
+	    "On, the RISC OS pointer goes wherever the host one is. Off, a click "
+	    "captures the mouse and RISC OS is sent movements instead, which is what "
+	    "games that drive the pointer themselves need. Alt+Enter gives it back.");
 	mouse_twobutton_menu_item_ =
 	    settings_menu->AppendCheckItem(ID_MENU_MOUSE_TWOBUTTON, "Two-button Mouse Mode");
 	shared_clipboard_menu_item_ =
@@ -294,6 +297,7 @@ void MainFrame::BuildMenus()
 	             &MainFrame::OnFollowHostDisplay);
 	BindMenuItem(file_menu, ID_MENU_SUSPEND_ON_EXIT, this, &MainFrame::OnSuspendOnExit);
 	BindMenuItem(settings_menu, ID_MENU_CPU_IDLE, this, &MainFrame::OnCpuIdle);
+	BindMenuItem(settings_menu, ID_MENU_MOUSE_HACK, this, &MainFrame::OnMouseHack);
 	BindMenuItem(settings_menu, ID_MENU_MOUSE_TWOBUTTON, this, &MainFrame::OnMouseTwobutton);
 	BindMenuItem(settings_menu, ID_MENU_SHARED_CLIPBOARD, this, &MainFrame::OnSharedClipboard);
 	BindMenuItem(settings_menu, ID_MENU_DEFAULT_MACHINE, this, &MainFrame::OnDefaultMachine);

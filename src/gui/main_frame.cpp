@@ -623,6 +623,9 @@ void MainFrame::ReportMenuState()
 		ID_MENU_FOLLOW_HOST_DISPLAY,
 		ID_MENU_SUSPEND_ON_EXIT,
 		ID_MENU_CPU_IDLE,
+		/* Not only for the Manager's tick-box: its panel needs this one to know
+		   whether to send the pointer's position or its movement. */
+		ID_MENU_MOUSE_HACK,
 		ID_MENU_MOUSE_TWOBUTTON,
 		ID_MENU_SHARED_CLIPBOARD,
 		ID_MENU_DEFAULT_MACHINE,

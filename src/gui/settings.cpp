@@ -639,11 +639,17 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 		cfg->isoname[0] = '\0';
 	}
 
+	/*
+	 * On by default, and off means captured-pointer mode.
+	 *
+	 * This used to read the stored value and then overwrite it with 1, from when
+	 * the menu toggle was hidden. That went further than hiding a menu item: it
+	 * meant a machine could not be put into capture mode by any route at all,
+	 * including editing this file by hand. Games that take the pointer over
+	 * themselves need it, so the stored value is honoured again.
+	 */
 	settings.Read("mouse_following", &value, 1L);
 	cfg->mousehackon = static_cast<int>(value);
-	/* Follow-mouse is always on: the UI toggle is hidden and the capture path is
-	   dormant. Force it on regardless of any older stored value. */
-	cfg->mousehackon = 1;
 	settings.Read("mouse_twobutton", &value, 0L);
 	cfg->mousetwobutton = static_cast<int>(value);
 
