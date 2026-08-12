@@ -246,6 +246,38 @@ jobs:
           path: ${{ steps.package.outputs.leafname }}
           if-no-files-found: error
 
+  # The checks gate, and the first thing the graph should show.
+  #
+  # Like the platform gates below it does no work, and it exists for the same two
+  # reasons: it makes "did the checks pass?" one answer, and it gives the run's
+  # graph a node to hang the checks box on. Without it those three jobs had no
+  # gate of their own, so the layout slotted them in among the platforms rather
+  # than at the top where they belong - they are what has to be true before a
+  # platform build is worth reading.
+  #
+  # if: always() with an explicit verdict, rather than plain needs, because
+  # version-matches-tag is SKIPPED on every push that is not a tag. A gate that
+  # simply needed it would be skipped on almost every run, which would grey out
+  # the box this exists to draw and would stop a release for the wrong reason.
+  # Skipped is not failed - the same distinction notify makes further down.
+  checks:
+    if: always()
+    needs: [version-matches-tag, sanitisers, docs]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Did anything actually fail
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          failed=$(printf '%s' "$RESULTS" \
+              | jq -r 'to_entries | map(select(.value.result == "failure") | .key) | join(", ")')
+          if [ -n "$failed" ]; then
+            echo "failed: $failed"
+            exit 1
+          fi
+          echo "The version/notes check, the sanitisers and the docs are all clear."
+
   linux-amd64:
     runs-on: ubuntu-latest
     steps:
@@ -1034,7 +1066,7 @@ jobs:
     # whether the emulator's C is well defined rather than merely producing the
     # expected answer, and shipping past a report from it would mean shipping
     # something known to be relying on the compiler's goodwill.
-    needs: [version-matches-tag, linux, windows, macos-universal, sanitisers, docs]
+    needs: [checks, linux, windows, macos-universal]
     runs-on: ubuntu-latest
     permissions:
       contents: write
