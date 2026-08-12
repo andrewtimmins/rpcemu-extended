@@ -140,6 +140,21 @@ and checks over VNC that RISC OS drew something, asks the guest its version over
 HostCmd, and checks its clock. That is the test that covers the CPU, memory,
 VIDC, ROM loading and the VNC server together.
 
+That includes `windows-arm64`, which was briefly the exception and is not any
+more: leaving the boot test off a brand new platform had it backwards, because a
+new compiler and a new architecture are exactly where a CPU core, VIDC or a
+libvncserver build is most likely to be wrong, and `linux-arm64` had already
+shown that an interpreter build can pass it in CI. It gets a longer timeout there
+for the same reason that one does - the interpreter rather than the recompiler.
+
+What that job establishes, in order: RPCEmu compiles natively (`file` reports
+`PE32+ ... ARM64`, asserted rather than admired), the staged release starts with
+every runtime DLL it needs - clang's `libc++` and `libunwind` rather than GCC's -
+the ROM downloader works over WinHTTP on ARM64, and RISC OS boots and draws.
+What it cannot establish is somebody using the thing: sound, USB, a window on a
+real ARM laptop. That is why its build is an artifact rather than a release asset.
+See [windows-build.md](windows-build.md).
+
 ## The guest modules
 
 The RISC OS modules under `riscos-progs/` run inside the emulated machine: HostFS

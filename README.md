@@ -20,7 +20,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 
 ## Highlights
 
-- **Cross-platform** — runs on **Linux** (amd64 + arm64), **Windows** (amd64), and **macOS** (universal — Intel + Apple Silicon). The x86-64 dynamic recompiler gives full-speed emulation on Linux, Windows and Intel Macs. A native **arm64** recompiler is also implemented and validated under emulation ([docs/arm64-dynarec.md](docs/arm64-dynarec.md)); it is not yet enabled in prebuilt releases, pending testing on real arm64 hardware. Builds from a single CMake codebase. See [Supported systems](#supported-systems).
+- **Cross-platform** — runs on **Linux** (amd64 + arm64), **Windows** (amd64 + a native arm64 build, interpreter, from CI artifacts), and **macOS** (universal — Intel + Apple Silicon). The x86-64 dynamic recompiler gives full-speed emulation on Linux, Windows and Intel Macs. A native **arm64** recompiler is also implemented and validated under emulation ([docs/arm64-dynarec.md](docs/arm64-dynarec.md)); it is not yet enabled in prebuilt releases, pending testing on real arm64 hardware. Builds from a single CMake codebase. See [Supported systems](#supported-systems).
 - **Kinetic StrongARM (512MB)** — emulates the Acorn Risc PC **Kinetic** StrongARM processor card and its full **512MB** of RAM: the 256MB the motherboard IOMD can address, plus two 128MB on-card SDRAM banks. Boots RISC OS 5 straight to the desktop.
 - **Get RISC OS in one step** — RPCEmu ships no ROM, so a new installation has nothing to run. Creating a machine offers to fetch a ROM and the ready-made HardDisc4 hard disc from RISC OS Open and set them up on it. Stable 5.30 or the 5.31 nightly, with the licensing terms shown and agreed to first; also available headlessly as `--fetch-riscos`. An existing machine's hard disc is never overwritten. Needs a wxWidgets with `wxWebRequest`, which Debian 12 and Raspberry Pi OS have not got: see [COMPILE.md](COMPILE.md#wxwidgets-and-wxwebrequest). See [Getting RISC OS](#getting-risc-os).
 - **Multi-machine configuration** — create, edit, clone, and delete machine profiles from a startup selector; each machine has isolated CMOS, HostFS, and hard disc storage.
@@ -164,6 +164,7 @@ Each GitHub release ships prebuilt packages for four targets:
 | `rpcemu_*_amd64.deb` / `_linux_amd64.tar.gz` | Linux x86-64 | Recompiler (full speed) |
 | `rpcemu_*_arm64.deb` / `_linux_arm64.tar.gz` | Linux arm64 (e.g. Raspberry Pi) | Interpreter (native arm64 recompiler implemented, not yet enabled in releases) |
 | `rpcemu_*_windows_amd64.zip` | Windows x64 (10/11) | Recompiler (full speed) |
+| *(CI artifact, not a release asset yet)* | Windows on ARM (ARM64) | Interpreter — native build; the amd64 release also runs there under emulation, with the recompiler |
 | `rpcemu_*_macos_universal.dmg` | macOS (Intel + Apple Silicon) | Universal app bundle — recompiler on Intel, interpreter on Apple Silicon |
 
 **Linux** packages are built on **Ubuntu 24.04 LTS**; being dynamically linked, they run
@@ -757,7 +758,7 @@ that cannot reach a device.
 | Platform | How |
 | --- | --- |
 | Linux | `./setup-build-env.sh` (installs `libusb-1.0-0-dev`) |
-| Windows, native MSYS2 | `pacman -S mingw-w64-x86_64-libusb` |
+| Windows, native MSYS2 | `pacman -S mingw-w64-x86_64-libusb` (or `mingw-w64-clang-aarch64-libusb` on ARM64) |
 | Windows, cross from Linux | `./setup-cross-build-env.sh` (builds libusb for the MinGW target) |
 | macOS | `brew install libusb` |
 
