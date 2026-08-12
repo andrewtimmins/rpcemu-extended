@@ -345,6 +345,7 @@ Both keep a list of what you have used recently.
 | **Full-screen Mode** | Also **Alt+Enter**, which is how you get back |
 | **Pixel Perfect** | Scale only in whole multiples, so pixels stay square |
 | **Fit to Window** | Scale the picture to whatever size you drag the window |
+| **Mouse Follows Host Pointer** | On by default. Turn it off for games (see below) |
 | **Two-button Mouse Mode** | Right button becomes Menu |
 | **Share Clipboard with RISC OS** | Link the two clipboards |
 | **Reduce CPU Usage** | Idle when RISC OS is idle |
@@ -392,13 +393,31 @@ screen memory at its physical address. See [docs/gfxcard.md](docs/gfxcard.md).
 
 **Every key goes to RISC OS.** No host shortcuts are bound, so F12, the function
 keys and Ctrl combinations all reach the guest. The one exception is
-**Alt+Enter**, which releases the mouse or leaves full-screen.
+**Alt+Enter**, which leaves full-screen, or releases a captured mouse when there
+is no full-screen to leave. In full-screen with the mouse captured that is two
+presses: one to leave, one to be given the mouse back.
 
 **Keys are identified by position, not by character.** Whatever layout you use —
 German, French, Dvorak — a key produces what is printed on it. AltGr works.
 
-**The mouse** follows your pointer directly. When a machine grabs the pointer,
-Alt+Enter releases it.
+**The mouse** has two modes, and the default suits everything except games.
+
+**Mouse Follows Host Pointer** (Settings, on by default) puts the RISC OS pointer
+wherever your own pointer is. Nothing is grabbed, you can leave the window
+whenever you like, and it works windowed, scaled and full-screen.
+
+Turn it off and the machine is in **captured** mode instead. Click once in the
+window and the mouse is captured: your pointer is pinned out of sight and RISC OS
+is sent how far the mouse moved rather than where it ended up. **Alt+Enter** gives
+it back. This is what games need — a game that draws and moves its own pointer,
+or reads movement directly, cannot work with a pointer being put where the host's
+is. Games are the reason the mode exists, so if one ignores the mouse or the
+pointer fights you, this is the first thing to change.
+
+The setting belongs to the machine and is remembered, so a machine left in
+captured mode is still in it next time. Both modes work the same way in the
+Manager as in a machine's own window; the status bar there says which mode you
+are in and what to press.
 
 ## Floppy and CD-ROM
 
