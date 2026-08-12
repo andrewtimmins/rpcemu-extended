@@ -14,11 +14,14 @@
  * src/network.h, which is the strongest check available: those two cross the
  * SWI boundary, so the host and the guest must agree about them or nothing
  * works. The rest are checked against models written out below, which were
- * verified field by field against Acorn's headers in
- * riscos-progs/EtherRPCEm/h/ by compiling them with `gcc -m32` - where a
- * pointer, a long, a size_t and a ptrdiff_t are all four bytes, as they are on
- * the RISC OS target. That cannot be done here, because this test has to
- * compile on 64-bit hosts and on macOS, where -m32 does not exist at all.
+ * verified field by field against Acorn's own DCI4 headers by compiling them
+ * with `gcc -m32` - where a pointer, a long, a size_t and a ptrdiff_t are all
+ * four bytes, as they are on the RISC OS target. That cannot be done here,
+ * because this test has to compile on 64-bit hosts and on macOS, where -m32 does
+ * not exist at all. Those headers used to sit in riscos-progs/EtherRPCEm/h/ and
+ * were removed with the rest of the C once the port was done; they are in git
+ * history at 9e44930 (`git show 9e44930:riscos-progs/EtherRPCEm/h/dcistructs`),
+ * which is where to look if a model below is ever in doubt.
  *
  * Alignment is checked as well as position: the assembler clears the workspace,
  * a ClaimBuf, an mbctl and a struct stats a word at a time, so a size that is
@@ -45,7 +48,8 @@ static int equate_count;
 static int failures;
 
 /* ------------------------------------------------------------------------- */
-/* Models of the guest-only structures, from riscos-progs/EtherRPCEm/h/.     */
+/* Models of the guest-only structures. The h/ files named below are Acorn's */
+/* DCI4 headers, in git history at 9e44930 (see the top of this file).       */
 /* Every field is written with an explicit width so the offsets come out the */
 /* same on any host: on the target these are all 32-bit.                     */
 /* ------------------------------------------------------------------------- */

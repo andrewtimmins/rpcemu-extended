@@ -5,9 +5,8 @@
 # This replaces the Acorn DDE build that had to run inside a guest: the module
 # is now assembler, like the other guest modules, so it builds on the host and
 # in CI. The C sources it was transcribed from (c.Module, s.intveneer,
-# cmhg.ModHdr, s.errors and the h. headers) are kept in this directory as the
-# reference the offsets and the DCI4 behaviour came from, along with the DDE
-# recipe in MkEther,feb - see README.md.
+# cmhg.ModHdr, s.errors, the h. headers and the MkEther,feb recipe that built
+# them) are in git history at 9e44930, not in this directory - see README.md.
 #
 # The result belongs in netroms/, not poduleroms/: the emulator builds the
 # network card's ROM around it at run time (src/network.c), while poduleroms/ is

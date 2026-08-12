@@ -171,7 +171,9 @@ makefile wants clang and `build.sh` does not build it either; its image is
 committed as it stands. And `SharedClipboard` is C built with the Acorn DDE inside
 a guest, so it cannot be rebuilt on the host at all — see
 `riscos-progs/SharedClipboard/README.md`. EtherRPCEm used to be in that position
-and is not any more.
+and is not any more: it is assembler now, so it is in the list above, and the C
+it was ported from has been removed from the tree rather than left sitting beside
+a source nothing checked it against (it is in git history at 9e44930).
 
 ## Writing a test
 
