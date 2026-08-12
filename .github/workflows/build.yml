@@ -837,13 +837,85 @@ jobs:
             releases/macos/*.tar.gz
           if-no-files-found: error
 
+  # Render the interface documentation under docs/prminxml/.
+  #
+  # These are PRM-in-XML: the format the RISC OS Programmer's Reference Manuals
+  # are written in, and the right one for an interface somebody else has to
+  # implement against, because it fixes the register contract in a structured
+  # form rather than in prose. docs/ is otherwise Markdown, which stays the
+  # right choice for notes about how this repository works; the distinction is
+  # between describing an interface and describing an implementation.
+  #
+  # The HTML is a release asset. Somebody writing a host-side implementation of
+  # one of these interfaces is not necessarily building the emulator, and should
+  # not have to check out the tree and install a toolchain to read what the
+  # interface does.
+  #
+  # docs/prminxml/index.xml names the chapters, their order and where the output
+  # goes, so this job does not: adding a chapter is a change to that file alone.
+  # The indexed build renders every chapter as well as the contents page and the
+  # generated SWI index, which is what lets a reader find a call without already
+  # knowing which interface it belongs to.
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      leafname: ${{ steps.package.outputs.leafname }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-tags: true
+
+      # No style: input. index.xml sets its own page and index CSS variants, and
+      # style: would prepend a second set of them.
+      - name: Render the host interfaces manual
+        uses: gerph/riscos-prminxml-action@v1
+        with:
+          files: docs/prminxml/index.xml
+          format: index
+          output: prm-output
+          log-directory: prm-output/indexed/logs
+
+      # Named from VERSION rather than the tag, so the archive matches the
+      # binaries beside it in a release. version-matches-tag has already
+      # insisted the two agree before any release is published.
+      - name: Package the documentation
+        id: package
+        run: |
+          if [ -s VERSION ]; then
+            version="$(tr -d ' \t\r\n' < VERSION)"
+          else
+            version="$(git rev-parse --short HEAD)"
+          fi
+          leafname="rpcemu-interface-docs-$version.zip"
+          # pages/ only. The rest of what the indexed build leaves behind - its
+          # logs, temporary files, per-chapter headers and index data - is build
+          # working, and a reader opening the release asset should find the
+          # manual rather than have to pick it out. The XML sources are inside
+          # pages/ beside their HTML, and are kept: they are the machine-readable
+          # form of the same thing.
+          pages=prm-output/indexed/pages
+          if [ ! -s "$pages/index.html" ]; then
+            echo "::error::the documentation build produced no manual"
+            exit 1
+          fi
+          ( cd "$pages" && zip -q9r "$OLDPWD/$leafname" . )
+          echo "leafname=$leafname" >> "$GITHUB_OUTPUT"
+          ls -l "$leafname"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rpcemu-interface-docs
+          path: ${{ steps.package.outputs.leafname }}
+          if-no-files-found: error
+
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     # The sanitiser job gates a release too. It is the only thing that looks at
     # whether the emulator's C is well defined rather than merely producing the
     # expected answer, and shipping past a report from it would mean shipping
     # something known to be relying on the compiler's goodwill.
-    needs: [version-matches-tag, linux-amd64, linux-arm64, windows-amd64, macos-universal, sanitisers]
+    needs: [version-matches-tag, linux-amd64, linux-arm64, windows-amd64, macos-universal, sanitisers, docs]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -885,7 +957,7 @@ jobs:
   # unreachable would be reporting on itself rather than on the emulator.
   notify:
     if: always() && github.event_name == 'push'
-    needs: [version-matches-tag, linux-amd64, linux-arm64, windows-amd64, macos-universal, sanitisers, release]
+    needs: [version-matches-tag, linux-amd64, linux-arm64, windows-amd64, macos-universal, sanitisers, docs, release]
     runs-on: ubuntu-latest
     permissions:
       contents: read

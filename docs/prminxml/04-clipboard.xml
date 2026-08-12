@@ -1,0 +1,456 @@
+<?xml version="1.0"?>
+<!DOCTYPE riscos-prm PUBLIC "-//Gerph//DTD PRM documentation 1.03//EN"
+                            "http://gerph.org/dtd/103/prm.dtd">
+
+<riscos-prm>
+<chapter title="Clipboard">
+
+<section title="Introduction">
+<p>
+The clipboard interface joins the host's clipboard to the emulated machine's, so
+that text or an image copied in one can be pasted in the other. Text copied from
+a browser on the host pastes into StrongEd; a paragraph copied in Edit pastes
+into whatever the host was doing.
+</p>
+<p>
+It is off by default, and that is a deliberate choice rather than caution about
+the implementation: turning it on puts the host's clipboard within reach of
+anything running in the emulated machine.
+</p>
+</section>
+
+<section title="Overview">
+<p>
+The interface and its guest module come from RiscOS Cloverleaf's fork of RPCEmu,
+and both the SWI number and the reason codes are kept as Cloverleaf defined them
+so that a guest module built for Cloverleaf works here unaltered. The number
+sits apart from the rest of the emulator's chunk, at &hex;56AD0.
+</p>
+<p>
+The guest half is a Wimp task, which is what the RISC OS clipboard conventions
+require: the clipboard is owned by a task, which offers its contents when another
+task asks for them. The task claims the RISC OS clipboard on the host's behalf
+and answers requests for it, and offers the host's clipboard whatever a RISC OS
+application has copied.
+</p>
+<p>
+Both directions are polled rather than pushed, but only one of them needs to be.
+When a RISC OS application copies something, the guest task knows immediately and
+calls the host. When the host's clipboard changes there is no way to call into
+RISC OS, so the host sets a bit in a word of guest memory that the task gave it
+at setup, and the task - which is passing that word to the Wimp as a pollword -
+is woken by the Wimp and comes to collect.
+</p>
+</section>
+
+<section title="Technical details">
+
+<subsection title="Calling convention">
+<p>
+The reason code is in R0, with arguments from R1 onwards.
+</p>
+<p>
+<value-table head-number="R0" head-value="Operation">
+<value number="1">Setup - declare the task, its alphabet and its pollword</value>
+<value number="2">Set - the guest is putting something on the clipboard</value>
+<value number="3">Get - the guest is fetching what the host has</value>
+<value number="4">Check - what is on the host's clipboard, and how much</value>
+</value-table>
+</p>
+<p>
+Nothing reports failure. An operation that cannot be carried out - because there
+is nothing on the clipboard, or the type is not one that is carried - returns
+zero in R0 and does nothing.
+</p>
+<p>
+When the clipboard is disabled in the emulator's configuration the SWI is not
+intercepted and RISC OS reports it as unknown, which is how the guest module
+detects that it should not be running.
+</p>
+</subsection>
+
+<subsection title="What is carried">
+<p>
+Three RISC OS filetypes travel through this interface, and the type travels with
+the data rather than being implied by the operation. That is what allowed images
+to be added without changing the interface or the guest module.
+</p>
+<p>
+<value-table head-number="Type" head-value="Contents">
+<value number="FFF">Text</value>
+<value number="B60">PNG image</value>
+<value number="C85">JPEG image</value>
+</value-table>
+</p>
+<p>
+Anything else offered by the guest is ignored. Only one thing is on the clipboard
+at a time: setting text discards a held image and the reverse.
+</p>
+<p>
+Images pass through unaltered, as the encoded file rather than as pixels, since
+neither side gains from decoding and re-encoding them. Text does not: see below.
+</p>
+</subsection>
+
+<subsection title="Text and alphabets">
+<p>
+Text cannot pass through unaltered, because the two sides do not agree on what a
+byte means. RISC OS uses a single-byte alphabet which depends on the configured
+territory; hosts use Unicode.
+</p>
+<p>
+Rather than assume which RISC OS alphabet is in use, the interface has the guest
+say. At setup the task hands over its alphabet number and a 256-entry table
+giving the UCS-4 value of each character in it. The host holds clipboard text as
+UCS-4 and converts through that table in both directions, so a character the
+guest's alphabet cannot represent is simply dropped rather than mistranslated.
+</p>
+<p>
+A host implementation therefore needs to keep text in a form that can be
+converted both ways, and must not assume Latin-1 merely because it is the most
+common case.
+</p>
+</subsection>
+
+<subsection title="Lengths and terminators">
+<p>
+The length reported by the check operation is exactly what the guest will
+receive, with no terminator counted, for both text and images. The guest uses
+that figure as the clipboard's length and hands it to the application asking for
+the clipboard, so anything added to it is delivered to the application as data.
+</p>
+<p>
+This is worth stating plainly because getting it wrong is not obviously a defect
+on the host side. Reporting one more than the text's length - to leave room for
+the terminator the guest does need - meant every paste into RISC OS arrived with
+a trailing zero byte, which Edit and StrongEd both displayed at the end of the
+text.
+</p>
+<p>
+The get operation writes a terminator after the text, one byte beyond the length
+the caller asked for. The guest allocates beyond what it asks for, so that byte
+is within its buffer, but a host implementation should know that it is writing
+it.
+</p>
+</subsection>
+
+<subsection title="The pollword">
+<p>
+The host announces a change to its clipboard by setting bit 0 of the word in
+guest memory whose address it was given at setup. It does not clear the bit; the
+guest does that when it has dealt with the change.
+</p>
+<p>
+The bit is also set at setup time if the host's clipboard already holds
+something, so a task starting up after the host has copied something is in step
+rather than believing the clipboard empty until the next change.
+</p>
+<p>
+A pollword address of zero withdraws the task, and the host must then stop
+writing to guest memory. This is how the module signals that it is shutting down.
+</p>
+</subsection>
+</section>
+
+<section title="SWI calls">
+
+<swi-definition name="RPCEmu_Clipboard"
+                number="56AD0"
+                description="Exchanges clipboard contents between the guest and the host"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">Reason code:
+  <p>
+  <value-table head-number="Reason" head-value="Action">
+   <value number="1"><reference type='swi' name='RPCEmu_Clipboard' reason='1' use-description='yes'/></value>
+   <value number="2"><reference type='swi' name='RPCEmu_Clipboard' reason='2' use-description='yes'/></value>
+   <value number="3"><reference type='swi' name='RPCEmu_Clipboard' reason='3' use-description='yes'/></value>
+   <value number="4"><reference type='swi' name='RPCEmu_Clipboard' reason='4' use-description='yes'/></value>
+  </value-table>
+  </p>
+ </register-use>
+ <register-use number="1-3">Dependent on the reason code</register-use>
+</entry>
+<exit>
+ <register-use number="0">Dependent on the reason code; 0 if the operation did nothing</register-use>
+ <register-use number="1">Dependent on the reason code</register-use>
+</exit>
+
+<use>
+<p>
+Provides the guest half of the shared clipboard. The reason code is in R0.
+</p>
+<p>
+No reason code reports an error. When the clipboard is disabled the SWI is not
+intercepted at all and RISC OS reports it as unknown.
+</p>
+</use>
+</swi-definition>
+
+<swi-definition name="RPCEmu_Clipboard"
+                number="56AD0"
+                reason="1" reasonname="Setup"
+                description="Declares the guest task, its alphabet and its pollword"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">1 (reason code)</register-use>
+ <register-use number="1">Address of the task's pollword, or 0 to withdraw</register-use>
+ <register-use number="2">The alphabet number the guest is using</register-use>
+ <register-use number="3">Address of a 256-entry table giving the UCS-4 value of each character in that alphabet</register-use>
+</entry>
+<exit>
+ <register-use number="0">0</register-use>
+ <register-use number="1">0</register-use>
+</exit>
+
+<use>
+<p>
+Declares the guest clipboard task to the host, and gives the host what it needs
+to convert text: the word to poke when the host's clipboard changes, and the
+table describing the guest's alphabet.
+</p>
+<p>
+The conversion table is read once, here. A guest whose alphabet changes must call
+again with the new table.
+</p>
+<p>
+If the host's clipboard already holds text at this point, the pollword bit is set
+straight away, so a task starting after the host has copied something does not
+have to wait for a further change to notice.
+</p>
+<p>
+Calling with R1 = 0 withdraws the task. The host discards the conversion table
+and stops writing to guest memory. A guest module must do this before it exits.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_Clipboard' reason='4'/>
+</related>
+</swi-definition>
+
+<swi-definition name="RPCEmu_Clipboard"
+                number="56AD0"
+                reason="2" reasonname="Set"
+                description="Puts guest data onto the host's clipboard"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">2 (reason code)</register-use>
+ <register-use number="1">Address of the data</register-use>
+ <register-use number="2">Length of the data in bytes</register-use>
+ <register-use number="3">RISC OS filetype of the data: &hex;FFF, &hex;B60 or &hex;C85</register-use>
+</entry>
+<exit>
+ <register-use number="0">0</register-use>
+ <register-use number="1">0</register-use>
+</exit>
+
+<use>
+<p>
+Places what a RISC OS application has copied onto the host's clipboard.
+</p>
+<p>
+Text is converted from the guest's alphabet through the table supplied at setup;
+characters with no equivalent are dropped. Images are taken as the encoded file
+and stored unaltered.
+</p>
+<p>
+Whatever was previously held is discarded, whichever form it was in. A length of
+zero, or a filetype that is not one of the three carried, does nothing.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_Clipboard' reason='3'/>
+</related>
+</swi-definition>
+
+<swi-definition name="RPCEmu_Clipboard"
+                number="56AD0"
+                reason="3" reasonname="Get"
+                description="Fetches the host's clipboard into guest memory"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">3 (reason code)</register-use>
+ <register-use number="1">Address of a buffer to receive the data</register-use>
+ <register-use number="2">Number of bytes of room in the buffer</register-use>
+</entry>
+<exit>
+ <register-use number="0">Number of bytes written, excluding any terminator; 0 if nothing was written</register-use>
+ <register-use number="1">0</register-use>
+</exit>
+
+<use>
+<p>
+Copies what the host holds into the guest's buffer.
+</p>
+<p>
+Text is converted into the guest's alphabet through the table supplied at setup,
+characters with no equivalent being dropped, and a zero terminator is written
+after it - one byte beyond the count in R2, which the guest is expected to have
+allowed for. Images are copied through unaltered with no terminator.
+</p>
+<p>
+The room in R2 should be the length reported by
+<reference type='swi' name='RPCEmu_Clipboard' reason='4'/>. Because dropped
+characters shorten the result, the count returned may be less than that; it is
+never more.
+</p>
+<p>
+A buffer with no room, or nothing held, writes nothing and returns zero.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_Clipboard' reason='4'/>
+</related>
+</swi-definition>
+
+<swi-definition name="RPCEmu_Clipboard"
+                number="56AD0"
+                reason="4" reasonname="Check"
+                description="Reports what the host's clipboard holds"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">4 (reason code)</register-use>
+</entry>
+<exit>
+ <register-use number="0">Length in bytes of what would be delivered, or 0 if the clipboard is empty</register-use>
+ <register-use number="1">RISC OS filetype of what is held, when R0 is non-zero</register-use>
+</exit>
+
+<use>
+<p>
+Reports how much there is to fetch and what type it is, so the guest can allocate
+a buffer and tell an application asking for the clipboard what it is being
+offered.
+</p>
+<p>
+The length is exactly what will be delivered, with no terminator counted. For
+text it is the length after conversion into the guest's alphabet, so it accounts
+for any characters that will be dropped. The guest uses this figure as the
+clipboard's length when it answers the application, so a host implementation must
+not add anything to it.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_Clipboard' reason='3'/>
+</related>
+</swi-definition>
+
+</section>
+
+<section title="Examples">
+<p>
+The host side, in full. Text is held as UCS-4 so it can be converted to either
+side's encoding; an image is held as the file it arrived as.
+</p>
+
+<extended-example type='pseudo'>
+clipboard_handler():
+
+    R0 = 0 ; R1 = 0
+    if the clipboard is not enabled then
+        return
+
+    case R0 of
+
+    1:  /* Setup */
+        pollword = R1
+        alphabet = R2
+        if R1 != 0 and R3 != 0 then
+            ucstable = read_words_from_guest(R3, 256)
+            if something is already held then
+                write_word_to_guest(pollword, HOST_CHANGED)
+        else
+            forget the table                 /* the task is going away */
+
+    2:  /* Set */
+        if R2 == 0 then
+            return
+        if R3 is an image type then
+            discard whatever is held
+            hold the bytes at R1 as an image of type R3
+            offer it to the host's clipboard
+        else if R3 == TEXT then
+            discard whatever is held
+            hold guest_text_to_ucs(bytes at R1, length R2)
+            offer it to the host's clipboard as UTF-8
+        /* anything else: ignored */
+
+    3:  /* Get */
+        if R2 == 0 or nothing is held then
+            return
+        if an image is held then
+            n = min(image length, R2)
+            write_to_guest(R1, first n bytes of the image)
+            R0 = n
+        else
+            out = ""
+            for each character in the held text, while length(out) &lt; R2
+                c = ucs_to_guest(character)
+                if c != 0 then append c to out /* no equivalent: drop it */
+            write_to_guest(R1, out followed by a zero byte)
+            R0 = length(out)
+
+    4:  /* Check */
+        if an image is held then
+            R0 = image length ; R1 = its filetype
+        else if text is held then
+            R0 = length after conversion to the guest's alphabet
+            R1 = TEXT
+        /* else both stay 0 */
+</extended-example>
+
+<p>
+And the one thing the host does without being asked:
+</p>
+
+<extended-example type='pseudo'>
+host_clipboard_changed(type, data):
+
+    hold the data, converting text to UCS-4
+    if pollword != 0 then
+        write_word_to_guest(pollword, HOST_CHANGED)   /* the Wimp wakes the task */
+</extended-example>
+</section>
+
+</chapter>
+
+<!-- MetaData -->
+<meta>
+ <maintainer>
+  <email name="Charles Ferguson" address="gerph@gerph.org" />
+ </maintainer>
+ <disclaimer>
+    <p>
+        This documentation describes the interface between the RPCEmu emulator
+        and the clipboard task which runs inside the emulated machine. The
+        interface originated in RiscOS Cloverleaf's fork of RPCEmu. RPCEmu is
+        distributed under the GNU General Public License, version 2.
+    </p>
+ </disclaimer>
+
+ <history>
+  <revision number="1" author="Charles Ferguson" date="11 Aug 2026" title="Initial version">
+    <change>Documented the &hex;56AD0 clipboard interface and its four reason codes.</change>
+  </revision>
+ </history>
+</meta>
+</riscos-prm>

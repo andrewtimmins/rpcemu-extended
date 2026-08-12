@@ -1,0 +1,498 @@
+<?xml version="1.0"?>
+<!DOCTYPE riscos-prm PUBLIC "-//Gerph//DTD PRM documentation 1.03//EN"
+                            "http://gerph.org/dtd/103/prm.dtd">
+
+<riscos-prm>
+<chapter title="HostCmd">
+
+<section title="Introduction">
+<p>
+HostCmd lets a program on the host run a command inside the emulated machine and
+read what it printed, together with the return code. It is what turns the
+emulator from something a person sits in front of into something a script or a
+build system can drive.
+</p>
+<p>
+The intended use is development. Source is edited on the host, reaches the
+machine through HostFS, and is compiled by a command sent through this interface,
+with the compiler's output coming back to the host's terminal. Nothing has to be
+typed into the emulated machine, and nothing has to be read off its screen.
+</p>
+</section>
+
+<section title="Overview">
+<p>
+The direction of travel is the opposite of every other interface in this manual.
+Elsewhere the guest asks the host to do something; here the host has work for the
+guest, and the guest must come and collect it.
+</p>
+<p>
+That is forced by how the emulator works. The host cannot call into RISC OS: it
+has no way to enter the emulated machine except by letting it run, and no safe
+moment at which to disturb whatever it is doing. So the guest module polls. It
+runs from a ticker event, asks the host on each tick whether there is a command
+waiting, and if there is, runs it and reports back.
+</p>
+<p>
+A complete transaction is therefore:
+</p>
+<p>
+<list>
+<item>the host accepts a command from a client and holds it;</item>
+<item>the guest polls, is given the command, and starts running it;</item>
+<item>the guest reports that the command has started;</item>
+<item>the guest passes output to the host as it is produced, in as many calls as
+it takes;</item>
+<item>the guest reports that the command has finished, with its return code.</item>
+</list>
+</p>
+<p>
+The host's own client - whatever asked for the command - sees this as a stream of
+framed messages on a socket. That socket protocol is not part of this interface
+and a reimplementation may do whatever it likes with the output; only the guest
+side is described here.
+</p>
+</section>
+
+<section title="Technical details">
+
+<subsection title="Calling convention">
+<p>
+The operation is in <em>R9</em>, as it is for HostFS. R0 onwards carry the
+operation's arguments.
+</p>
+<p>
+<value-table head-number="R9" head-value="Operation">
+<value number="0">Poll for a command</value>
+<value number="1">Send output</value>
+<value number="2">Report status</value>
+<value number="3">Read the display target</value>
+<value number="FFFFFFFF">Register with the host</value>
+</value-table>
+</p>
+<p>
+Nothing here reports failure. Every operation returns a status in R0 which the
+caller acts on, and an unrecognised operation returns zero in R0 so that a guest
+module asking about something the host does not implement reads a definite
+answer rather than whatever it passed in.
+</p>
+<p>
+When the interface is disabled in the emulator's configuration the SWI is not
+handled at all and falls through to RISC OS, which reports it as unknown. A
+guest module can use that to detect that the host is not offering the service.
+</p>
+</subsection>
+
+<subsection title="Liveness">
+<p>
+The host needs to know not merely that a guest module once registered but that it
+is still running, because a command handed to a module that has since stopped
+would never be collected and never complete. Both the registration and the poll
+operations refresh that knowledge, and since the module polls from a ticker the
+host sees it regularly for as long as it is alive.
+</p>
+<p>
+A host implementation should use this to refuse work up front rather than let a
+caller wait for a reply that cannot come.
+</p>
+</subsection>
+
+<subsection title="Backpressure">
+<p>
+Output is buffered on the host, and the buffer is finite. Rather than block the
+emulated machine or throw output away, the send operation reports how many bytes
+it actually took, which may be fewer than were offered and may be none. The guest
+is expected to keep the remainder and offer it again on a later call.
+</p>
+<p>
+Two cases deliberately break that rule and claim to have accepted everything.
+When there is no client connected there is nowhere for output to go, and when the
+output belongs to a command that has been abandoned there is no longer anyone
+interested in it. In both cases the output is discarded but reported as taken, so
+that the guest never stalls waiting to flush output that nothing will ever read.
+</p>
+</subsection>
+
+<subsection title="Abandoned commands">
+<p>
+A client may disconnect while its command is still running. The command cannot be
+stopped - RISC OS is running it and the host has no way to interrupt it - so it
+runs to completion and then reports a status for a command nobody is waiting for.
+</p>
+<p>
+The host counts these. A completion arriving when no command is in flight is
+matched against that count and discarded, so it neither closes whatever command
+is current nor reaches a client. A host implementation that does not do this will
+eventually attribute one command's return code to another.
+</p>
+</subsection>
+
+<subsection title="Following the host's display">
+<p>
+The display operation is unrelated to running commands and is here because the
+guest module was already polling. It reports the screen mode the guest should
+adopt to match the host's window, so that resizing the window can change the
+RISC OS screen mode to suit.
+</p>
+<p>
+It carries a generation number rather than a change flag. The guest compares it
+against the one it last acted on, which means the host does not have to track
+what any particular guest has seen, and a guest that misses several changes
+still ends up in the right mode.
+</p>
+</subsection>
+</section>
+
+<section title="SWI calls">
+
+<swi-definition name="RPCEmu_HostCmd"
+                number="56AC5"
+                description="Runs commands sent from the host inside the emulated machine"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="9">Operation:
+  <p>
+  <value-table head-number="R9" head-value="Operation">
+   <value number="0"><reference type='swi' name='RPCEmu_HostCmd' reason='0' use-description='yes'/></value>
+   <value number="1"><reference type='swi' name='RPCEmu_HostCmd' reason='1' use-description='yes'/></value>
+   <value number="2"><reference type='swi' name='RPCEmu_HostCmd' reason='2' use-description='yes'/></value>
+   <value number="3"><reference type='swi' name='RPCEmu_HostCmd' reason='3' use-description='yes'/></value>
+   <value number="FFFFFFFF"><reference type='swi' name='RPCEmu_HostCmd' reason='FFFFFFFF' use-description='yes'/></value>
+  </value-table>
+  </p>
+ </register-use>
+ <register-use number="0-5">Dependent on the operation</register-use>
+</entry>
+<exit>
+ <register-use number="0">Dependent on the operation; 0 for an operation the host does not implement</register-use>
+ <register-use number="1-5">Dependent on the operation</register-use>
+</exit>
+
+<use>
+<p>
+Provides the guest half of the host command interface. The operation is selected
+by R9.
+</p>
+<p>
+When the interface is disabled the SWI is not intercepted and RISC OS reports it
+as unknown, which a guest module may use to detect that the host is not offering
+the service.
+</p>
+</use>
+</swi-definition>
+
+<swi-definition name="RPCEmu_HostCmd"
+                number="56AC5"
+                reason="FFFFFFFF" reasonname="Register"
+                description="Declares the guest module to the host"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="9">&hex;FFFFFFFF (operation)</register-use>
+</entry>
+<exit>
+ <register-use number="0">&hex;FFFFFFFF</register-use>
+ <register-use number="1">1 if a client is connected to the host, otherwise 0</register-use>
+</exit>
+
+<use>
+<p>
+Tells the host that the guest module is present, and reports whether anything is
+currently connected to the host waiting to send commands.
+</p>
+<p>
+This is the host's only proof that the guest half exists, which is what lets it
+refuse a command straight away rather than accept one that nothing would collect.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_HostCmd' reason='0'/>
+</related>
+</swi-definition>
+
+<swi-definition name="RPCEmu_HostCmd"
+                number="56AC5"
+                reason="0" reasonname="Poll"
+                description="Asks the host whether a command is waiting"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">Address of a buffer to receive the command</register-use>
+ <register-use number="1">Size of the buffer in bytes</register-use>
+ <register-use number="9">0 (operation)</register-use>
+</entry>
+<exit>
+ <register-use number="0">Result:
+  <p>
+  <value-table head-number="Value" head-value="Meaning">
+   <value number="0">No command is waiting</value>
+   <value number="1">A command has been placed in the buffer</value>
+   <value number="2">A command is waiting but the buffer is too small</value>
+  </value-table>
+  </p>
+ </register-use>
+ <register-use number="1">Length of the command, excluding its terminator, when R0 is 1 or 2</register-use>
+</exit>
+
+<use>
+<p>
+Collects a command from the host, if there is one. The command is written to the
+buffer and terminated with a zero byte, so the buffer must be at least one byte
+longer than the length reported.
+</p>
+<p>
+A result of 2 means the command was left where it was, and the guest should call
+again with a buffer of at least the size reported in R1 plus one.
+</p>
+<p>
+Calling this also tells the host that the guest module is still running. The
+module is expected to poll regularly - from a ticker event - so that the host
+can tell a live module from one that has stopped.
+</p>
+<p>
+Only one command is in flight at a time. Once a command has been collected, no
+further command is offered until its completion has been reported.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_HostCmd' reason='1'/>
+<reference type='swi' name='RPCEmu_HostCmd' reason='2'/>
+</related>
+</swi-definition>
+
+<swi-definition name="RPCEmu_HostCmd"
+                number="56AC5"
+                reason="1" reasonname="Output"
+                description="Passes command output back to the host"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">Address of the output</register-use>
+ <register-use number="1">Number of bytes of output</register-use>
+ <register-use number="9">1 (operation)</register-use>
+</entry>
+<exit>
+ <register-use number="0">Number of bytes the host accepted, which may be fewer than were offered, and may be zero</register-use>
+</exit>
+
+<use>
+<p>
+Offers output produced by the running command to the host. The host takes as much
+as it has room for and reports how much that was; the guest must retain the
+remainder and offer it again later.
+</p>
+<p>
+The count returned is the whole of what was offered, without it necessarily
+having been kept, in two cases: when no client is connected, and when the output
+belongs to a command whose client has since disconnected. Both discard the
+output, and both report it as accepted so that the guest is never left waiting to
+flush output that nothing will read.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_HostCmd' reason='2'/>
+</related>
+</swi-definition>
+
+<swi-definition name="RPCEmu_HostCmd"
+                number="56AC5"
+                reason="2" reasonname="Status"
+                description="Reports that a command has started or finished"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">Marker:
+  <p>
+  <value-table head-number="Value" head-value="Meaning">
+   <value number="0">The command has started</value>
+   <value number="1">The command has finished</value>
+  </value-table>
+  </p>
+ </register-use>
+ <register-use number="1">The command's return code, when the marker is 1</register-use>
+ <register-use number="2">Flags:
+  <p>
+  <bitfield-table>
+   <bit number="0" state='set'>The output was truncated</bit>
+   <bit number="1-31" state="reserved" />
+  </bitfield-table>
+  </p>
+ </register-use>
+ <register-use number="9">2 (operation)</register-use>
+</entry>
+<exit>
+ <register-use number="0">0</register-use>
+</exit>
+
+<use>
+<p>
+Delimits the command. The start marker requires nothing of the host, since the
+framing of the output already says where it begins; the finish marker carries the
+return code and releases the host to offer the next command.
+</p>
+<p>
+A finish marker arriving when no command is in flight belongs to a command whose
+client disconnected while it was still running. The host discards it: it is not
+the current command's status, and must neither close the current command nor
+reach any client.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_HostCmd' reason='0'/>
+<reference type='swi' name='RPCEmu_HostCmd' reason='1'/>
+</related>
+</swi-definition>
+
+<swi-definition name="RPCEmu_HostCmd"
+                number="56AC5"
+                reason="3" reasonname="Display"
+                description="Reads the display mode the host would like the guest to adopt"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="9">3 (operation)</register-use>
+</entry>
+<exit>
+ <register-use number="0">1 if a display target is being reported, otherwise 0</register-use>
+ <register-use number="1">Generation number, which changes whenever the host's display changes</register-use>
+ <register-use number="2">Width in pixels</register-use>
+ <register-use number="3">Height in pixels</register-use>
+ <register-use number="4">Refresh rate in Hz, or 0 if the host did not supply one</register-use>
+</exit>
+
+<use>
+<p>
+Reports the screen mode the guest should adopt to follow the host's window.
+</p>
+<p>
+The generation number is what the guest should test, rather than the dimensions:
+it changes whenever the host's display changes, so a module compares it against
+the one it last acted on and changes mode only when they differ. That way the
+host does not have to know what any guest has already seen.
+</p>
+<p>
+The dimensions returned have already been bounded by both the host display and
+the emulated machine's video memory, so a guest may use them as they stand
+without further checking.
+</p>
+</use>
+</swi-definition>
+
+</section>
+
+<section title="Examples">
+<p>
+The guest module's ticker, which is the whole of its side of the protocol:
+</p>
+
+<extended-example type='pseudo'>
+on_ticker():                                 /* called regularly */
+
+    if there is output still to flush then
+        taken = host_cmd(OUTPUT, buffer, length)
+        discard the first `taken` bytes
+        if anything remains then
+            return                           /* try again next tick */
+
+    if a command is running then
+        return
+
+    result, length = host_cmd(POLL, buffer, sizeof(buffer))
+
+    if result == 0 then                      /* nothing waiting */
+        return
+
+    if result == 2 then                      /* buffer too small */
+        enlarge buffer to length + 1
+        return                               /* collect it next tick */
+
+    host_cmd(STATUS, STARTED)
+    rc = run the command, sending its output through OUTPUT
+    host_cmd(STATUS, FINISHED, rc, flags)
+</extended-example>
+
+<p>
+The host side of a command's life, showing where an abandoned command is
+absorbed:
+</p>
+
+<extended-example type='pseudo'>
+client_sent_a_command(command):
+
+    if the guest has not been seen recently then
+        refuse("no guest module is running")  /* rather than wait for nothing */
+        return
+    hold the command as pending
+
+
+handle_poll(bufptr, bufsize):
+    remember that the guest is alive
+
+    if no command is pending or one is already in flight then
+        R0 = 0
+        return
+    if length of command + 1 > bufsize then
+        R0 = 2 ; R1 = length
+        return
+
+    write_to_guest(bufptr, command with a zero terminator)
+    mark the command in flight
+    R0 = 1 ; R1 = length
+
+
+handle_status(marker, rc):
+
+    if marker == FINISHED and nothing is in flight and abandoned > 0 then
+        abandoned = abandoned - 1            /* a disconnected client's command */
+        return                               /* never reaches a client */
+
+    if marker == FINISHED then
+        send the return code to the client
+        nothing is in flight
+
+
+client_disconnected():
+    if a command is in flight then
+        abandoned = abandoned + 1            /* it will report in eventually */
+</extended-example>
+</section>
+
+</chapter>
+
+<!-- MetaData -->
+<meta>
+ <maintainer>
+  <email name="Charles Ferguson" address="gerph@gerph.org" />
+ </maintainer>
+ <disclaimer>
+    <p>
+        This documentation describes the interface between the RPCEmu emulator
+        and the HostCmd module which runs inside the emulated machine. RPCEmu is
+        distributed under the GNU General Public License, version 2.
+    </p>
+ </disclaimer>
+
+ <history>
+  <revision number="1" author="Charles Ferguson" date="11 Aug 2026" title="Initial version">
+    <change>Documented the &hex;56AC5 host command interface.</change>
+  </revision>
+ </history>
+</meta>
+</riscos-prm>

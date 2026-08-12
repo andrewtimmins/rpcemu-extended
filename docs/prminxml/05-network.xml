@@ -1,0 +1,757 @@
+<?xml version="1.0"?>
+<!DOCTYPE riscos-prm PUBLIC "-//Gerph//DTD PRM documentation 1.03//EN"
+                            "http://gerph.org/dtd/103/prm.dtd">
+
+<riscos-prm>
+<chapter title="The RPCEmu network interface">
+
+<section title="Introduction">
+<p>
+RPCEmu presents an Ethernet interface to the emulated machine. There is no
+emulated network chip behind it. Instead the guest is given an expansion card
+whose ROM contains a DCI4 network driver, <filename>EtherRPCEm</filename>, and that
+driver moves frames by calling a single SWI which the emulator intercepts
+before RISC OS ever sees it.
+</p>
+<p>
+The reason for that arrangement is the amount of work avoided by it. A faithful
+emulation of a real network card - the i82596 of an Acorn AEH62, say, or
+the LAN91C96 of a Castle EtherY - means emulating descriptor rings, DMA
+into emulated memory, a MII register file and the card's own interrupt logic,
+all so that an unmodified driver can be persuaded to hand over an Ethernet
+frame it was always going to hand over. None of that detail is visible to the
+user, and none of it makes the emulated machine behave any more like a Risc PC.
+Replacing the chip with a SWI reduces the whole transaction to "here is a frame,
+send it" and "have you a frame for me", which is all the DCI4 layer above
+actually wants.
+</p>
+<p>
+The cost is that the driver is specific to RPCEmu. That is the trade this
+interface represents, and it is the reason the interface is worth writing down:
+anything that wants to run the stock RISC OS networking stack the way RPCEmu
+does - another emulator, a test harness, a replacement host-side
+implementation - has to provide this SWI, and there is otherwise nothing
+that says what it must do.
+</p>
+</section>
+
+<section title="Overview">
+<p>
+Three pieces cooperate, and the interface described here is the boundary
+between the second and the third.
+</p>
+<p>
+<list>
+<item>
+The <em>expansion card</em>. RPCEmu registers a podule whose ROM it builds at run
+time. The ROM holds an Acorn-conformant expansion card header, a description
+string, and a chunk of type &hex;81 (RISC OS, ROM) containing the driver
+module. RISC OS finds and starts the module during expansion card enumeration,
+exactly as it would from a real card.
+</item>
+<item>
+<p>
+The <em>guest driver</em>, <filename>EtherRPCEm</filename>. A DCI4 driver that registers
+itself with the Internet stack under the interface name <filename>rpcem</filename>. It
+implements the DCI4 SWIs the stack calls, and turns them into the calls
+described in this chapter. It owns no hardware.
+</p>
+</item>
+<item>
+The <em>host implementation</em>. The emulator's SWI handler, which converts
+between the guest's mbuf chains and flat Ethernet frames, and passes them to
+whichever backend the user has configured.
+</item>
+</list>
+</p>
+
+<p>
+Frames travel in both directions, but only one of those directions is driven by
+the guest alone. Transmission is synchronous: the driver calls, the host takes
+the frame, the call returns. Reception is interrupt-driven, because the guest
+has no way to know a frame has arrived. When the host has a frame it raises the
+expansion card's interrupt request; RISC OS dispatches that to the driver's
+device vector claimant, and the driver then calls the receive reason repeatedly
+until it is told there is nothing left.
+</p>
+<p>
+A host implementation therefore needs to do two things beyond answering the SWI:
+build an expansion card the guest will enumerate, and be able to assert the
+card's interrupt.
+</p>
+</section>
+
+<section title="Technical details">
+<p>
+The whole interface is one SWI, <reference type='swi' name='RPCEmu_Network'/>, numbered
+&hex;56AC4. It is not a registered RISC OS SWI and has no name known to
+<reference type='swi' name='OS_SWINumberFromString'/>; it is issued numerically, and the name used
+in this chapter is a convenience for documentation.
+</p>
+
+<subsection title="The emulator SWI chunk">
+<p>
+&hex;56AC4 falls inside a block of SWI numbers, based at &hex;56AC0, which
+RPCEmu inherits from ArcEm and uses for all of its host interfaces. The
+allocation is:
+</p>
+<p>
+<value-table head-number="Number" head-value="Interface">
+<value number="56AC0">Shutdown</value>
+<value number="56AC1">HostFS</value>
+<value number="56AC2">Debug</value>
+<value number="56AC3">Reserved</value>
+<value number="56AC4">Network (this chapter)</value>
+<value number="56AC5">HostCmd</value>
+<value number="56AD0">Clipboard</value>
+</value-table>
+</p>
+<p>
+An implementation that intends to be a drop-in replacement should decode the
+SWI number in full. The emulator masks the SWI operand to its bottom 20 bits
+(including the X bit) before comparing, and resolves
+<reference type='swi' name='OS_CallASWI'/> and <reference type='swi' name='OS_CallASWIR12'/> to the number held in R10
+or R12 first, so the interface is reachable through those as well as directly.
+</p>
+</subsection>
+
+<subsection title="How results are reported">
+<p>
+This SWI does not use the usual RISC OS error convention. The V flag is not
+touched on any path, and the value returned in R0 is not an error block:
+</p>
+<p>
+<list>
+<item>R0 = 0 on success.</item>
+<item>R0 &ne; 0 on failure.</item>
+</list>
+</p>
+<p>
+On failure the emulator normally returns the value it was passed in R1, having
+first written a null-terminated explanatory string to the buffer R1 points at.
+A caller must not depend on that: some backends return a bare non-zero value
+that is not a pointer to anything. Treat R0 strictly as a boolean, and read the
+message from the buffer that was passed in rather than from the address
+returned.
+</p>
+<p>
+The guest driver does exactly this. It keeps a private 256-byte message buffer
+and a static error block, passes the buffer in R1, and on a non-zero R0
+substitutes the address of its own error block - whose message text is
+that buffer - before returning to RISC OS.
+</p>
+<p>
+There is no mechanism for reporting an error number. The error block the driver
+builds carries a fixed number, so every failure of this interface reaches RISC OS
+as the same error with different text.
+</p>
+</subsection>
+
+<subsection title="Behaviour when networking is disabled">
+<p>
+If the user has configured networking off, the emulator does not handle the SWI
+at all: it returns to the guest with every register unchanged and the V flag as
+it was found. It does not report an unknown SWI.
+</p>
+<p>
+That is worth being careful about in a reimplementation, because "registers
+unchanged" is not the same as "success" for every reason code. R0 still holds
+the reason code on return, so a call that passed 0 (transmit) appears to have
+succeeded, while a call that passed 2, 3 or 4 appears to have failed and to have
+returned a pointer whose value is the reason code. A caller cannot distinguish
+"networking is switched off" from "the frame was sent", and must not try.
+</p>
+</subsection>
+
+<subsection title="The mbuf chain">
+<p>
+RISC OS network drivers exchange data with the stack as chains of mbufs
+allocated by the Mbuf Manager. The emulator reads and writes only the first six
+words of each mbuf, and ignores the rest of the structure:
+</p>
+<p>
+<offset-table head-number="Offset" head-name="Field" head-data-size="Size" head-value="Meaning">
+ <offset number="0" name="m_next" data-size="4">Address of the next mbuf in this chain, or 0 to end it</offset>
+ <offset number="4" name="m_list" data-size="4">Address of the next chain; not read or written by the emulator</offset>
+ <offset number="8" name="m_off" data-size="4">Offset from the start of the mbuf to its data</offset>
+ <offset number="12" name="m_len" data-size="4">Number of bytes of data</offset>
+ <offset number="16" name="m_inioff" data-size="4">Offset the data started at when the mbuf was allocated</offset>
+ <offset number="20" name="m_inilen" data-size="4">Capacity in bytes of the underlying block</offset>
+</offset-table>
+</p>
+<p>
+All six are 32-bit little-endian words. The payload of an mbuf begins at the
+mbuf's own address plus <variable>m_off</variable>, not at a separately stored pointer.
+</p>
+<p>
+On transmission the chain is followed through <variable>m_next</variable> and each
+segment's <variable>m_len</variable> bytes are appended to the frame in turn.
+<variable>m_list</variable> is not followed: the driver walks that itself and calls once
+per chain.
+</p>
+<p>
+On reception a single mbuf is filled in. The host sets <variable>m_off</variable> to
+<variable>m_inioff</variable>, copies the payload to that offset, sets
+<variable>m_len</variable> to the payload length, and writes all six words back.
+</p>
+<p>
+Both chain and contents are guest-controlled, and a host implementation must
+treat them as hostile. A chain built with a cycle in it will otherwise be
+followed forever, and a segment length taken at face value will overrun a fixed
+host buffer - neither of which the total-length check catches on its own,
+since a cycle of zero-length segments never grows the total. RPCEmu bounds both:
+it abandons a chain after 1024 segments with the message
+<systemoutput>RPCEmu: mbuf chain too long</systemoutput>, and checks each segment's length
+against the buffer size in its own right as well as against the running total.
+</p>
+</subsection>
+
+<subsection title="The receive header">
+<p>
+The receive reason fills in a 36-byte structure describing the frame, separately
+from the mbuf holding its payload. The driver passes this to the protocol module
+as the head of a two-mbuf chain.
+</p>
+<p>
+<offset-table head-number="Offset" head-name="Field" head-data-size="Size" head-value="Meaning">
+ <offset number="0" name="rx_ptr" data-size="4" state="reserved">Reserved; set to zero</offset>
+ <offset number="4" name="rx_tag" data-size="4" state="reserved">Reserved; set to zero</offset>
+ <offset number="8" name="rx_src_addr" data-size="6">Source MAC address</offset>
+ <offset number="14" data-size="2" state="reserved">Padding; set to zero</offset>
+ <offset number="16" name="rx_dst_addr" data-size="6">Destination MAC address</offset>
+ <offset number="22" data-size="2" state="reserved">Padding; set to zero</offset>
+ <offset number="24" name="rx_frame_type" data-size="4">EtherType, or length for an IEEE 802.3 frame</offset>
+ <offset number="28" name="rx_error_level" data-size="4">Error level; always zero</offset>
+ <offset number="32" name="rx_cksum" data-size="4" state="reserved">Reserved; set to zero</offset>
+</offset-table>
+</p>
+<p>
+The whole structure is cleared before the fields that carry information are
+filled in, so a reimplementation should zero the reserved and padding words
+rather than leave them holding whatever the guest last put there.
+</p>
+<p>
+Note that the frame type is delivered as a 32-bit host-endian word here, having
+been assembled from the two big-endian bytes on the wire. It is the driver, not
+the host, that decides whether a value of 1500 or less means an IEEE length
+rather than an EtherType.
+</p>
+</subsection>
+
+<subsection title="Frame layout on the wire">
+<p>
+The host builds a complete Ethernet II frame from the registers and the mbuf
+chain: six bytes of destination address, six of source address, then the frame
+type as two big-endian bytes, then the concatenated mbuf payloads. No CRC is
+appended, and no padding to the 60-byte Ethernet minimum is applied -
+both belong to the transport the frame is handed to.
+</p>
+<p>
+On reception the same 14-byte header is stripped, its three fields going into
+the receive header structure and the remainder becoming the mbuf payload.
+</p>
+<p>
+A host transport may need its own framing in front of that, and if it does, that
+framing is its own business and is not visible through this interface. RPCEmu's
+IP tunnelling backend, for instance, prepends four zero bytes to everything it
+writes to the tunnel device and skips them again on the way back.
+</p>
+</subsection>
+
+<subsection title="Interrupts and the receive cycle">
+<p>
+Reason 2 exists so that the host knows the driver is present and ready. The
+driver calls it once during initialisation, with a non-zero value, and again
+with zero as it shuts down. RPCEmu stores the value but never dereferences it:
+what matters is only whether it is zero. A host implementation that has nowhere
+to deliver a frame - because the driver has not called reason 2, or has
+called it with zero - should drop arriving frames rather than queue them.
+</p>
+<p>
+The name of the reason reflects an older design in which the value was the
+address of a word in guest memory to be used as an interrupt status register.
+That is no longer how it works, and a reimplementation should not write to the
+address it is given.
+</p>
+<p>
+When a frame arrives, the host raises the expansion card's interrupt request.
+The driver's interrupt handler then:
+</p>
+<p>
+<list>
+<item>calls reason 3 with R2 = 0 to lower the request;</item>
+<item>calls reason 1 repeatedly, taking one frame per call;</item>
+<item>stops when a call returns with the data-available flag clear.</item>
+</list>
+</p>
+<p>
+Because the request is cleared before the frames are collected, a host that
+receives a frame while the guest is still draining the queue must raise the
+request again. RPCEmu queues up to 32 frames of up to 2048 bytes each behind
+the one currently being offered, and promotes the next one as each is taken.
+</p>
+<p>
+Reason 3 also allows the driver to raise the request itself, with a non-zero
+R2. Nothing in the shipped driver does so.
+</p>
+</subsection>
+
+<subsection title="Size limits">
+<p>
+The limits are properties of the host implementation rather than of the
+interface, and a reimplementation may choose its own. RPCEmu's are:
+</p>
+<p>
+<definition-table head-name="Limit" head-value="Value">
+ <definition name="Largest frame">2048 bytes, including the 14-byte Ethernet header</definition>
+ <definition name="Chain length">1024 mbuf segments followed in one chain</definition>
+ <definition name="Receive queue">32 frames held awaiting collection</definition>
+</definition-table>
+</p>
+<p>
+The driver advertises an MTU of 1500 and refuses to change it, so a frame
+larger than 1514 bytes should not arise from the guest in normal use.
+</p>
+</subsection>
+</section>
+
+<section title="SWI calls">
+
+<swi-definition name="RPCEmu_Network"
+                number="56AC4"
+                description="Moves Ethernet frames between the guest and the host"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">Reason code:
+  <p>
+  <value-table head-number="Reason" head-value="Action">
+   <value number="0"><reference type='swi' name='RPCEmu_Network' reason='0' use-description='yes'/></value>
+   <value number="1"><reference type='swi' name='RPCEmu_Network' reason='1' use-description='yes'/></value>
+   <value number="2"><reference type='swi' name='RPCEmu_Network' reason='2' use-description='yes'/></value>
+   <value number="3"><reference type='swi' name='RPCEmu_Network' reason='3' use-description='yes'/></value>
+   <value number="4"><reference type='swi' name='RPCEmu_Network' reason='4' use-description='yes'/></value>
+  </value-table>
+  </p>
+ </register-use>
+ <register-use number="1">Address of a buffer to receive an error message, or 0 if the reason code cannot fail</register-use>
+ <register-use number="2-5">Dependent on reason code</register-use>
+</entry>
+<exit>
+ <register-use number="0">0 if the operation succeeded, non-zero if it failed</register-use>
+ <register-use number="1">Dependent on reason code</register-use>
+ <register-use number="2-5" state="preserved" />
+</exit>
+
+<use>
+<p>
+This SWI is the whole of the interface between the <filename>EtherRPCEm</filename>
+driver running in the emulated machine and the emulator hosting it. The reason
+code in R0 selects the operation.
+</p>
+<p>
+The V flag is not set on failure and the value in R0 is not an error block; see
+the technical details above before writing a caller.
+</p>
+<p>
+An unrecognised reason code writes the message
+<systemoutput>Unknown RPCEmu network SWI</systemoutput> to the buffer addressed by R1 and
+returns that address in R0. R1 must therefore address a writable buffer of at
+least 27 bytes whenever a reason code that might not be recognised is used.
+</p>
+</use>
+</swi-definition>
+
+<swi-definition name="RPCEmu_Network"
+                number="56AC4"
+                reason="0" reasonname="Transmit"
+                description="Sends an Ethernet frame to the host network"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">0 (reason code)</register-use>
+ <register-use number="1">Address of a buffer to receive an error message</register-use>
+ <register-use number="2">Address of the mbuf chain holding the frame payload, or 0 to send a frame with no payload</register-use>
+ <register-use number="3">Address of the 6-byte destination MAC address</register-use>
+ <register-use number="4">Address of the 6-byte source MAC address, or 0 to use the emulated machine's own</register-use>
+ <register-use number="5">Frame type (EtherType), or the payload length for an IEEE 802.3 frame</register-use>
+</entry>
+<exit>
+ <register-use number="0">0 if the frame was sent, non-zero if it was not</register-use>
+ <register-use number="1-5" state="preserved" />
+</exit>
+
+<use>
+<p>
+Builds an Ethernet frame from the addresses and frame type given, followed by
+the concatenated contents of the mbuf chain, and hands it to the host network.
+</p>
+<p>
+The addresses in R3 and R4 are byte-aligned pointers into guest memory, not
+values. R4 may be zero, in which case the host substitutes the MAC address it
+reports through <reference type='swi' name='RPCEmu_Network' reason='4'/>.
+</p>
+<p>
+Only the low 16 bits of R5 reach the wire, most significant byte first.
+</p>
+<p>
+The call is synchronous and the frame has been passed to the host transport by
+the time it returns. Ownership of the mbuf chain is unaffected: the caller still
+owns it, and is responsible for freeing it if the DCI4 client asked the driver
+to take ownership.
+</p>
+<p>
+The call fails if the frame does not fit the host's buffer, or if the mbuf chain
+is longer than the host is prepared to follow. It may also fail for reasons
+belonging to the host transport, such as a write error on a tunnel device.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_Network' reason='1'/>
+<reference type='swi' name='RPCEmu_Network' reason='4'/>
+</related>
+</swi-definition>
+
+<swi-definition name="RPCEmu_Network"
+                number="56AC4"
+                reason="1" reasonname="Receive"
+                description="Collects a received Ethernet frame from the host"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">1 (reason code)</register-use>
+ <register-use number="1">Address of a buffer to receive an error message</register-use>
+ <register-use number="2">Address of an mbuf to hold the payload, or 0 if none is available</register-use>
+ <register-use number="3">Address of a 36-byte block to hold the receive header</register-use>
+</entry>
+<exit>
+ <register-use number="0">0 if the call succeeded, non-zero if it failed</register-use>
+ <register-use number="1">1 if a frame was collected, 0 if none was waiting</register-use>
+ <register-use number="2-5" state="preserved" />
+</exit>
+
+<use>
+<p>
+Takes at most one frame from the host and delivers it to the guest, stripping
+the 14-byte Ethernet header into the block addressed by R3 and copying the
+payload into the mbuf addressed by R2.
+</p>
+<p>
+The flag returned in R1 is the one to test, not R0. R0 reports whether the call
+worked; R1 reports whether it produced a frame. Both an empty queue and a frame
+the host chose to drop return R0 = 0 with R1 = 0.
+</p>
+<p>
+Frames that cannot be delivered are dropped rather than reported. A frame is
+undeliverable if no mbuf was supplied, if it has no payload beyond the
+Ethernet header, or if its payload is larger than the supplied mbuf's
+<variable>m_inilen</variable>. In each case the frame is consumed, the guest's receive
+header is left untouched, and the next queued frame is promoted.
+</p>
+<p>
+Dropping rather than reporting is deliberate. A host implementation that leaves
+an undeliverable frame in place, and returns an error, will never accept another
+frame from its transport, and the emulated machine's networking stops for the
+rest of the session with no way back short of a reset. The cost of dropping the
+frame is one retransmission.
+</p>
+<p>
+Callers should repeat the call until R1 returns 0, since more than one frame may
+be waiting behind a single interrupt.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_Network' reason='0'/>
+<reference type='swi' name='RPCEmu_Network' reason='3'/>
+</related>
+</swi-definition>
+
+<swi-definition name="RPCEmu_Network"
+                number="56AC4"
+                reason="2" reasonname="SetIRQStatus"
+                description="Registers the driver as ready to receive frames"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">2 (reason code)</register-use>
+ <register-use number="1">0 (this reason code cannot fail)</register-use>
+ <register-use number="2">Non-zero to declare the driver ready to receive frames, or 0 to declare it no longer ready</register-use>
+</entry>
+<exit>
+ <register-use number="0">0</register-use>
+ <register-use number="1-5" state="preserved" />
+</exit>
+
+<use>
+<p>
+Tells the host whether there is a driver able to accept received frames. The
+host should discard arriving frames, rather than queue them, at any time when
+the most recent call passed zero or no call has been made.
+</p>
+<p>
+The value passed in R2 is not interpreted beyond being zero or non-zero. The
+name of the reason code, and the driver's habit of passing an address, are
+inherited from an earlier design in which R2 gave the address of a word in guest
+memory to be used as an interrupt status register. A host implementation must
+not write to it.
+</p>
+<p>
+The driver calls this with a non-zero value at the end of its initialisation,
+once it has claimed its device vector and enabled the expansion card's
+interrupt, and with zero at the start of its finalisation.
+</p>
+<p>
+This state is part of the machine's suspended state. An implementation
+supporting snapshots must save and restore it, or a machine resumed from a
+snapshot will never receive another frame.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_Network' reason='1'/>
+<reference type='swi' name='RPCEmu_Network' reason='3'/>
+</related>
+</swi-definition>
+
+<swi-definition name="RPCEmu_Network"
+                number="56AC4"
+                reason="3" reasonname="SetIRQRequest"
+                description="Raises or lowers the expansion card's interrupt request"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">3 (reason code)</register-use>
+ <register-use number="1">0 (this reason code cannot fail)</register-use>
+ <register-use number="2">Non-zero to raise the interrupt request, or 0 to lower it</register-use>
+</entry>
+<exit>
+ <register-use number="0">0</register-use>
+ <register-use number="1-5" state="preserved" />
+</exit>
+
+<use>
+<p>
+Sets the state of the interrupt request from the network expansion card.
+</p>
+<p>
+The driver calls this with R2 = 0 as the first action of its interrupt handler,
+to acknowledge the interrupt before collecting the frames that caused it. This
+is the guest's only way to clear the request: the card presents its interrupt
+status through the expansion card's IOC space, which is read-only.
+</p>
+<p>
+A host implementation raises the request itself when a frame arrives, and must
+raise it again if further frames arrive after the guest has cleared it but
+before the guest has drained the queue.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_Network' reason='1'/>
+<reference type='swi' name='RPCEmu_Network' reason='2'/>
+</related>
+</swi-definition>
+
+<swi-definition name="RPCEmu_Network"
+                number="56AC4"
+                reason="4" reasonname="ReadHardwareAddress"
+                description="Reads the emulated machine's MAC address"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">4 (reason code)</register-use>
+ <register-use number="1">0 (this reason code cannot fail)</register-use>
+ <register-use number="2">Address of a 6-byte buffer to hold the MAC address</register-use>
+</entry>
+<exit>
+ <register-use number="0">0</register-use>
+ <register-use number="1-5" state="preserved" />
+</exit>
+
+<use>
+<p>
+Writes the MAC address of the emulated Ethernet interface to the buffer
+addressed by R2, most significant byte first, as it would appear on the wire.
+</p>
+<p>
+This is the address the host substitutes when
+<reference type='swi' name='RPCEmu_Network' reason='0'/> is called with R4 = 0,
+and the address a host implementation should filter received frames against if
+it filters at all.
+</p>
+<p>
+The driver calls this once, at the very start of its initialisation, and
+publishes the result through the DCI4 device information block. It does not
+check the result, so a host implementation that cannot supply an address must
+still leave the buffer in a defined state.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_Network' reason='0'/>
+</related>
+</swi-definition>
+
+</section>
+
+<section title="Examples">
+<p>
+The minimum a host implementation must do to satisfy the driver, expressed as
+the handler for the intercepted SWI. Frames are exchanged with whatever
+transport the implementation provides; the parts that matter here are the
+register contract, the mbuf walk and the treatment of failures.
+</p>
+
+<extended-example type='pseudo'>
+handle_swi(r0, r1, r2, r3, r4, r5):
+
+    case r0 of
+
+    0:  /* Transmit */
+        frame = bytes_from_guest(r3, 6)                 /* destination */
+        if r4 != 0 then
+            frame += bytes_from_guest(r4, 6)            /* source */
+        else
+            frame += our_mac_address
+        frame += big_endian_16(r5)                      /* frame type */
+
+        mbuf = r2
+        hops = 0
+        while mbuf != 0
+            hops = hops + 1
+            if hops > MAX_HOPS then                     /* a cycle: give up */
+                string_to_guest(r1, "mbuf chain too long")
+                return r1
+            m = read_words_from_guest(mbuf, 6)          /* the six-word subset */
+            if m.m_len > MAX_FRAME or
+               length(frame) + m.m_len > MAX_FRAME then
+                string_to_guest(r1, "Packet too large to send")
+                return r1
+            frame += bytes_from_guest(mbuf + m.m_off, m.m_len)
+            mbuf = m.m_next
+
+        transmit(frame)
+        return 0
+
+    1:  /* Receive */
+        if no frame waiting then
+            set_r1(0)
+            return 0
+
+        frame = take_next_waiting_frame()               /* consumed either way */
+
+        if r2 == 0 or length(frame) &lt;= 14 then
+            log("dropped a received frame")             /* never an error */
+            set_r1(0)
+            return 0
+
+        m = read_words_from_guest(r2, 6)
+        payload_len = length(frame) - 14
+        if payload_len > m.m_inilen then
+            log("dropped a received frame: too big for the guest's mbuf")
+            set_r1(0)
+            return 0
+
+        hdr = zeroed(36)
+        hdr.rx_dst_addr  = frame[0..5]
+        hdr.rx_src_addr  = frame[6..11]
+        hdr.rx_frame_type = (frame[12] &lt;&lt; 8) or frame[13]
+        write_to_guest(r3, hdr)                         /* only once deliverable */
+
+        m.m_off = m.m_inioff
+        m.m_len = payload_len
+        write_to_guest(r2 + m.m_off, frame[14..])
+        write_words_to_guest(r2, m)
+
+        set_r1(1)
+        return 0
+
+    2:  /* SetIRQStatus */
+        driver_is_ready = (r2 != 0)                     /* the value, not the address */
+        return 0
+
+    3:  /* SetIRQRequest */
+        if r2 != 0 then
+            raise_podule_interrupt()
+        else
+            lower_podule_interrupt()
+        return 0
+
+    4:  /* ReadHardwareAddress */
+        write_to_guest(r2, our_mac_address)
+        return 0
+
+    otherwise:
+        string_to_guest(r1, "Unknown RPCEmu network SWI")
+        return r1
+</extended-example>
+
+<p>
+A frame arriving from the transport is offered to the guest like this:
+</p>
+
+<extended-example type='pseudo'>
+frame_arrived(frame):
+
+    if not driver_is_ready then
+        return                                          /* nowhere to put it */
+
+    if nothing is currently being offered then
+        offer(frame)
+        raise_podule_interrupt()                        /* the guest is idle */
+    else
+        if queue is full then
+            return                                      /* drop it */
+        enqueue(frame)
+</extended-example>
+
+<p>
+Note that the interrupt is raised only when the guest is not already working
+through frames. The guest lowers the request itself before it starts collecting,
+so a frame arriving during that window is picked up by the loop the guest is
+already running, and one arriving after it has finished raises the request
+afresh when it is promoted out of the queue.
+</p>
+</section>
+
+</chapter>
+
+<!-- MetaData -->
+<meta>
+ <maintainer>
+  <email name="Charles Ferguson" address="gerph@gerph.org" />
+ </maintainer>
+ <disclaimer>
+    <p>
+        This documentation describes the interface between the RPCEmu emulator
+        and the <filename>EtherRPCEm</filename> network driver which runs inside the
+        emulated machine. RPCEmu is distributed under the GNU General Public
+        License, version 2.
+    </p>
+ </disclaimer>
+
+ <history>
+  <revision number="1" author="Charles Ferguson" date="11 Aug 2026" title="Initial version">
+    <change>Documented the &hex;56AC4 network interface and its five reason codes.</change>
+  </revision>
+ </history>
+
+ <related>
+    <reference type='link' href="https://www.marutan.net/rpcemu/" />
+ </related>
+</meta>
+</riscos-prm>

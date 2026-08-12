@@ -2,7 +2,7 @@
 
 **A modern ('ish), cross-platform RISC OS machine on your desktop — and a serious platform for RISC OS development.**
 
-Extened Edition is an extended fork of **[RPCEmu](http://www.marutan.net/rpcemu/)**, the
+Extended Edition is an extended fork of **[RPCEmu](http://www.marutan.net/rpcemu/)**, the
 open-source emulator for Acorn's Risc PC and A7000, brought right up to date. It runs on
 **Linux, Windows and macOS** with a clean wxWidgets interface and a full-speed dynamic
 recompiler. Run **several machines** from a startup selector, **suspend and resume** a
@@ -113,6 +113,7 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `docs/multi-machine.md` | Running several machines at once: how it works today, the virtual switch planned, and why the core is one machine per process |
 | `docs/pyromaniac-networking.md` | Sharing a virtual network with RISC OS Pyromaniac and other emulators, through a JSON tun/tap server |
 | `docs/hostcmd.md` | HostCmd: drive the RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`) |
+| `docs/prminxml/` | **The host interfaces manual**, in PRM-in-XML: HostFS, HostCmd, the clipboard and the network SWI — every operation, its registers, and how each reports failure. Written for someone implementing the host half rather than for someone using the emulator. Rendered to HTML by CI and published with each release; `make` in that directory builds it locally |
 | `tools/mcp/README.md` | MCP server: drive a RISC OS machine from Claude / an agent (commands, files, screen, debugger). Setup + tool reference. |
 | `docs/debugcmd.md` | DebugCmd: control the emulated CPU over a socket (`rpcemu-debug`) — registers, memory, disassembly, conditional breakpoints, stepping over and out, backtraces, symbols |
 | `docs/disassembly.md` | The ARM disassembler: what it covers, the FPA and RISC OS SWI names, and why it is not a library |
