@@ -543,6 +543,8 @@ void ManagerFrame::BuildMachineMenus(wxMenuBar *menu_bar)
 	machine_settings_menu_->AppendCheckItem(ID_MENU_FOLLOW_HOST_DISPLAY,
 	    "Follow Host Display");
 	machine_settings_menu_->AppendSeparator();
+	machine_settings_menu_->AppendCheckItem(ID_MENU_MOUSE_HACK,
+	    "Mouse Follows Host Pointer");
 	machine_settings_menu_->AppendCheckItem(ID_MENU_MOUSE_TWOBUTTON, "Two-Button Mouse");
 	machine_settings_menu_->AppendCheckItem(ID_MENU_SHARED_CLIPBOARD, "Shared Clipboard");
 	machine_settings_menu_->AppendCheckItem(ID_MENU_CPU_IDLE, "Reduce CPU Usage");
@@ -726,10 +728,28 @@ void ManagerFrame::UpdateStatusText()
 	    ? wxString("RPCEmu Extended")
 	    : wxString::Format("RPCEmu Extended - %s", active_machine_));
 
-	SetStatusText(wxString::Format("Current machine: %s   |   %zu machine%s, %zu running",
+	wxString status = wxString::Format(
+	    "Current machine: %s   |   %zu machine%s, %zu running",
 	    active_machine_.empty() ? wxString("None") : active_machine_,
 	    machine_names_.size(), machine_names_.size() == 1 ? "" : "s",
-	    running_count_), 1);
+	    running_count_);
+
+	/*
+	 * What the mouse is doing, but only when it is doing something the user has
+	 * to know about. Follow-mouse needs no explanation and is the usual case, so
+	 * saying so on every machine would be noise; a captured pointer very much
+	 * does need explaining, since the way out of it is a keystroke.
+	 */
+	auto it = running_.find(active_machine_);
+
+	if (it != running_.end() && it->second.panel != nullptr &&
+	    !it->second.panel->FollowHostMouse()) {
+		status += it->second.panel->PointerCaptured()
+		    ? "   |   Alt+Enter releases the mouse"
+		    : "   |   Click to capture the mouse";
+	}
+
+	SetStatusText(status, 1);
 }
 
 wxString ManagerFrame::SelectedMachineName() const
@@ -869,6 +889,15 @@ void ManagerFrame::AttachPanelFor(const wxString &name, const wxString &shared_f
 	panel->SetStateCallback([this, name](const wxString &report) {
 		if (name == active_machine_) {
 			ApplyStateReport(report);
+		}
+	});
+
+	/* Capture starts and ends with a click or a keystroke inside the panel, which
+	   this window never sees, so it has to be told - the status bar is what says
+	   how to escape. */
+	panel->SetCaptureChangedCallback([this, name]() {
+		if (name == active_machine_) {
+			UpdateStatusText();
 		}
 	});
 
@@ -1932,6 +1961,22 @@ void ManagerFrame::ApplyStateReport(const wxString &report)
 
 		if (item != nullptr && item->IsCheckable()) {
 			item->Check(value != 0);
+		}
+
+		/*
+		 * The mouse mode is not only a tick-box here: the panel has to know it
+		 * to decide whether the machine is sent the pointer's position or its
+		 * movement, and getting that wrong is not a cosmetic fault - a machine
+		 * expecting movements asserts on a position. Which is why it is taken
+		 * from what the machine says rather than from what this menu shows.
+		 */
+		if (id == ID_MENU_MOUSE_HACK) {
+			auto it = running_.find(active_machine_);
+
+			if (it != running_.end() && it->second.panel != nullptr) {
+				it->second.panel->SetFollowHostMouse(value != 0);
+			}
+			UpdateStatusText();
 		}
 
 		/* Mute also has a toolbar tool, which has to agree with its menu

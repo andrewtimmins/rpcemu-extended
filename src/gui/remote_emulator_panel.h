@@ -41,13 +41,13 @@ extern "C" {
  * receiving them in-process, and sending input over a MachineIpcClient
  * instead of calling EmulatorHost directly.
  *
- * Scope note: this reproduces EmulatorPanel's absolute ("mouse follows host
- * pointer" / mousehackon) mouse mode and its 1:1 keyboard forwarding, which
- * covers ordinary use. It does not yet reproduce the relative/captured
- * pointer mode EmulatorPanel offers when mousehackon is off (host pointer
- * warped to centre, deltas forwarded) - that needs the remote machine's
- * mousehackon setting mirrored to the Manager first, deferred as follow-up
- * work rather than guessed at here. Nor does it offer integer-scaling /
+ * Scope note: this reproduces both of EmulatorPanel's mouse modes and its 1:1
+ * keyboard forwarding. Absolute ("mouse follows host pointer" / mousehackon)
+ * covers ordinary use; captured mode - a click pins the host pointer to the
+ * middle of the picture and RISC OS is sent movements instead of positions - is
+ * what games that drive the pointer themselves need. Which one is in force is
+ * the machine's business, not this window's: it arrives in the machine's own
+ * StateReport, via SetFollowHostMouse(). It does not offer integer-scaling /
  * fit-to-window as separate modes; it always scales to fill the panel.
  */
 class RemoteEmulatorPanel : public wxPanel {
@@ -112,10 +112,44 @@ public:
 	/* Act on Settings... having been changed while this machine is running. */
 	void SetHardwareAcceleration(bool enabled);
 
+	/*
+	 * Which mouse mode the machine is in, as the machine itself reports it (see
+	 * IpcEventType::StateReport). True is the ordinary "pointer follows the host
+	 * one" mode; false means the machine expects movements, which this panel
+	 * only starts sending once the user has clicked to capture.
+	 *
+	 * Asked rather than assumed because the setting belongs to the machine and
+	 * survives in its config: a machine left in capture mode is still in it the
+	 * next time the Manager shows it.
+	 */
+	void SetFollowHostMouse(bool follow);
+
+	/*
+	 * Give the mouse back, if this panel has it. Answers whether it did, so a
+	 * caller handling Alt+Enter can tell whether the key has been used up.
+	 */
+	bool ReleaseCapturedPointer();
+
+	/* The two answers a window with a status bar needs to say how the mouse is
+	   behaving and what to press. */
+	bool PointerCaptured() const { return pointer_captured_; }
+	bool FollowHostMouse() const { return follow_host_mouse_; }
+
 	using LeaveFullScreenCallback = std::function<bool()>;
 	void SetLeaveFullScreenCallback(LeaveFullScreenCallback callback)
 	{
 		on_leave_full_screen_ = std::move(callback);
+	}
+
+	/*
+	 * The pointer has been captured or given back. Called because capture begins
+	 * with a click inside this panel, which the window around it never sees, and
+	 * that window is the one with a status bar to say how to escape.
+	 */
+	using CaptureChangedCallback = std::function<void()>;
+	void SetCaptureChangedCallback(CaptureChangedCallback callback)
+	{
+		on_capture_changed_ = std::move(callback);
 	}
 
 private:
@@ -135,6 +169,18 @@ private:
 	void UpdateCursor();
 	int MapClickButton(const wxMouseEvent &event) const;
 	wxPoint PanelPointToGuest(int x, int y) const;
+
+	/* Take the pointer, on a click in captured mode. */
+	void CaptureThePointer();
+
+	/* Where the pointer is pinned while captured: the middle of the picture, not
+	   of the panel, so the deltas are measured from a point inside the guest's
+	   screen rather than from somewhere in the bars beside it. */
+	wxPoint CaptureCentre() const;
+
+	/* Warp the pointer back to the centre and send the machine how far it moved
+	   to get away from there. */
+	void SendCapturedMotion(const wxMouseEvent &event);
 
 	/*
 	 * Where in the panel the guest's screen is actually drawn: aspect-fitted
@@ -202,6 +248,20 @@ private:
 	StateCallback on_state_;
 	ErrorCallback on_error_;
 	LeaveFullScreenCallback on_leave_full_screen_;
+	CaptureChangedCallback on_capture_changed_;
+
+	/*
+	 * The mouse mode, and whether the pointer has been captured in it.
+	 *
+	 * follow_host_mouse_ starts true so a machine whose state has not arrived yet
+	 * behaves as it always has, rather than ignoring the mouse until it does.
+	 * The carries belong to remote_display_delta_to_guest(); see that comment for
+	 * why they exist.
+	 */
+	bool follow_host_mouse_ = true;
+	bool pointer_captured_ = false;
+	int capture_carry_x_ = 0;
+	int capture_carry_y_ = 0;
 
 	bool live_ = false;
 	wxString attach_error_;

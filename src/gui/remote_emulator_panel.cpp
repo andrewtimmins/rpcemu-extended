@@ -111,6 +111,9 @@ RemoteEmulatorPanel::RemoteEmulatorPanel(wxWindow *parent, const std::string &sh
 void RemoteEmulatorPanel::CloseConnection()
 {
 	live_ = false;
+	/* Before the cursor is put back, or a machine that has gone leaves the
+	   pointer pinned to a panel with nothing in it. */
+	ReleaseCapturedPointer();
 	ipc_client_.Disconnect();
 }
 
@@ -122,29 +125,149 @@ RemoteEmulatorPanel::~RemoteEmulatorPanel()
 /*
  * Hide the host arrow while a machine is being shown.
  *
- * This panel always runs in the absolute "guest pointer follows the host one"
- * mode (see the class comment), so RISC OS draws its own pointer wherever the
- * host pointer is. Leaving the host arrow visible as well put two pointers on
- * screen, one on top of the other - EmulatorPanel blanks it for exactly this
- * reason in UpdateMouseCursor().
+ * Whenever RISC OS is drawing a pointer of its own - which it does in both mouse
+ * modes - the host arrow would be a second pointer on screen, one on top of the
+ * other. EmulatorPanel blanks it for exactly this reason in UpdateMouseCursor().
  *
  * The arrow comes back when the machine has gone, where the panel is showing a
- * "Machine stopped" message and there is no guest pointer to replace it.
+ * "Machine stopped" message and there is no guest pointer to replace it, and in
+ * captured mode until the click that captures.
  */
 void RemoteEmulatorPanel::UpdateCursor()
 {
-	SetCursor(wxCursor(live_ ? wxCURSOR_BLANK : wxCURSOR_ARROW));
+	/*
+	 * Hidden while there is a guest pointer standing in for it, which is both
+	 * mouse modes bar one case: a machine in captured mode that has not been
+	 * clicked yet. There the guest pointer is wherever RISC OS left it and the
+	 * host one is the only thing tracking the hand, so hiding it would leave the
+	 * user with no pointer at all and no clue that a click is what starts it.
+	 */
+	const bool hide = live_ && (follow_host_mouse_ || pointer_captured_);
+	const wxCursor cursor(hide ? wxCURSOR_BLANK : wxCURSOR_ARROW);
+
+	SetCursor(cursor);
 #if wxUSE_GLCANVAS
 	/* The canvas is the window the pointer is actually over. */
 	if (gl_canvas_ != nullptr) {
-		gl_canvas_->SetCursor(wxCursor(live_ ? wxCURSOR_BLANK : wxCURSOR_ARROW));
+		gl_canvas_->SetCursor(cursor);
 	}
 #endif
+}
+
+void RemoteEmulatorPanel::SetFollowHostMouse(bool follow)
+{
+	if (follow == follow_host_mouse_) {
+		return;
+	}
+	follow_host_mouse_ = follow;
+
+	/*
+	 * Turning follow-mouse back on while the pointer is captured has to let it
+	 * go: the machine is about to expect positions again, and a pointer still
+	 * pinned to the middle of the picture could never send one.
+	 */
+	if (follow_host_mouse_ && pointer_captured_) {
+		ReleaseCapturedPointer();
+		return;
+	}
+
+	UpdateCursor();
+}
+
+wxPoint RemoteEmulatorPanel::CaptureCentre() const
+{
+	const wxRect rect = DisplayRect();
+
+	return wxPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+}
+
+void RemoteEmulatorPanel::CaptureThePointer()
+{
+	pointer_captured_ = true;
+	capture_carry_x_ = 0;
+	capture_carry_y_ = 0;
+
+	const wxPoint centre = CaptureCentre();
+
+	WarpPointer(centre.x, centre.y);
+	UpdateCursor();
+
+	if (on_capture_changed_) {
+		on_capture_changed_();
+	}
+}
+
+bool RemoteEmulatorPanel::ReleaseCapturedPointer()
+{
+	if (!pointer_captured_) {
+		return false;
+	}
+	pointer_captured_ = false;
+	UpdateCursor();
+
+	if (on_capture_changed_) {
+		on_capture_changed_();
+	}
+	return true;
+}
+
+/*
+ * Movement while the pointer is captured.
+ *
+ * The pointer is put back in the middle after every movement, so the distance it
+ * managed to get from there is how far the hand went - the same trick
+ * EmulatorPanel uses in a machine's own window, and for the same reason: RISC OS
+ * is being told about movement, so the host pointer must never run out of room
+ * to move in.
+ *
+ * The warp is what makes the next event's coordinates meaningful, so it happens
+ * whether or not this movement amounted to a whole guest pixel.
+ */
+void RemoteEmulatorPanel::SendCapturedMotion(const wxMouseEvent &event)
+{
+	const wxPoint centre = CaptureCentre();
+	const int panel_dx = event.GetX() - centre.x;
+	const int panel_dy = event.GetY() - centre.y;
+
+	if (panel_dx == 0 && panel_dy == 0) {
+		/* Our own warp coming back to us. */
+		return;
+	}
+
+	WarpPointer(centre.x, centre.y);
+
+	const wxSize client = GetClientSize();
+	const struct remote_display_rect rect = remote_display_rect_for(
+	    client.GetWidth(), client.GetHeight(), frame_width_, frame_height_);
+	int guest_dx = 0, guest_dy = 0;
+
+	remote_display_delta_to_guest(rect, frame_width_, frame_height_,
+	    panel_dx, panel_dy, &capture_carry_x_, &capture_carry_y_,
+	    &guest_dx, &guest_dy);
+
+	if (guest_dx == 0 && guest_dy == 0) {
+		/* Less than a guest pixel so far; the remainder is keeping it. */
+		return;
+	}
+
+	IpcRequest request;
+	request.type = IpcRequestType::MouseMoveRelative;
+	request.arg1 = guest_dx;
+	request.arg2 = guest_dy;
+
+	SendRequest(request);
 }
 
 void RemoteEmulatorPanel::SetActive(bool active)
 {
 	active_ = active;
+
+	/* Switching to another machine gives the pointer back: it was captured for
+	   this one, and the user is now looking at a different screen. */
+	if (!active_) {
+		ReleaseCapturedPointer();
+	}
+
 	if (active_ && live_) {
 		/* Show whatever the machine last drew immediately, rather than
 		   waiting for the guest to draw something new after the switch -
@@ -851,6 +974,22 @@ void RemoteEmulatorPanel::OnMouseMove(wxMouseEvent &event)
 
 	NoteInput();
 
+	/*
+	 * ★ A machine in captured mode is never sent a position.
+	 *
+	 * Not merely pointless but wrong: the machine's own mouse code asserts that
+	 * positions arrive only in follow-mouse mode, so sending one to a machine
+	 * expecting movements is a bug on the other side of the socket. Before the
+	 * click that captures the pointer, there is nothing to send at all - which is
+	 * what a machine's own window does too.
+	 */
+	if (!follow_host_mouse_) {
+		if (pointer_captured_) {
+			SendCapturedMotion(event);
+		}
+		return;
+	}
+
 	const wxPoint guest = PanelPointToGuest(event.GetX(), event.GetY());
 	IpcRequest request;
 	request.type = IpcRequestType::MouseMove;
@@ -867,6 +1006,18 @@ void RemoteEmulatorPanel::OnMouseDown(wxMouseEvent &event)
 		return;
 	}
 
+	/*
+	 * In captured mode the first click takes the pointer rather than reaching
+	 * RISC OS, as it does in a machine's own window. It has to be spent on
+	 * something: the guest pointer is wherever RISC OS left it, so a click passed
+	 * on now would land somewhere the user was not aiming at.
+	 */
+	if (!follow_host_mouse_ && !pointer_captured_) {
+		NoteInput();
+		CaptureThePointer();
+		return;
+	}
+
 	const int buttons = MapClickButton(event);
 	if (buttons == 0) {
 		return;
@@ -875,7 +1026,12 @@ void RemoteEmulatorPanel::OnMouseDown(wxMouseEvent &event)
 	NoteInput();
 	held_buttons_ |= buttons;
 
-	OnMouseMove(event);
+	/* Only in follow-mouse mode: a captured pointer has no position to send, and
+	   RISC OS already has it from the movements. */
+	if (follow_host_mouse_) {
+		OnMouseMove(event);
+	}
+
 	IpcRequest request;
 	request.type = IpcRequestType::MousePress;
 	request.arg1 = buttons;
@@ -922,14 +1078,24 @@ void RemoteEmulatorPanel::OnKeyDown(wxKeyEvent &event)
 	}
 
 	/*
-	 * Alt+Enter leaves full screen, the same key a machine's own window uses,
-	 * and does not reach the guest. Nothing else is intercepted: every other
-	 * key belongs to RISC OS.
+	 * Alt+Enter is the way out of both things a user can get stuck in, and does
+	 * not reach the guest when it is used for one of them. Nothing else is
+	 * intercepted: every other key belongs to RISC OS.
+	 *
+	 * Full screen first, then the captured pointer - the same order a machine's
+	 * own window uses, deliberately, because one key doing different things in
+	 * the two windows would be worse than either order. So in full screen with
+	 * the pointer captured it takes two presses: one to leave, one to be given
+	 * the mouse back.
 	 */
-	if (InputIsReleaseMouseCaptureKey(event) && on_leave_full_screen_) {
-		if (on_leave_full_screen_()) {
+	if (InputIsReleaseMouseCaptureKey(event)) {
+		if (on_leave_full_screen_ && on_leave_full_screen_()) {
 			return;
 		}
+		if (ReleaseCapturedPointer()) {
+			return;
+		}
+		/* Nothing to escape from, so the guest gets the key. */
 	}
 
 	/* A click rather than a keystroke, as in a machine's own window. */
