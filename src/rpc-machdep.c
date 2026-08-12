@@ -151,6 +151,23 @@ rpcemu_set_machine_datadir(const char *machine_name)
 	logpath[0] = '\0';
 
 	ensure_machine_dirs();
+
+	/*
+	 * Close the log so the next line reopens it in the machine's own directory.
+	 *
+	 * Clearing logpath above is not enough on its own: rpclog() opens the file
+	 * on its FIRST call and keeps the handle, and the first call happens while
+	 * the paths are still being worked out - before any machine is known. So
+	 * without this the location is decided before there is a machine to decide
+	 * it, and every process writes the data directory's log, which rpclog()
+	 * opens with "wt". Several machines running at once then truncate one
+	 * another's logs and interleave lines mid-write.
+	 *
+	 * The handful of lines written before this point stay in the data
+	 * directory's log, which is where they belong: they are about finding the
+	 * data directory, not about a machine.
+	 */
+	rpclog_close();
 }
 
 const char *
@@ -162,12 +179,29 @@ rpcemu_get_machine_datadir(void)
 	return machinedir;
 }
 
+/*
+ * Where this process writes its log.
+ *
+ * A machine's log belongs in that machine's own directory; the emulator-wide
+ * one - before a machine has been chosen - belongs in the data directory.
+ *
+ * ★ This is what rpcemu_set_machine_datadir() clearing logpath was always for:
+ * it is called when a machine is chosen, so the next call here picks the new
+ * location up. Reading datadir here regardless defeated it, and every process
+ * therefore wrote the same datadir/rpclog.txt.
+ *
+ * Deliberately does NOT call rpcemu_get_machine_datadir(), which would create
+ * the directories for a machine called "Default" as a side effect of asking a
+ * question about logging.
+ */
 const char *
 rpcemu_get_log_path(void)
 {
 	if (logpath[0] == '\0') {
-		strcpy(logpath, rpcemu_get_datadir());
-		strcat(logpath, "rpclog.txt");
+		const char *dir = machinedir[0] != '\0' ? machinedir
+		                                        : rpcemu_get_datadir();
+
+		snprintf(logpath, sizeof(logpath), "%srpclog.txt", dir);
 	}
 
 	return logpath;
