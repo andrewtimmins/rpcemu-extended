@@ -994,13 +994,47 @@ jobs:
           path: ${{ steps.package.outputs.leafname }}
           if-no-files-found: error
 
+  # ---------------------------------------------------------------------------
+  # Per-platform gates.
+  #
+  # These do no work. They exist for two reasons, one practical and one about
+  # being able to read the thing:
+  #
+  #   - GitHub draws the run's graph from the dependency edges, and groups jobs
+  #     that share the same set of dependents. Without a gate per platform,
+  #     every build job with no dependency of its own lands in one box together -
+  #     Linux, Windows and the checks all mixed up - while the two macOS slices
+  #     group on their own only because macos-universal happens to need both of
+  #     them. A gate per platform makes the graph read as: the checks, then
+  #     Linux, then Windows, then macOS.
+  #   - "Did Linux pass?" becomes one answer rather than two, which is what a
+  #     branch protection rule wants to require.
+  #
+  # There is no macos gate because macos-universal already is one: it needs both
+  # slices and does real work with them (lipo, the .app, the DMG). Adding a
+  # fourth gate to sit beside it would be a job that exists only to look tidy.
+  #
+  # A gate is skipped when anything it needs fails, so the release below is
+  # skipped too - the same behaviour as depending on the jobs directly.
+  linux:
+    needs: [linux-amd64, linux-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Linux amd64 and arm64 both built and passed their tests."
+
+  windows:
+    needs: [windows-amd64, windows-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Windows amd64 and arm64 both built and passed their tests."
+
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     # The sanitiser job gates a release too. It is the only thing that looks at
     # whether the emulator's C is well defined rather than merely producing the
     # expected answer, and shipping past a report from it would mean shipping
     # something known to be relying on the compiler's goodwill.
-    needs: [version-matches-tag, linux-amd64, linux-arm64, windows-amd64, macos-universal, sanitisers, docs]
+    needs: [version-matches-tag, linux, windows, macos-universal, sanitisers, docs]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -1042,7 +1076,13 @@ jobs:
   # unreachable would be reporting on itself rather than on the emulator.
   notify:
     if: always() && github.event_name == 'push'
-    needs: [version-matches-tag, linux-amd64, linux-arm64, windows-amd64, macos-universal, sanitisers, docs, release]
+    # windows-arm64 is here even though the release does not depend on it: this
+    # job works its verdict out from toJSON(needs), so a job missing from this
+    # list is one whose failures nobody is told about - the run goes red and the
+    # channel says nothing, which is the silent failure this file exists to
+    # avoid. Being reported on and being a release blocker are separate
+    # questions, and the answers differ.
+    needs: [version-matches-tag, linux-amd64, linux-arm64, windows-amd64, windows-arm64, macos-universal, sanitisers, docs, release]
     runs-on: ubuntu-latest
     permissions:
       contents: read
