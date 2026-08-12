@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "display_acceleration.h"
 #include "remote_display_geometry.h"
 #include "remote_display_scale.h"
 
@@ -509,6 +510,57 @@ main(void)
 		}
 		free(src);
 		free(dst);
+	}
+
+	printf("\nThe pixel layout the GPU upload depends on\n");
+
+	/*
+	 * The Manager's OpenGL path uploads the guest's framebuffer to a texture as
+	 * GL_BGRA + GL_UNSIGNED_BYTE with no conversion at all, which is only
+	 * correct because a 0x00RRGGBB word is the bytes B,G,R,0 in memory on a
+	 * little-endian host. That is an assumption about the machine, not about our
+	 * code, and it is the sort that fails silently and colourfully: red and blue
+	 * swap over, and nothing crashes.
+	 *
+	 * So it is checked here rather than trusted. A host where this fails needs
+	 * GL_RGBA and a swizzle, or the CPU path - see src/gui/gl_display_canvas.cpp.
+	 */
+	{
+		const uint32_t pixel = 0x00112233;	/* R=0x11 G=0x22 B=0x33 */
+		unsigned char bytes[4];
+
+		memcpy(bytes, &pixel, sizeof(bytes));
+
+		check("a guest pixel is B,G,R,0 in memory, which is what GL_BGRA reads",
+		      bytes[0] == 0x33 && bytes[1] == 0x22 && bytes[2] == 0x11 &&
+		      bytes[3] == 0x00);
+
+		/* And the same fact stated the way the CPU path relies on it, so the two
+		   cannot drift apart: its shifts must agree with those bytes. */
+		check("the CPU path's shifts extract the same R, G and B",
+		      ((pixel >> 16) & 0xff) == 0x11 && ((pixel >> 8) & 0xff) == 0x22 &&
+		      (pixel & 0xff) == 0x33);
+	}
+
+	printf("\nWhether hardware acceleration is wanted\n");
+
+	/*
+	 * The command line has to beat the stored preference. Worth a check of its
+	 * own because it is precedence, and precedence gets written the wrong way
+	 * round: if the preference won, --no-gl would do nothing at all for the one
+	 * user who needs it - somebody whose display driver misbehaves, who has
+	 * already ticked the box, and who cannot get to the box to untick it because
+	 * the display is the thing that is broken.
+	 */
+	{
+		check("nothing said, preference on: accelerate",
+		      display_acceleration_decide(DISPLAY_ACCELERATION_NO_OVERRIDE, 1) != 0);
+		check("nothing said, preference off: do not",
+		      display_acceleration_decide(DISPLAY_ACCELERATION_NO_OVERRIDE, 0) == 0);
+		check("--no-gl beats a preference that says on",
+		      display_acceleration_decide(0, 1) == 0);
+		check("an override that says on beats a preference that says off",
+		      display_acceleration_decide(1, 0) != 0);
 	}
 
 	printf("\n%s\n", failures == 0 ? "all checks passed" : "FAILURES");

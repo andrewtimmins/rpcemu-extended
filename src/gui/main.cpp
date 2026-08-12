@@ -39,6 +39,7 @@
 #include "data_dir_dialog.h"
 #include "gui_preferences.h"
 #include "manager_frame.h"
+#include "gui_preferences.h"
 #include "main_frame.h"
 #include "headless_main.h"
 #include "http_transfer.h"	/* RPCEMU_HAVE_HTTP */
@@ -1112,6 +1113,11 @@ int main(int argc, char **argv)
 			app_settings_override_json_net(value);
 		} else if (strcmp(arg, "--no-relay") == 0) {
 			app_settings_override_relay(0);
+		} else if (strcmp(arg, "--no-gl") == 0) {
+			/* The escape hatch for a display where OpenGL works well enough to
+			   start and badly enough to be a nuisance - which nothing here can
+			   detect, so it has to be sayable. */
+			SetHardwareAccelerationOverride(0);
 		} else if (strcmp(arg, "--managed") == 0) {
 			/* Internal: used by the Manager window to launch a machine it
 			   will display and control itself. Not documented as a

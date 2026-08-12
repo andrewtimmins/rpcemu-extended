@@ -97,6 +97,21 @@ public:
 	   yet. Safe to call concurrently with Publish() from another process. */
 	bool ReadInto(std::vector<uint32_t> *out, int *width, int *height) const;
 
+	/*
+	 * Reader side, without the copy: a pointer to the newest complete frame,
+	 * for a consumer that reads it once and immediately - uploading it to a GPU
+	 * texture, say - rather than keeping it.
+	 *
+	 * Safe for that use because of the triple buffer: the writer publishes into
+	 * the slot that is neither front nor prev, so the frame this returns
+	 * survives two more Publish() calls before its slot can be reused. It is
+	 * NOT safe to hold across a paint or hand to another thread; if the frame
+	 * is needed later, copy it with ReadInto().
+	 *
+	 * Returns false if nothing has been published yet.
+	 */
+	bool AcquireFront(const uint32_t **pixels, int *width, int *height) const;
+
 private:
 	struct Header {
 		std::atomic<uint32_t> front_slot;	/* index of the newest complete frame */

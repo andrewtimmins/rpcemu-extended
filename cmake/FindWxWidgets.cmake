@@ -25,14 +25,14 @@ function(rpcemu_setup_wxwidgets target)
         message(STATUS "wxWidgets (cross) via ${wxWidgets_CONFIG_EXECUTABLE}")
 
         execute_process(
-            COMMAND ${wxWidgets_CONFIG_EXECUTABLE} --cxxflags core base net
+            COMMAND ${wxWidgets_CONFIG_EXECUTABLE} --cxxflags gl core base net
             OUTPUT_VARIABLE _wx_cxxflags OUTPUT_STRIP_TRAILING_WHITESPACE
             RESULT_VARIABLE _wx_rc)
         if(NOT _wx_rc EQUAL 0)
             message(FATAL_ERROR "wx-config --cxxflags failed (rc=${_wx_rc})")
         endif()
         execute_process(
-            COMMAND ${wxWidgets_CONFIG_EXECUTABLE} --libs core base net
+            COMMAND ${wxWidgets_CONFIG_EXECUTABLE} --libs gl core base net
             OUTPUT_VARIABLE _wx_libs OUTPUT_STRIP_TRAILING_WHITESPACE)
 
         separate_arguments(_wx_cxxflags_list NATIVE_COMMAND "${_wx_cxxflags}")
@@ -52,7 +52,7 @@ function(rpcemu_setup_wxwidgets target)
             endif()
         endforeach()
     else()
-        find_package(wxWidgets REQUIRED COMPONENTS core base net)
+        find_package(wxWidgets REQUIRED COMPONENTS gl core base net)
         include(${wxWidgets_USE_FILE})
         target_link_libraries(${target} PRIVATE ${wxWidgets_LIBRARIES})
         set(_wx_inc_dirs ${wxWidgets_INCLUDE_DIRS})

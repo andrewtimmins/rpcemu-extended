@@ -49,6 +49,30 @@ std::string GetDataDir();
 void SetDataDir(const std::string &path);
 void ClearDataDir();
 
+/*
+ * Whether a machine shown in the Manager is drawn through the platform's
+ * accelerated display path - Direct2D on Windows, an OpenGL texture on Linux and
+ * macOS. See display_acceleration.h for what the one setting means on three
+ * platforms, and Settings... in the Manager, which is where the user sets it.
+ *
+ * A host preference rather than a per-machine or per-data-folder one: it is a
+ * statement about this computer's display, and the same machines may well be run
+ * on another computer whose answer differs.
+ *
+ * On by default. Every accelerated path falls back to the software one by itself
+ * when it cannot start, so defaulting to off would only slow down the users who
+ * never find the setting.
+ */
+bool GetHardwareAcceleration();
+void SetHardwareAcceleration(bool enabled);
+
+/* Set from the command line (--no-gl), for this session only, and beats the
+   stored preference. */
+void SetHardwareAccelerationOverride(int state);
+
+/* The answer to act on: the override if there is one, the preference if not. */
+bool HardwareAccelerationWanted();
+
 std::string GetDefaultMachine();
 void SetDefaultMachine(const std::string &machine_name);
 void ClearDefaultMachine();

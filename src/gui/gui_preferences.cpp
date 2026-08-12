@@ -18,6 +18,7 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include "display_acceleration.h"
 #include "gui_preferences.h"
 
 #include <algorithm>
@@ -124,6 +125,50 @@ void
 ClearDataDir()
 {
 	(void) data_dir_store_clear();
+}
+
+/*
+ * Hardware acceleration for the Manager's display.
+ *
+ * Stored as a plain 0/1 under "HardwareAcceleration"; absent means on, which is
+ * what a preferences file written before this existed looks like.
+ */
+bool
+GetHardwareAcceleration()
+{
+	wxConfig *config = OpenPreferences();
+	bool enabled = true;
+
+	config->Read("HardwareAcceleration", &enabled, true);
+	delete config;
+	return enabled;
+}
+
+void
+SetHardwareAcceleration(bool enabled)
+{
+	wxConfig *config = OpenPreferences();
+
+	config->Write("HardwareAcceleration", enabled);
+	config->Flush();
+	delete config;
+}
+
+/* The command line's answer for this session, or none. See
+   display_acceleration.h for why the precedence is spelled out separately. */
+static int g_acceleration_override = DISPLAY_ACCELERATION_NO_OVERRIDE;
+
+void
+SetHardwareAccelerationOverride(int state)
+{
+	g_acceleration_override = state;
+}
+
+bool
+HardwareAccelerationWanted()
+{
+	return display_acceleration_decide(g_acceleration_override,
+	    GetHardwareAcceleration() ? 1 : 0) != 0;
 }
 
 std::string

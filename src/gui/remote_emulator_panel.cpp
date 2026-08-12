@@ -27,6 +27,8 @@
 
 #include <chrono>
 
+#include "gl_display_canvas.h"
+#include "gui_preferences.h"
 #include "input_helpers.h"
 #include "remote_display_geometry.h"
 #include "remote_display_scale.h"
@@ -132,6 +134,12 @@ RemoteEmulatorPanel::~RemoteEmulatorPanel()
 void RemoteEmulatorPanel::UpdateCursor()
 {
 	SetCursor(wxCursor(live_ ? wxCURSOR_BLANK : wxCURSOR_ARROW));
+#if wxUSE_GLCANVAS
+	/* The canvas is the window the pointer is actually over. */
+	if (gl_canvas_ != nullptr) {
+		gl_canvas_->SetCursor(wxCursor(live_ ? wxCURSOR_BLANK : wxCURSOR_ARROW));
+	}
+#endif
 }
 
 void RemoteEmulatorPanel::SetActive(bool active)
@@ -144,7 +152,16 @@ void RemoteEmulatorPanel::SetActive(bool active)
 		frame_dirty_ = true;
 		dirty_all_ = true;
 		Refresh(false);
+#if wxUSE_GLCANVAS
+		if (gl_canvas_ != nullptr) {
+			gl_canvas_->Refresh(false);
+			gl_canvas_->SetFocus();
+		} else {
+			SetFocus();
+		}
+#else
 		SetFocus();
+#endif
 	}
 }
 
@@ -192,6 +209,36 @@ void RemoteEmulatorPanel::HandleIpcEvent(const IpcEvent &event)
 			 * now costs one conversion rather than one each.
 			 */
 			frame_dirty_ = true;
+
+#if wxUSE_GLCANVAS
+			/*
+			 * ★ With the GPU path the frame goes straight from shared memory
+			 * into the texture, here, and only the rows that changed.
+			 *
+			 * Done on arrival rather than in a paint because there is nothing
+			 * expensive to coalesce any more: an upload of a band is a DMA, not
+			 * a pass over the picture. The canvas is then asked to redraw, and
+			 * wx coalesces THAT as it always did.
+			 */
+			if (GlActive()) {
+				const uint32_t *pixels = nullptr;
+				int w = 0, h = 0;
+
+				if (shared_fb_.AcquireFront(&pixels, &w, &h)) {
+					frame_width_ = w;
+					frame_height_ = h;
+					gl_canvas_->SetDisplayRect(DisplayRect());
+					gl_canvas_->UpdateFrame(pixels, w, h,
+					    dirty_all_ ? 0 : dirty_top_,
+					    dirty_all_ ? h : dirty_bottom_);
+					dirty_all_ = false;
+					dirty_top_ = dirty_bottom_ = 0;
+					frame_dirty_ = false;
+					gl_canvas_->Refresh(false);
+					break;
+				}
+			}
+#endif
 			Refresh(false);
 		}
 		break;
@@ -433,6 +480,110 @@ wxBitmap &RemoteEmulatorPanel::FullBitmap()
 	return display_bitmap_;
 }
 
+/*
+ * Whether the GPU is drawing this machine at the moment.
+ */
+bool RemoteEmulatorPanel::GlActive() const
+{
+#if wxUSE_GLCANVAS
+	return gl_canvas_ != nullptr && gl_canvas_->IsUsable();
+#else
+	return false;
+#endif
+}
+
+/*
+ * Set up the GPU path, once, and only where it is worth having.
+ *
+ * Not attempted at all on a platform whose own renderer is already hardware
+ * accelerated - Windows, where the Direct2D path in OnPaint is the right answer
+ * and a second display path would be two things to keep working for no gain.
+ *
+ * `--no-gl` turns it off everywhere, which is the escape hatch for a display
+ * where GLX exists, succeeds, and then behaves badly: that is not something this
+ * code can detect, so it has to be something the user can say.
+ */
+void RemoteEmulatorPanel::TryCreateGlCanvas()
+{
+#if wxUSE_GLCANVAS
+	if (gl_tried_ || !live_) {
+		return;
+	}
+	gl_tried_ = true;
+
+#ifdef __WXMSW__
+	/* Direct2D already does this in hardware; see OnPaint. */
+	return;
+#else
+	if (!HardwareAccelerationWanted()) {
+		rpclog("Manager: hardware acceleration is off, so a machine's screen "
+		       "is drawn on the CPU\n");
+		return;
+	}
+
+	gl_canvas_ = new GlDisplayCanvas(this);
+	gl_canvas_->SetSize(GetClientSize());
+	gl_canvas_->SetCursor(wxCursor(wxCURSOR_BLANK));
+
+	/*
+	 * Input goes to this panel's own handlers. The canvas covers the panel
+	 * exactly, so the coordinates in its events are already panel coordinates
+	 * and PanelPointToGuest needs no adjustment.
+	 *
+	 * Bound one by one rather than by pushing this panel as the canvas's event
+	 * handler: this panel also handles EVT_PAINT and EVT_SIZE, and letting those
+	 * fire for the canvas would have the CPU path drawing over the GPU one.
+	 */
+	gl_canvas_->Bind(wxEVT_MOTION, &RemoteEmulatorPanel::OnMouseMove, this);
+	gl_canvas_->Bind(wxEVT_LEFT_DOWN, &RemoteEmulatorPanel::OnMouseDown, this);
+	gl_canvas_->Bind(wxEVT_MIDDLE_DOWN, &RemoteEmulatorPanel::OnMouseDown, this);
+	gl_canvas_->Bind(wxEVT_RIGHT_DOWN, &RemoteEmulatorPanel::OnMouseDown, this);
+	gl_canvas_->Bind(wxEVT_LEFT_DCLICK, &RemoteEmulatorPanel::OnMouseDown, this);
+	gl_canvas_->Bind(wxEVT_MIDDLE_DCLICK, &RemoteEmulatorPanel::OnMouseDown, this);
+	gl_canvas_->Bind(wxEVT_RIGHT_DCLICK, &RemoteEmulatorPanel::OnMouseDown, this);
+	gl_canvas_->Bind(wxEVT_LEFT_UP, &RemoteEmulatorPanel::OnMouseUp, this);
+	gl_canvas_->Bind(wxEVT_MIDDLE_UP, &RemoteEmulatorPanel::OnMouseUp, this);
+	gl_canvas_->Bind(wxEVT_RIGHT_UP, &RemoteEmulatorPanel::OnMouseUp, this);
+	gl_canvas_->Bind(wxEVT_MOUSEWHEEL, &RemoteEmulatorPanel::OnMouseWheel, this);
+	gl_canvas_->Bind(wxEVT_KEY_DOWN, &RemoteEmulatorPanel::OnKeyDown, this);
+	gl_canvas_->Bind(wxEVT_KEY_UP, &RemoteEmulatorPanel::OnKeyUp, this);
+	gl_canvas_->Bind(wxEVT_KILL_FOCUS, &RemoteEmulatorPanel::OnKillFocus, this);
+
+	gl_canvas_->SetFocus();
+#endif
+#endif
+}
+
+/*
+ * Give up on the GPU and go back to drawing here.
+ *
+ * Called when the canvas reports itself unusable, which can happen on its first
+ * paint rather than at construction: a GLX context can be created and only then
+ * refuse to become current.
+ */
+void RemoteEmulatorPanel::DestroyGlCanvas(const wxString &why)
+{
+#if wxUSE_GLCANVAS
+	if (gl_canvas_ == nullptr) {
+		return;
+	}
+
+	rpclog("Manager: OpenGL display unavailable (%s); drawing on the CPU "
+	       "instead\n", why.utf8_str().data());
+
+	gl_canvas_->Destroy();
+	gl_canvas_ = nullptr;
+
+	/* The CPU path has drawn nothing so far, so everything is stale. */
+	scaled_valid_ = false;
+	dirty_all_ = true;
+	SetFocus();
+	Refresh(false);
+#else
+	(void) why;
+#endif
+}
+
 void RemoteEmulatorPanel::OnPaint(wxPaintEvent & /*event*/)
 {
 	/* Buffered, as EmulatorPanel's own paint is: the letterboxed case clears
@@ -444,6 +595,35 @@ void RemoteEmulatorPanel::OnPaint(wxPaintEvent & /*event*/)
 		RefreshFrame();
 		frame_dirty_ = false;
 	}
+
+#if wxUSE_GLCANVAS
+	/*
+	 * The GPU path is set up on the first paint that has something to show, not
+	 * in the constructor: a GL context needs a realised window, and this panel
+	 * is created before it is shown.
+	 */
+	if (live_ && !frame_pixels_.empty()) {
+		TryCreateGlCanvas();
+	}
+
+	if (gl_canvas_ != nullptr) {
+		if (gl_canvas_->IsUsable() || !gl_canvas_->Failure().empty()) {
+			if (!gl_canvas_->IsUsable()) {
+				DestroyGlCanvas(gl_canvas_->Failure());
+			} else {
+				/* The canvas covers this panel and has drawn it. */
+				return;
+			}
+		} else {
+			/* Not decided yet - its own first paint will settle it. Leave the
+			   panel black rather than drawing a frame that is about to be
+			   covered. */
+			dc.SetBackground(*wxBLACK_BRUSH);
+			dc.Clear();
+			return;
+		}
+	}
+#endif
 
 	if (!live_) {
 		dc.SetBackground(*wxBLACK_BRUSH);
@@ -489,9 +669,16 @@ void RemoteEmulatorPanel::OnPaint(wxPaintEvent & /*event*/)
 		wxGraphicsRenderer *accelerated = nullptr;
 
 #ifdef __WXMSW__
-		/* Direct2D rather than the GDI+ default, which is slow enough to
-		   create per paint that typing felt laggy. */
-		accelerated = wxGraphicsRenderer::GetDirect2DRenderer();
+		/*
+		 * Direct2D rather than the GDI+ default, which is slow enough to create
+		 * per paint that typing felt laggy - and only when the user has left
+		 * hardware acceleration on, which is the same setting that gives Linux
+		 * and macOS their OpenGL path. Off means the software path on all three,
+		 * which is what makes the setting mean one thing.
+		 */
+		if (HardwareAccelerationWanted()) {
+			accelerated = wxGraphicsRenderer::GetDirect2DRenderer();
+		}
 #endif
 
 		wxGraphicsContext *gc = accelerated != nullptr
@@ -572,6 +759,14 @@ void RemoteEmulatorPanel::OnSize(wxSizeEvent &event)
 		frame_dirty_ = true;
 		Refresh(false);
 	}
+
+#if wxUSE_GLCANVAS
+	if (gl_canvas_ != nullptr) {
+		gl_canvas_->SetSize(GetClientSize());
+		gl_canvas_->SetDisplayRect(DisplayRect());
+		gl_canvas_->Refresh(false);
+	}
+#endif
 	event.Skip();
 }
 

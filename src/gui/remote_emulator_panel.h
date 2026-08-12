@@ -28,6 +28,7 @@
 #include <wx/timer.h>
 #include <wx/wx.h>
 
+#include "gl_display_canvas.h"
 #include "machine_ipc.h"
 
 extern "C" {
@@ -169,6 +170,25 @@ private:
 	void NoteInput();
 	void OnSettleTimer(wxTimerEvent &event);
 
+	/*
+	 * The GPU path, if this machine can have one.
+	 *
+	 * Tried once, on the first paint that has a frame to show. When it works the
+	 * canvas covers this panel and does the drawing; when it does not - no GLX
+	 * on a remote display, a context that will not create, a driver missing
+	 * something - it is destroyed and the CPU path below carries on as though it
+	 * had never been attempted. That fallback is not optional: a display that
+	 * can fail to start must never leave the user with a black window.
+	 *
+	 * Input still belongs to this panel. The canvas sits on top, so its mouse
+	 * and key events are bound straight to this panel's handlers rather than
+	 * duplicated, and it fills the panel exactly so the coordinates need no
+	 * adjustment.
+	 */
+	void TryCreateGlCanvas();
+	void DestroyGlCanvas(const wxString &why);
+	bool GlActive() const;
+
 	SharedFramebuffer shared_fb_;
 	MachineIpcClient ipc_client_;
 	/* Set when the shared framebuffer or the panel size has changed, cleared
@@ -221,6 +241,11 @@ private:
 	std::chrono::steady_clock::time_point last_input_;
 	int held_buttons_ = 0;
 	wxTimer settle_timer_;
+
+#if wxUSE_GLCANVAS
+	GlDisplayCanvas *gl_canvas_ = nullptr;
+	bool gl_tried_ = false;
+#endif
 
 	HeldKeys held_keys_{};
 

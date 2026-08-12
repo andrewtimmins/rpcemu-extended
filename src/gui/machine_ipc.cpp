@@ -245,6 +245,28 @@ bool SharedFramebuffer::ReadInto(std::vector<uint32_t> *out, int *width, int *he
 	return true;
 }
 
+bool SharedFramebuffer::AcquireFront(const uint32_t **pixels, int *width, int *height) const
+{
+	if (header_ == nullptr) {
+		return false;
+	}
+
+	/* Acquire, as ReadInto does: the dimensions are per-slot, so loading them
+	   after this gives the pair that belongs to these exact pixels. */
+	const uint32_t front = header_->front_slot.load(std::memory_order_acquire);
+	const uint32_t w = header_->slot_width[front].load(std::memory_order_relaxed);
+	const uint32_t h = header_->slot_height[front].load(std::memory_order_relaxed);
+
+	if (w == 0 || h == 0) {
+		return false;
+	}
+
+	*pixels = slots_[front];
+	*width = (int) w;
+	*height = (int) h;
+	return true;
+}
+
 /* FNV-1a rather than std::hash, which is only required to agree within one
    execution - and this name is arrived at separately by two processes. */
 static uint32_t NameHash(const std::string &s)
