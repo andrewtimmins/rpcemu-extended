@@ -26,9 +26,11 @@ ROM_IMAGE = EtherRPCEm,ffa
 
 # The name *Help and *Modules show, and who wrote what. The original authors'
 # credit was in the cmhg help string and has to stay somewhere the user can see
-# it, so it stays here.
+# it, so it stays here - in the order the work happened, with the author of the
+# assembler port last. This is the only guest module whose help string carries a
+# copyright, and that is why: the others are ours outright.
 TITLE = EtherRPCEm
-COPYRIGHT = \xa9 Alex Waugh and John Ballance/Castle
+COPYRIGHT = \xa9 John Ballance/Castle, Alex Waugh, Andy Timmins
 
 # Version and date come from VersionNum. Either can be overridden on the command
 # line, e.g. make MODULE_DATE="$(shell date +'%d %b %Y')" for a true build stamp.
