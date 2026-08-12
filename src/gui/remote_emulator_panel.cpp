@@ -483,6 +483,33 @@ wxBitmap &RemoteEmulatorPanel::FullBitmap()
 /*
  * Whether the GPU is drawing this machine at the moment.
  */
+/*
+ * Act on the setting having been changed while machines are running, so it takes
+ * effect on the machine the user is looking at rather than at the next start.
+ */
+void RemoteEmulatorPanel::SetHardwareAcceleration(bool enabled)
+{
+#if wxUSE_GLCANVAS
+	if (!enabled) {
+		if (gl_canvas_ != nullptr) {
+			DestroyGlCanvas("turned off in Settings");
+		}
+		/* Left tried, so nothing re-creates it until asked again. */
+		gl_tried_ = true;
+		return;
+	}
+
+	if (gl_canvas_ == nullptr) {
+		gl_tried_ = false;	/* let the next paint try again */
+	}
+#else
+	(void) enabled;
+#endif
+	scaled_valid_ = false;
+	dirty_all_ = true;
+	Refresh(false);
+}
+
 bool RemoteEmulatorPanel::GlActive() const
 {
 #if wxUSE_GLCANVAS

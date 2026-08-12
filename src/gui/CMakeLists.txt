@@ -51,6 +51,7 @@ set(GUI_SOURCES
     machine_ipc.cpp
     manager_frame.cpp
     gl_display_canvas.cpp
+    manager_settings_dialog.cpp
     remote_emulator_panel.cpp
 )
 

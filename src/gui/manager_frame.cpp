@@ -20,6 +20,8 @@
 
 #include "manager_frame.h"
 
+#include "manager_settings_dialog.h"
+
 #include <wx/artprov.h>
 #include <wx/dcmemory.h>
 #include <wx/dir.h>
@@ -155,6 +157,7 @@ wxBEGIN_EVENT_TABLE(ManagerFrame, wxFrame)
 	EVT_MENU(ID_START, ManagerFrame::OnStart)
 	EVT_MENU(ID_RESUME, ManagerFrame::OnResume)
 	EVT_MENU(ID_DATA_FOLDER, ManagerFrame::OnDataFolder)
+	EVT_MENU(wxID_PREFERENCES, ManagerFrame::OnSettings)
 	EVT_MENU(ID_STOP, ManagerFrame::OnStop)
 	EVT_MENU(ID_RESET, ManagerFrame::OnReset)
 	EVT_MENU(ID_RESTART, ManagerFrame::OnRestart)
@@ -178,6 +181,7 @@ ManagerFrame::ManagerFrame()
 	RefreshMachineList();
 	DiscoverAlreadyRunningMachines();
 	poll_timer_.Start(kPollIntervalMs);
+
 }
 
 ManagerFrame::~ManagerFrame()
@@ -453,8 +457,14 @@ void ManagerFrame::BuildMenus()
 	file_menu->Append(ID_CLONE, "&Clone Machine...");
 	file_menu->Append(ID_DELETE, "&Delete Machine");
 	file_menu->AppendSeparator();
-	file_menu->Append(ID_DATA_FOLDER, "Data Folder...")
-	    ->SetHelp("Where RPCEmu keeps machines, ROMs and settings");
+	/*
+	 * RPCEmu's own settings, not a machine's - so wxID_PREFERENCES, which is
+	 * what puts it in the application menu on macOS rather than under File.
+	 * The data folder used to be an item here, which read like another machine
+	 * command; it lives in that window now.
+	 */
+	file_menu->Append(wxID_PREFERENCES, "&Settings...\tCtrl+,")
+	    ->SetHelp("Where RPCEmu keeps its files, and how it draws a machine");
 	file_menu->AppendSeparator();
 	file_menu->Append(wxID_EXIT, "E&xit\tCtrl+Q");
 
@@ -1415,6 +1425,40 @@ static bool AnyMachineInUse(const wxString &datadir)
  * Beyond that the rules are folder_transfer's: verified before anything is
  * deleted, and the pointer only moved once the files have arrived.
  */
+/*
+ * RPCEmu's own settings.
+ *
+ * The data folder button runs OnDataFolder's flow rather than a copy of it -
+ * that flow refuses while machines are running, names them, and offers to move
+ * the files, and none of that is worth having twice.
+ *
+ * Hardware acceleration is applied to the machines already on screen rather than
+ * at the next start, because a setting that appears to do nothing until you
+ * restart reads as a setting that does not work.
+ */
+void ManagerFrame::OnSettings(wxCommandEvent & /*event*/)
+{
+	ManagerSettingsDialog dialog(this, [this]() {
+		wxCommandEvent unused;
+
+		OnDataFolder(unused);
+		return wxString::FromUTF8(rpcemu_get_datadir());
+	});
+
+	if (dialog.ShowModal() != wxID_OK) {
+		return;
+	}
+
+	if (dialog.HardwareAccelerationChanged()) {
+		for (auto &entry : running_) {
+			if (entry.second.panel != nullptr) {
+				entry.second.panel->SetHardwareAcceleration(
+				    dialog.HardwareAccelerationChosen());
+			}
+		}
+	}
+}
+
 void ManagerFrame::OnDataFolder(wxCommandEvent & /*event*/)
 {
 	const wxString current = wxString::FromUTF8(rpcemu_get_datadir());

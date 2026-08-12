@@ -109,6 +109,9 @@ public:
 	 * which case the key is not passed to the guest; false means there was no
 	 * full screen to leave and RISC OS should have the key after all.
 	 */
+	/* Act on Settings... having been changed while this machine is running. */
+	void SetHardwareAcceleration(bool enabled);
+
 	using LeaveFullScreenCallback = std::function<bool()>;
 	void SetLeaveFullScreenCallback(LeaveFullScreenCallback callback)
 	{

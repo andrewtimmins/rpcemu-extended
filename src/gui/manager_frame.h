@@ -83,6 +83,7 @@ private:
 	void DiscoverAlreadyRunningMachines();
 	void StartMachine(const wxString &name, bool resume = false);
 	void StopMachine(const wxString &name);
+
 	void ShowMachinePanel(const wxString &name);
 	void RemoveRunningEntry(const wxString &name);
 	void AttachPanelFor(const wxString &name, const wxString &shared_fb_name,
@@ -118,6 +119,10 @@ private:
 	void OnStart(wxCommandEvent &event);
 	void OnResume(wxCommandEvent &event);
 	void OnDataFolder(wxCommandEvent &event);
+
+	/* RPCEmu's own settings - the data folder and how a machine is drawn.
+	   Machine settings are a different window and belong to the machine. */
+	void OnSettings(wxCommandEvent &event);
 	void OnStop(wxCommandEvent &event);
 	void OnReset(wxCommandEvent &event);
 	void OnRestart(wxCommandEvent &event);
