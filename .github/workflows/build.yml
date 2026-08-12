@@ -1,10 +1,48 @@
+# Build, test and release RPCEmu Extended.
+#
+# The jobs form a chain of gates, each one earning the right to start the next:
+#
+#   release-preflight        tags only; does the tag match VERSION, and do its
+#         |                  release notes exist? Skipped on every other ref.
+#         v
+#   sanitisers   interface-docs   the checks: undefined behaviour and the test
+#         |             |         suite, and the API reference still building.
+#         +------+------+
+#                v
+#            build-gate          one answer to "are the checks clear?"
+#                |
+#   +------------+---------+---------------+---------------+--------------+
+#   v                      v               v               v              v
+#   linux (amd64, arm64)   windows-amd64   windows-arm64   macos-x86_64   macos-arm64
+#         |                      |               |               |             |
+#         |                      +-------+-------+               +------+------+
+#         |                              v                              v
+#         |                           windows                    macos-universal
+#         |                              |                              |
+#         +------------------------------+------------------------------+
+#                                        v
+#                                     release      tags only; publishes the assets
+#                                        |
+#                                        v
+#                                     notify       pushes only; posts to Slack
+#
+# Before editing: a skipped job skips the whole chain behind it, not just the
+# next job along, and release-preflight is skipped on every ref that is not a
+# tag. So every job downstream of it reads
+#
+#     if: always() && <what it actually requires>
+#
+# where always() stops the inherited skip and the rest is the real condition.
+# release is the exception, running on tags alone.
+
 name: Build
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
     tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -23,12 +61,15 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
-  # A release is named by its tag but the binaries carry what VERSION says, so
-  # the two disagreeing publishes a release whose contents claim to be something
-  # else. Checked before anything is built, so a mistyped tag costs seconds.
-  version-matches-tag:
+  # What a tag has to get right before anything is built: it agrees with VERSION,
+  # and its release notes exist. Disagreeing publishes a release whose contents
+  # claim to be something else; missing notes cannot be written afterwards.
+  #
+  # Tags only, so this is skipped on a branch or a pull request - and everything
+  # behind it treats that skip as permission to continue.
+  release-preflight:
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     steps:
       - uses: actions/checkout@v7
         with:
@@ -45,16 +86,9 @@ jobs:
           fi
           echo "tag v$tag matches VERSION"
 
-      # The release notes have to exist before the release does.
-      #
-      # This used to be generate_release_notes: true, which lists merged pull
-      # requests and nothing else. Almost all the work here lands as direct
-      # commits to main, so every release so far has published notes that
-      # described a fraction of what shipped - 1.1.9 announced itself as one
-      # unrelated pull request, and 1.1.11 read as though it were nothing but CI
-      # changes - and each was rewritten by hand afterwards, once somebody
-      # noticed. Requiring the file turns that into something the tag cannot get
-      # past.
+      # Hand-written notes, required rather than generated: most work lands as
+      # direct commits to main, which a generated list of merged pull requests
+      # would not describe.
       - name: The release notes must exist
         run: |
           tag="${GITHUB_REF#refs/tags/}"
@@ -70,6 +104,8 @@ jobs:
           echo "found $notes ($(wc -l < "$notes") lines)"
 
   sanitisers:
+    needs: release-preflight
+    if: always() && needs.release-preflight.result != 'failure'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -79,22 +115,14 @@ jobs:
       - name: Install dependencies
         run: bash setup-build-env.sh
 
-      # The interpreter, not the recompiler. AddressSanitizer instruments memory
-      # accesses in code the compiler generated; the recompiler's output is
-      # written at run time into a page it maps itself, so it is invisible to the
-      # instrumentation and its code cache looks like a stranger writing over
-      # executable memory. The interpreter runs the same CPU semantics through
-      # code the sanitisers can see, which is what is wanted here. The JIT has its
-      # own answer to this: eight differential tests that check it against the
-      # interpreter instruction by instruction.
+      # The interpreter, not the recompiler: ASan instruments compiled code, and
+      # the recompiler writes its own at run time into a page it maps itself, so
+      # the sanitisers cannot see it. The JIT is covered instead by the
+      # differential tests that check it against the interpreter.
       #
-      # -fno-sanitize-recover=all makes the first report fatal. Without it a
-      # fault in the emulation loop prints thousands of times and the run still
-      # succeeds.
-      #
-      # GhostPDL is off: it is a large third-party library reached only by
-      # printing, and instrumenting it would spend the runner's time on somebody
-      # else's code.
+      # -fno-sanitize-recover=all makes the first report fatal; without it a fault
+      # in the emulation loop prints thousands of times and still exits 0.
+      # GhostPDL is off - third-party, reached only by printing.
       - name: Configure with ASan and UBSan
         run: |
           cmake -S . -B build-san \
@@ -106,11 +134,11 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
 
       - name: Build
-        timeout-minutes: 15
+        timeout-minutes: 4
         run: cmake --build build-san -j"$(nproc)"
 
       - name: Unit tests under the sanitisers
-        timeout-minutes: 10
+        timeout-minutes: 3
         env:
           # Leak checking is off. The emulator holds its guest RAM, ROM and
           # framestore for the life of the process and frees none of it on the
@@ -152,7 +180,7 @@ jobs:
       # the sanitisers said; whether the desktop is reached is judged by the four
       # ordinary boot tests, on every platform, on real builds.
       - name: Boot under the sanitisers
-        timeout-minutes: 15
+        timeout-minutes: 3
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
@@ -193,9 +221,11 @@ jobs:
   # The indexed build renders every chapter as well as the contents page and the
   # generated SWI index, which is what lets a reader find a call without already
   # knowing which interface it belongs to.
-  docs:
+  interface-docs:
+    needs: release-preflight
+    if: always() && needs.release-preflight.result != 'failure'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 3
     outputs:
       leafname: ${{ steps.package.outputs.leafname }}
     steps:
@@ -213,14 +243,21 @@ jobs:
           output: prm-output
           log-directory: prm-output/indexed/logs
 
-      # Named from VERSION rather than the tag, so the archive matches the
-      # binaries beside it in a release. version-matches-tag has already
-      # insisted the two agree before any release is published.
+      # Named the way build.sh names the binaries, so the archive and the
+      # executables beside it in a release agree: VERSION on a release tag, and
+      # VERSION with the commit appended anywhere else. Without the second half a
+      # docs archive built from a branch is named as though it were the release
+      # itself. The same logic lives in build.sh's get_version and in
+      # CMakeLists.txt; release-preflight has already insisted VERSION and the tag
+      # agree before any release is published.
       - name: Package the documentation
         id: package
         run: |
           if [ -s VERSION ]; then
             version="$(tr -d ' \t\r\n' < VERSION)"
+            if ! git describe --tags --exact-match --match 'v[0-9]*' >/dev/null 2>&1; then
+              version="$version-g$(git rev-parse --short HEAD)"
+            fi
           else
             version="$(git rev-parse --short HEAD)"
           fi
@@ -246,40 +283,45 @@ jobs:
           path: ${{ steps.package.outputs.leafname }}
           if-no-files-found: error
 
-  # The checks gate, and the first thing the graph should show.
+  # One answer to "are the checks clear?". The platform builds behind it say
+  # needs: build-gate rather than each repeating the same pair of result tests,
+  # and a branch protection rule has one check to require rather than one per
+  # check. Does no work, so it takes the smallest runner.
   #
-  # Like the platform gates below it does no work, and it exists for the same two
-  # reasons: it makes "did the checks pass?" one answer, and it gives the run's
-  # graph a node to hang the checks box on. Without it those three jobs had no
-  # gate of their own, so the layout slotted them in among the platforms rather
-  # than at the top where they belong - they are what has to be true before a
-  # platform build is worth reading.
-  #
-  # if: always() with an explicit verdict, rather than plain needs, because
-  # version-matches-tag is SKIPPED on every push that is not a tag. A gate that
-  # simply needed it would be skipped on almost every run, which would grey out
-  # the box this exists to draw and would stop a release for the wrong reason.
-  # Skipped is not failed - the same distinction notify makes further down.
-  checks:
-    if: always()
-    needs: [version-matches-tag, sanitisers, docs]
-    runs-on: ubuntu-latest
+  # Not in notify's needs: it reports which job failed, and would say build-gate
+  # where it currently names the check that actually broke.
+  build-gate:
+    needs: [sanitisers, interface-docs]
+    if: always() && needs.sanitisers.result == 'success' && needs['interface-docs'].result == 'success'
+    runs-on: ubuntu-slim
     steps:
-      - name: Did anything actually fail
-        env:
-          RESULTS: ${{ toJSON(needs) }}
-        run: |
-          set -euo pipefail
-          failed=$(printf '%s' "$RESULTS" \
-              | jq -r 'to_entries | map(select(.value.result == "failure") | .key) | join(", ")')
-          if [ -n "$failed" ]; then
-            echo "failed: $failed"
-            exit 1
-          fi
-          echo "The version/notes check, the sanitisers and the docs are all clear."
+      - run: echo "The sanitisers and the interface documentation are clear."
 
-  linux-amd64:
-    runs-on: ubuntu-latest
+  # Both Linux builds from one definition: amd64 gets the recompiler, arm64 the
+  # interpreter, there being no ARM dynarec backend, and three steps run on amd64
+  # alone. Everything else is identical, so it is written once.
+  #
+  # One job and one answer for both architectures, which is what a branch
+  # protection rule wants - so it also replaces the gate that used to provide it.
+  linux:
+    needs: build-gate
+    if: always() && needs.build-gate.result == 'success'
+    runs-on: ${{ matrix.runner }}
+    name: linux-${{ matrix.arch }}
+    strategy:
+      # One architecture failing should not cancel the other: which of them broke
+      # is the first thing worth knowing.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            variant: recompiler
+            build_flags: ""
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            variant: interpreter
+            build_flags: "--interpreter"
     steps:
       - uses: actions/checkout@v7
         with:
@@ -289,83 +331,79 @@ jobs:
       # under riscos-progs/ as well as the emulator. Without them build.sh says
       # "Guest ROMs: skipped - using the committed ones" and carries on, which
       # meant no CI job had ever assembled a single one of them.
+      #
+      # --podules on amd64 alone; the check below says why.
       - name: Install dependencies
-        run: bash setup-build-env.sh --podules
+        run: bash setup-build-env.sh ${{ matrix.arch == 'amd64' && '--podules' || '' }}
 
-      # Rebuild every guest module and check it against the image committed
-      # beside it. The assembled modules are committed because a user building
-      # RPCEmu is not asked for a cross-assembler, and the failure that arrangement
-      # invites is silent: edit the source, forget to rebuild, and the emulator
-      # goes on loading the old module for months.
+      # The assembled guest modules are committed, so a user needs no
+      # cross-assembler - which makes "edited the source, forgot to rebuild" a
+      # silent failure. This catches it.
       #
-      # Before the build, deliberately: build.sh rebuilds these itself now that
-      # the tools are here, and copies them over the committed images, so
-      # comparing afterwards would only ever compare a file with itself.
-      #
-      # Only this job. The modules are ARM binaries and identical whatever host
-      # builds them, so once is enough.
+      # Must run before the build: build.sh rebuilds these and copies them over
+      # the committed images, so comparing afterwards compares a file with itself.
+      # amd64 only - the modules are ARM binaries, identical whatever host builds
+      # them.
       - name: Guest modules match their sources
+        if: matrix.arch == 'amd64'
         run: bash tests/check-guest-modules.sh
 
       # Piped through tee so the compiler's output can be examined afterwards.
       # pipefail so a failed build still fails the step rather than being masked
       # by tee's exit status.
-      - name: Build and package (amd64, dynarec)
-        timeout-minutes: 5
+      - name: Build and package
+        timeout-minutes: 3
         run: |
           set -o pipefail
           chmod +x build.sh setup-build-env.sh
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            ./build.sh --deb --zip 2>&1 | tee build.log
+            ./build.sh ${{ matrix.build_flags }} --deb --zip 2>&1 | tee build.log
           else
-            ./build.sh --zip 2>&1 | tee build.log
+            ./build.sh ${{ matrix.build_flags }} --zip 2>&1 | tee build.log
           fi
 
       # A warning in code this project maintains fails the build. Done here
       # rather than with -Werror in CMake, so that a new compiler release cannot
       # stop a user building from source - see the comment in the script.
-      # Only this job: it is the same C everywhere, and a full clean build is
+      # Only amd64: it is the same C everywhere, and a full clean build is
       # needed for the compiler to say anything at all about a file it would
       # otherwise skip.
       - name: No new compiler warnings
+        if: matrix.arch == 'amd64'
         run: bash tests/check-warnings.sh build.log
 
       - name: Smoke test binary
         run: |
-          file releases/linux/amd64/rpcemu-recompiler | grep -i ELF
-          ls -la releases/linux/amd64/
+          binary="releases/linux/${{ matrix.arch }}/rpcemu-${{ matrix.variant }}"
+          file "$binary" | grep -i ELF
+          ls -la "releases/linux/${{ matrix.arch }}/"
           # Actually execute it. These paths run before any wxWidgets/GTK
           # initialisation, so they work with no display and catch a binary that
           # cannot start at all (bad link, missing library). The same script
           # runs on every platform, so the CLI is checked identically.
-          bash tests/cli_smoke.sh releases/linux/amd64/rpcemu-recompiler
+          bash tests/cli_smoke.sh "$binary"
 
-      # Boot the machine for real and look at the screen. Everything above stops
-      # at "the binary starts and parses its arguments"; this drives a full boot
-      # over the built-in VNC server, so a break in the CPU, memory, VIDC, ROM
-      # loading or the VNC server itself shows up here rather than in a user's
-      # first run. The test machine is seeded with a !Boot that runs Desktop, so
-      # a healthy run reaches the RISC OS desktop; the check asks whether the
-      # screen has a desktop's range of colour, not whether it matches a
-      # reference image, so cosmetic changes cannot fail the build.
-      # The boot test needs a ROM, and RPCEmu ships none - so fetch one the way a
-      # user now would, with the emulator's own downloader. That gives the boot
-      # test something to run and checks the download itself on every platform,
-      # which matters because each uses a different HTTP stack (libcurl here,
-      # WinHTTP on Windows, NSURLSession on macOS).
+      # A full boot over the built-in VNC server. Everything above stops at "the
+      # binary starts and parses its arguments"; this exercises the CPU, memory,
+      # VIDC, ROM loading and the VNC server itself. The machine is seeded with a
+      # !Boot that runs Desktop, and the check asks whether the screen has a
+      # desktop's range of colour rather than matching a reference image, so
+      # cosmetic changes cannot fail it.
       #
-      # Cached so RISC OS Open are not asked for the same file on every push.
-      # The ROM and the machine the test creates go in a data directory under
-      # RUNNER_TEMP, not in the staged release. The emulator resolves its
-      # writable data separately from its read-only resources, so RPCEMU_DATADIR
-      # moves every write out of the tree that is about to be uploaded while it
-      # still finds its resources beside the binary. The staged release is left
-      # exactly as it was built.
+      # RPCEmu ships no ROM, so one is fetched with the emulator's own downloader
+      # - which also exercises that path, a different HTTP stack per platform.
+      #
+      # Cached, so RISC OS Open are not asked for the same file every push.
+      # RPCEMU_DATADIR puts the ROM and the test machine under RUNNER_TEMP, so
+      # every write stays out of the release about to be uploaded while the
+      # binary still finds its resources beside itself.
       - name: Cache the RISC OS ROM
         uses: actions/cache@v6
         with:
           path: ci-rom
-          key: rpcemu-rom-stable-v1
+          # Per architecture: a cache entry cannot be written twice, so on a cold
+          # cache the two configurations would race and the loser would warn.
+          key: rpcemu-rom-stable-v1-${{ matrix.arch }}
       - name: Fetch a ROM for the boot test
         run: |
           set -eu
@@ -374,7 +412,7 @@ jobs:
           mkdir -p "$RPCEMU_DATADIR" ci-rom
           cp -r default configs "$RPCEMU_DATADIR/"
           if ! ls ci-rom/ROM* >/dev/null 2>&1; then
-            releases/linux/amd64/rpcemu-recompiler --fetch-riscos --no-disc --accept-licence
+            "releases/linux/${{ matrix.arch }}/rpcemu-${{ matrix.variant }}" --fetch-riscos --no-disc --accept-licence
             cp "$RPCEMU_DATADIR"/roms/ROM* ci-rom/
           fi
           mkdir -p "$RPCEMU_DATADIR/roms"
@@ -385,160 +423,35 @@ jobs:
         timeout-minutes: 3
         run: |
           python3 tests/boot_smoke.py \
-            --binary releases/linux/amd64/rpcemu-recompiler \
+            --binary "releases/linux/${{ matrix.arch }}/rpcemu-${{ matrix.variant }}" \
             --datadir "$RUNNER_TEMP/rpcemu-data" \
             --abort-check require \
-            --save vnc-smoke-linux-amd64.png
+            --save vnc-smoke-linux-${{ matrix.arch }}.png
 
       - name: Upload the boot screenshot
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: vnc-smoke-linux-amd64
-          path: vnc-smoke-linux-amd64.png
+          name: vnc-smoke-linux-${{ matrix.arch }}
+          path: vnc-smoke-linux-${{ matrix.arch }}.png
           # A single PNG: skip the zip so it can be viewed from the run page
           # directly. "archive: false" allows one file only, which this is.
           archive: false
           if-no-files-found: ignore
 
-      - name: Upload Linux amd64 release
+      - name: Upload Linux release
         uses: actions/upload-artifact@v7
         with:
-          name: rpcemu-linux-amd64
+          name: rpcemu-linux-${{ matrix.arch }}
           path: |
-            releases/linux/amd64/
+            releases/linux/${{ matrix.arch }}/
             releases/linux/*.tar.gz
-            releases/linux/amd64/*.deb
+            releases/linux/${{ matrix.arch }}/*.deb
           if-no-files-found: error
-
-  linux-arm64:
-    # Native arm64 hosted runner (free for public repos). The ARM dynarec backend
-    # does not exist, so arm64 uses the interpreter (--interpreter).
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-tags: true
-
-      - name: Install dependencies
-        run: bash setup-build-env.sh
-
-      - name: Build and package (arm64, interpreter)
-        timeout-minutes: 5
-        run: |
-          chmod +x build.sh setup-build-env.sh
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            ./build.sh --interpreter --deb --zip
-          else
-            ./build.sh --interpreter --zip
-          fi
-
-      - name: Smoke test binary
-        run: |
-          file releases/linux/arm64/rpcemu-interpreter | grep -i ELF
-          ls -la releases/linux/arm64/
-          bash tests/cli_smoke.sh releases/linux/arm64/rpcemu-interpreter
-
-      # Boot the machine for real and look at the screen. Everything above stops
-      # at "the binary starts and parses its arguments"; this drives a full boot
-      # over the built-in VNC server, so a break in the CPU, memory, VIDC, ROM
-      # loading or the VNC server itself shows up here rather than in a user's
-      # first run. The test machine is seeded with a !Boot that runs Desktop, so
-      # a healthy run reaches the RISC OS desktop; the check asks whether the
-      # screen has a desktop's range of colour, not whether it matches a
-      # reference image, so cosmetic changes cannot fail the build.
-      # The boot test needs a ROM, and RPCEmu ships none - so fetch one the way a
-      # user now would, with the emulator's own downloader. That gives the boot
-      # test something to run and checks the download itself on every platform,
-      # which matters because each uses a different HTTP stack (libcurl here,
-      # WinHTTP on Windows, NSURLSession on macOS).
-      #
-      # Cached so RISC OS Open are not asked for the same file on every push.
-      # The ROM and the machine the test creates go in a data directory under
-      # RUNNER_TEMP, not in the staged release. The emulator resolves its
-      # writable data separately from its read-only resources, so RPCEMU_DATADIR
-      # moves every write out of the tree that is about to be uploaded while it
-      # still finds its resources beside the binary. The staged release is left
-      # exactly as it was built.
-      - name: Cache the RISC OS ROM
-        uses: actions/cache@v6
-        with:
-          path: ci-rom
-          key: rpcemu-rom-stable-v1
-      - name: Fetch a ROM for the boot test
-        run: |
-          set -eu
-          export RPCEMU_DATADIR="$RUNNER_TEMP/rpcemu-data"
-          export RPCEMU_NO_GUI_MESSAGES=1
-          mkdir -p "$RPCEMU_DATADIR" ci-rom
-          cp -r default configs "$RPCEMU_DATADIR/"
-          if ! ls ci-rom/ROM* >/dev/null 2>&1; then
-            releases/linux/arm64/rpcemu-interpreter --fetch-riscos --no-disc --accept-licence
-            cp "$RPCEMU_DATADIR"/roms/ROM* ci-rom/
-          fi
-          mkdir -p "$RPCEMU_DATADIR/roms"
-          cp ci-rom/ROM* "$RPCEMU_DATADIR/roms/"
-          ls -la "$RPCEMU_DATADIR/roms/"
-
-      - name: Headless boot smoke test
-        timeout-minutes: 3
-        run: |
-          python3 tests/boot_smoke.py \
-            --binary releases/linux/arm64/rpcemu-interpreter \
-            --datadir "$RUNNER_TEMP/rpcemu-data" \
-            --abort-check require \
-            --save vnc-smoke-linux-arm64.png
-
-      - name: Upload the boot screenshot
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: vnc-smoke-linux-arm64
-          path: vnc-smoke-linux-arm64.png
-          # A single PNG: skip the zip so it can be viewed from the run page
-          # directly. "archive: false" allows one file only, which this is.
-          archive: false
-          if-no-files-found: ignore
-
-      - name: Upload Linux arm64 release
-        uses: actions/upload-artifact@v7
-        with:
-          name: rpcemu-linux-arm64
-          path: |
-            releases/linux/arm64/
-            releases/linux/*.tar.gz
-            releases/linux/arm64/*.deb
-          if-no-files-found: error
-
-  # ---------------------------------------------------------------------------
-  # Per-platform gates.
-  #
-  # These do no work. They exist for two reasons, one practical and one about
-  # being able to read the thing:
-  #
-  #   - GitHub draws the run's graph from the dependency edges, and groups jobs
-  #     that share the same set of dependents. Without a gate per platform,
-  #     every build job with no dependency of its own lands in one box together -
-  #     Linux, Windows and the checks all mixed up - while the two macOS slices
-  #     group on their own only because macos-universal happens to need both of
-  #     them. A gate per platform makes the graph read as: the checks, then
-  #     Linux, then Windows, then macOS.
-  #   - "Did Linux pass?" becomes one answer rather than two, which is what a
-  #     branch protection rule wants to require.
-  #
-  # There is no macos gate because macos-universal already is one: it needs both
-  # slices and does real work with them (lipo, the .app, the DMG). Adding a
-  # fourth gate to sit beside it would be a job that exists only to look tidy.
-  #
-  # A gate is skipped when anything it needs fails, so the release below is
-  # skipped too - the same behaviour as depending on the jobs directly.
-  linux:
-    needs: [linux-amd64, linux-arm64]
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Linux amd64 and arm64 both built and passed their tests."
 
   windows-amd64:
+    needs: build-gate
+    if: always() && needs.build-gate.result == 'success'
     # Native Windows build with MinGW-w64 via MSYS2 (MINGW64). Ships the
     # recompiler (full-speed dynarec; the JIT supports the Windows x64 ABI).
     # Uses build-windows.sh (build.sh is apt/.deb-only).
@@ -568,7 +481,7 @@ jobs:
             mingw-w64-x86_64-libusb
 
       - name: Build and stage release (native MSYS2)
-        timeout-minutes: 7
+        timeout-minutes: 6
         run: |
           chmod +x build-windows.sh
           ./build-windows.sh --zip
@@ -610,27 +523,20 @@ jobs:
           fi
           rm -f slash.txt
 
-      # Boot the machine for real and look at the screen. Everything above stops
-      # at "the binary starts and parses its arguments"; this drives a full boot
-      # over the built-in VNC server, so a break in the CPU, memory, VIDC, ROM
-      # loading or the VNC server itself shows up here rather than in a user's
-      # first run. The test machine is seeded with a !Boot that runs Desktop, so
-      # a healthy run reaches the RISC OS desktop; the check asks whether the
-      # screen has a desktop's range of colour, not whether it matches a
-      # reference image, so cosmetic changes cannot fail the build.
-      # The boot test needs a ROM, and RPCEmu ships none - so fetch one the way a
-      # user now would, with the emulator's own downloader. That gives the boot
-      # test something to run and checks the download itself on every platform,
-      # which matters because each uses a different HTTP stack (libcurl here,
-      # WinHTTP on Windows, NSURLSession on macOS).
+      # A full boot over the built-in VNC server. Everything above stops at "the
+      # binary starts and parses its arguments"; this exercises the CPU, memory,
+      # VIDC, ROM loading and the VNC server itself. The machine is seeded with a
+      # !Boot that runs Desktop, and the check asks whether the screen has a
+      # desktop's range of colour rather than matching a reference image, so
+      # cosmetic changes cannot fail it.
       #
-      # Cached so RISC OS Open are not asked for the same file on every push.
-      # The ROM and the machine the test creates go in a data directory under
-      # RUNNER_TEMP, not in the staged release. The emulator resolves its
-      # writable data separately from its read-only resources, so RPCEMU_DATADIR
-      # moves every write out of the tree that is about to be uploaded while it
-      # still finds its resources beside the binary. The staged release is left
-      # exactly as it was built.
+      # RPCEmu ships no ROM, so one is fetched with the emulator's own downloader
+      # - which also exercises that path, a different HTTP stack per platform.
+      #
+      # Cached, so RISC OS Open are not asked for the same file every push.
+      # RPCEMU_DATADIR puts the ROM and the test machine under RUNNER_TEMP, so
+      # every write stays out of the release about to be uploaded while the
+      # binary still finds its resources beside itself.
       - name: Cache the RISC OS ROM
         uses: actions/cache@v6
         with:
@@ -699,6 +605,8 @@ jobs:
   # platform's own code (the Win32 and Cocoa paths) is not covered. Noted in
   # docs/testing.md rather than left to be discovered.
   windows-arm64:
+    needs: build-gate
+    if: always() && needs.build-gate.result == 'success'
     # Native Windows-on-ARM build, asked for by users running RPCEmu on ARM
     # laptops. MSYS2's CLANGARM64 environment: clang reports
     # aarch64-w64-windows-gnu and file(1) calls the output "PE32+ ... ARM64", so
@@ -746,7 +654,7 @@ jobs:
             mingw-w64-clang-aarch64-libusb
 
       - name: Build and stage release (arm64, interpreter)
-        timeout-minutes: 25
+        timeout-minutes: 8
         run: |
           chmod +x build-windows.sh
           ./build-windows.sh --zip
@@ -807,7 +715,7 @@ jobs:
       # Longer timeout than the amd64 job gets: this is the interpreter rather
       # than the recompiler, and the same trade the linux-arm64 job lives with.
       - name: Headless boot smoke test
-        timeout-minutes: 6
+        timeout-minutes: 3
         run: |
           python3 tests/boot_smoke.py \
             --binary releases/windows/arm64/rpcemu-interpreter.exe \
@@ -825,10 +733,11 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload arm64 build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rpcemu-windows-arm64
           path: releases/windows/arm64/
+          if-no-files-found: error
 
       # An artifact rather than a release asset, still - but for a smaller reason
       # than before. The boot test above means the runner now shows that RISC OS
@@ -842,11 +751,14 @@ jobs:
 
   windows:
     needs: [windows-amd64, windows-arm64]
+    if: always() && needs.windows-amd64.result == 'success' && needs.windows-arm64.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - run: echo "Windows amd64 and arm64 both built and passed their tests."
 
   macos-x86_64:
+    needs: build-gate
+    if: always() && needs.build-gate.result == 'success'
     # Free Intel (macos-13) runners are effectively unavailable, so build the
     # x86_64 slice (WITH the dynarec) on an Apple Silicon runner: Apple clang
     # cross-compiles to x86_64 natively via CMAKE_OSX_ARCHITECTURES, we just
@@ -871,16 +783,11 @@ jobs:
             script="$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
             NONINTERACTIVE=1 arch -x86_64 /bin/bash -c "$script"
           fi
-          # Both slices must end up with the SAME version of every dependency:
-          # they are fused with lipo, and a library built from two different
-          # upstream releases is not one library. The Intel and Apple Silicon
-          # Homebrews are separate installations that update independently, so
-          # without this they drift - a real run fused SDL3 3.4.12 (x86_64)
-          # against 3.4.10 (arm64) before the bundler caught it. "brew update"
-          # puts both on the same formula revision.
-          # Retried for the same reason as the arm64 job: this fetches from
-          # github.com, and a runner that cannot reach it fails the build before
-          # anything is compiled.
+          # Both slices need the SAME version of every dependency: lipo fuses
+          # them, and a library from two upstream releases is not one library.
+          # The Intel and Apple Silicon Homebrews update independently, so
+          # "brew update" is what holds them to one formula revision.
+          # Retried because it fetches from github.com.
           for attempt in 1 2 3; do
             arch -x86_64 /usr/local/bin/brew update && break
             echo "brew update failed (attempt $attempt of 3)"
@@ -892,7 +799,7 @@ jobs:
           arch -x86_64 /usr/local/bin/brew list --versions sdl2-compat sdl3 wxwidgets libvncserver libusb || true
 
       - name: Build x86_64 slice + test (Rosetta)
-        timeout-minutes: 12
+        timeout-minutes: 10
         run: |
           chmod +x build-macos.sh
           # Resolve wx-config / pkg-config / cmake from the x86_64 Homebrew
@@ -914,6 +821,8 @@ jobs:
           if-no-files-found: error
 
   macos-arm64:
+    needs: build-gate
+    if: always() && needs.build-gate.result == 'success'
     # Apple Silicon runner: builds the arm64 slice. There is no ARM dynarec
     # backend, so arm64 uses the interpreter (RPCEMU_DYNAREC=OFF), mirroring the
     # Linux arm64 build. On Apple Silicon the x86_64 slice also runs via Rosetta.
@@ -925,20 +834,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-          # Both slices must end up with the SAME version of every dependency:
-          # they are fused with lipo, and a library built from two different
-          # upstream releases is not one library. The Intel and Apple Silicon
-          # Homebrews are separate installations that update independently, so
-          # without this they drift - a real run fused SDL3 3.4.12 (x86_64)
-          # against 3.4.10 (arm64) before the bundler caught it. "brew update"
-          # puts both on the same formula revision.
+          # Both slices need the SAME version of every dependency: lipo fuses
+          # them, and a library from two upstream releases is not one library.
+          # The Intel and Apple Silicon Homebrews update independently, so
+          # "brew update" is what holds them to one formula revision.
           #
-          # Retried, because it fetches from github.com and the runner's network
-          # is not always willing: a run failed here with "SSL certificate
-          # problem: self signed certificate" and took the whole build with it,
-          # having compiled nothing. Still fatal if every attempt fails - the
-          # drift this prevents is worse than a red build - but a single bad
-          # moment no longer costs a re-run.
+          # Retried because it fetches from github.com. Still fatal if all three
+          # attempts fail - the drift this prevents is worse than a red build.
           for attempt in 1 2 3; do
             brew update && break
             echo "brew update failed (attempt $attempt of 3)"
@@ -950,7 +852,7 @@ jobs:
           brew list --versions sdl2-compat sdl3 wxwidgets libvncserver libusb || true
 
       - name: Build arm64 slice (interpreter) + test
-        timeout-minutes: 5
+        timeout-minutes: 3
         run: |
           chmod +x build-macos.sh
           ./build-macos.sh --arch arm64
@@ -965,8 +867,9 @@ jobs:
   macos-universal:
     # Fuse the two per-arch slices into a universal binary and stage the release.
     needs: [macos-x86_64, macos-arm64]
+    if: always() && needs.macos-x86_64.result == 'success' && needs.macos-arm64.result == 'success'
     runs-on: macos-14
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1049,13 +952,10 @@ jobs:
       # which matters because each uses a different HTTP stack (libcurl here,
       # WinHTTP on Windows, NSURLSession on macOS).
       #
-      # Cached so RISC OS Open are not asked for the same file on every push.
-      # The ROM and the machine the test creates go in a data directory under
-      # RUNNER_TEMP, not in the staged release. The emulator resolves its
-      # writable data separately from its read-only resources, so RPCEMU_DATADIR
-      # moves every write out of the tree that is about to be uploaded while it
-      # still finds its resources beside the binary. The staged release is left
-      # exactly as it was built.
+      # Cached, so RISC OS Open are not asked for the same file every push.
+      # RPCEMU_DATADIR puts the ROM and the test machine under RUNNER_TEMP, so
+      # every write stays out of the release about to be uploaded while the
+      # binary still finds its resources beside itself.
       - name: Cache the RISC OS ROM
         uses: actions/cache@v6
         with:
@@ -1123,14 +1023,13 @@ jobs:
     # whether the emulator's C is well defined rather than merely producing the
     # expected answer, and shipping past a report from it would mean shipping
     # something known to be relying on the compiler's goodwill.
-    needs: [checks, linux, windows, macos-universal]
+    needs: [release-preflight, sanitisers, interface-docs, linux, windows, macos-universal]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      # The notes are published from the file version-matches-tag insisted on, so
-      # the release reads correctly the moment it appears rather than being
-      # rewritten by hand afterwards.
+      # The notes come from the file release-preflight insisted on, so the
+      # release reads correctly the moment it appears.
       - uses: actions/checkout@v7
 
       - name: Download all build artifacts
@@ -1171,7 +1070,7 @@ jobs:
     # channel says nothing, which is the silent failure this file exists to
     # avoid. Being reported on and being a release blocker are separate
     # questions, and the answers differ.
-    needs: [version-matches-tag, linux-amd64, linux-arm64, windows-amd64, windows-arm64, macos-universal, sanitisers, docs, release]
+    needs: [release-preflight, linux, windows-amd64, windows-arm64, macos-universal, sanitisers, interface-docs, release]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1185,8 +1084,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          # A job that did not run is not a job that failed: version-matches-tag
-          # and release are skipped on every push that is not a tag.
+          # A job that did not run is not a job that failed: release-preflight and
+          # release are skipped on every push that is not a tag, and a failed
+          # preflight skips everything behind it.
           failed=$(printf '%s' "$RESULTS" \
               | jq -r 'to_entries | map(select(.value.result == "failure") | .key) | join(", ")')
 
