@@ -19,6 +19,7 @@
  */
 
 #include <string.h>
+#include <time.h>
 
 #include "socket-compat.h"
 
@@ -44,6 +45,54 @@
 
 static int switch_fd = -1;
 static int switch_slot = -1;
+
+/*
+ * What has crossed the wire, reported now and then.
+ *
+ * Here because "the other machines cannot see the share" and "the frames are not
+ * arriving" are different faults with the same symptom, and until this there was
+ * no way to tell them apart: a machine could be receiving every frame and
+ * discarding them for its own reasons, or receiving none at all, and the log said
+ * nothing either way.
+ *
+ * Reported at most every ten seconds, and only when something has moved, so an
+ * idle machine writes nothing.
+ */
+static unsigned long switch_tx_frames;
+static unsigned long switch_rx_frames;      /* seen on the wire */
+static unsigned long switch_rx_for_us;      /* and addressed to this machine */
+static unsigned long switch_reported_tx;
+static unsigned long switch_reported_rx;
+static time_t switch_last_report;
+
+#define NET_SWITCH_REPORT_SECONDS 10
+
+static void
+net_switch_report(void)
+{
+	const time_t now = time(NULL);
+
+	if (switch_last_report == 0) {
+		switch_last_report = now;
+		return;
+	}
+	if (now - switch_last_report < NET_SWITCH_REPORT_SECONDS) {
+		return;
+	}
+	if (switch_tx_frames == switch_reported_tx &&
+	    switch_rx_frames == switch_reported_rx) {
+		switch_last_report = now;
+		return;
+	}
+
+	rpclog("net_switch: slot %d - sent %lu frames, received %lu (%lu for this "
+	       "machine)\n", switch_slot, switch_tx_frames, switch_rx_frames,
+	    switch_rx_for_us);
+
+	switch_reported_tx = switch_tx_frames;
+	switch_reported_rx = switch_rx_frames;
+	switch_last_report = now;
+}
 
 int
 net_switch_frame_is_for_us(const uint8_t *frame, int frame_len,
@@ -153,6 +202,9 @@ net_switch_tx(const uint8_t *frame, int frame_len)
 		(void) sendto(switch_fd, (const char *) frame, (size_t) frame_len, 0,
 		    (struct sockaddr *) &addr, sizeof(addr));
 	}
+
+	switch_tx_frames++;
+	net_switch_report();
 }
 
 int
@@ -191,13 +243,23 @@ net_switch_poll(void)
 		 */
 		(void) broadcast_relay_tx(frame, len);
 
+		switch_rx_frames++;
+
 		if (!net_switch_frame_is_for_us(frame, len, network_hwaddr)) {
 			continue;
 		}
+		switch_rx_for_us++;
 		if (network_nat_inject_packet(frame, len)) {
 			delivered++;
 		}
 	}
+
+	/*
+	 * Also from here, not only from the transmit path: a machine that is only
+	 * listening - which is exactly the machine whose silence needs explaining -
+	 * would otherwise never say a word.
+	 */
+	net_switch_report();
 
 	return delivered;
 }
