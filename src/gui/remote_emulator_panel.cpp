@@ -42,6 +42,17 @@ wxBEGIN_EVENT_TABLE(RemoteEmulatorPanel, wxPanel)
 	EVT_LEFT_UP(RemoteEmulatorPanel::OnMouseUp)
 	EVT_MIDDLE_UP(RemoteEmulatorPanel::OnMouseUp)
 	EVT_RIGHT_UP(RemoteEmulatorPanel::OnMouseUp)
+	/*
+	 * The second press of a double click arrives as its own event, not as
+	 * another LEFT_DOWN: wx sends down, up, dclick, up. Without these three
+	 * that second press was dropped, the guest saw one press and two releases,
+	 * and it took three clicks of the host mouse to make two arrive - so
+	 * double clicking on an icon mostly did not work. EmulatorPanel has bound
+	 * them all along (OnMouseDoubleClick); this panel had not.
+	 */
+	EVT_LEFT_DCLICK(RemoteEmulatorPanel::OnMouseDown)
+	EVT_MIDDLE_DCLICK(RemoteEmulatorPanel::OnMouseDown)
+	EVT_RIGHT_DCLICK(RemoteEmulatorPanel::OnMouseDown)
 	EVT_MOUSEWHEEL(RemoteEmulatorPanel::OnMouseWheel)
 	EVT_KEY_DOWN(RemoteEmulatorPanel::OnKeyDown)
 	EVT_KEY_UP(RemoteEmulatorPanel::OnKeyUp)
