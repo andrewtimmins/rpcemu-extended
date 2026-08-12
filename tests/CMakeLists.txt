@@ -672,6 +672,16 @@ target_include_directories(test_etherrpcem_layout PRIVATE
 rpcemu_add_test(test_etherrpcem_layout
                 ${CMAKE_CURRENT_SOURCE_DIR}/../riscos-progs/EtherRPCEm/etherrpcem.s)
 
+# Where the Manager draws a machine's screen inside its panel, and where a point
+# in that panel lands on that screen. Arithmetic only - the geometry lives in a
+# header of its own (src/gui/remote_display_geometry.h) precisely so that it can
+# be checked without a display, a machine or a running Manager. The two answers
+# disagreeing is what made the guest pointer move more slowly than the hand.
+add_executable(test_remote_display test_remote_display.c)
+target_include_directories(test_remote_display PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui)
+rpcemu_add_test(test_remote_display)
+
 # The serialisation primitives snapshots are built from, and the run-length codec
 # that carries RAM and VRAM. Links rpcemu_core: savestate.c calls into every
 # module's own save/load function, so unlike most of the tests here it cannot be
@@ -712,7 +722,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 42)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 43)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()

@@ -230,6 +230,26 @@ enum class IpcEventType : uint32_t {
 
 struct IpcEvent {
 	IpcEventType type = IpcEventType::FrameReady;
+
+	/*
+	 * For FrameReady: the rows of the guest's screen that changed, as the
+	 * half-open range [dirty_top, dirty_bottom) the emulator's own VideoUpdate
+	 * uses. Unused by every other event type.
+	 *
+	 * Here because without it the Manager had to treat every frame as a whole
+	 * new screen: copy it, convert it and resample all of it, measured at 23ms
+	 * a frame for a 1920x1080 guest, which is most of a GUI thread and is why
+	 * the pointer - handled on that same thread - could only be updated about
+	 * thirty times a second. A machine's own window has always had these rows
+	 * and has always used them.
+	 *
+	 * A machine that cannot say, or that really did redraw everything, sends
+	 * 0 and the screen height, which is what the Manager did for every frame
+	 * before this existed.
+	 */
+	int32_t dirty_top = 0;
+	int32_t dirty_bottom = 0;
+
 	char path[512] = {};
 };
 

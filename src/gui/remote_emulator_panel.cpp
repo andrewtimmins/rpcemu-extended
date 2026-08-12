@@ -25,7 +25,11 @@
 #include <wx/dcbuffer.h>
 #include <wx/graphics.h>
 
+#include <chrono>
+
 #include "input_helpers.h"
+#include "remote_display_geometry.h"
+#include "remote_display_scale.h"
 
 extern "C" {
 #include "rpcemu.h"
@@ -57,11 +61,13 @@ wxBEGIN_EVENT_TABLE(RemoteEmulatorPanel, wxPanel)
 	EVT_KEY_DOWN(RemoteEmulatorPanel::OnKeyDown)
 	EVT_KEY_UP(RemoteEmulatorPanel::OnKeyUp)
 	EVT_KILL_FOCUS(RemoteEmulatorPanel::OnKillFocus)
+	EVT_TIMER(wxID_ANY, RemoteEmulatorPanel::OnSettleTimer)
 wxEND_EVENT_TABLE()
 
 RemoteEmulatorPanel::RemoteEmulatorPanel(wxWindow *parent, const std::string &shared_fb_name,
                                          const std::string &ipc_endpoint)
 	: wxPanel(parent, wxID_ANY, wxDefaultPosition, wxSize(640, 480), wxWANTS_CHARS)
+	, settle_timer_(this)
 {
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
 	SetBackgroundColour(*wxBLACK);
@@ -136,6 +142,7 @@ void RemoteEmulatorPanel::SetActive(bool active)
 		   waiting for the guest to draw something new after the switch -
 		   the shared framebuffer already holds it. */
 		frame_dirty_ = true;
+		dirty_all_ = true;
 		Refresh(false);
 		SetFocus();
 	}
@@ -146,6 +153,29 @@ void RemoteEmulatorPanel::HandleIpcEvent(const IpcEvent &event)
 	switch (event.type) {
 	case IpcEventType::FrameReady:
 		if (active_) {
+			/*
+			 * Union of the rows every frame since the last paint reported.
+			 * Several frames arrive between two paints - wx coalesces the
+			 * repaint requests, which is deliberate - so painting only the
+			 * last frame's rows would leave the ones before it stale.
+			 *
+			 * A machine that reports an empty or impossible range is taken
+			 * to mean the whole screen, which is what happened for every
+			 * frame before the range existed.
+			 */
+			if (event.dirty_bottom > event.dirty_top) {
+				if (dirty_bottom_ <= dirty_top_) {
+					dirty_top_ = event.dirty_top;
+					dirty_bottom_ = event.dirty_bottom;
+				} else {
+					dirty_top_ = std::min(dirty_top_, (int) event.dirty_top);
+					dirty_bottom_ = std::max(dirty_bottom_,
+					    (int) event.dirty_bottom);
+				}
+			} else {
+				dirty_all_ = true;
+			}
+
 			/*
 			 * ★ Mark it stale and ask for a paint; do not build the bitmap
 			 * here.
@@ -205,6 +235,137 @@ void RemoteEmulatorPanel::HandleIpcEvent(const IpcEvent &event)
 	}
 }
 
+/*
+ * The guest's screen at dw x dh, ready to blit, doing as little as it can.
+ *
+ * Three things can make work here: a new frame, which only dirties the rows the
+ * guest redrew; a change of panel size or guest screen mode, which dirties all
+ * of them; and a change of filter as the user starts or stops moving things,
+ * which also dirties all of them, because half a picture at each quality looks
+ * like a fault.
+ *
+ * A repaint on its own makes none: an expose, a menu closing over the panel, or
+ * a machine sitting at a still desktop all ask for a paint with nothing to
+ * recompute.
+ */
+wxBitmap &RemoteEmulatorPanel::ScaledBitmap(int dw, int dh)
+{
+	/*
+	 * Which filter, and it is not simply "fast while interacting".
+	 *
+	 * The first attempt at this used nearest neighbour for everything the user
+	 * was moving, and it looked it: dragging a window made the whole screen go
+	 * grainy, which is a poor trade when dragging a window only dirties a band
+	 * of rows and the box average over a band is cheap. So the test is the work
+	 * in front of it, not the mood: keep the good filter while the rows that
+	 * changed are a small enough part of the screen to afford it, and fall back
+	 * only when the guest really is redrawing everything at once, which is
+	 * where the cost was.
+	 *
+	 * Upscaling always takes nearest: a box average has nothing to average when
+	 * a destination pixel covers less than one source pixel.
+	 *
+	 * The budget is in source pixels, because that is what the box average
+	 * reads: 600,000 is about 4ms at the 7ns a pixel measured here, which
+	 * leaves room for sixty of them a second.
+	 */
+	static const long kBoxPixelBudget = 600000;
+	const bool upscaling = dw > frame_width_ || dh > frame_height_;
+	long source_rows = frame_height_;
+
+	if (!dirty_all_ && dirty_bottom_ > dirty_top_) {
+		source_rows = dirty_bottom_ - dirty_top_;
+	}
+
+	const bool too_much_to_filter =
+	    source_rows * (long) frame_width_ > kBoxPixelBudget;
+	const bool fast = upscaling || (Interacting() && too_much_to_filter);
+
+	if (!scaled_valid_ || scaled_width_ != dw || scaled_height_ != dh ||
+	    scaled_from_width_ != frame_width_ || scaled_from_height_ != frame_height_ ||
+	    scaled_is_fast_ != fast) {
+		if (!scaled_image_.IsOk() || scaled_image_.GetWidth() != dw ||
+		    scaled_image_.GetHeight() != dh) {
+			scaled_image_ = wxImage(dw, dh, false);
+		}
+		scaled_width_ = dw;
+		scaled_height_ = dh;
+		scaled_from_width_ = frame_width_;
+		scaled_from_height_ = frame_height_;
+		scaled_is_fast_ = fast;
+		scaled_valid_ = true;
+		dirty_all_ = true;
+	}
+
+	int row_top = 0, row_bottom = dh;
+
+	if (!dirty_all_) {
+		remote_display_scale_rows_for(dirty_top_, dirty_bottom_, frame_height_,
+		    dh, &row_top, &row_bottom);
+	}
+
+	if (row_bottom > row_top) {
+		if (fast) {
+			remote_display_scale_argb_nearest_rows(frame_pixels_.data(),
+			    frame_width_, frame_height_, scaled_image_.GetData(), dw, dh,
+			    row_top, row_bottom);
+		} else {
+			remote_display_scale_argb_rows(frame_pixels_.data(),
+			    frame_width_, frame_height_, scaled_image_.GetData(), dw, dh,
+			    row_top, row_bottom);
+		}
+
+		scaled_bitmap_stale_ = true;
+	}
+
+	dirty_all_ = false;
+	dirty_top_ = dirty_bottom_ = 0;
+
+	if (scaled_bitmap_stale_ || !scaled_bitmap_.IsOk()) {
+		scaled_bitmap_ = wxBitmap(scaled_image_);
+		scaled_bitmap_stale_ = false;
+	}
+
+	return scaled_bitmap_;
+}
+
+/*
+ * Moving something counts for a quarter of a second after the last event, and
+ * for as long as a button is held - a drag has long gaps between motion events
+ * and must not flick to the slow filter in the middle of one.
+ */
+bool RemoteEmulatorPanel::Interacting() const
+{
+	if (held_buttons_ != 0) {
+		return true;
+	}
+	if (last_input_ == std::chrono::steady_clock::time_point()) {
+		return false;
+	}
+
+	return std::chrono::duration_cast<std::chrono::milliseconds>(
+	    std::chrono::steady_clock::now() - last_input_).count() < 250;
+}
+
+void RemoteEmulatorPanel::NoteInput()
+{
+	last_input_ = std::chrono::steady_clock::now();
+
+	/* Restarted on every event, so it fires once, after the last one. Longer
+	   than the quarter second Interacting() allows, so the timer lands after
+	   the fast filter has lapsed rather than racing it. */
+	settle_timer_.Start(320, wxTIMER_ONE_SHOT);
+}
+
+void RemoteEmulatorPanel::OnSettleTimer(wxTimerEvent & /*event*/)
+{
+	/* They have stopped. Redraw the whole picture properly. */
+	if (live_ && active_) {
+		scaled_valid_ = false;
+		Refresh(false);
+	}
+}
+
 void RemoteEmulatorPanel::RefreshFrame()
 {
 	int w = 0, h = 0;
@@ -214,6 +375,42 @@ void RemoteEmulatorPanel::RefreshFrame()
 	}
 	frame_width_ = w;
 	frame_height_ = h;
+	frame_serial_++;
+
+	/*
+	 * ★ Only the copy out of shared memory happens here.
+	 *
+	 * Converting to RGB and building a guest-sized wxBitmap used to happen on
+	 * every frame as well, whether anything needed them or not. The path
+	 * taken for a scaled picture - which is every panel that is not exactly
+	 * the guest's size - reads the 32-bit pixels directly and needs neither,
+	 * so both are built on demand now (FullBitmap) and the common case does
+	 * one pass over the frame instead of three.
+	 */
+	display_bitmap_ = wxBitmap();
+
+	/* No Refresh() here: this is called from OnPaint, and asking for another
+	   paint from inside one is how a repaint loop starts. */
+}
+
+/*
+ * The guest's screen at its own size, ready to blit.
+ *
+ * Wanted only by the paths that do not scale it themselves: the 1:1 case, the
+ * hardware-accelerated graphics context on Windows, and the StretchBlit
+ * fallback.
+ */
+wxBitmap &RemoteEmulatorPanel::FullBitmap()
+{
+	if (display_bitmap_.IsOk()) {
+		return display_bitmap_;
+	}
+
+	const int w = frame_width_, h = frame_height_;
+
+	if (w <= 0 || h <= 0 || frame_pixels_.size() < (size_t) w * (size_t) h) {
+		return display_bitmap_;
+	}
 
 	wxImage image(w, h, false);
 	unsigned char *rgb = image.GetData();
@@ -231,19 +428,9 @@ void RemoteEmulatorPanel::RefreshFrame()
 		}
 	}
 
-	/*
-	 * ★ Kept at the guest's own size. OnPaint does the scaling.
-	 *
-	 * This used to wxImage::Rescale() to the panel size on every frame, which
-	 * is a full resample of the whole image in software and was the single
-	 * most expensive thing this panel did - most of a CPU core to show a
-	 * machine doing nothing. The toolkit does that work now, so there is
-	 * nothing to rescale here.
-	 */
 	display_bitmap_ = wxBitmap(image);
 
-	/* No Refresh() here: this is called from OnPaint, and asking for another
-	   paint from inside one is how a repaint loop starts. */
+	return display_bitmap_;
 }
 
 void RemoteEmulatorPanel::OnPaint(wxPaintEvent & /*event*/)
@@ -270,79 +457,69 @@ void RemoteEmulatorPanel::OnPaint(wxPaintEvent & /*event*/)
 		return;
 	}
 
-	if (display_bitmap_.IsOk()) {
-		const wxSize client = GetClientSize();
-		const int bw = display_bitmap_.GetWidth();
-		const int bh = display_bitmap_.GetHeight();
+	if (frame_width_ > 0 && frame_height_ > 0 && !frame_pixels_.empty()) {
+		const wxRect display = DisplayRect();
 
-		if (client.GetWidth() == bw && client.GetHeight() == bh) {
-			/* Nothing to scale, so nothing to lose: straight copy. */
-			wxMemoryDC memDC(display_bitmap_);
+		/*
+		 * ★ Fitted to the panel, keeping its shape, and drawn by whichever
+		 * route is actually cheap on this platform.
+		 *
+		 * The panel is a fixed shape and the guest's screen is not, so the
+		 * picture is fitted to whichever edge runs out first and centred, with
+		 * the background showing through as bars. DisplayRect() works out
+		 * where, and PanelPointToGuest maps the pointer through the same
+		 * rectangle - they used to disagree, and that is why the guest pointer
+		 * moved at the wrong speed.
+		 *
+		 * How it is scaled matters more than it looks, and the answer differs
+		 * by platform. A graphics context lets the platform's renderer filter
+		 * it, which is right where that renderer is hardware accelerated:
+		 * Direct2D on Windows, asked for by name. Where it is not accelerated
+		 * it is the most expensive option there is - GTK's Cairo took about
+		 * 30ms for a 1600x1200 guest in a 933x700 panel, and is quick only at
+		 * 1:1 and 1:2, never at the ratios a dragged window produces. So
+		 * everywhere else the scaling is done here, incrementally: only the
+		 * rows the guest redrew, and with the cheap filter while the user is
+		 * moving something. Measured on a real session, that took a paint from
+		 * 23ms to a few.
+		 */
+		dc.SetBackground(*wxBLACK_BRUSH);
+		dc.Clear();
 
-			dc.Blit(0, 0, bw, bh, &memDC, 0, 0);
-		} else {
-			/*
-			 * ★ Scaled through a graphics context, and with the aspect
-			 * ratio kept.
-			 *
-			 * StretchBlit is what EmulatorPanel uses, and is a
-			 * nearest-neighbour copy: every scale factor that is not a whole
-			 * number drops and duplicates rows and columns, which is what
-			 * made this look pixelated and grainy at any guest resolution.
-			 * wxImage::Rescale would look right but resamples the whole
-			 * frame in software on the way to every paint, which is what
-			 * used to cost a CPU core.
-			 *
-			 * A graphics context is the third option: the platform's own
-			 * renderer does the filtering, so it looks like the resampled
-			 * version without the software cost. Which renderer that is
-			 * matters on Windows - see below.
-			 *
-			 * The panel is a fixed shape and the guest's screen is not, so
-			 * without this the picture was also stretched out of shape.
-			 * Fitted to whichever edge runs out first and centred, with the
-			 * background showing through as bars.
-			 */
-			const double scale = std::min(
-			    (double) client.GetWidth() / (double) bw,
-			    (double) client.GetHeight() / (double) bh);
-			const double dw = (double) bw * scale;
-			const double dh = (double) bh * scale;
-			const double dx = ((double) client.GetWidth() - dw) / 2.0;
-			const double dy = ((double) client.GetHeight() - dh) / 2.0;
-
-			dc.SetBackground(*wxBLACK_BRUSH);
-			dc.Clear();
-
-			/* Direct2D rather than the GDI+ default, which is slow enough to
-			   create per paint that typing felt laggy. */
-			wxGraphicsRenderer *renderer = nullptr;
+		wxGraphicsRenderer *accelerated = nullptr;
 
 #ifdef __WXMSW__
-			renderer = wxGraphicsRenderer::GetDirect2DRenderer();
+		/* Direct2D rather than the GDI+ default, which is slow enough to
+		   create per paint that typing felt laggy. */
+		accelerated = wxGraphicsRenderer::GetDirect2DRenderer();
 #endif
-			if (renderer == nullptr) {
-				renderer = wxGraphicsRenderer::GetDefaultRenderer();
-			}
 
-			wxGraphicsContext *gc =
-			    renderer != nullptr ? renderer->CreateContext(dc) : nullptr;
+		wxGraphicsContext *gc = accelerated != nullptr
+		    ? accelerated->CreateContext(dc) : nullptr;
 
-			if (gc != nullptr) {
+		if (gc != nullptr) {
+			wxBitmap &bitmap = FullBitmap();
+
+			if (bitmap.IsOk()) {
 				/* BEST, not GOOD: the guest screen is usually scaled down,
 				   and GOOD is bilinear, which breaks single-pixel text. */
 				gc->SetInterpolationQuality(wxINTERPOLATION_BEST);
-				gc->DrawBitmap(display_bitmap_, dx, dy, dw, dh);
-				delete gc;
-			} else {
-				/* No graphics context available: better a hard-edged
-				   picture than none. */
-				wxMemoryDC memDC(display_bitmap_);
+				gc->DrawBitmap(bitmap, display.GetX(), display.GetY(),
+				    display.GetWidth(), display.GetHeight());
+			}
+			delete gc;
+		} else {
+			wxBitmap &bitmap =
+			    ScaledBitmap(display.GetWidth(), display.GetHeight());
 
-				dc.StretchBlit((int) dx, (int) dy, (int) dw, (int) dh,
-				    &memDC, 0, 0, bw, bh);
+			if (bitmap.IsOk()) {
+				wxMemoryDC memDC(bitmap);
+
+				dc.Blit(display.GetX(), display.GetY(),
+				    display.GetWidth(), display.GetHeight(), &memDC, 0, 0);
 			}
 		}
+
 	} else {
 		dc.SetBackground(*wxBLACK_BRUSH);
 		dc.Clear();
@@ -390,6 +567,8 @@ void RemoteEmulatorPanel::OnSize(wxSizeEvent &event)
 	   each one was most of what made the window stop responding while being
 	   dragged; the paint that follows does it once. */
 	if (live_) {
+		/* A different size means a different scaled picture, all of it. */
+		scaled_valid_ = false;
 		frame_dirty_ = true;
 		Refresh(false);
 	}
@@ -406,18 +585,40 @@ int RemoteEmulatorPanel::MapClickButton(const wxMouseEvent &event) const
 	}
 }
 
+wxRect RemoteEmulatorPanel::DisplayRect() const
+{
+	const wxSize client = GetClientSize();
+	const struct remote_display_rect rect = remote_display_rect_for(
+	    client.GetWidth(), client.GetHeight(), frame_width_, frame_height_);
+
+	return wxRect(rect.x, rect.y, rect.w, rect.h);
+}
+
+/*
+ * Panel coordinates to guest coordinates.
+ *
+ * Measured against the rectangle the picture is drawn in, not against the whole
+ * panel. Against the whole panel - which is what this did - the guest pointer
+ * moved at dw/panel_width of the speed the host pointer did, and started
+ * offset by the width of the bar down the left, because the letterboxing the
+ * paint applies was not accounted for here. The host pointer is hidden while a
+ * machine is shown, so the guest one is all the user sees, and it read as a
+ * pointer that moved more slowly than the hand moving it. EmulatorPanel maps
+ * through its own offset_/scaled_ for the same reason.
+ *
+ * A point in the bars is clamped to the nearest edge of the picture, which is
+ * what a guest pointer pressed against the side of its screen does anyway.
+ */
 wxPoint RemoteEmulatorPanel::PanelPointToGuest(int x, int y) const
 {
 	const wxSize client = GetClientSize();
+	const struct remote_display_rect rect = remote_display_rect_for(
+	    client.GetWidth(), client.GetHeight(), frame_width_, frame_height_);
+	int gx = 0, gy = 0;
 
-	if (client.GetWidth() <= 0 || client.GetHeight() <= 0 || frame_width_ <= 0 || frame_height_ <= 0) {
-		return wxPoint(0, 0);
-	}
+	remote_display_point_to_guest(rect, frame_width_, frame_height_, x, y, &gx, &gy);
 
-	const int gx = x * frame_width_ / client.GetWidth();
-	const int gy = y * frame_height_ / client.GetHeight();
-
-	return wxPoint(std::clamp(gx, 0, frame_width_ - 1), std::clamp(gy, 0, frame_height_ - 1));
+	return wxPoint(gx, gy);
 }
 
 void RemoteEmulatorPanel::OnMouseMove(wxMouseEvent &event)
@@ -426,11 +627,14 @@ void RemoteEmulatorPanel::OnMouseMove(wxMouseEvent &event)
 		return;
 	}
 
+	NoteInput();
+
 	const wxPoint guest = PanelPointToGuest(event.GetX(), event.GetY());
 	IpcRequest request;
 	request.type = IpcRequestType::MouseMove;
 	request.arg1 = guest.x;
 	request.arg2 = guest.y;
+
 	SendRequest(request);
 }
 
@@ -445,6 +649,9 @@ void RemoteEmulatorPanel::OnMouseDown(wxMouseEvent &event)
 	if (buttons == 0) {
 		return;
 	}
+
+	NoteInput();
+	held_buttons_ |= buttons;
 
 	OnMouseMove(event);
 	IpcRequest request;
@@ -463,6 +670,9 @@ void RemoteEmulatorPanel::OnMouseUp(wxMouseEvent &event)
 	if (buttons == 0) {
 		return;
 	}
+
+	NoteInput();
+	held_buttons_ &= ~buttons;
 
 	IpcRequest request;
 	request.type = IpcRequestType::MouseRelease;

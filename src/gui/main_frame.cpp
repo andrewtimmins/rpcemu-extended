@@ -29,6 +29,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+#ifndef _WIN32
+#include <unistd.h>
+#else
+#include <process.h>
+#define getpid _getpid
+#endif
 #include <mutex>
 
 #include <wx/clipbrd.h>
@@ -372,6 +379,11 @@ void MainFrame::MirrorToSharedFramebuffer(const VideoUpdate &update)
 	if (ipc_server_) {
 		IpcEvent event;
 		event.type = IpcEventType::FrameReady;
+		/* The rows the guest actually redrew, so the Manager can do what this
+		   window does and touch only those. Clamped here rather than trusted:
+		   the reader is another process. */
+		event.dirty_top = std::max(0, std::min(update.yl, update.ysize));
+		event.dirty_bottom = std::max(0, std::min(update.yh, update.ysize));
 		ipc_server_->SendEvent(event);
 	}
 }

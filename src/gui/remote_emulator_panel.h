@@ -21,9 +21,11 @@
 #ifndef REMOTE_EMULATOR_PANEL_H
 #define REMOTE_EMULATOR_PANEL_H
 
+#include <chrono>
 #include <functional>
 #include <vector>
 
+#include <wx/timer.h>
 #include <wx/wx.h>
 
 #include "machine_ipc.h"
@@ -130,6 +132,43 @@ private:
 	int MapClickButton(const wxMouseEvent &event) const;
 	wxPoint PanelPointToGuest(int x, int y) const;
 
+	/*
+	 * Where in the panel the guest's screen is actually drawn: aspect-fitted
+	 * and centred, so there are bars down two sides whenever the panel is a
+	 * different shape from the guest's screen.
+	 *
+	 * One function, used by both the painting and the pointer mapping. They
+	 * disagreeing is what made the guest pointer travel at the wrong speed:
+	 * the paint letterboxed the picture while the mapping measured against
+	 * the whole panel.
+	 */
+	wxRect DisplayRect() const;
+
+	/*
+	 * The guest's screen, scaled to dw x dh and ready to blit.
+	 *
+	 * Only the rows the guest has redrawn since the last paint are rescaled;
+	 * the rest of the image is still there from before. A change of size, of
+	 * guest screen mode, or of filter redoes all of it.
+	 */
+	wxBitmap &ScaledBitmap(int dw, int dh);
+
+	/* The guest's screen at its own size, converted on demand. */
+	wxBitmap &FullBitmap();
+
+	/*
+	 * Whether the user is moving something about right now.
+	 *
+	 * While they are, the scaling is nearest-neighbour, which costs what the
+	 * panel costs rather than what the guest's screen costs; when they stop,
+	 * a timer fires one repaint at the box-average quality. Pointer events are
+	 * handled on the thread that paints, so a cheaper paint while dragging is
+	 * a pointer that keeps up - which is the whole reason for the distinction.
+	 */
+	bool Interacting() const;
+	void NoteInput();
+	void OnSettleTimer(wxTimerEvent &event);
+
 	SharedFramebuffer shared_fb_;
 	MachineIpcClient ipc_client_;
 	/* Set when the shared framebuffer or the panel size has changed, cleared
@@ -148,6 +187,41 @@ private:
 	int frame_width_ = 640;
 	int frame_height_ = 480;
 	wxBitmap display_bitmap_;
+
+	/*
+	 * The scaled copy, kept between paints so that only what changed has to be
+	 * redone. scaled_image_ is the pixels; scaled_bitmap_ is what a wxDC can
+	 * blit, rebuilt from it when the image has changed.
+	 */
+	wxImage scaled_image_;
+	wxBitmap scaled_bitmap_;
+	int scaled_width_ = 0;
+	int scaled_height_ = 0;
+	int scaled_from_width_ = 0;	/* the guest screen size it was made from */
+	int scaled_from_height_ = 0;
+	bool scaled_valid_ = false;
+	bool scaled_is_fast_ = false;	/* made with nearest neighbour */
+	bool scaled_bitmap_stale_ = true;
+
+	/*
+	 * Rows of the guest's screen redrawn since the last paint, as the
+	 * half-open range the FrameReady events carry. Several frames can arrive
+	 * between two paints - wx coalesces the repaint requests - so this is the
+	 * union of what they reported, and it is reset once painted.
+	 */
+	int dirty_top_ = 0;
+	int dirty_bottom_ = 0;
+	bool dirty_all_ = true;
+
+	/* Bumped for every frame taken out of shared memory. */
+	int frame_serial_ = 0;
+
+	/* When the user last moved or clicked, and the one-shot timer that fires
+	   after they stop to repaint at full quality. */
+	std::chrono::steady_clock::time_point last_input_;
+	int held_buttons_ = 0;
+	wxTimer settle_timer_;
+
 	HeldKeys held_keys_{};
 
 	wxDECLARE_EVENT_TABLE();
