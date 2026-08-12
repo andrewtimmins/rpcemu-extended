@@ -598,7 +598,15 @@ jobs:
           # without this they drift - a real run fused SDL3 3.4.12 (x86_64)
           # against 3.4.10 (arm64) before the bundler caught it. "brew update"
           # puts both on the same formula revision.
-          arch -x86_64 /usr/local/bin/brew update
+          # Retried for the same reason as the arm64 job: this fetches from
+          # github.com, and a runner that cannot reach it fails the build before
+          # anything is compiled.
+          for attempt in 1 2 3; do
+            arch -x86_64 /usr/local/bin/brew update && break
+            echo "brew update failed (attempt $attempt of 3)"
+            [ "$attempt" = 3 ] && exit 1
+            sleep $((attempt * 15))
+          done
           arch -x86_64 /usr/local/bin/brew install cmake ninja pkg-config wxwidgets sdl2 libvncserver libusb
           echo "==> x86_64 dependency versions"
           arch -x86_64 /usr/local/bin/brew list --versions sdl2-compat sdl3 wxwidgets libvncserver libusb || true
@@ -644,7 +652,19 @@ jobs:
           # without this they drift - a real run fused SDL3 3.4.12 (x86_64)
           # against 3.4.10 (arm64) before the bundler caught it. "brew update"
           # puts both on the same formula revision.
-          brew update
+          #
+          # Retried, because it fetches from github.com and the runner's network
+          # is not always willing: a run failed here with "SSL certificate
+          # problem: self signed certificate" and took the whole build with it,
+          # having compiled nothing. Still fatal if every attempt fails - the
+          # drift this prevents is worse than a red build - but a single bad
+          # moment no longer costs a re-run.
+          for attempt in 1 2 3; do
+            brew update && break
+            echo "brew update failed (attempt $attempt of 3)"
+            [ "$attempt" = 3 ] && exit 1
+            sleep $((attempt * 15))
+          done
           brew install cmake ninja pkg-config wxwidgets sdl2 libvncserver libusb
           echo "==> arm64 dependency versions"
           brew list --versions sdl2-compat sdl3 wxwidgets libvncserver libusb || true
