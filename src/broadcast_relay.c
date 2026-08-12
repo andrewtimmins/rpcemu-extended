@@ -101,8 +101,84 @@ relay_sock_strerror(void)
 #define IP_PROTO_UDP    17
 #define IP_HDR_LEN      20
 
-/* Rate limiting */
-#define MAX_PACKETS_PER_SECOND  100
+/*
+ * Rate limiting, in two budgets, because the two kinds of traffic here want
+ * opposite things.
+ *
+ * ★ There used to be one budget of 100 packets a second for everything, which
+ * is generous for discovery and hopeless for a file transfer: roughly 140KB/s at
+ * full MTU, and that is the ceiling however small the datagrams are, because the
+ * budget counts packets rather than bytes. (Fragments are charged once per
+ * datagram, not once each - the paths that fragment or reassemble spend from the
+ * budget one datagram at a time.) A small file fitted under it and a zip did
+ * not, so a share would mount and then stall - and every dropped packet was
+ * silent. Measured with a fake LAN peer at 200 packets a second: exactly 100
+ * delivered, 100 discarded, every second.
+ *
+ * Discovery keeps a cap. A relayed broadcast really can multiply - guest to LAN,
+ * LAN to the other emulated machines, and back - so a storm is a genuine risk
+ * and 100 a second is far more than Access+ announcements need.
+ *
+ * File traffic gets a backstop rather than a throttle. It is set high enough
+ * that nothing RISC OS can generate over an emulated 10Mbit card will reach it
+ * (20,000 packets a second is around 28MB/s at full MTU), so it never shapes a
+ * transfer; it exists only so that a routing loop or a runaway cannot spin the
+ * host at full speed unnoticed. Hitting it means something is wrong, which is
+ * why it is still counted and still reported.
+ *
+ * The budgets are also per direction. One shared counter meant a busy download
+ * could exhaust the allowance the guest needed for its own announcements, which
+ * is its own quiet failure.
+ */
+#define RELAY_BCAST_PER_SECOND    100
+#define RELAY_UNICAST_PER_SECOND  20000
+
+typedef enum {
+    RELAY_DIR_IN,        /* host -> guest */
+    RELAY_DIR_OUT,       /* guest -> host */
+    RELAY_DIRS
+} relay_dir_t;
+
+typedef enum {
+    RELAY_CLASS_BCAST,   /* discovery: broadcast or the announce port */
+    RELAY_CLASS_UNICAST, /* share management and file operations */
+    RELAY_CLASSES
+} relay_class_t;
+
+/*
+ * Why a packet was dropped, and how often to say so.
+ *
+ * Every drop used to be one counter that nothing read - broadcast_relay_stats()
+ * existed and had no callers - which is the same fault the send-failure note
+ * below describes: the share is discovered, the transfer stalls, and nothing
+ * anywhere says why. A rate limit sized for discovery broadcasts is invisible
+ * when it starts throwing away a file transfer, so it says so, with the reason
+ * separated because "we are over the cap" and "that would not fit in a frame"
+ * want different fixes.
+ *
+ * Reported at most once a second, and only while something is being dropped, so
+ * an idle machine writes nothing and a busy one cannot flood its own log.
+ */
+typedef enum {
+    RELAY_DROP_RATE_IN_BCAST,    /* host -> guest, discovery budget */
+    RELAY_DROP_RATE_IN_UNICAST,  /* host -> guest, file-traffic backstop */
+    RELAY_DROP_RATE_OUT_BCAST,   /* guest -> host, discovery budget */
+    RELAY_DROP_RATE_OUT_UNICAST, /* guest -> host, file-traffic backstop */
+    RELAY_DROP_BUILD,        /* could not build a frame for the guest */
+    RELAY_DROP_INJECT,       /* the guest's receive path would not take it */
+    RELAY_DROP_FRAGMENT,     /* fragmenting a large datagram failed */
+    RELAY_DROP_REASONS
+} relay_drop_reason_t;
+
+static const char *const relay_drop_names[RELAY_DROP_REASONS] = {
+    "discovery rate limit (host->guest)",
+    "file-traffic backstop (host->guest)",
+    "discovery rate limit (guest->host)",
+    "file-traffic backstop (guest->host)",
+    "frame build failed",
+    "guest would not accept",
+    "fragmentation failed"
+};
 
 /* SLiRP network constants */
 #define SLIRP_NET       0x0a0a0a00  /* 10.10.10.0 */
@@ -138,14 +214,19 @@ typedef struct {
     /* Learned guest IP from outgoing packets */
     uint32_t guest_ip;               /* Guest's IP in host byte order, 0 if unknown */
 
-    /* Rate limiting */
-    uint32_t packets_this_second;
+    /* Rate limiting: [direction][class], reset together each second. */
+    uint32_t rate_count[RELAY_DIRS][RELAY_CLASSES];
     time_t last_rate_reset;
 
     /* Statistics */
     uint32_t tx_count;              /* Guest -> Host */
     uint32_t rx_count;              /* Host -> Guest */
     uint32_t dropped;               /* Rate limited or errors */
+
+    /* Per-reason drop counts, and when they were last reported. */
+    uint32_t drop_reason[RELAY_DROP_REASONS];
+    uint32_t drop_reported[RELAY_DROP_REASONS];
+    time_t last_drop_report;
 } relay_state_t;
 
 static relay_state_t relay = {
@@ -168,6 +249,80 @@ static relay_state_t relay = {
  * NSLocalNetworkUsageDescription so macOS can ask; if the answer was no, or the
  * prompt was dismissed, this is what it looks like from in here.
  */
+/**
+ * Count a dropped packet, and say so at most once a second per reason.
+ *
+ * The rate-limit reasons carry the cap in the message, because 100 packets a
+ * second is ample for discovery and nowhere near enough for a file transfer -
+ * roughly 140KB/s at best - so somebody reading this while a copy stalls should
+ * not have to find that number in the source.
+ */
+/**
+ * Spend a packet from a budget, or refuse it.
+ *
+ * @return non-zero if the packet may be relayed.
+ */
+static int
+relay_rate_allow(relay_dir_t dir, relay_class_t cls)
+{
+    const time_t now = time(NULL);
+    const uint32_t cap = (cls == RELAY_CLASS_BCAST) ? RELAY_BCAST_PER_SECOND
+                                                    : RELAY_UNICAST_PER_SECOND;
+
+    if (now != relay.last_rate_reset) {
+        memset(relay.rate_count, 0, sizeof(relay.rate_count));
+        relay.last_rate_reset = now;
+    }
+
+    if (relay.rate_count[dir][cls] >= cap) {
+        return 0;
+    }
+    relay.rate_count[dir][cls]++;
+    return 1;
+}
+
+static void
+relay_drop(relay_drop_reason_t reason)
+{
+    const time_t now = time(NULL);
+    int i;
+
+    relay.dropped++;
+    if (reason >= 0 && reason < RELAY_DROP_REASONS) {
+        relay.drop_reason[reason]++;
+    }
+
+    if (now == relay.last_drop_report) {
+        return;
+    }
+    relay.last_drop_report = now;
+
+    for (i = 0; i < RELAY_DROP_REASONS; i++) {
+        const uint32_t since = relay.drop_reason[i] - relay.drop_reported[i];
+
+        if (since == 0) {
+            continue;
+        }
+        relay.drop_reported[i] = relay.drop_reason[i];
+
+        if (i <= RELAY_DROP_RATE_OUT_UNICAST) {
+            const int cap = (i == RELAY_DROP_RATE_IN_BCAST ||
+                             i == RELAY_DROP_RATE_OUT_BCAST)
+                ? RELAY_BCAST_PER_SECOND : RELAY_UNICAST_PER_SECOND;
+
+            rpclog("broadcast_relay: DROPPED %u packet%s - %s, cap is %d/second "
+                   "(%u dropped in total; tx %u, rx %u)\n",
+                (unsigned) since, since == 1 ? "" : "s", relay_drop_names[i],
+                cap, (unsigned) relay.drop_reason[i],
+                (unsigned) relay.tx_count, (unsigned) relay.rx_count);
+        } else {
+            rpclog("broadcast_relay: DROPPED %u packet%s - %s (%u in total)\n",
+                (unsigned) since, since == 1 ? "" : "s", relay_drop_names[i],
+                (unsigned) relay.drop_reason[i]);
+        }
+    }
+}
+
 static void
 relay_report_send_failure(void)
 {
@@ -510,8 +665,11 @@ broadcast_relay_init(void)
     relay.tx_count = 0;
     relay.rx_count = 0;
     relay.dropped = 0;
-    relay.packets_this_second = 0;
+    memset(relay.rate_count, 0, sizeof(relay.rate_count));
+    memset(relay.drop_reason, 0, sizeof(relay.drop_reason));
+    memset(relay.drop_reported, 0, sizeof(relay.drop_reported));
     relay.last_rate_reset = time(NULL);
+    relay.last_drop_report = 0;
     relay.guest_ip = 0;  /* Will be learned from first outgoing packet */
 
     reasm_reset();
@@ -849,7 +1007,6 @@ poll_socket(int sock_idx)
     int frame_len;
     uint16_t port;
     int is_broadcast;
-    time_t now;
 
     if (relay.sockets[sock_idx] == RELAY_INVALID_SOCKET) {
         return 0;
@@ -876,21 +1033,19 @@ poll_socket(int sock_idx)
         return 0;
     }
 
-    /* Rate limiting */
-    now = time(NULL);
-    if (now != relay.last_rate_reset) {
-        relay.packets_this_second = 0;
-        relay.last_rate_reset = now;
-    }
-    if (relay.packets_this_second >= MAX_PACKETS_PER_SECOND) {
-        relay.dropped++;
+    /*
+     * Determine if this should be delivered as broadcast or unicast. Port 32770
+     * uses broadcast for discovery, others are unicast responses - and that is
+     * also which budget it spends from, so it is worked out before the check.
+     */
+    is_broadcast = (port == ACCESS_PORT_ANNOUNCE);
+
+    if (!relay_rate_allow(RELAY_DIR_IN, is_broadcast ? RELAY_CLASS_BCAST
+                                                     : RELAY_CLASS_UNICAST)) {
+        relay_drop(is_broadcast ? RELAY_DROP_RATE_IN_BCAST
+                                : RELAY_DROP_RATE_IN_UNICAST);
         return 0;
     }
-    relay.packets_this_second++;
-
-    /* Determine if this should be delivered as broadcast or unicast */
-    /* Port 32770 uses broadcast for discovery, others are unicast responses */
-    is_broadcast = (port == ACCESS_PORT_ANNOUNCE);
 
     /* Check if payload is too large for single Ethernet frame */
     /* Max UDP payload in single frame: 1500 - 20(IP) - 8(UDP) = 1472 */
@@ -901,7 +1056,7 @@ poll_socket(int sock_idx)
             relay.rx_count++;
             return 1;
         } else {
-            relay.dropped++;
+            relay_drop(RELAY_DROP_FRAGMENT);
             return 0;
         }
     }
@@ -909,7 +1064,7 @@ poll_socket(int sock_idx)
     /* Build frame for guest (single unfragmented frame) */
     frame_len = build_guest_frame(frame, sizeof(frame), &from, port, udp_payload, n, is_broadcast);
     if (frame_len < 0) {
-        relay.dropped++;
+        relay_drop(RELAY_DROP_BUILD);
         return 0;
     }
 
@@ -918,7 +1073,7 @@ poll_socket(int sock_idx)
         relay.rx_count++;
         return 1;
     } else {
-        relay.dropped++;
+        relay_drop(RELAY_DROP_INJECT);
         return 0;
     }
 }
@@ -1156,17 +1311,17 @@ relay_tx_fragment(const uint8_t *ip_hdr, int ip_hdr_len, int avail,
         return 1;
     }
 
-    /* Rate limiting is applied per datagram rather than per fragment, so a
-       fragmented transfer is not charged several times over. */
-    if (now != relay.last_rate_reset) {
-        relay.packets_this_second = 0;
-        relay.last_rate_reset = now;
-    }
-    if (relay.packets_this_second >= MAX_PACKETS_PER_SECOND) {
-        relay.dropped++;
+    /*
+     * Charged per datagram rather than per fragment, so a fragmented transfer is
+     * not billed several times over. Always the file-traffic budget: a datagram
+     * only arrives here because it was fragmented, and Access+ discovery
+     * broadcasts are far too small to fragment.
+     */
+    if (!relay_rate_allow(RELAY_DIR_OUT, RELAY_CLASS_UNICAST)) {
+        relay_drop(RELAY_DROP_RATE_OUT_UNICAST);
         return 1;
     }
-    relay.packets_this_second++;
+    (void) now;
 
     memset(&dest, 0, sizeof(dest));
     dest.sin_family = AF_INET;
@@ -1320,16 +1475,13 @@ broadcast_relay_tx(const uint8_t *pkt, int pkt_len)
         return 0;
     }
 
-    /* Rate limiting */
-    if (now != relay.last_rate_reset) {
-        relay.packets_this_second = 0;
-        relay.last_rate_reset = now;
-    }
-    if (relay.packets_this_second >= MAX_PACKETS_PER_SECOND) {
-        relay.dropped++;
+    /* Rate limiting, from whichever budget this destination belongs to. */
+    if (!relay_rate_allow(RELAY_DIR_OUT, is_broadcast ? RELAY_CLASS_BCAST
+                                                      : RELAY_CLASS_UNICAST)) {
+        relay_drop(is_broadcast ? RELAY_DROP_RATE_OUT_BCAST
+                                : RELAY_DROP_RATE_OUT_UNICAST);
         return 1;  /* Handled (dropped) */
     }
-    relay.packets_this_second++;
 
     /* Extract UDP payload. The length field is only the guest's claim, so clamp
        it to what the frame actually holds rather than reading past the end of
