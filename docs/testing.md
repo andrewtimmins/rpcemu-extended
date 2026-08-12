@@ -140,6 +140,15 @@ and checks over VNC that RISC OS drew something, asks the guest its version over
 HostCmd, and checks its clock. That is the test that covers the CPU, memory,
 VIDC, ROM loading and the VNC server together.
 
+The exception is `windows-arm64`, which runs the unit tests and `cli_smoke.sh` but
+not the boot test. It is a new platform - a `windows-11-arm` runner, MSYS2's
+CLANGARM64 environment, the interpreter - and what it establishes for now is that
+RPCEmu compiles natively there (`file` reports `PE32+ ... ARM64`, asserted rather
+than admired) and that the staged release starts with every runtime DLL it needs.
+Whether it emulates a Risc PC correctly on Windows on ARM is unproven, which is
+why its build is an artifact rather than a release asset. See
+[windows-build.md](windows-build.md).
+
 ## The guest modules
 
 The RISC OS modules under `riscos-progs/` run inside the emulated machine: HostFS

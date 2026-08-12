@@ -461,6 +461,91 @@ jobs:
   # C on all three platforms, so a fault found here is a fault everywhere, but a
   # platform's own code (the Win32 and Cocoa paths) is not covered. Noted in
   # docs/testing.md rather than left to be discovered.
+  windows-arm64:
+    # Native Windows-on-ARM build, asked for by users running RPCEmu on ARM
+    # laptops. MSYS2's CLANGARM64 environment: clang reports
+    # aarch64-w64-windows-gnu and file(1) calls the output "PE32+ ... ARM64", so
+    # this is a native binary and not the amd64 one under emulation.
+    #
+    # The INTERPRETER, deliberately (build-windows.sh defaults to it here). The
+    # AArch64 dynarec is not shipped on any platform yet, and Windows on ARM adds
+    # its own questions to it - x18 is reserved as the TEB pointer, and cache
+    # maintenance wants FlushInstructionCache rather than the EL0 dc/ic the
+    # backend uses. Shipping an unproven JIT on a new platform would make both
+    # harder to judge.
+    #
+    # Worth knowing before this is offered to anyone as "the fast one": Windows on
+    # ARM already runs our amd64 build under Prism emulation WITH the x86-64
+    # recompiler, so an emulated build with a JIT may well beat a native build
+    # with the interpreter. Which is quicker is a question for real hardware, and
+    # this job exists so there is something to measure.
+    #
+    # Slower than the amd64 job for a mundane reason: MSYS2's own runtime is
+    # x86-64, so the build tools themselves run emulated. Setting up the
+    # environment alone takes about four minutes.
+    runs-on: windows-11-arm
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-tags: true
+
+      - name: Set up MSYS2 / CLANGARM64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          update: true
+          install: >-
+            git
+            mingw-w64-clang-aarch64-toolchain
+            mingw-w64-clang-aarch64-cmake
+            mingw-w64-clang-aarch64-ninja
+            mingw-w64-clang-aarch64-pkgconf
+            mingw-w64-clang-aarch64-wxwidgets3.2-msw
+            mingw-w64-clang-aarch64-SDL2
+            mingw-w64-clang-aarch64-libvncserver
+            mingw-w64-clang-aarch64-libusb
+
+      - name: Build and stage release (arm64, interpreter)
+        timeout-minutes: 25
+        run: |
+          chmod +x build-windows.sh
+          ./build-windows.sh --zip
+
+      # The architecture is the whole point of this job, so it is asserted rather
+      # than admired: a toolchain misconfiguration that produced x86-64 here would
+      # otherwise pass every other check in this file.
+      - name: Smoke test binary (native ARM64 PE)
+        run: |
+          ls -la releases/windows/arm64/
+          exe=releases/windows/arm64/rpcemu-interpreter.exe
+          file "$exe"
+          file "$exe" | grep -qi 'aarch64\|arm64' \
+            || { echo "not a native ARM64 binary"; exit 1; }
+          # Runs the staged release as a user receives it, so a runtime DLL the
+          # bundler failed to copy is caught here rather than by them. clang's
+          # runtime differs from GCC's - libc++ and libunwind rather than
+          # libstdc++ and libgcc - which is exactly the sort of thing to check on
+          # a new platform.
+          bash tests/cli_smoke.sh "$exe"
+
+      - name: Upload arm64 build
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpcemu-windows-arm64
+          path: releases/windows/arm64/
+
+      # Not in "needs" for the release job, and not yet a release asset. It has
+      # never been run on Windows on ARM by anybody: the runner proves it builds
+      # and starts, not that it emulates a Risc PC correctly. Until somebody
+      # confirms that on real hardware it is a CI artifact people can try, which
+      # is a better answer to "is there an ARM build?" than an untested download
+      # attached to a release - and it means a brand new job cannot hold up a
+      # release either. Adding it is one line here and one in the release job's
+      # needs, once it has been used in anger.
+
   sanitisers:
     runs-on: ubuntu-latest
     steps:

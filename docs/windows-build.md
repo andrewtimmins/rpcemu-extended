@@ -1,9 +1,15 @@
 # Building RPCEmu (Extended Edition) for Windows
 
-Windows builds are produced with **MinGW-w64** (not MSVC) and ship the full-speed
-recompiler (`rpcemu-recompiler.exe`). The wxWidgets GUI is cross-platform, so the
+Windows builds are produced with **MinGW-w64** (not MSVC). The x86-64 build ships
+the full-speed recompiler (`rpcemu-recompiler.exe`); there is also a native
+**ARM64** build, which ships the interpreter - see
+[Windows on ARM](#windows-on-arm). The wxWidgets GUI is cross-platform, so the
 Windows-specific code is confined to the C core (POSIX→Win32 shims) and the build
 system.
+
+`build-windows.sh` decides which of the two it is building from `$MSYSTEM`:
+`MINGW64` gives amd64, `CLANGARM64` gives arm64, and neither (on Linux) gives the
+amd64 cross build.
 
 ## Building
 
@@ -26,6 +32,38 @@ Then:
 
 `build-windows.sh` builds the recompiler by default; pass `--interpreter` for the
 (slower) interpreter build.
+
+### Windows on ARM
+
+Native ARM64, from the **CLANGARM64** shell (packages are prefixed
+`mingw-w64-clang-aarch64-`, and that environment is clang rather than GCC):
+
+```
+toolchain cmake ninja pkgconf wxwidgets3.2-msw SDL2 libvncserver libusb
+```
+
+```sh
+./build-windows.sh          # builds + stages releases/windows/arm64/
+```
+
+It is native: clang there reports `aarch64-w64-windows-gnu` and `file` calls the
+result `PE32+ ... ARM64`. MSYS2's own runtime is x86-64 and runs under Windows'
+Prism emulation, so the *build* is emulated and slow while its *output* is not.
+
+**It ships the interpreter, and that is deliberate.** The AArch64 dynarec
+([arm64-dynarec.md](arm64-dynarec.md)) is not enabled in releases on any platform
+yet, and Windows on ARM adds its own questions to it: `x18` is reserved as the TEB
+pointer, and cache maintenance there wants `FlushInstructionCache` rather than the
+EL0 `dc`/`ic` sequence the backend uses. `--dynarec` will build it anyway, which is
+how it will eventually be proved. Note also that Windows on ARM runs the amd64
+build under emulation **with** the recompiler, so the emulated build may well be
+quicker than the native one until that changes - worth measuring rather than
+assuming either way.
+
+Built by the CI `windows-arm64` job on a `windows-11-arm` runner, and published as
+a build artifact rather than a release asset: the runner proves it compiles and
+starts, not that it emulates a Risc PC correctly, and nobody has yet run it on
+Windows on ARM in anger.
 
 ### Cross-compiling from Linux
 

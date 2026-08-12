@@ -19,22 +19,54 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 cd "$SCRIPT_DIR"
 
-TARGET=x86_64-w64-mingw32
+# Which Windows to build for. Taken from the MSYS2 environment when there is
+# one, because that is what actually decides which compiler and which libraries
+# are on the path:
+#
+#   MINGW64      x86-64, GCC             -> releases/windows/amd64
+#   CLANGARM64   ARM64, clang            -> releases/windows/arm64
+#   (neither)    the Linux cross build, x86-64 only
+#
+# ARM64 is native there: clang reports aarch64-w64-windows-gnu and file(1) calls
+# the result "PE32+ ... ARM64", even though MSYS2's own runtime is x86-64 and runs
+# under Windows' Prism emulation, which makes the build slow but not wrong.
+case "${MSYSTEM:-}" in
+CLANGARM64)
+	TARGET=aarch64-w64-mingw32
+	WIN_ARCH=arm64
+	MSYS_PREFIX=/clangarm64
+	;;
+*)
+	TARGET=x86_64-w64-mingw32
+	WIN_ARCH=amd64
+	MSYS_PREFIX=/mingw64
+	;;
+esac
+
 BUILD_DIR=build-win
-WIN_ARCH=amd64
 WIN_RELEASE="releases/windows/$WIN_ARCH"
 MAKE_ZIP=false
-# The x86-64 dynarec now supports the Windows x64 ABI (codegen_amd64.c), so the
-# Windows build uses the recompiler by default for full-speed emulation. Pass
-# --interpreter to force the (slower, ABI-agnostic) interpreter build.
-INTERPRETER=false
+
+# The x86-64 dynarec supports the Windows x64 ABI (codegen_amd64.c), so that
+# build uses the recompiler by default for full-speed emulation.
+#
+# ARM64 defaults to the interpreter, and deliberately: the AArch64 backend is not
+# shipped on any platform yet, and Windows on ARM adds its own questions to it -
+# x18 is reserved as the TEB pointer, and cache maintenance there wants
+# FlushInstructionCache rather than the EL0 dc/ic our backend uses. Pass
+# --dynarec to try it anyway; that is how it will eventually be proved.
+if [ "$WIN_ARCH" = arm64 ]; then
+	INTERPRETER=true
+else
+	INTERPRETER=false
+fi
 
 for arg in "$@"; do
 	case "$arg" in
 		--zip|-z) MAKE_ZIP=true ;;
 		--interpreter|-i) INTERPRETER=true ;;
 		--dynarec) INTERPRETER=false ;;
-		--help|-h) echo "Usage: $0 [--zip] [--interpreter|--dynarec]"; exit 0 ;;
+		--help|-h) echo "Usage: $0 [--zip] [--interpreter|--dynarec]"; echo "Target follows \$MSYSTEM: MINGW64 -> amd64, CLANGARM64 -> arm64 (interpreter by default)"; exit 0 ;;
 		*) echo "unknown option: $arg"; exit 2 ;;
 	esac
 done
@@ -67,11 +99,17 @@ VERSION=$(get_version)
 njobs() { nproc 2>/dev/null || echo 4; }
 
 # Mode detection: native MSYS2/MINGW64 vs Linux->Windows cross.
-if [ "${MSYSTEM:-}" = "MINGW64" ]; then
-	MODE="native (MSYS2 $MSYSTEM)"
+if [ "${MSYSTEM:-}" = "MINGW64" ] || [ "${MSYSTEM:-}" = "CLANGARM64" ]; then
+	MODE="native (MSYS2 $MSYSTEM, $WIN_ARCH)"
 	NATIVE=true
-	OBJDUMP=objdump
-	SEARCH_DIRS=(/mingw64/bin)
+	# CLANGARM64 ships LLVM's binutils rather than GNU's, and the DLL walk below
+	# only needs "DLL Name:" out of a PE's import table, which both print.
+	if command -v objdump >/dev/null 2>&1; then
+		OBJDUMP=objdump
+	else
+		OBJDUMP=llvm-objdump
+	fi
+	SEARCH_DIRS=("$MSYS_PREFIX/bin")
 	CMAKE_TC_ARGS=()
 else
 	MODE="cross ($TARGET)"
