@@ -768,20 +768,77 @@ jobs:
           # a new platform.
           bash tests/cli_smoke.sh "$exe"
 
+
+      # The ROM the boot test needs, fetched with the emulator's own downloader -
+      # which on Windows means WinHTTP, and this is the first time that has run on
+      # ARM64. Cached so RISC OS Open are not asked for the same file every push;
+      # the key is shared with the other jobs because it is the same ROM.
+      - name: Cache the RISC OS ROM
+        uses: actions/cache@v6
+        with:
+          path: ci-rom
+          key: rpcemu-rom-stable-v1
+
+      - name: Fetch a ROM for the boot test
+        run: |
+          set -eu
+          # As in the amd64 job: this shell wants the MSYS2 form of the path while
+          # the executable is a native Windows program and wants the Windows form.
+          data="$(cygpath -u "$RUNNER_TEMP")/rpcemu-data"
+          export RPCEMU_DATADIR="$(cygpath -w "$data")"
+          export RPCEMU_NO_GUI_MESSAGES=1
+          mkdir -p "$data" ci-rom
+          cp -r default configs "$data/"
+          if ! ls ci-rom/ROM* >/dev/null 2>&1; then
+            releases/windows/arm64/rpcemu-interpreter.exe --fetch-riscos --no-disc --accept-licence
+            cp "$data"/roms/ROM* ci-rom/
+          fi
+          mkdir -p "$data/roms"
+          cp ci-rom/ROM* "$data/roms/"
+          ls -la "$data/roms/"
+
+      # The test that answers the question the rest of this job cannot: does it
+      # actually emulate a Risc PC on Windows on ARM? It boots a real machine with
+      # a real ROM and checks over the built-in VNC server that RISC OS drew
+      # something, which exercises the CPU core, memory, VIDC, ROM loading and
+      # libvncserver together - all of it built by a compiler and for an
+      # architecture this project has never used before.
+      #
+      # Longer timeout than the amd64 job gets: this is the interpreter rather
+      # than the recompiler, and the same trade the linux-arm64 job lives with.
+      - name: Headless boot smoke test
+        timeout-minutes: 6
+        run: |
+          python3 tests/boot_smoke.py \
+            --binary releases/windows/arm64/rpcemu-interpreter.exe \
+            --datadir "$(cygpath -u "$RUNNER_TEMP")/rpcemu-data" \
+            --abort-check require \
+            --save vnc-smoke-windows-arm64.png
+
+      - name: Upload the boot screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vnc-smoke-windows-arm64
+          path: vnc-smoke-windows-arm64.png
+          archive: false
+          if-no-files-found: ignore
+
       - name: Upload arm64 build
         uses: actions/upload-artifact@v4
         with:
           name: rpcemu-windows-arm64
           path: releases/windows/arm64/
 
-      # Not in "needs" for the release job, and not yet a release asset. It has
-      # never been run on Windows on ARM by anybody: the runner proves it builds
-      # and starts, not that it emulates a Risc PC correctly. Until somebody
-      # confirms that on real hardware it is a CI artifact people can try, which
-      # is a better answer to "is there an ARM build?" than an untested download
-      # attached to a release - and it means a brand new job cannot hold up a
-      # release either. Adding it is one line here and one in the release job's
-      # needs, once it has been used in anger.
+      # An artifact rather than a release asset, still - but for a smaller reason
+      # than before. The boot test above means the runner now shows that RISC OS
+      # boots and draws on this platform, not merely that the binary starts, so
+      # what is left unproven is a person actually using it: sound, USB, a real
+      # window on a real ARM laptop. This job uploads only the staged directory
+      # while the amd64 job uploads its zip as well, so the release's *.zip glob
+      # finds no arm64 asset. Publishing one is a matter of adding
+      # releases/windows/*.zip to the path below, once somebody has run it in
+      # anger.
 
   windows:
     needs: [windows-amd64, windows-arm64]

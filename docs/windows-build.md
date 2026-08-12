@@ -60,10 +60,11 @@ build under emulation **with** the recompiler, so the emulated build may well be
 quicker than the native one until that changes - worth measuring rather than
 assuming either way.
 
-Built by the CI `windows-arm64` job on a `windows-11-arm` runner, and published as
-a build artifact rather than a release asset: the runner proves it compiles and
-starts, not that it emulates a Risc PC correctly, and nobody has yet run it on
-Windows on ARM in anger.
+Built by the CI `windows-arm64` job on a `windows-11-arm` runner, which also boots
+a real machine with a real ROM and checks over VNC that RISC OS drew something -
+the same test the other platforms get. Published as a build artifact rather than a
+release asset: what the runner cannot show is somebody using it, meaning sound,
+USB and a window on a real ARM laptop.
 
 ### Cross-compiling from Linux
 
