@@ -59,6 +59,9 @@ namespace {
 const int kMachinesPanelCollapsed = 12;
 const int kCollapseButtonField = 28;
 
+/* Status holds "Suspended" and no more; Machine takes the rest of the width. */
+const int kStatusColumnWidth = 90;
+
 enum {
 	ID_NEW = wxID_HIGHEST + 500,
 	ID_EDIT,
@@ -248,7 +251,8 @@ void ManagerFrame::BuildUi()
 	    wxLC_REPORT | wxLC_SINGLE_SEL | wxLC_HRULES);
 	machine_list_->AssignImageList(status_images_, wxIMAGE_LIST_SMALL);
 	machine_list_->InsertColumn(0, "Machine", wxLIST_FORMAT_LEFT, 170);
-	machine_list_->InsertColumn(1, "Status", wxLIST_FORMAT_LEFT, 90);
+	machine_list_->InsertColumn(1, "Status", wxLIST_FORMAT_LEFT, kStatusColumnWidth);
+	machine_list_->Bind(wxEVT_SIZE, &ManagerFrame::OnMachineListSize, this);
 	left_sizer->Add(machine_list_, 1, wxEXPAND | wxLEFT | wxRIGHT, 10);
 
 	/* A 2x2 grid rather than one row of four: at a sidebar's natural width,
@@ -329,6 +333,22 @@ void ManagerFrame::OnStatusBarSize(wxSizeEvent &event)
 	/* Moving the button by hand leaves the fields unpainted. */
 	if (status != nullptr) {
 		status->Refresh();
+	}
+	event.Skip();
+}
+
+/* Two fixed columns in a control that fills the pane leave the rest of the
+   header drawn as an empty third column. Machine takes whatever Status does not,
+   so the columns always end where the list does. */
+void ManagerFrame::OnMachineListSize(wxSizeEvent &event)
+{
+	if (machine_list_ != nullptr) {
+		const int width = machine_list_->GetClientSize().GetWidth()
+		    - kStatusColumnWidth;
+
+		if (width > 0) {
+			machine_list_->SetColumnWidth(0, width);
+		}
 	}
 	event.Skip();
 }
