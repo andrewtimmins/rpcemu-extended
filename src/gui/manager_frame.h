@@ -65,6 +65,9 @@ private:
 		bool starting = false;		/* waiting for the child to publish its IPC endpoint */
 		wxString last_attach_error;	/* why the most recent attempt failed */
 		wxLongLong start_time_ms;
+		/* The machine's own setting, from its state report. Starts true so a
+		   machine that has not reported yet still explains itself. */
+		bool show_fullscreen_message = true;
 	};
 
 	void BuildUi();
@@ -144,7 +147,7 @@ private:
 	void OnMachineMenuCommand(wxCommandEvent &event);
 	bool SendMenuCommand(int id, bool checked, const wxString &argument = wxEmptyString);
 	void UpdateMachineMenuState();
-	void ApplyStateReport(const wxString &report);
+	void ApplyStateReport(const wxString &machine, const wxString &report);
 
 	/* Commands that ask for a file. The dialogue belongs here, this being the
 	   process with a window to put it over; the machine is sent the path. */

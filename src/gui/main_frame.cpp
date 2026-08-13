@@ -479,6 +479,15 @@ void MainFrame::HandleIpcRequest(const IpcRequest &request)
 		   of the wx object graph. */
 		CallAfter([this] { ReportMenuState(); });
 		break;
+
+	case IpcRequestType::FullscreenMessageOff:
+		CallAfter([this] {
+			config_copy_.show_fullscreen_message = 0;
+			if (emulator_) {
+				emulator_->ShowFullscreenMessageOff();
+			}
+		});
+		break;
 	}
 }
 
@@ -650,6 +659,14 @@ void MainFrame::ReportMenuState()
 		}
 		report += wxString::Format("%d=%d", id, item->IsChecked() ? 1 : 0);
 	}
+
+	/* Appended rather than listed above: this one is config, not a menu item,
+	   so the loop's FindItem would skip it. */
+	if (!report.empty()) {
+		report += " ";
+	}
+	report += wxString::Format("%d=%d", kStateFullscreenMessage,
+	    config_copy_.show_fullscreen_message ? 1 : 0);
 
 	IpcEvent event;
 	event.type = IpcEventType::StateReport;

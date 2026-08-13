@@ -214,7 +214,25 @@ enum class IpcRequestType : uint32_t {
 	 * show them correctly. Answered with an IpcEventType::StateReport.
 	 */
 	RequestState,
+
+	/*
+	 * The user ticked "do not show this again" on the full-screen message.
+	 * Its own verb rather than a MenuCommand: the setting has no menu item,
+	 * and MenuCommand works by sending an event to the menu that owns one.
+	 * The machine writes it to its own config, which is the only process that
+	 * safely can while it is running.
+	 */
+	FullscreenMessageOff,
 };
+
+/*
+ * The full-screen message setting, in the state report.
+ *
+ * Not a menu id - it has none - so a number outside the range wx assigns to
+ * them, which ApplyStateReport ignores when it looks the id up as a menu item
+ * and picks out by name instead.
+ */
+constexpr int kStateFullscreenMessage = 100001;
 
 struct IpcRequest {
 	IpcRequestType type = IpcRequestType::RequestKeyFrame;

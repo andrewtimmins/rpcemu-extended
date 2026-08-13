@@ -39,6 +39,7 @@
 #include "config_paths.h"
 #include "machine_edit_dialog.h"
 #include "new_machine_dialog.h"
+#include "machine_ipc.h"	/* IpcRequestType, kStateFullscreenMessage */
 #include "main_frame.h"	/* MainFrameMenuId - the ids these menus forward */
 #include "toolbar_icons.h"
 /* C++ headers, so outside the extern "C" below - putting them inside gives
@@ -400,6 +401,32 @@ void ManagerFrame::EnterFullScreen()
 		             "screen.", "RPCEmu", wxOK | wxICON_INFORMATION, this);
 		SetFullScreenMenuChecked(false);
 		return;
+	}
+
+	/* The same message a machine's own window shows, and the same setting: the
+	   machine reported it, and the machine is what stores it. */
+	if (it->second.show_fullscreen_message) {
+		wxRichMessageDialog dlg(this,
+		    "This window will now be switched to full-screen mode.\n\n"
+		    "To leave full-screen mode press Alt+Enter.",
+		    "RPCEmu Extended - Full-screen mode",
+		    wxOK | wxCANCEL | wxICON_INFORMATION);
+
+		dlg.SetOKCancelLabels("OK", "Cancel");
+		dlg.ShowCheckBox("Do not show this message again");
+
+		if (dlg.ShowModal() != wxID_OK) {
+			SetFullScreenMenuChecked(false);
+			return;
+		}
+
+		if (dlg.IsCheckBoxChecked()) {
+			IpcRequest request;
+
+			request.type = IpcRequestType::FullscreenMessageOff;
+			panel->SendRequest(request);
+			it->second.show_fullscreen_message = false;
+		}
 	}
 
 	collapsed_before_full_screen_ = machines_panel_collapsed_;
@@ -915,9 +942,7 @@ void ManagerFrame::AttachPanelFor(const wxString &name, const wxString &shared_f
 	});
 
 	panel->SetStateCallback([this, name](const wxString &report) {
-		if (name == active_machine_) {
-			ApplyStateReport(report);
-		}
+		ApplyStateReport(name, report);
 	});
 
 	/* Capture starts and ends with a click or a keystroke inside the panel, which
@@ -1959,13 +1984,13 @@ void ManagerFrame::UpdateMachineMenuState()
  * treated as an error, so the two processes need not be in lockstep about
  * which items exist.
  */
-void ManagerFrame::ApplyStateReport(const wxString &report)
+void ManagerFrame::ApplyStateReport(const wxString &machine, const wxString &report)
 {
+	/* The menus show the active machine only, but every machine's own settings
+	   are recorded as they arrive - full screen asks the machine it is about
+	   to show, which is not necessarily the one that just reported. */
+	const bool active = (machine == active_machine_);
 	wxMenuBar *bar = GetMenuBar();
-
-	if (bar == nullptr) {
-		return;
-	}
 
 	wxStringTokenizer pairs(report, " ");
 
@@ -1985,7 +2010,22 @@ void ManagerFrame::ApplyStateReport(const wxString &report)
 			continue;
 		}
 
-		wxMenuItem *item = bar->FindItem((int) id);
+		/* Config rather than a menu item, and wanted whichever machine sent
+		   it: EnterFullScreen asks the machine it is about to show. */
+		if (id == kStateFullscreenMessage) {
+			auto it = running_.find(machine);
+
+			if (it != running_.end()) {
+				it->second.show_fullscreen_message = (value != 0);
+			}
+			continue;
+		}
+
+		if (!active) {
+			continue;
+		}
+
+		wxMenuItem *item = bar != nullptr ? bar->FindItem((int) id) : nullptr;
 
 		if (item != nullptr && item->IsCheckable()) {
 			item->Check(value != 0);
