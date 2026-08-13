@@ -37,7 +37,8 @@
 #include <strings.h>
 #include <sys/stat.h>
 #ifdef _WIN32
-#include <windows.h>
+/* winsock2.h before windows.h, which is the order Winsock needs. */
+#include "../socket-compat.h"
 #else
 #include <unistd.h>
 #endif
