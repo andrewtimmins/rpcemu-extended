@@ -278,6 +278,7 @@ void ManagerFrame::BuildUi()
 	placeholder_page_ = display_book_->GetPageCount();
 	display_book_->AddPage(BuildPlaceholderPage(), "", true);
 
+	machines_panel_ = left_panel;
 	splitter->SplitVertically(left_panel, display_book_, 300);
 
 	auto *root = new wxBoxSizer(wxVERTICAL);
@@ -402,7 +403,10 @@ void ManagerFrame::EnterFullScreen()
 	}
 
 	collapsed_before_full_screen_ = machines_panel_collapsed_;
-	SetMachinesPanelCollapsed(true);
+	if (!machines_panel_collapsed_) {
+		machines_panel_width_ = splitter_->GetSashPosition();
+	}
+	splitter_->Unsplit(machines_panel_);
 
 	if (tool_bar_ != nullptr) {
 		tool_bar_->Hide();
@@ -432,6 +436,10 @@ void ManagerFrame::ExitFullScreen()
 	}
 	if (GetStatusBar() != nullptr) {
 		GetStatusBar()->Show();
+	}
+	if (!splitter_->IsSplit() && machines_panel_ != nullptr) {
+		splitter_->SplitVertically(machines_panel_, display_book_,
+		    machines_panel_width_);
 	}
 	SetMachinesPanelCollapsed(collapsed_before_full_screen_);
 	Layout();
