@@ -59,6 +59,12 @@
 #define RPCEMU_DEBUG_DEFAULT_TCP "127.0.0.1:15591"
 #endif
 
+#ifdef _WIN32
+#define EOF_KEY "Ctrl-Z then Enter"
+#else
+#define EOF_KEY "Ctrl-D"
+#endif
+
 #define LINE_MAX_LEN 65536
 
 static const char *progname = "rpcemu-debug";
@@ -392,7 +398,7 @@ interactive(int fd)
 
 	fprintf(stderr,
 	    "rpcemu-debug: connected. One command per line, 'help' lists them, "
-	    "Ctrl-D to quit.\n");
+	    EOF_KEY " to quit.\n");
 
 	for (;;) {
 		char *p;
