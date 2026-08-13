@@ -382,8 +382,16 @@ treated as its own state: the concurrency group cancels superseded runs as a
 matter of course, and calling one of those green would announce a build for a
 commit nobody waited on that never finished.
 
-Two details worth knowing before changing it:
+Three details worth knowing before changing it:
 
+- **Every job that can fail has to be in `notify`'s `needs`.** The verdict is
+  worked out from `toJSON(needs)`, so a job left out is one whose failures
+  nobody hears about. Naming an aggregate is not enough to cover the jobs behind
+  it: when `macos-x86_64` fails, `macos-universal` is *skipped* rather than
+  failed, and a skip is not a failure, so a list naming only the aggregate
+  announces a green build for a run that is red. The gates themselves
+  (`build-gate`, `linux`, `windows`) are left out on purpose, because they would
+  report which tier stopped in place of the job that broke.
 - **Pull requests are deliberately excluded.** A pull request from a fork cannot
   read repository secrets, so the step would do nothing on exactly the runs an
   outside contributor wants feedback on, while looking configured.
