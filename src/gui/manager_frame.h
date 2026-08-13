@@ -170,6 +170,7 @@ private:
 	/* The machine list collapses, so the width it had is kept to put it back
 	   where the user had it. */
 	wxSplitterWindow *splitter_ = nullptr;
+	wxWindow *machines_panel_ = nullptr;
 	int machines_panel_width_ = 300;
 	bool machines_panel_collapsed_ = false;
 	wxBitmapButton *collapse_button_ = nullptr;
