@@ -11,20 +11,26 @@
 #                v
 #            build-gate          one answer to "are the checks clear?"
 #                |
-#   +------------+---------+---------------+---------------+--------------+
-#   v                      v               v               v              v
-#   linux (amd64, arm64)   windows-amd64   windows-arm64   macos-x86_64   macos-arm64
-#         |                      |               |               |             |
-#         |                      +-------+-------+               +------+------+
-#         |                              v                              v
-#         |                           windows                    macos-universal
-#         |                              |                              |
-#         +------------------------------+------------------------------+
-#                                        v
-#                                     release      tags only; publishes the assets
-#                                        |
-#                                        v
-#                                     notify       pushes only; posts to Slack
+#   +------------+------------+---------------+---------------+--------------+
+#   |            |            |               |               |              |
+#   v            v            v               v               v              v
+#   linux-amd64  linux-arm64  windows-amd64   windows-arm64   macos-x86_64   macos-arm64
+#         |            |            |               |               |             |
+#         +-----+------+            +-------+-------+               +------+------+
+#               v                           v                              v
+#             linux                      windows                    macos-universal
+#               |                           |                              |
+#               +---------------------------+------------------------------+
+#                                           v
+#                                        release   tags only; publishes the assets
+#                                           |
+#                                           v
+#                                        notify    pushes only; posts to Slack
+#
+# Each platform ends in one job so that the row above it can be read as "did
+# Linux pass?" rather than as six separate answers, and so a branch protection
+# rule has one check per platform to require. linux, windows and macos-universal
+# are that job; macos-universal is also the one that does the fusing.
 #
 # Before editing: a skipped job skips the whole chain behind it, not just the
 # next job along, and release-preflight is skipped on every ref that is not a
@@ -103,6 +109,23 @@ jobs:
           fi
           echo "found $notes ($(wc -l < "$notes") lines)"
 
+  # Everything else asks whether the emulator does the right thing. This asks
+  # whether it does it legitimately - whether the C it is written in is doing
+  # what its author believed. An emulator is mostly arithmetic on addresses the
+  # guest chose, so the two questions have different answers more often here than
+  # in ordinary software: the first time this was run it found a shift by 32 on
+  # every word-aligned load and a signed overflow on every palette update, both
+  # of which had produced the right answer on every compiler the project has ever
+  # been built with, and neither of which any test could have caught.
+  #
+  # Linux only, and that is a real limit rather than an oversight: it is the same
+  # C on all three platforms, so a fault found here is a fault everywhere, but a
+  # platform's own code (the Win32 and Cocoa paths) is not covered. Noted in
+  # docs/testing.md rather than left to be discovered.
+  #
+  # It also fetches the ROM the boot below needs, which seeds the cache every
+  # other job reads: this job finishes before build-gate lets any build start, so
+  # by then the entry exists and the five platform jobs cannot race to write it.
   sanitisers:
     needs: release-preflight
     if: always() && needs.release-preflight.result != 'failure'
@@ -297,31 +320,21 @@ jobs:
     steps:
       - run: echo "The sanitisers and the interface documentation are clear."
 
-  # Both Linux builds from one definition: amd64 gets the recompiler, arm64 the
-  # interpreter, there being no ARM dynarec backend, and three steps run on amd64
-  # alone. Everything else is identical, so it is written once.
+  # The two Linux builds are written out as two jobs rather than folded into one
+  # matrix. They are nearly the same job and a matrix does remove the
+  # duplication, but it is drawn in the Actions graph as a container of its own
+  # headed "Matrix: linux", and it reports a check per leg and none for the pair.
+  # Windows and macOS are each a pair of ordinary jobs meeting at an aggregate,
+  # so Linux is written the same way: the graph reads alike across all three, and
+  # each platform offers one check for a branch protection rule to require.
   #
-  # One job and one answer for both architectures, which is what a branch
-  # protection rule wants - so it also replaces the gate that used to provide it.
-  linux:
+  # amd64 gets the recompiler; arm64 gets the interpreter, there being no ARM
+  # dynarec backend. Three steps run on amd64 alone and each says why where it
+  # stands.
+  linux-amd64:
     needs: build-gate
     if: always() && needs.build-gate.result == 'success'
-    runs-on: ${{ matrix.runner }}
-    name: linux-${{ matrix.arch }}
-    strategy:
-      # One architecture failing should not cancel the other: which of them broke
-      # is the first thing worth knowing.
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            variant: recompiler
-            build_flags: ""
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            variant: interpreter
-            build_flags: "--interpreter"
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
@@ -332,9 +345,9 @@ jobs:
       # "Guest ROMs: skipped - using the committed ones" and carries on, which
       # meant no CI job had ever assembled a single one of them.
       #
-      # --podules on amd64 alone; the check below says why.
+      # amd64 alone; the check below says why.
       - name: Install dependencies
-        run: bash setup-build-env.sh ${{ matrix.arch == 'amd64' && '--podules' || '' }}
+        run: bash setup-build-env.sh --podules
 
       # The assembled guest modules are committed, so a user needs no
       # cross-assembler - which makes "edited the source, forgot to rebuild" a
@@ -345,21 +358,20 @@ jobs:
       # amd64 only - the modules are ARM binaries, identical whatever host builds
       # them.
       - name: Guest modules match their sources
-        if: matrix.arch == 'amd64'
         run: bash tests/check-guest-modules.sh
 
       # Piped through tee so the compiler's output can be examined afterwards.
       # pipefail so a failed build still fails the step rather than being masked
       # by tee's exit status.
-      - name: Build and package
+      - name: Build and package (amd64, dynarec)
         timeout-minutes: 3
         run: |
           set -o pipefail
           chmod +x build.sh setup-build-env.sh
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            ./build.sh ${{ matrix.build_flags }} --deb --zip 2>&1 | tee build.log
+            ./build.sh --deb --zip 2>&1 | tee build.log
           else
-            ./build.sh ${{ matrix.build_flags }} --zip 2>&1 | tee build.log
+            ./build.sh --zip 2>&1 | tee build.log
           fi
 
       # A warning in code this project maintains fails the build. Done here
@@ -369,19 +381,17 @@ jobs:
       # needed for the compiler to say anything at all about a file it would
       # otherwise skip.
       - name: No new compiler warnings
-        if: matrix.arch == 'amd64'
         run: bash tests/check-warnings.sh build.log
 
       - name: Smoke test binary
         run: |
-          binary="releases/linux/${{ matrix.arch }}/rpcemu-${{ matrix.variant }}"
-          file "$binary" | grep -i ELF
-          ls -la "releases/linux/${{ matrix.arch }}/"
+          file releases/linux/amd64/rpcemu-recompiler | grep -i ELF
+          ls -la releases/linux/amd64/
           # Actually execute it. These paths run before any wxWidgets/GTK
           # initialisation, so they work with no display and catch a binary that
           # cannot start at all (bad link, missing library). The same script
           # runs on every platform, so the CLI is checked identically.
-          bash tests/cli_smoke.sh "$binary"
+          bash tests/cli_smoke.sh releases/linux/amd64/rpcemu-recompiler
 
       # A full boot over the built-in VNC server. Everything above stops at "the
       # binary starts and parses its arguments"; this exercises the CPU, memory,
@@ -393,7 +403,6 @@ jobs:
       # RPCEmu ships no ROM, so one is fetched with the emulator's own downloader
       # - which also exercises that path, a different HTTP stack per platform.
       #
-      # Cached, so RISC OS Open are not asked for the same file every push.
       # RPCEMU_DATADIR puts the ROM and the test machine under RUNNER_TEMP, so
       # every write stays out of the release about to be uploaded while the
       # binary still finds its resources beside itself.
@@ -401,9 +410,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ci-rom
-          # Per architecture: a cache entry cannot be written twice, so on a cold
-          # cache the two configurations would race and the loser would warn.
-          key: rpcemu-rom-stable-v1-${{ matrix.arch }}
+          key: rpcemu-rom-stable-v1
       - name: Fetch a ROM for the boot test
         run: |
           set -eu
@@ -412,7 +419,7 @@ jobs:
           mkdir -p "$RPCEMU_DATADIR" ci-rom
           cp -r default configs "$RPCEMU_DATADIR/"
           if ! ls ci-rom/ROM* >/dev/null 2>&1; then
-            "releases/linux/${{ matrix.arch }}/rpcemu-${{ matrix.variant }}" --fetch-riscos --no-disc --accept-licence
+            releases/linux/amd64/rpcemu-recompiler --fetch-riscos --no-disc --accept-licence
             cp "$RPCEMU_DATADIR"/roms/ROM* ci-rom/
           fi
           mkdir -p "$RPCEMU_DATADIR/roms"
@@ -423,31 +430,122 @@ jobs:
         timeout-minutes: 3
         run: |
           python3 tests/boot_smoke.py \
-            --binary "releases/linux/${{ matrix.arch }}/rpcemu-${{ matrix.variant }}" \
+            --binary releases/linux/amd64/rpcemu-recompiler \
             --datadir "$RUNNER_TEMP/rpcemu-data" \
             --abort-check require \
-            --save vnc-smoke-linux-${{ matrix.arch }}.png
+            --save vnc-smoke-linux-amd64.png
 
       - name: Upload the boot screenshot
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: vnc-smoke-linux-${{ matrix.arch }}
-          path: vnc-smoke-linux-${{ matrix.arch }}.png
+          name: vnc-smoke-linux-amd64
+          path: vnc-smoke-linux-amd64.png
           # A single PNG: skip the zip so it can be viewed from the run page
           # directly. "archive: false" allows one file only, which this is.
           archive: false
           if-no-files-found: ignore
 
-      - name: Upload Linux release
+      - name: Upload Linux amd64 release
         uses: actions/upload-artifact@v7
         with:
-          name: rpcemu-linux-${{ matrix.arch }}
+          name: rpcemu-linux-amd64
           path: |
-            releases/linux/${{ matrix.arch }}/
+            releases/linux/amd64/
             releases/linux/*.tar.gz
-            releases/linux/${{ matrix.arch }}/*.deb
+            releases/linux/amd64/*.deb
           if-no-files-found: error
+
+  # The interpreter, there being no AArch64 dynarec backend shipped on any
+  # platform. Otherwise the same build as amd64, minus the three checks that only
+  # need running once against the same C.
+  linux-arm64:
+    needs: build-gate
+    if: always() && needs.build-gate.result == 'success'
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-tags: true
+
+      - name: Install dependencies
+        run: bash setup-build-env.sh
+
+      - name: Build and package (arm64, interpreter)
+        timeout-minutes: 3
+        run: |
+          set -o pipefail
+          chmod +x build.sh setup-build-env.sh
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            ./build.sh --interpreter --deb --zip 2>&1 | tee build.log
+          else
+            ./build.sh --interpreter --zip 2>&1 | tee build.log
+          fi
+
+      - name: Smoke test binary
+        run: |
+          file releases/linux/arm64/rpcemu-interpreter | grep -i ELF
+          ls -la releases/linux/arm64/
+          # See the amd64 job: runs before any wxWidgets/GTK initialisation, so
+          # it needs no display and catches a binary that cannot start at all.
+          bash tests/cli_smoke.sh releases/linux/arm64/rpcemu-interpreter
+
+      # See the amd64 job for what this proves and why the ROM is fetched rather
+      # than shipped.
+      - name: Cache the RISC OS ROM
+        uses: actions/cache@v6
+        with:
+          path: ci-rom
+          key: rpcemu-rom-stable-v1
+      - name: Fetch a ROM for the boot test
+        run: |
+          set -eu
+          export RPCEMU_DATADIR="$RUNNER_TEMP/rpcemu-data"
+          export RPCEMU_NO_GUI_MESSAGES=1
+          mkdir -p "$RPCEMU_DATADIR" ci-rom
+          cp -r default configs "$RPCEMU_DATADIR/"
+          if ! ls ci-rom/ROM* >/dev/null 2>&1; then
+            releases/linux/arm64/rpcemu-interpreter --fetch-riscos --no-disc --accept-licence
+            cp "$RPCEMU_DATADIR"/roms/ROM* ci-rom/
+          fi
+          mkdir -p "$RPCEMU_DATADIR/roms"
+          cp ci-rom/ROM* "$RPCEMU_DATADIR/roms/"
+          ls -la "$RPCEMU_DATADIR/roms/"
+
+      - name: Headless boot smoke test
+        timeout-minutes: 3
+        run: |
+          python3 tests/boot_smoke.py \
+            --binary releases/linux/arm64/rpcemu-interpreter \
+            --datadir "$RUNNER_TEMP/rpcemu-data" \
+            --abort-check require \
+            --save vnc-smoke-linux-arm64.png
+
+      - name: Upload the boot screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vnc-smoke-linux-arm64
+          path: vnc-smoke-linux-arm64.png
+          archive: false
+          if-no-files-found: ignore
+
+      - name: Upload Linux arm64 release
+        uses: actions/upload-artifact@v7
+        with:
+          name: rpcemu-linux-arm64
+          path: |
+            releases/linux/arm64/
+            releases/linux/*.tar.gz
+            releases/linux/arm64/*.deb
+          if-no-files-found: error
+
+  linux:
+    needs: [linux-amd64, linux-arm64]
+    if: always() && needs.linux-amd64.result == 'success' && needs.linux-arm64.result == 'success'
+    runs-on: ubuntu-slim
+    steps:
+      - run: echo "Linux amd64 and arm64 both built and passed their tests."
 
   windows-amd64:
     needs: build-gate
@@ -591,19 +689,6 @@ jobs:
             releases/windows/*.zip
           if-no-files-found: error
 
-  # Everything else asks whether the emulator does the right thing. This asks
-  # whether it does it legitimately - whether the C it is written in is doing
-  # what its author believed. An emulator is mostly arithmetic on addresses the
-  # guest chose, so the two questions have different answers more often here than
-  # in ordinary software: the first time this was run it found a shift by 32 on
-  # every word-aligned load and a signed overflow on every palette update, both
-  # of which had produced the right answer on every compiler the project has ever
-  # been built with, and neither of which any test could have caught.
-  #
-  # Linux only, and that is a real limit rather than an oversight: it is the same
-  # C on all three platforms, so a fault found here is a fault everywhere, but a
-  # platform's own code (the Win32 and Cocoa paths) is not covered. Noted in
-  # docs/testing.md rather than left to be discovered.
   windows-arm64:
     needs: build-gate
     if: always() && needs.build-gate.result == 'success'
@@ -752,7 +837,7 @@ jobs:
   windows:
     needs: [windows-amd64, windows-arm64]
     if: always() && needs.windows-amd64.result == 'success' && needs.windows-arm64.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     steps:
       - run: echo "Windows amd64 and arm64 both built and passed their tests."
 
@@ -1064,13 +1149,33 @@ jobs:
   # unreachable would be reporting on itself rather than on the emulator.
   notify:
     if: always() && github.event_name == 'push'
-    # windows-arm64 is here even though the release does not depend on it: this
-    # job works its verdict out from toJSON(needs), so a job missing from this
-    # list is one whose failures nobody is told about - the run goes red and the
-    # channel says nothing, which is the silent failure this file exists to
-    # avoid. Being reported on and being a release blocker are separate
-    # questions, and the answers differ.
-    needs: [release-preflight, linux, windows-amd64, windows-arm64, macos-universal, sanitisers, interface-docs, release]
+    # Every job that can fail is listed, because this one works its verdict out
+    # from toJSON(needs) and a job missing from the list is one whose failures
+    # nobody is told about: the run goes red and the channel says nothing, which
+    # is the silent failure this file exists to avoid.
+    #
+    # In particular the jobs that only feed an aggregate are listed individually.
+    # A failed macos-x86_64 leaves macos-universal *skipped* rather than failed,
+    # and a skip is not a failure to the check below, so naming only the
+    # aggregate would have announced a green build for a run that was red. The
+    # same goes for the two Linux and two Windows jobs behind their aggregates.
+    #
+    # The gates are not listed. build-gate and the aggregates report which tier
+    # stopped rather than what broke, and every job behind them is named here
+    # already, so including them would only replace a useful name with a vague
+    # one.
+    needs:
+      - release-preflight
+      - sanitisers
+      - interface-docs
+      - linux-amd64
+      - linux-arm64
+      - windows-amd64
+      - windows-arm64
+      - macos-x86_64
+      - macos-arm64
+      - macos-universal
+      - release
     runs-on: ubuntu-latest
     permissions:
       contents: read
