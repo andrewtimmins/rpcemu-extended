@@ -132,6 +132,7 @@ private:
 	void OnRestart(wxCommandEvent &event);
 	void OnExit(wxCommandEvent &event);
 	void OnClose(wxCloseEvent &event);
+	void OnMachineListSize(wxSizeEvent &event);
 	void OnPollTimer(wxTimerEvent &event);
 
 	/*
