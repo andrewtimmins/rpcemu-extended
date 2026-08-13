@@ -1,0 +1,15 @@
+|================================================================|
+| User startup file for !Internet                                |
+|                                                                |
+| Place any special configuration options that cannot be set     |
+| using !InetSetup into this file. It is executed immediately    |
+| after the automatically-generated Startup file.                |
+|================================================================|
+
+Set Inet$MimeMappings InetDBase:MimeMap
+Set Inet$ResolverDelay 5
+Set Inet$ResolverRetries 3
+SetEval Inet$TestEval 1
+RMEnsure Resolver 0.55 SetEval Inet$TestEval 0
+If Inet$TestEval THEN ResolverConfig
+Unset Inet$TestEval

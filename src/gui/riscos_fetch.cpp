@@ -46,6 +46,7 @@
 #include <wx/filename.h>
 #include <wx/fileconf.h>
 #include <wx/sizer.h>
+#include <wx/regex.h>
 #include <wx/settings.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
@@ -617,6 +618,66 @@ void SeedMonitorChoice(const wxString &hostfs_dir, unsigned vram_mb)
 	       "%ux%u host display\n", mode_w, mode_h, written, host_w, host_h);
 }
 
+/*
+ * Merge the bundled RISC OS 5 network configuration into a freshly installed
+ * disc, so the network comes up on startup. A missing template is not an error:
+ * the disc is left to be set up by hand, as every disc was before this.
+ *
+ * The hostname is rewritten on the way in: left alone, every machine made this
+ * way would announce the same name to Access.
+ */
+bool SeedNetworkChoices(const wxString &hostfs_dir, const wxString &machine_name)
+{
+	const wxString sep = wxFileName::GetPathSeparator();
+	const wxString source = wxString::FromUTF8(rpcemu_get_resourcedir()) +
+	    "resources" + sep + "ro5" + sep + "network" + sep + "!Boot";
+
+	if (!wxDirExists(source)) {
+		rpclog("riscos fetch: no network template at %s, so the disc is left "
+		       "without one\n", source.utf8_str().data());
+		return false;
+	}
+
+	if (!ConfigPathsCopyDirectory(source, hostfs_dir + sep + "!Boot")) {
+		rpclog("riscos fetch: the network template could not be copied\n");
+		return false;
+	}
+
+	const wxString startup = hostfs_dir + sep + "!Boot" + sep + "Choices" + sep +
+	    "Internet" + sep + "Startup,feb";
+	const wxString host_name = ConfigPathsSanitizeName(machine_name);
+	wxString text;
+
+	{
+		wxFFile file(startup, "rb");
+
+		if (!file.IsOpened() || !file.ReadAll(&text)) {
+			rpclog("riscos fetch: network template installed, but its Startup "
+			       "file could not be read to set the hostname\n");
+			return true;
+		}
+	}
+
+	wxRegEx host("(^|\n)([[:space:]]*Set Inet\\$HostName[[:space:]]+)[^\n]*");
+
+	if (host.IsValid()) {
+		host.ReplaceAll(&text, "\\1\\2" + host_name);
+	}
+
+	{
+		wxFFile file(startup, "wb");
+
+		if (!file.IsOpened() || !file.Write(text)) {
+			rpclog("riscos fetch: the network hostname could not be written\n");
+			return true;
+		}
+	}
+
+	rpclog("riscos fetch: network configuration installed, hostname %s\n",
+	       host_name.utf8_str().data());
+	return true;
+}
+
 int InstallDisc(const wxString &archive_path, const wxString &dest_dir,
                 RiscosFetchReporter &reporter, wxString &error, bool &cancelled)
 {
@@ -1085,6 +1146,9 @@ RiscosFetchOutcome RiscosFetchPerform(const RiscosFetchRequest &request,
 		   article. */
 		if (files >= 0) {
 			SeedMonitorChoice(staged_hostfs, MachineVramMb(machine_name));
+			if (request.configure_network) {
+				SeedNetworkChoices(staged_hostfs, machine_name);
+			}
 		}
 
 		if (files < 0) {

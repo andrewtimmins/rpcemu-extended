@@ -73,6 +73,9 @@ struct RiscosFetchRequest {
 	/** Also fetch HardDisc4 and unpack it onto the machine's HostFS. */
 	bool include_disc = true;
 
+	/** Merge the bundled network configuration into the disc's !Boot. */
+	bool configure_network = false;
+
 	/**
 	 * Create a machine around what was fetched. When false the ROM lands in
 	 * roms/ and any disc goes to the machine named below, which is what the
