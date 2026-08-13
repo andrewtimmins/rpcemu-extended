@@ -2022,7 +2022,7 @@ void ManagerFrame::OnClose(wxCloseEvent &event)
 		wxRichMessageDialog dlg(this,
 		    wxString::Format("%zu machine%s still running.", count,
 		        count == 1 ? " is" : "s are"),
-		    "RPCEmu Extended Manager", wxOK | wxCANCEL | wxICON_QUESTION);
+		    "RPCEmu Extended Manager", wxOK | wxCANCEL | wxICON_WARNING);
 
 		dlg.SetExtendedMessage(
 		    "Closing this window leaves them running in the background.\n\n"
