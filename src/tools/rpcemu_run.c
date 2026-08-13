@@ -45,6 +45,12 @@
 #define RPCEMU_RUN_DEFAULT_TCP "127.0.0.1:15590"
 #endif
 
+#ifdef _WIN32
+#define EOF_KEY "Ctrl-Z then Enter"
+#else
+#define EOF_KEY "Ctrl-D"
+#endif
+
 #ifndef _WIN32
 /*
  * ★ Which machine's socket, now that each machine has its own.
@@ -512,14 +518,7 @@ main(int argc, char **argv)
 	{
 		char line[1024];
 
-		/* End-of-file is Ctrl-D on Unix but Ctrl-Z (then Return) on Windows,
-		   where Ctrl-D is not EOF at all - it just enters ASCII 4, which would
-		   be sent to the guest as a command. Name the key that works here. */
-#ifdef _WIN32
-		fprintf(stderr, "rpcemu-shell: connected. Ctrl-Z then Return to exit.\n");
-#else
-		fprintf(stderr, "rpcemu-shell: connected. Ctrl-D to exit.\n");
-#endif
+		fprintf(stderr, "rpcemu-shell: connected. " EOF_KEY " to exit.\n");
 		/* The server's greeting is on its way but has not necessarily landed
 		   yet, so wait briefly for it rather than printing the first prompt
 		   above it. Nothing is lost if it does not arrive in time: the next
