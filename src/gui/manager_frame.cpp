@@ -1644,11 +1644,11 @@ bool ManagerFrame::ConfirmStop(const wxString &name)
 
 	dlg.SetYesNoLabels("Stop", "Cancel");
 	dlg.SetExtendedMessage(
-	    "The machine is asked to shut down, and anything RISC OS has not "
-	    "written to disc is lost - unless this machine is set to suspend on "
-	    "exit, in which case its state is saved.\n\n"
-	    "A machine left running can be shown again from this window at any "
-	    "time, including after this window is closed.");
+	    "The machine is asked to shut down, and anything RISC OS has\n"
+	    "not written to disc is lost - unless this machine is set to\n"
+	    "suspend on exit, in which case its state is saved.\n\n"
+	    "A machine left running can be shown again from this window\n"
+	    "at any time, including after this window is closed.");
 
 	return dlg.ShowModal() == wxID_YES;
 }
