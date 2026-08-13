@@ -35,6 +35,7 @@ set(GUI_SOURCES
     podule_config_dialog.cpp
     machine_inspector_window.cpp
     about_dialog.cpp
+    check_update.cpp
     nat_edit_dialog.cpp
     nat_list_dialog.cpp
     serial_dialog.cpp

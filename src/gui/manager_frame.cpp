@@ -36,6 +36,7 @@
 #include <wx/tokenzr.h>
 
 #include "about_dialog.h"
+#include "check_update.h"
 #include "config_paths.h"
 #include "machine_edit_dialog.h"
 #include "new_machine_dialog.h"
@@ -1813,6 +1814,9 @@ void ManagerFrame::OnMachineMenuCommand(wxCommandEvent &event)
 		return;
 	case wxID_ABOUT:
 		ShowAboutDialog();
+		return;
+	case ID_MENU_CHECK_UPDATE:
+		CheckForUpdate(this);
 		return;
 	default:
 		break;
