@@ -43,10 +43,6 @@
 
 #include "config_paths.h"
 
-extern "C" {
-#include "rpcemu.h"
-}
-
 namespace {
 
 /*
@@ -191,20 +187,21 @@ bool AddRedactedFile(wxZipOutputStream &zip, const wxString &name,
 } // namespace
 
 wxString
-SupportBundleSuggestedName()
+SupportBundleSuggestedName(const wxString &machine_name)
 {
-	const wxString machine = wxString::FromUTF8(config.name);
 	const wxString stamp = wxDateTime::Now().Format("%Y%m%d");
 
-	if (machine.empty()) {
+	if (machine_name.empty()) {
 		return wxString::Format("rpcemu-support-%s.zip", stamp);
 	}
 	return wxString::Format("rpcemu-support-%s-%s.zip",
-	    ConfigPathsSanitizeName(machine), stamp);
+	    ConfigPathsSanitizeName(machine_name), stamp);
 }
 
 SupportBundleResult
-SupportBundleWrite(const wxString &dest_path, const wxString &screenshot_path)
+SupportBundleWrite(const wxString &dest_path, const wxString &machine_name,
+                   const wxString &machine_dir, const wxString &log_path,
+                   const wxString &screenshot_path)
 {
 	SupportBundleResult result;
 	wxFFileOutputStream out(dest_path);
@@ -216,17 +213,14 @@ SupportBundleWrite(const wxString &dest_path, const wxString &screenshot_path)
 	}
 
 	wxZipOutputStream zip(out);
-	const wxString machine = wxString::FromUTF8(config.name);
-	const wxString machine_dir = wxString::FromUTF8(rpcemu_get_machine_datadir());
 	bool ok = true;
 
 	/* Redacted: the log repeats the configuration as it parses it. */
-	ok = ok && AddRedactedFile(zip, "rpclog.txt",
-	    wxString::FromUTF8(rpcemu_get_log_path()), &result.members);
+	ok = ok && AddRedactedFile(zip, "rpclog.txt", log_path, &result.members);
 
-	if (!machine.empty()) {
+	if (!machine_name.empty()) {
 		const wxFileName cfg(ConfigPathsConfigsDir(),
-		    ConfigPathsSanitizeName(machine) + ".cfg");
+		    ConfigPathsSanitizeName(machine_name) + ".cfg");
 
 		ok = ok && AddRedactedFile(zip, "machine.cfg", cfg.GetFullPath(),
 		    &result.members);

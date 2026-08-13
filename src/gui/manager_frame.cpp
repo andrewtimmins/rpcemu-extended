@@ -32,11 +32,13 @@
 #include <wx/statbmp.h>
 #include <wx/stdpaths.h>
 #include <wx/textdlg.h>
+#include <wx/choicdlg.h>
 #include <wx/filedlg.h>
 #include <wx/tokenzr.h>
 
 #include "about_dialog.h"
 #include "check_update.h"
+#include "support_bundle.h"
 #include "config_paths.h"
 #include "machine_edit_dialog.h"
 #include "new_machine_dialog.h"
@@ -1818,6 +1820,9 @@ void ManagerFrame::OnMachineMenuCommand(wxCommandEvent &event)
 	case ID_MENU_CHECK_UPDATE:
 		CheckForUpdate(this);
 		return;
+	case ID_MENU_SUPPORT_BUNDLE:
+		CreateSupportBundle();
+		return;
 	default:
 		break;
 	}
@@ -2075,6 +2080,108 @@ void ManagerFrame::ShowAboutDialog()
 	AboutDialog dlg(this);
 
 	dlg.ShowModal();
+}
+
+void ManagerFrame::CreateSupportBundle()
+{
+	wxArrayString choices;
+
+	for (const wxString &name : machine_names_) {
+		choices.Add(name);
+	}
+
+	if (choices.IsEmpty()) {
+		wxMessageBox("There are no machines to collect anything about.",
+		    "RPCEmu Extended - Support Files", wxOK | wxICON_INFORMATION, this);
+		return;
+	}
+
+	wxString machine;
+
+	if (choices.GetCount() == 1) {
+		machine = choices[0];
+	} else {
+		/* Defaulted to the one being shown, which is what somebody looking at
+		   a misbehaving machine is most likely to mean. */
+		int selected = choices.Index(active_machine_);
+
+		if (selected == wxNOT_FOUND) {
+			selected = 0;
+		}
+
+		wxSingleChoiceDialog dlg(this, "Which machine is the report about?",
+		    "RPCEmu Extended - Support Files", choices);
+
+		dlg.SetSelection(selected);
+		if (dlg.ShowModal() != wxID_OK) {
+			return;
+		}
+		machine = dlg.GetStringSelection();
+	}
+
+	/* Only a running machine has a screen, and only this window has its
+	   pixels - a managed machine's own panel never receives frames. */
+	wxString screenshot;
+	auto it = running_.find(machine);
+
+	if (it != running_.end() && it->second.panel != nullptr) {
+		const wxString temp = wxFileName::CreateTempFileName("rpcemu-screen");
+
+		if (!temp.empty() && it->second.panel->SaveScreenshot(temp)) {
+			screenshot = temp;
+		} else if (!temp.empty()) {
+			wxRemoveFile(temp);
+		}
+	}
+
+	if (!screenshot.empty() &&
+	    wxMessageBox("Include a screenshot of the RISC OS screen?\n\n"
+	                 "It shows what the machine was displaying just now, and "
+	                 "anyone reading the report will see it.",
+	                 "RPCEmu Extended - Support Files",
+	                 wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION, this) != wxYES) {
+		wxRemoveFile(screenshot);
+		screenshot.clear();
+	}
+
+	wxFileDialog dlg(this, "Save Support Files",
+	    wxStandardPaths::Get().GetDocumentsDir(),
+	    SupportBundleSuggestedName(machine),
+	    "Zip archives (*.zip)|*.zip", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+
+	if (dlg.ShowModal() != wxID_OK) {
+		if (!screenshot.empty()) {
+			wxRemoveFile(screenshot);
+		}
+		return;
+	}
+
+	const wxString dir = MachineDirFor(machine);
+	const SupportBundleResult result = SupportBundleWrite(dlg.GetPath(), machine,
+	    dir, wxFileName(dir, "rpclog.txt").GetFullPath(), screenshot);
+
+	if (!screenshot.empty()) {
+		wxRemoveFile(screenshot);
+	}
+
+	if (!result.ok) {
+		wxMessageBox(result.message, "RPCEmu Extended - Support Files",
+		    wxOK | wxICON_ERROR, this);
+		return;
+	}
+
+	wxString detail;
+
+	for (const SupportBundleMember &member : result.members) {
+		detail += wxString::Format("    %s\n", member.name);
+	}
+
+	wxMessageBox(
+	    wxString::Format("Saved to:\n%s\n\nIt contains:\n%s\n"
+	                     "The VNC password and any home folder paths have been "
+	                     "taken out of the log and the settings.",
+	        dlg.GetPath(), detail),
+	    "RPCEmu Extended - Support Files", wxOK | wxICON_INFORMATION, this);
 }
 
 void ManagerFrame::OnExit(wxCommandEvent & /*event*/)
