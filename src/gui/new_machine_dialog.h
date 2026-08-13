@@ -64,6 +64,7 @@ private:
 	wxRadioButton *nightly_ = nullptr;
 	wxRadioButton *no_download_ = nullptr;
 	wxCheckBox *include_disc_ = nullptr;
+	wxCheckBox *configure_network_ = nullptr;
 	wxStaticText *size_label_ = nullptr;
 
 	wxString created_config_path_;

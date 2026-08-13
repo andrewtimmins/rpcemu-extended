@@ -86,6 +86,14 @@ NewMachineDialog::NewMachineDialog(wxWindow *parent)
 	    "configured !Boot, set up for the ROM chosen above. Without it the "
 	    "machine starts at the supervisor prompt with an empty disc.");
 
+	configure_network_ = new wxCheckBox(this, wxID_ANY,
+	    "Automatically enable networking in RISC OS 5");
+	configure_network_->SetValue(true);
+	configure_network_->SetToolTip(
+	    "Adds the !Boot files that bring the network up on startup: an address "
+	    "from DHCP, and Access sharing. Without it networking has to be set up "
+	    "by hand inside RISC OS.");
+
 	size_label_ = new wxStaticText(this, wxID_ANY, wxEmptyString);
 
 	auto *ok_button = new wxButton(this, wxID_OK, "OK");
@@ -103,6 +111,10 @@ NewMachineDialog::NewMachineDialog(wxWindow *parent)
 	os_box->Add(nightly_, 0, wxLEFT | wxRIGHT | wxTOP, 6);
 	os_box->Add(no_download_, 0, wxLEFT | wxRIGHT | wxTOP, 6);
 	os_box->Add(include_disc_, 0, wxLEFT | wxRIGHT | wxTOP, 6);
+	auto *network_row = new wxBoxSizer(wxHORIZONTAL);
+	network_row->AddSpacer(16);
+	network_row->Add(configure_network_, 0);
+	os_box->Add(network_row, 0, wxLEFT | wxRIGHT | wxTOP, 6);
 	os_box->AddSpacer(6);
 
 	auto *buttons = new wxBoxSizer(wxHORIZONTAL);
@@ -123,6 +135,7 @@ NewMachineDialog::NewMachineDialog(wxWindow *parent)
 	nightly_->Bind(wxEVT_RADIOBUTTON, &NewMachineDialog::OnChoiceChanged, this);
 	no_download_->Bind(wxEVT_RADIOBUTTON, &NewMachineDialog::OnChoiceChanged, this);
 	include_disc_->Bind(wxEVT_CHECKBOX, &NewMachineDialog::OnChoiceChanged, this);
+	configure_network_->Bind(wxEVT_CHECKBOX, &NewMachineDialog::OnChoiceChanged, this);
 	ok_button->Bind(wxEVT_BUTTON, &NewMachineDialog::OnOk, this);
 
 	name_edit_->SetFocus();
@@ -134,6 +147,9 @@ void NewMachineDialog::OnChoiceChanged(wxCommandEvent &)
 {
 	/* Nothing to fetch means nothing to put on the disc either. */
 	include_disc_->Enable(!no_download_->GetValue());
+	/* The files go into the disc's own !Boot, so there has to be one. */
+	configure_network_->Enable(include_disc_->IsEnabled() &&
+	    include_disc_->GetValue());
 	UpdateSizeLabel();
 }
 
@@ -242,6 +258,7 @@ void NewMachineDialog::OnOk(wxCommandEvent &)
 		request.release = nightly_->GetValue() ? RiscosRelease::Nightly
 		                                      : RiscosRelease::Stable;
 		request.include_disc = include_disc_->GetValue();
+		request.configure_network = configure_network_->GetValue();
 		request.create_machine = false;
 		request.machine_name = name;
 
