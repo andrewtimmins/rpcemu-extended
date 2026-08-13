@@ -1,0 +1,16 @@
+|================================================================|
+| Routes file for !Internet                                      |
+|                                                                |
+| Place any extra *Route commands, apart from the default route  |
+| that can be set using !InetSetup, into this file.              |
+|                                                                |
+| For example, if your machine is connected to net 1, and you    |
+| wish to establish a route to net 2 via the interface 1.0.0.2   |
+| on a gateway:                                                  |
+|                                                                |
+| IF "<Inet$Error>" = "" THEN Route -e add -net 2 1.0.0.2        |
+|                                                                |
+| (The IF...THEN statement above is necessary, as is the '-e'    |
+| parameter.)                                                    |
+|                                                                |
+|================================================================|
