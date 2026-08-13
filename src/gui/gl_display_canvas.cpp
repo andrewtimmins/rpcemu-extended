@@ -263,6 +263,15 @@ void GlDisplayCanvas::OnPaint(wxPaintEvent & /*event*/)
 		return;
 	}
 
+	/*
+	 * ★ Upload here, and only here, because the SwapBuffers() below is what
+	 * lets the driver retire it. See SetFrameSupplier() for what uploading
+	 * anywhere else did.
+	 */
+	if (supply_frame_) {
+		supply_frame_();
+	}
+
 	Render();
 	SwapBuffers();
 }

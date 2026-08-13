@@ -239,6 +239,11 @@ private:
 	 * duplicated, and it fills the panel exactly so the coordinates need no
 	 * adjustment.
 	 */
+	/* Hand the newest frame to the OpenGL canvas. Called by the canvas from
+	   inside its own paint, never on frame arrival - see
+	   GlDisplayCanvas::SetFrameSupplier. */
+	void UploadPendingFrame();
+
 	void TryCreateGlCanvas();
 	void DestroyGlCanvas(const wxString &why);
 	bool GlActive() const;

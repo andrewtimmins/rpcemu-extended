@@ -363,31 +363,24 @@ void RemoteEmulatorPanel::HandleIpcEvent(const IpcEvent &event)
 
 #if wxUSE_GLCANVAS
 			/*
-			 * ★ With the GPU path the frame goes straight from shared memory
-			 * into the texture, here, and only the rows that changed.
+			 * ★ With the GPU path this asks for a paint and does nothing else.
 			 *
-			 * Done on arrival rather than in a paint because there is nothing
-			 * expensive to coalesce any more: an upload of a band is a DMA, not
-			 * a pass over the picture. The canvas is then asked to redraw, and
-			 * wx coalesces THAT as it always did.
+			 * The upload used to be done here, on arrival. It now happens in the
+			 * canvas's paint, through the supplier set in TryCreateGlCanvas,
+			 * because an upload has to be followed by a buffer swap and only the
+			 * paint swaps - see GlDisplayCanvas::SetFrameSupplier for what
+			 * uploading without swapping did to the driver.
+			 *
+			 * The dirty range accumulated above is deliberately NOT cleared
+			 * here: the paint is what consumes it, and several frames may arrive
+			 * before one comes. frame_dirty_ is cleared because the CPU bitmap
+			 * this panel would otherwise rebuild is not what gets drawn while the
+			 * canvas is up.
 			 */
 			if (GlActive()) {
-				const uint32_t *pixels = nullptr;
-				int w = 0, h = 0;
-
-				if (shared_fb_.AcquireFront(&pixels, &w, &h)) {
-					frame_width_ = w;
-					frame_height_ = h;
-					gl_canvas_->SetDisplayRect(DisplayRect());
-					gl_canvas_->UpdateFrame(pixels, w, h,
-					    dirty_all_ ? 0 : dirty_top_,
-					    dirty_all_ ? h : dirty_bottom_);
-					dirty_all_ = false;
-					dirty_top_ = dirty_bottom_ = 0;
-					frame_dirty_ = false;
-					gl_canvas_->Refresh(false);
-					break;
-				}
+				frame_dirty_ = false;
+				gl_canvas_->Refresh(false);
+				break;
 			}
 #endif
 			Refresh(false);
@@ -681,6 +674,40 @@ bool RemoteEmulatorPanel::GlActive() const
  * where GLX exists, succeeds, and then behaves badly: that is not something this
  * code can detect, so it has to be something the user can say.
  */
+/*
+ * Give the canvas the newest frame, called from inside its paint.
+ *
+ * Everything here used to run the moment a frame arrived; it is the same work,
+ * moved to the one place from which a buffer swap is certain to follow. See
+ * GlDisplayCanvas::SetFrameSupplier.
+ *
+ * Called for every paint, including a plain expose with no new frame, and that
+ * is deliberate: the display rectangle has to be refreshed after a resize even
+ * when the picture has not changed, and an upload with an empty dirty range
+ * costs nothing (UpdateFrame returns without touching the texture).
+ */
+void RemoteEmulatorPanel::UploadPendingFrame()
+{
+#if wxUSE_GLCANVAS
+	const uint32_t *pixels = nullptr;
+	int w = 0, h = 0;
+
+	if (!GlActive() || !shared_fb_.AcquireFront(&pixels, &w, &h)) {
+		return;
+	}
+
+	frame_width_ = w;
+	frame_height_ = h;
+	gl_canvas_->SetDisplayRect(DisplayRect());
+	gl_canvas_->UpdateFrame(pixels, w, h,
+	    dirty_all_ ? 0 : dirty_top_,
+	    dirty_all_ ? h : dirty_bottom_);
+
+	dirty_all_ = false;
+	dirty_top_ = dirty_bottom_ = 0;
+#endif
+}
+
 void RemoteEmulatorPanel::TryCreateGlCanvas()
 {
 #if wxUSE_GLCANVAS
@@ -702,6 +729,10 @@ void RemoteEmulatorPanel::TryCreateGlCanvas()
 	gl_canvas_ = new GlDisplayCanvas(this);
 	gl_canvas_->SetSize(GetClientSize());
 	gl_canvas_->SetCursor(wxCursor(wxCURSOR_BLANK));
+
+	/* The canvas asks for the newest frame from inside its paint, so that the
+	   upload is always followed by the swap that retires it. */
+	gl_canvas_->SetFrameSupplier([this] { UploadPendingFrame(); });
 
 	/*
 	 * Input goes to this panel's own handlers. The canvas covers the panel

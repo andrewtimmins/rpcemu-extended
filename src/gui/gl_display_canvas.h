@@ -28,6 +28,7 @@
 #include <wx/glcanvas.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 /*
@@ -88,9 +89,42 @@ public:
 	 * kept. `dirty_top`/`dirty_bottom` are the half-open range of guest rows
 	 * that changed; passing the whole height is always correct and is what a
 	 * first frame or a mode change wants.
+	 *
+	 * ★ MUST be called from the supplier set by SetFrameSupplier(), so that a
+	 * buffer swap always follows. See that comment: calling it anywhere else
+	 * livelocks the driver.
 	 */
 	void UpdateFrame(const uint32_t *pixels, int width, int height,
 	                 int dirty_top, int dirty_bottom);
+
+	/*
+	 * ★ Who to ask for the newest frame, called from the paint immediately
+	 * before the picture is drawn. The supplier is expected to call
+	 * UpdateFrame() if it has anything new.
+	 *
+	 * This exists because an upload has to be followed by a swap, and only the
+	 * paint swaps.
+	 *
+	 * The frame used to be uploaded the moment it arrived, on the grounds that a
+	 * band is a transfer rather than a pass over the picture, so there was
+	 * nothing left worth coalescing. That was wrong in a way that took a hung
+	 * Manager and its backtrace to see. glTexSubImage2D does not merely cost what
+	 * it transfers: it puts work in the driver's queue, and the queue is drained
+	 * by presenting a frame. Uploading on arrival at sixty frames a second while
+	 * the window was not being painted - the user had switched to another
+	 * application, or the guest had just changed screen mode - filled that queue,
+	 * and NVIDIA's driver then busy-waits in userspace for room. The GUI thread
+	 * span at 100% of a core inside glTexSubImage2D, so it never reached the paint
+	 * that would have swapped and made room: a livelock that cannot recover, with
+	 * no syscalls to show for it.
+	 *
+	 * Asking at paint time also means no work at all happens for a window nobody
+	 * is looking at, and wx's coalescing of Refresh() gives back the batching that
+	 * uploading on arrival was trying to avoid needing: a burst of frames becomes
+	 * one upload of the union of their rows, and one swap.
+	 */
+	using FrameSupplier = std::function<void()>;
+	void SetFrameSupplier(FrameSupplier supplier) { supply_frame_ = std::move(supplier); }
 
 	/* Where in the canvas the picture goes, aspect-fitted by the caller, which
 	   already works this out for the pointer mapping. */
@@ -121,6 +155,8 @@ private:
 	int frame_width_ = 0;
 	int frame_height_ = 0;
 	wxRect display_rect_;
+
+	FrameSupplier supply_frame_;
 
 	wxDECLARE_EVENT_TABLE();
 };
