@@ -1712,7 +1712,7 @@ void MainFrame::OnSupportBundle(wxCommandEvent &)
 
 	wxMessageBox(
 	    wxString::Format("Saved to:\n%s\n\nIt contains:\n%s\n"
-	                     "The password and any home folder paths have been "
+	                     "The VNC password and any home folder paths have been "
 	                     "taken out of the log and the settings.",
 	        dlg.GetPath(), detail),
 	    "RPCEmu Extended - Support Files", wxOK | wxICON_INFORMATION, this);
