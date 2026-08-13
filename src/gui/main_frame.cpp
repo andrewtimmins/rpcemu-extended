@@ -1697,8 +1697,11 @@ void MainFrame::OnSupportBundle(wxCommandEvent &)
 		screenshot.clear();
 	}
 
+	const wxString machine = wxString::FromUTF8(config.name);
+
 	wxFileDialog dlg(this, "Save Support Files",
-	    wxStandardPaths::Get().GetDocumentsDir(), SupportBundleSuggestedName(),
+	    wxStandardPaths::Get().GetDocumentsDir(),
+	    SupportBundleSuggestedName(machine),
 	    "Zip archives (*.zip)|*.zip", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
 
 	if (dlg.ShowModal() != wxID_OK) {
@@ -1708,7 +1711,9 @@ void MainFrame::OnSupportBundle(wxCommandEvent &)
 		return;
 	}
 
-	const SupportBundleResult result = SupportBundleWrite(dlg.GetPath(), screenshot);
+	const SupportBundleResult result = SupportBundleWrite(dlg.GetPath(), machine,
+	    wxString::FromUTF8(rpcemu_get_machine_datadir()),
+	    wxString::FromUTF8(rpcemu_get_log_path()), screenshot);
 
 	if (!screenshot.empty()) {
 		wxRemoveFile(screenshot);

@@ -158,6 +158,13 @@ private:
 	   and so are answered here whether or not one is running. */
 	void ShowAboutDialog();
 
+	/*
+	 * A support bundle for any machine, running or not: everything in it but
+	 * the screenshot is a file on disk, and a machine that has stopped - or
+	 * crashed - is exactly the one somebody wants a bundle for.
+	 */
+	void CreateSupportBundle();
+
 	wxMenu *machine_file_menu_ = nullptr;
 	wxMenu *machine_disc_menu_ = nullptr;
 	wxMenu *machine_settings_menu_ = nullptr;

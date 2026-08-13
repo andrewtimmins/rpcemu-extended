@@ -49,15 +49,29 @@ struct SupportBundleResult {
  * this can be attached to a public issue without handing over a password or
  * the reporter's home directory.
  *
+ * The machine is named rather than taken from the loaded configuration, so the
+ * Manager can bundle any machine it knows of. Every file here is a file on
+ * disk: a machine does not have to be running, and one that crashed is exactly
+ * the machine somebody wants a bundle for.
+ *
+ * @param machine_name    Which machine, for the archive's configuration member.
+ *                        Empty leaves the configuration out.
+ * @param machine_dir     That machine's data directory, holding its CMOS and
+ *                        emulator metadata.
+ * @param log_path        Its rpclog.txt.
  * @param screenshot_path A PNG of the guest's screen to include, or empty for
  *                        none. Asked for rather than taken: it is whatever the
  *                        machine happens to be showing, which is the one thing
- *                        here that cannot be redacted.
+ *                        here that cannot be redacted - and a machine that is
+ *                        not running has no screen to show.
  */
 SupportBundleResult SupportBundleWrite(const wxString &dest_path,
+                                       const wxString &machine_name,
+                                       const wxString &machine_dir,
+                                       const wxString &log_path,
                                        const wxString &screenshot_path = wxString());
 
 /** Suggested leafname, e.g. "rpcemu-support-Test1-20260803.zip". */
-wxString SupportBundleSuggestedName();
+wxString SupportBundleSuggestedName(const wxString &machine_name);
 
 #endif /* SUPPORT_BUNDLE_H */
