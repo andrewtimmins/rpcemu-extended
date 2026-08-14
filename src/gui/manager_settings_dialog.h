@@ -72,6 +72,9 @@ private:
 	ChangeDataFolderFn change_data_folder_;
 	wxStaticText *data_folder_text_ = nullptr;
 	wxCheckBox *acceleration_check_ = nullptr;
+	wxCheckBox *minimal_ui_check_ = nullptr;
+	wxCheckBox *warn_stop_check_ = nullptr;
+	wxCheckBox *warn_exit_check_ = nullptr;
 
 	bool acceleration_was_ = true;
 	bool acceleration_chosen_ = true;

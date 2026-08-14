@@ -69,7 +69,7 @@ AccelerationExplanation()
 
 ManagerSettingsDialog::ManagerSettingsDialog(wxWindow *parent,
                                              ChangeDataFolderFn change_data_folder)
-	: wxDialog(parent, wxID_ANY, "RPCEmu Settings", wxDefaultPosition,
+	: wxDialog(parent, wxID_ANY, "RPCEmu Extended - Settings", wxDefaultPosition,
 	    wxDefaultSize, wxDEFAULT_DIALOG_STYLE)
 	, change_data_folder_(std::move(change_data_folder))
 {
@@ -148,6 +148,35 @@ ManagerSettingsDialog::ManagerSettingsDialog(wxWindow *parent,
 		root->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 10);
 	}
 
+	/* ---- Window ---- */
+	{
+		auto *box = new wxStaticBoxSizer(wxVERTICAL, this, "Window");
+
+		minimal_ui_check_ = new wxCheckBox(this, wxID_ANY,
+		    "Start with a minimal interface");
+		minimal_ui_check_->SetValue(GetMinimalUi());
+		minimal_ui_check_->SetToolTip(
+		    "Open with the toolbar and the machine list hidden. View > Minimal "
+		    "Interface turns it off and on again without changing this.");
+		box->Add(minimal_ui_check_, 0, wxLEFT | wxRIGHT | wxTOP, 8);
+
+		warn_stop_check_ = new wxCheckBox(this, wxID_ANY,
+		    "Ask before stopping a machine");
+		warn_stop_check_->SetValue(GetWarnOnStop());
+		warn_stop_check_->SetToolTip(
+		    "Not asked for a machine set to suspend on exit, which loses "
+		    "nothing by being stopped.");
+		box->Add(warn_stop_check_, 0, wxLEFT | wxRIGHT | wxTOP, 8);
+
+		warn_exit_check_ = new wxCheckBox(this, wxID_ANY,
+		    "Ask when closing with machines running");
+		warn_exit_check_->SetValue(GetWarnOnExit());
+		box->Add(warn_exit_check_, 0, wxLEFT | wxRIGHT | wxTOP, 8);
+		box->AddSpacer(8);
+
+		root->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 10);
+	}
+
 	root->Add(new wxStaticLine(this), 0, wxEXPAND | wxALL, 10);
 
 	auto *buttons = CreateStdDialogButtonSizer(wxOK | wxCANCEL);
@@ -194,6 +223,16 @@ void ManagerSettingsDialog::OnOk(wxCommandEvent &event)
 		SetHardwareAcceleration(acceleration_chosen_);
 		rpclog("Settings: hardware acceleration turned %s\n",
 		    acceleration_chosen_ ? "on" : "off");
+	}
+
+	if (minimal_ui_check_ != nullptr) {
+		SetMinimalUi(minimal_ui_check_->GetValue());
+	}
+	if (warn_stop_check_ != nullptr) {
+		SetWarnOnStop(warn_stop_check_->GetValue());
+	}
+	if (warn_exit_check_ != nullptr) {
+		SetWarnOnExit(warn_exit_check_->GetValue());
 	}
 	event.Skip();	/* let wxDialog close with wxID_OK */
 }

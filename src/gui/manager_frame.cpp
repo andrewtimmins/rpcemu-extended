@@ -82,6 +82,8 @@ enum {
 	ID_RESTART,
 	ID_RESUME,
 	ID_SHORTCUT,
+	ID_MINIMAL_UI,
+	ID_MACHINE_LIST,
 	ID_DATA_FOLDER,
 	ID_POLL_TIMER,
 };
@@ -175,6 +177,8 @@ wxBEGIN_EVENT_TABLE(ManagerFrame, wxFrame)
 	EVT_MENU(ID_RESET, ManagerFrame::OnReset)
 	EVT_MENU(ID_RESTART, ManagerFrame::OnRestart)
 	EVT_MENU(ID_SHORTCUT, ManagerFrame::OnCreateShortcut)
+	EVT_MENU(ID_MINIMAL_UI, ManagerFrame::OnMinimalUi)
+	EVT_MENU(ID_MACHINE_LIST, ManagerFrame::OnMachineListToggle)
 	EVT_MENU(wxID_EXIT, ManagerFrame::OnExit)
 	EVT_CLOSE(ManagerFrame::OnClose)
 	EVT_TIMER(ID_POLL_TIMER, ManagerFrame::OnPollTimer)
@@ -194,6 +198,10 @@ ManagerFrame::ManagerFrame()
 	UpdateMachineMenuState();
 	RefreshMachineList();
 	DiscoverAlreadyRunningMachines();
+	/* After the toolbar and the splitter exist, since it hides both. */
+	if (GetMinimalUi()) {
+		ApplyMinimalUi(true);
+	}
 	poll_timer_.Start(kPollIntervalMs);
 
 }
@@ -365,17 +373,25 @@ void ManagerFrame::OnMachineListSize(wxSizeEvent &event)
 	event.Skip();
 }
 
-/* Collapse or restore the machine list, and turn the button round. */
+/* Hide or show the machine list, and turn the button round. Hidden means gone:
+   a pane collapsed to the sash's minimum is a stripe down the side of the
+   machine, and the button on the status bar is what brings it back. */
 void ManagerFrame::SetMachinesPanelCollapsed(bool collapsed)
 {
 	if (collapsed) {
-		const int width = splitter_->GetSashPosition();
+		if (splitter_->IsSplit()) {
+			const int width = splitter_->GetSashPosition();
 
-		if (width > kMachinesPanelCollapsed) {
-			machines_panel_width_ = width;
+			if (width > kMachinesPanelCollapsed) {
+				machines_panel_width_ = width;
+			}
+			splitter_->Unsplit(machines_panel_);
 		}
-		splitter_->SetSashPosition(kMachinesPanelCollapsed);
 	} else {
+		if (!splitter_->IsSplit() && machines_panel_ != nullptr) {
+			splitter_->SplitVertically(machines_panel_, display_book_,
+			    machines_panel_width_);
+		}
 		splitter_->SetSashPosition(machines_panel_width_);
 	}
 	machines_panel_collapsed_ = collapsed;
@@ -386,6 +402,11 @@ void ManagerFrame::SetMachinesPanelCollapsed(bool collapsed)
 		    wxART_BUTTON, wxSize(16, 16)));
 		collapse_button_->SetToolTip(collapsed ? "Show the machine list"
 		                                       : "Hide the machine list");
+	}
+
+	/* The same state from a second place, so the tick follows the button. */
+	if (machine_list_item_ != nullptr) {
+		machine_list_item_->Check(!collapsed);
 	}
 }
 
@@ -408,7 +429,7 @@ void ManagerFrame::EnterFullScreen()
 
 	if (panel == nullptr) {
 		wxMessageBox("Start a machine first - there is nothing to show full "
-		             "screen.", "RPCEmu", wxOK | wxICON_INFORMATION, this);
+		             "screen.", "RPCEmu Extended Manager", wxOK | wxICON_INFORMATION, this);
 		SetFullScreenMenuChecked(false);
 		return;
 	}
@@ -459,6 +480,36 @@ void ManagerFrame::EnterFullScreen()
 	SetFullScreenMenuChecked(true);
 }
 
+
+/* Hide the furniture and leave the machine. */
+void ManagerFrame::ApplyMinimalUi(bool minimal)
+{
+	minimal_ui_ = minimal;
+
+	if (tool_bar_ != nullptr) {
+		tool_bar_->Show(!minimal);
+	}
+
+	SetMachinesPanelCollapsed(minimal);
+
+	if (minimal_ui_item_ != nullptr) {
+		minimal_ui_item_->Check(minimal);
+	}
+
+	Layout();
+	PositionCollapseButton();
+}
+
+void ManagerFrame::OnMinimalUi(wxCommandEvent &event)
+{
+	ApplyMinimalUi(event.IsChecked());
+}
+
+void ManagerFrame::OnMachineListToggle(wxCommandEvent &event)
+{
+	SetMachinesPanelCollapsed(!event.IsChecked());
+}
+
 void ManagerFrame::ExitFullScreen()
 {
 	if (!full_screen_) {
@@ -468,8 +519,9 @@ void ManagerFrame::ExitFullScreen()
 	full_screen_ = false;
 	ShowFullScreen(false);
 
+	/* Back to what it was, which in a minimal window is still hidden. */
 	if (tool_bar_ != nullptr) {
-		tool_bar_->Show();
+		tool_bar_->Show(!minimal_ui_);
 	}
 	if (GetStatusBar() != nullptr) {
 		GetStatusBar()->Show();
@@ -478,7 +530,7 @@ void ManagerFrame::ExitFullScreen()
 		splitter_->SplitVertically(machines_panel_, display_book_,
 		    machines_panel_width_);
 	}
-	SetMachinesPanelCollapsed(collapsed_before_full_screen_);
+	SetMachinesPanelCollapsed(minimal_ui_ || collapsed_before_full_screen_);
 	Layout();
 	PositionCollapseButton();
 	SetFullScreenMenuChecked(false);
@@ -555,9 +607,21 @@ void ManagerFrame::BuildMenus()
 	shortcut_item_->SetHelp(
 	    "A shortcut that opens this machine directly, without the manager");
 
+	auto *view_menu = new wxMenu();
+
+	machine_list_item_ = view_menu->AppendCheckItem(ID_MACHINE_LIST,
+	    "Machine &List");
+	machine_list_item_->Check(true);
+	view_menu->AppendSeparator();
+	minimal_ui_item_ = view_menu->AppendCheckItem(ID_MINIMAL_UI,
+	    "&Minimal Interface");
+	minimal_ui_item_->SetHelp(
+	    "Hide the toolbar and the machine list, for this session");
+
 	auto *menu_bar = new wxMenuBar();
 	menu_bar->Append(file_menu, "&File");
 	menu_bar->Append(machine_menu, "&Machine");
+	menu_bar->Append(view_menu, "&View");
 	BuildMachineMenus(menu_bar);
 	SetMenuBar(menu_bar);
 	UpdateMachineMenuState();
@@ -1691,7 +1755,12 @@ void ManagerFrame::OnDataFolder(wxCommandEvent & /*event*/)
  */
 bool ManagerFrame::ConfirmStop(const wxString &name)
 {
-	if (running_.find(name) == running_.end()) {
+	auto running = running_.find(name);
+
+	/* Nothing to lose: a machine set to suspend on exit saves its state, and
+	   one that is not running has none. */
+	if (running == running_.end() || !GetWarnOnStop() ||
+	    running->second.suspend_on_exit) {
 		return true;
 	}
 
@@ -1967,7 +2036,7 @@ bool ManagerFrame::SendMenuCommand(int id, bool checked, const wxString &argumen
 
 	if (utf8.length() >= sizeof(request.path)) {
 		wxMessageBox("That path is too long to send to the machine.",
-		    "RPCEmu", wxOK | wxICON_ERROR, this);
+		    "RPCEmu Extended Manager", wxOK | wxICON_ERROR, this);
 		return false;
 	}
 	strncpy(request.path, utf8.data(), sizeof(request.path) - 1);
@@ -2057,7 +2126,7 @@ void ManagerFrame::OnMachineMenuCommand(wxCommandEvent &event)
 
 	if (active_machine_.empty() || running_.find(active_machine_) == running_.end()) {
 		wxMessageBox("Start a machine first - this command acts on the machine "
-		             "being shown.", "RPCEmu", wxOK | wxICON_INFORMATION, this);
+		             "being shown.", "RPCEmu Extended Manager", wxOK | wxICON_INFORMATION, this);
 		return;
 	}
 
@@ -2086,7 +2155,8 @@ void ManagerFrame::OnMachineMenuCommand(wxCommandEvent &event)
 			return;
 		}
 		if (!it->second.panel->SaveScreenshot(dialog.GetPath())) {
-			wxMessageBox("Could not save the screenshot.", "RPCEmu",
+			wxMessageBox("Could not save the screenshot.",
+			    "RPCEmu Extended Manager",
 			    wxOK | wxICON_WARNING, this);
 		}
 		return;
@@ -2256,6 +2326,16 @@ void ManagerFrame::ApplyStateReport(const wxString &machine, const wxString &rep
 			continue;
 		}
 
+		/* Recorded for every machine, not only the one being shown: ConfirmStop
+		   asks about whichever machine is being stopped. */
+		if (id == ID_MENU_SUSPEND_ON_EXIT) {
+			auto it = running_.find(machine);
+
+			if (it != running_.end()) {
+				it->second.suspend_on_exit = (value != 0);
+			}
+		}
+
 		if (!active) {
 			continue;
 		}
@@ -2422,7 +2502,7 @@ void ManagerFrame::OnClose(wxCloseEvent &event)
 	 * obvious one: nothing on screen afterwards says the machine is still
 	 * there. Say so, and offer the other choice.
 	 */
-	if (!running_.empty() && !closing_after_stop_) {
+	if (!running_.empty() && !closing_after_stop_ && GetWarnOnExit()) {
 		const size_t count = running_.size();
 		wxRichMessageDialog dlg(this,
 		    wxString::Format("%zu machine%s still running.", count,
