@@ -87,7 +87,7 @@ void vidcstartthread(void) {}
 void vidcendthread(void) {}
 void vidcwakeupthread(void) {}
 void vidcreleasemutex(void) {}
-int  vidctrymutex(void) { return 0; }
+int  vidctrymutex(void) { return 1; }
 
 /*
  * Supplied by the front end: says whether host input or another command is
