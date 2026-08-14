@@ -84,6 +84,10 @@ extern int prog32;
 extern int blockend;
 extern int linecyc;
 
+/* Non-zero to interpret every block rather than recompile it. Set per CPU model
+   in arm_reset(); see the comment there. Only the dynarec build defines it. */
+extern int arm_interpret_only;
+
 extern int lastflagchange;
 
 #define RD ((opcode>>12)&0xF)

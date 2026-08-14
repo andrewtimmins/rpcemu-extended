@@ -394,6 +394,22 @@ arm_reset(CPUModel cpu_model)
 		arm.stm_writeback_at_end = 0;
 		arm.arch_v4 = 0;
 	}
+
+	/* See arm_interpret_only. The ARMv3 CPUs are exactly the ones that reset
+	   into 26-bit configuration, which is the configuration that storms. */
+	arm_interpret_only = arm.arch_v4 ? 0 : 1;
+	if (arm_interpret_only) {
+		const char *force = getenv("RPCEMU_FORCE_DYNAREC");
+
+		if (force != NULL && *force != '\0' && *force != '0') {
+			arm_interpret_only = 0;
+			rpclog("CPU: RPCEMU_FORCE_DYNAREC set, recompiling on a 26-bit CPU "
+			       "- expect the data abort storm this guards against\n");
+		} else {
+			rpclog("CPU: interpreting only on this CPU, the recompiler wedges "
+			       "26-bit machines (RPCEMU_FORCE_DYNAREC=1 overrides)\n");
+		}
+	}
 }
 
 void
@@ -779,6 +795,40 @@ static const OpFn opcodes[256] = {
 
 int linecyc=0;
 
+/**
+ * Non-zero to interpret every block instead of recompiling it.
+ *
+ * Set for the ARMv3-era CPUs - ARM610, ARM710, ARM7500 and ARM7500FE - which are
+ * the four that come out of reset in 26-bit program configuration and therefore
+ * the four that boot a 26-bit RISC OS. On those, running recompiled blocks wedges
+ * the machine in an endless data abort storm: a black screen at 100% CPU, part way
+ * through the RISC OS 3.71 boot. How often it fires depends on timing, measured
+ * 10 out of 10 launches on an A7000 and 8 out of 10 on a Risc PC ARM610, so it is
+ * not every launch and not a clean failure to spot.
+ *
+ * This is a workaround and not a diagnosis. What is established:
+ *
+ *  - It is not a regression. A build from before the 26-bit exception fix storms
+ *    identically, so it is long standing; our performance work raised the rate at
+ *    which it fires rather than introducing it.
+ *  - It is not opcode semantics and not per-instruction codegen. Both are covered
+ *    by tests/test_jit_26bit.c (8.0M checks) and tests/test_jit_26bit_seq.c (180k
+ *    programs, comparing registers, mode and every banked register bank), and both
+ *    are clean and mutation-proven.
+ *  - Taking this path is what makes the machines work: forcing it by hand booted
+ *    an A7000 and an RPC610 cleanly with no aborts, where the recompiled path
+ *    stormed on the same build and the same ROM.
+ *
+ * The cost is speed on the four slowest models RPCEmu emulates. A wedged machine
+ * is worth less than a slow one. StrongARM, ARM810, Kinetic and Phoebe are
+ * untouched and keep the recompiler, which is every RISC OS 5 configuration.
+ *
+ * RPCEMU_FORCE_DYNAREC=1 puts the recompiler back for these CPUs, to work on the
+ * underlying fault. Resolved once here rather than per block: this is the hot
+ * path, and a getenv() on it would be its own performance bug.
+ */
+int arm_interpret_only;
+
 static inline int
 arm_opcode_needs_pc(uint32_t opcode)
 {
@@ -861,7 +911,7 @@ int
 arm_exec(void)
 {
 	for (linecyc = 256; linecyc >= 0; linecyc--) {
-		if (!isblockvalid(PC) || debugger_hook_active) {
+		if (arm_interpret_only || !isblockvalid(PC) || debugger_hook_active) {
 			// Interpret block
 			if ((PC >> 12) != pccache) {
 				pccache = PC >> 12;
