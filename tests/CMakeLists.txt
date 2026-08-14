@@ -563,6 +563,17 @@ rpcemu_add_test(test_net_tx)
 # macOS arm64 build once already (see test_mode_fit above).
 # edid.c comes along because the card serves the monitor's EDID over DDC; like
 # display_mode.c it is dependency-free, so this still links nothing.
+# Vertical sync must be produced by the display tick, not by pixels being
+# delivered. It used to ride on a frame reaching the host, so a screen that was
+# not changing produced no vertical sync at all - which deadlocks any guest that
+# waits for one before drawing, and is what made every ADFFS game hang with a
+# black screen and no fault of any kind. Links rpcemu_core for the real IOMD and
+# VIDC; test_stubs.c makes vidctrymutex() fail, so drawscr() draws nothing here,
+# which is precisely the case that used to be silent.
+add_executable(test_vsync test_vsync.c test_stubs.c)
+target_link_libraries(test_vsync PRIVATE rpcemu_core m)
+rpcemu_add_test(test_vsync)
+
 add_executable(test_gfxcard test_gfxcard.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/edid.c)
 target_include_directories(test_gfxcard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
@@ -722,7 +733,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 43)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 44)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()

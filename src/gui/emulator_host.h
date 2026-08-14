@@ -48,7 +48,6 @@ enum class EmuCommandType {
 	MouseWheel,
 	Reset,
 	Exit,
-	VideoFlyback,
 	ConfigUpdated,
 	LoadDisc0,
 	LoadDisc1,
@@ -226,7 +225,6 @@ public:
 	void IdleProcessEvents();
 	int64_t GetElapsedTimerNs() const;
 
-	void PostVideoFlyback();
 
 private:
 	void MainEmuLoop();
@@ -235,7 +233,6 @@ private:
 	void ServiceTimers(int64_t elapsed);
 	void DrainCommands();
 	void HandleCommand(const EmuCommand &command);
-	void VideoFlyback();
 	void NotifyDebuggerStateChanged();
 
 	GuiBridge *gui_bridge_;
@@ -274,7 +271,6 @@ private:
 	std::vector<DebugTraceEvent> trace_result_{};
 	uint32_t trace_dropped_ = 0;
 
-	std::atomic<bool> flyback_pending_{false};
 };
 
 /*

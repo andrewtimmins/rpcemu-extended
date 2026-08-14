@@ -344,6 +344,33 @@ drawscr(void)
 {
 	static int lastframeborder = 0;
 
+	/*
+	 * Vertical sync, once per frame period, before any of the early exits
+	 * below.
+	 *
+	 * VIDC generates this from the display timing. It does not depend on there
+	 * being anything new to draw, and neither may we: it used to be raised as a
+	 * side effect of a frame of pixels reaching the host
+	 * (rpcemu_video_update -> PostVideoFlyback), and the video thread returns
+	 * without delivering anything when the dirty buffer is empty. So a screen
+	 * that was not changing produced no vertical sync at all, and that
+	 * deadlocks a guest outright: a game clears the screen, waits for vertical
+	 * sync before drawing the first frame, and the sync it is waiting for can
+	 * only be produced by it drawing. It waits for ever with the screen black
+	 * and no fault of any kind - which is what made ADFFS games hang, pinned in
+	 * the kernel's OS_Byte 19 wait loop.
+	 *
+	 * drawscr() is the display tick: called once per frame from execrpcemu()
+	 * and from the idle loop, on the emulator thread that owns IOMD's state,
+	 * whether or not a pixel changed. That makes it the honest place for this.
+	 *
+	 * Pulsed low then high so the pollable flyback bit in IOMD's control
+	 * register sees an edge and not only the interrupt. The duty cycle is as it
+	 * was before: the line stays high until the next frame.
+	 */
+	iomd_flyback(0);
+	iomd_flyback(1);
+
 	// Must get the mutex before altering the thread's state.
 	if (!vidctrymutex()) {
 		return;
@@ -480,7 +507,6 @@ drawscr(void)
 		cp15_tlb_invalidate_physical(gfxcard_fb_phys & 0x1f000000);
 
 		thr.threadpending = 1;
-		iomd_flyback(0);
 		vidcwakeupthread();
 		goto unlock_mutex_return;
 	}
@@ -489,6 +515,7 @@ drawscr(void)
 	// If not Video cursor DMA enabled or vertical start > vertical end
 	if ((thr.iomd_vidcr & 0x20) == 0 || vidc.vdsr > vidc.vder) {
 		lastframeborder = 1;
+
 		if (dirtybuffer[0] || vidc.palchange) {
 			uint32_t *p;
 			int i;
@@ -550,8 +577,6 @@ drawscr(void)
 	}
 
 	thr.threadpending = 1;
-
-	iomd_flyback(0);
 
 	vidcwakeupthread();
 

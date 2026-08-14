@@ -282,10 +282,6 @@ extern "C" void rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize
 
 	g_gui_bridge->PostVideoUpdate(update);
 
-	if (g_emulator_host != nullptr) {
-		g_emulator_host->PostVideoFlyback();
-	}
-
 #ifdef RPCEMU_VNC
 	if (g_vnc_server && g_vnc_server->isRunning()) {
 		g_vnc_server->updateFramebuffer(buffer, xsize, ysize, yl, yh);
@@ -749,9 +745,6 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 	}
 	case EmuCommandType::Exit:
 		quited = 1;
-		break;
-	case EmuCommandType::VideoFlyback:
-		VideoFlyback();
 		break;
 	case EmuCommandType::ConfigUpdated:
 		if (command.config_ptr != nullptr) {
@@ -1446,23 +1439,6 @@ void EmulatorHost::NotifyDebuggerStateChanged()
 	if (gui_bridge_ != nullptr) {
 		gui_bridge_->PostDebuggerStateChanged();
 	}
-}
-
-void EmulatorHost::PostVideoFlyback()
-{
-	if (flyback_pending_.exchange(true, std::memory_order_acq_rel)) {
-		return;
-	}
-
-	EmuCommand cmd;
-	cmd.type = EmuCommandType::VideoFlyback;
-	PostCommand(cmd);
-}
-
-void EmulatorHost::VideoFlyback()
-{
-	flyback_pending_.store(false, std::memory_order_release);
-	iomd_flyback(1);
 }
 
 /**
