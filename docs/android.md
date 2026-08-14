@@ -1,9 +1,56 @@
 # Android
 
-The emulator core cross-compiles for Android and is built by CI. There is **no
-application yet**: nothing draws, nothing takes input, and there is no APK. What
-exists is the half that turned out to be portable, and a build that keeps it that
-way while the other half is written.
+RISC OS runs on Android. There is an APK, one machine runs at a time, and it boots
+to its desktop and takes touch, mouse and keyboard input. Sound, suspend on
+leaving the foreground, and any settings beyond choosing a ROM are not written yet.
+
+Everything below has been exercised on an x86_64 AVD. No arm64 tablet has run this
+yet, so treat the arm64 build as compiled rather than tested.
+
+## The application
+
+`src/gui-android/` is a front end of its own and deliberately not a port of the
+wxWidgets one: wxWidgets has no Android build, and the desktop shape - modal
+dialogues, a five-tab machine editor, several machines at once - is wrong for a
+tablet. It is SDL2 for the window, input and sound, and Kotlin for the two screens.
+
+| part | file |
+|---|---|
+| the machine: display, input, driving the core | `rpcemu_android.c` |
+| launcher, ROM list | `android/.../MachineListActivity.kt` |
+| the data directory and what has to be in it | `android/.../MachineStore.kt` |
+| the SDL activity the machine runs in | `android/.../RPCEmuActivity.kt` |
+
+Files live in `Android/data/uk.co.rpcemu.android/files`, which needs no permission
+and is still reachable over MTP or `adb push`, so a ROM can be put in `roms/`
+without a file picker. The podule ROMs and a CMOS template ship as assets and are
+copied out on first run; HostFS is one of those podules, so without them RISC OS
+never finds `!Boot` and stops at a Supervisor prompt.
+
+## Input
+
+`config.mousehackon` is set, so the guest's pointer goes where the finger is
+rather than drifting relative to it.
+
+RISC OS needs three buttons and Android offers one. `config.mousetwobutton` is set,
+which puts Menu on the right button and Adjust on the middle, and:
+
+- one finger is Select, two are Menu, three are Adjust;
+- a single press held still for half a second becomes Menu, because an AVD (and a
+  plain tablet mouse) gives one pointer and RISC OS is unusable without Menu. Any
+  real movement cancels it, so dragging is unaffected;
+- a real USB or Bluetooth mouse gets its buttons as they are.
+
+Keys are handed to the core **one at a time and spaced out**, which is not a
+nicety. RISC OS reads scan codes on an interrupt but only turns them into key
+events on its 100Hz tick, so a press and its release that arrive together leave the
+key state unchanged when the tick comes round and the keystroke is lost completely.
+`SDL_PollEvent()` is drained dry before any instruction runs, so a tap whose down
+and up were both queued during the previous batch arrives with nothing in between.
+The spacing is measured both in timer interrupts raised and in turns of the main
+loop; the second is what matters on a slow device, where every timer tick due can
+accrue inside a single batch of emulated CPU. See `key_pump()` for the measurements
+behind the two constants.
 
 ## What works today
 
@@ -20,9 +67,10 @@ of them clean:
 which makes it the easier target to test on a desktop, and it has the advantage of
 exercising the amd64 backend that everything else already uses.
 
-Compiling is not running. The AArch64 recompiler compiles here but is not shipped
-on any platform and still has an open fault (a blank screen on a Pi 5), so the
-first thing to run on a device should be the interpreter.
+The AVD runs the amd64 recompiler and RISC OS boots on it. The AArch64 recompiler
+compiles here but is not shipped on any platform and still has an open fault (a
+blank screen on a Pi 5), so the first thing to try on a real tablet should be the
+interpreter.
 
 ## Building it
 
@@ -61,7 +109,7 @@ enough not to be a real constraint on tablets.
   outright.
 - **`src/CMakeLists.txt`** skips `gui/` and `tools/` for Android. `gui/` requires
   SDL2, GTK 3 and libvncserver through pkg-config, and wxWidgets on top; none of
-  that exists here. Android's front end will live in `src/gui-android/`.
+  that exists here. The Android front end is `src/gui-android/` instead.
 - **`src/CMakeLists.txt`** gives Android the same null network layer and ISO-file
   CD-ROM backend as Windows and macOS. `network-tun.c` goes through
   `/dev/net/tun`, which needs root and which an app cannot open, and there is no
@@ -92,23 +140,40 @@ are therefore skipped for Android, and the CI job checks the resulting archive's
 architecture rather than trusting the build's exit status - which is what would
 notice that guard being lost.
 
-## What is left, roughly in order
+## Building the APK
 
-1. **A front end in `src/gui-android/`.** SDL2 has first-class Android support and
-   an official project template, and SDL2 is already understood by the core, so
-   that is the obvious route. It needs to build SDL2 for Android as a subproject
-   rather than find it through pkg-config.
-2. **A surface to draw on.** Everything that consumes the framebuffer today is on
-   the wx side (`src/gui/emulator_host.cpp`, `headless_main.cpp`,
-   `vnc_dialog.cpp`), so there is no GUI-free display consumer to inherit and the
-   Android front end has to supply one.
-3. **Input.** RISC OS is a three-button-mouse desktop with menus on the middle
-   button. This needs a real design answer rather than a mouse emulation hack.
-4. **Storage.** Scoped storage on Android 11+ against a data directory the user is
-   expected to poke at - machines, roms, hostfs as ordinary folders. HostFS in
-   particular assumes a normal filesystem.
-5. **Packaging.** JDK, SDK and Gradle, and a decision about F-Droid versus Play
-   for a GPL application.
+```sh
+export JAVA_HOME=~/Android/jdk-17 ANDROID_HOME=~/Android/sdk
+cd src/gui-android/android
+gradle assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Gradle drives the emulator's own top-level `CMakeLists.txt` and builds only the
+`main` target, because building the desktop targets here would need wxWidgets and
+GTK. SDL2 is fetched by URL and hash rather than found: pkg-config cannot be used
+(see the trap above) and there is no Android SDL2 to find. The download is kept
+outside the Gradle build tree so a clean does not throw it away.
+
+The native library must be called `main`. SDL's `SDLActivity` loads `SDL2` and then
+`main` by those names, and renaming it fails with nothing more informative than a
+missing library.
+
+## What is left
+
+1. **Sound.** The sound thread runs and the buffers are consumed, but nothing is
+   handed to an audio device.
+2. **Suspending.** Going to the background is logged and otherwise ignored. The
+   machine keeps running, and a proper answer saves state - which `savestate.c`
+   already does.
+3. **Settings.** Model, memory, VRAM and the rest are fixed in
+   `machine_start()`. There is no editor, so the only choice offered is the ROM.
+4. **A file picker.** Putting a ROM in place currently means a file manager, MTP or
+   `adb push`.
+5. **An arm64 device.** Nothing here has run on real hardware, and the AArch64
+   recompiler is not shipped on any platform and still has an open fault (a blank
+   screen on a Pi 5).
+6. **Packaging.** A decision about F-Droid versus Play for a GPL application.
 
 ## What CI does
 

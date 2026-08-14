@@ -37,16 +37,20 @@
  *
  *   - Frames are produced by the CORE, not by us. vblupdate() on the desktop is
  *     just "drawscre++", and execrpcemu() calls drawscr() itself whenever a frame
- *     is owed; drawscr() then calls rpcemu_video_update() with the pixels. So
- *     there is no video thread here and no need for one: the hooks below are
- *     no-ops and vidctrymutex() always succeeds, which is honest because
- *     everything runs on this one thread.
+ *     is owed; drawscr() hands the pixels to the video thread, which calls
+ *     rpcemu_video_update() below. The threads are real ones and mirror
+ *     src/gui/emulator_host.cpp - see the note above vidcstartthread().
  *
  *   - The IOMD timers do not tick unless we tick them. gentimerirq() must be
  *     called about every 2ms or RISC OS waits for an interrupt for ever - which
  *     is exactly what tests/boot_trace.c ran into. The interval and the catch-up
  *     limits mirror EmulatorHost::ServiceTimers() so the two front ends pace the
  *     machine the same way.
+ *
+ *   - Keys cannot simply be passed straight through as they arrive. RISC OS reads
+ *     the scan codes on an interrupt but only turns them into key events on its
+ *     100Hz tick, so a press and its release that arrive together are lost
+ *     entirely. See key_pump().
  */
 
 #include <stdarg.h>
@@ -145,6 +149,7 @@ rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize, int yl, int yh
 	bytes = (size_t) xsize * (size_t) ysize * 4;
 	memcpy(frame.pixels, buffer, bytes);
 	frame.have = 1;
+
 	pthread_mutex_unlock(&frame_mutex);
 }
 
@@ -395,6 +400,24 @@ rpcemu_request_poweroff(void)
 static uint64_t iomd_next, video_next, video_interval;
 
 /**
+ * IOMD timer interrupts delivered so far, which is the guest's own clock.
+ *
+ * Used to space out keys - see key_pump(). Counted here rather than derived from
+ * the host clock because the two are not the same thing: the catch-up caps below
+ * deliberately let the guest fall behind real time.
+ */
+static unsigned iomd_ticks;
+
+/**
+ * Turns of the main loop so far.
+ *
+ * Each turn runs a fixed number of execrpcemu() batches, so this counts emulated
+ * CPU progress - which is not the same thing as host time, nor as the number of
+ * timer interrupts raised. key_pump() needs exactly that distinction.
+ */
+static unsigned loop_turns;
+
+/**
  * Bring the IOMD timers and the frame clock up to date.
  *
  * Mirrors EmulatorHost::ServiceTimers(), catch-up caps included.
@@ -407,6 +430,7 @@ service_timers(void)
 
 	for (n = 0; elapsed >= iomd_next && n < MAX_IOMD_CATCH_UP; n++) {
 		gentimerirq(elapsed);
+		iomd_ticks++;
 		iomd_next += IOMD_INTERVAL_NS;
 	}
 	if (elapsed >= iomd_next) {
@@ -512,7 +536,7 @@ static const struct { SDL_Scancode sdl; uint8_t evdev; } key_table[] = {
 };
 
 static void
-handle_key(SDL_Scancode sc, int pressed)
+send_key(SDL_Scancode sc, int pressed)
 {
 	size_t i;
 
@@ -521,6 +545,8 @@ handle_key(SDL_Scancode sc, int pressed)
 			const uint8_t *codes = keyboard_map_key(key_table[i].evdev + 8u);
 
 			if (codes == NULL) {
+				LOGE("no PS/2 mapping for evdev %u (X11 %u)",
+				    key_table[i].evdev, key_table[i].evdev + 8u);
 				return;
 			}
 			if (pressed) {
@@ -535,6 +561,89 @@ handle_key(SDL_Scancode sc, int pressed)
 			return;
 		}
 	}
+}
+
+/*
+ * Keys are handed to the core one press or release at a time, spaced out, and this
+ * is not a nicety - without it the guest ignores the keystroke completely.
+ *
+ * RISC OS reads the scan codes on an interrupt but only turns them into key events
+ * on its 100Hz tick. A make and its matching break that both land inside one of
+ * those ticks leave the key state exactly as it was when the tick comes round, so
+ * nothing is entered into the input buffer and the keystroke is silently lost.
+ * Measured on a machine booted to a Supervisor prompt, where characters echo: a
+ * hold of 8-14ms typed nothing, 16ms and over typed the character.
+ *
+ * That is easy to hit here, because SDL_PollEvent() is drained dry before any
+ * instruction is run: a tap whose down and up were both queued while the previous
+ * batch was executing reaches the core with nothing in between at all. The desktop
+ * front end escapes this by accident rather than design - its GUI thread posts each
+ * key as it happens and its emulator thread cycles far faster than keys arrive.
+ *
+ * Both conditions below have to be met, and each catches what the other misses:
+ *
+ *   - TICKS are IOMD timer interrupts raised, which is what the guest keeps time
+ *     by. Ten of them is 20ms of guest clock, two of its 100Hz ticks.
+ *
+ *   - TURNS are turns of the main loop, each a fixed number of execrpcemu()
+ *     batches, so they measure emulated CPU actually run. This is the one that
+ *     matters on a slow device, and it was measured rather than guessed: on an
+ *     x86_64 AVD the machine manages about twenty turns a second, so all ten ticks
+ *     accrue inside a single turn and the guest gets one batch of instructions
+ *     between the make and the break - not enough to run its keyboard scan twice.
+ *     With the tick condition alone the AVD typed nothing at all; with twelve turns
+ *     as well it typed every character. Eight turns was also enough, so twelve
+ *     leaves some margin.
+ *
+ * On a machine running anywhere near full speed twelve turns pass in well under a
+ * millisecond, so this costs nothing there.
+ */
+#define KEY_SPACING_TICKS	10
+#define KEY_SPACING_TURNS	12
+#define KEY_QUEUE_SIZE		64
+
+static struct {
+	SDL_Scancode	sc;
+	int		pressed;
+} key_queue[KEY_QUEUE_SIZE];
+static unsigned kq_head, kq_tail;	/* head is the next out, tail the next in */
+
+static void
+queue_key(SDL_Scancode sc, int pressed)
+{
+	const unsigned next = (kq_tail + 1u) % KEY_QUEUE_SIZE;
+
+	if (next == kq_head) {
+		/* Full. Let the oldest through now rather than drop it: dropping
+		   could discard a release and leave a key held down in the guest for
+		   ever, which is far worse than one keystroke arriving too early. */
+		send_key(key_queue[kq_head].sc, key_queue[kq_head].pressed);
+		kq_head = (kq_head + 1u) % KEY_QUEUE_SIZE;
+	}
+	key_queue[kq_tail].sc = sc;
+	key_queue[kq_tail].pressed = pressed;
+	kq_tail = next;
+}
+
+/** Hand at most one queued key to the core. Called once per turn of the main loop. */
+static void
+key_pump(void)
+{
+	static unsigned last_tick, last_turns;
+
+	if (kq_head == kq_tail) {
+		return;
+	}
+	if (iomd_ticks - last_tick < KEY_SPACING_TICKS) {
+		return;
+	}
+	if (loop_turns - last_turns < KEY_SPACING_TURNS) {
+		return;
+	}
+	last_tick = iomd_ticks;
+	last_turns = loop_turns;
+	send_key(key_queue[kq_head].sc, key_queue[kq_head].pressed);
+	kq_head = (kq_head + 1u) % KEY_QUEUE_SIZE;
 }
 
 /*
@@ -577,22 +686,69 @@ pointer_to(int win_x, int win_y)
  * A real mouse is handled separately and needs none of this: Android supports one
  * over USB or Bluetooth, and then the buttons are simply the buttons.
  */
-#define RISCOS_LEFT	1
-#define RISCOS_RIGHT	2
-#define RISCOS_MIDDLE	4
+/*
+ * Buttons are named by what RISC OS does with them, not by where they are on a
+ * host mouse, because the two are not the same thing.
+ *
+ * The core takes 1 for the left button, 2 for the right and 4 for the middle, and
+ * config.mousetwobutton then decides what RISC OS makes of the last two: with it
+ * set, RIGHT is Menu and MIDDLE is Adjust; without it, right is Adjust and middle
+ * is Menu, which is the three-button Acorn arrangement.
+ *
+ * Two-button style is the default here. Android input almost never offers a
+ * genuine middle button - a phone or tablet mouse has two and a wheel at best -
+ * and Menu is the button RISC OS needs constantly, so it belongs on the right
+ * where a user will look for it. A three-button mouse still gets all three: its
+ * middle button is Adjust. Turning config.mousetwobutton off restores the Acorn
+ * arrangement for anyone who prefers it.
+ */
+enum riscos_button { FN_SELECT, FN_MENU, FN_ADJUST };
 
-static int touch_button;	/* the button this touch is holding, 0 if none */
+static int
+core_button(enum riscos_button fn)
+{
+	switch (fn) {
+	case FN_MENU:
+		return config.mousetwobutton ? 2 : 4;
+	case FN_ADJUST:
+		return config.mousetwobutton ? 4 : 2;
+	case FN_SELECT:
+	default:
+		return 1;
+	}
+}
+
+static int touch_button;	/* the core bit this touch is holding, 0 if none */
+
+/*
+ * Menu from a single pointer, by holding still.
+ *
+ * Two fingers for Menu is fine on a tablet but useless anywhere a single pointer
+ * is all there is - an Android emulator turns the host mouse into one finger, so
+ * only Select was reachable and RISC OS is unusable without Menu. So a press that
+ * stays still for this long becomes Menu instead: Select is released and Menu is
+ * pressed where the pointer already is, which is exactly what a RISC OS user
+ * wants from a long press.
+ *
+ * Dragging is unaffected because any real movement cancels it.
+ */
+#define LONG_PRESS_NS		500000000ULL
+#define LONG_PRESS_SLOP		12	/* window pixels of wobble allowed */
+
+static uint64_t	press_started;		/* 0 when not timing a press */
+static int	press_x, press_y;
+static int	press_promoted;
 
 static int
 button_for_fingers(int fingers)
 {
 	if (fingers >= 3) {
-		return RISCOS_RIGHT;
+		return core_button(FN_ADJUST);
 	}
 	if (fingers == 2) {
-		return RISCOS_MIDDLE;
+		return core_button(FN_MENU);
 	}
-	return RISCOS_LEFT;
+	return core_button(FN_SELECT);
 }
 
 static void
@@ -602,6 +758,28 @@ touch_release(void)
 		mouse_mouse_release(touch_button);
 		touch_button = 0;
 	}
+	press_started = 0;
+	press_promoted = 0;
+}
+
+/** Promote a still, held Select into Menu. Called from the main loop. */
+static void
+long_press_poll(void)
+{
+	if (press_started == 0 || press_promoted || touch_button == 0) {
+		return;
+	}
+	if (touch_button != core_button(FN_SELECT)) {
+		return;		/* already a deliberate Menu or Adjust */
+	}
+	if (rpcemu_nsec_timer_ticks() - press_started < LONG_PRESS_NS) {
+		return;
+	}
+
+	mouse_mouse_release(touch_button);
+	touch_button = core_button(FN_MENU);
+	mouse_mouse_press(touch_button);
+	press_promoted = 1;
 }
 
 /* ---- presenting a frame --------------------------------------------------- */
@@ -609,48 +787,65 @@ touch_release(void)
 static void
 present(void)
 {
+	static uint64_t next_present;
+	const uint64_t now = rpcemu_nsec_timer_ticks();
+
+	/* Take a new frame into the texture if one has arrived. */
 	pthread_mutex_lock(&frame_mutex);
-	if (!frame.have || frame.pixels == NULL) {
-		pthread_mutex_unlock(&frame_mutex);
+	if (frame.have && frame.pixels != NULL) {
+		if (texture == NULL || tex_w != frame.w || tex_h != frame.h) {
+			if (texture != NULL) {
+				SDL_DestroyTexture(texture);
+			}
+			/*
+			 * RGB888 (which is XRGB8888: the top byte is ignored) rather
+			 * than ARGB8888. The core writes 0x00RRGGBB, so the alpha byte
+			 * is zero, and with a format that honours alpha the whole frame
+			 * is transparent and the screen stays black while frames arrive
+			 * perfectly well. Blending is off for the same reason.
+			 */
+			texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB888,
+			    SDL_TEXTUREACCESS_STREAMING, frame.w, frame.h);
+			if (texture == NULL) {
+				LOGE("SDL_CreateTexture: %s", SDL_GetError());
+				pthread_mutex_unlock(&frame_mutex);
+				return;
+			}
+			SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
+			tex_w = frame.w;
+			tex_h = frame.h;
+		}
+		if (SDL_UpdateTexture(texture, NULL, frame.pixels, frame.w * 4) != 0) {
+			LOGE("SDL_UpdateTexture: %s", SDL_GetError());
+		}
+		frame.have = 0;
+	}
+	pthread_mutex_unlock(&frame_mutex);
+
+	/*
+	 * Draw EVERY time, not only when a new frame arrived.
+	 *
+	 * The renderer is double buffered, so a present shows the other buffer. The
+	 * guest sends a handful of frames a second, and presenting only on those
+	 * left the two buffers alternating between our picture and one nothing had
+	 * drawn into - a black screen flashing white. Redrawing the texture on every
+	 * present costs one blit and keeps both buffers correct.
+	 *
+	 * Rate limited to the machine's refresh rather than the loop rate, which is
+	 * hundreds of times a second, and deliberately not done by asking SDL for a
+	 * vsync-locked renderer: that would block this thread, and this thread is
+	 * also running the guest.
+	 */
+	if (texture == NULL || now < next_present) {
 		return;
 	}
+	next_present = now + video_interval;
 
-	if (texture == NULL || tex_w != frame.w || tex_h != frame.h) {
-		if (texture != NULL) {
-			SDL_DestroyTexture(texture);
-		}
-		/*
-		 * RGB888 (which is XRGB8888: the top byte is ignored) rather than
-		 * ARGB8888. The core writes 0x00RRGGBB, so the alpha byte is zero, and
-		 * with a format that honours alpha the whole frame is transparent and
-		 * the screen stays black while frames arrive perfectly well. Blending
-		 * is turned off for the same reason.
-		 */
-		texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB888,
-		    SDL_TEXTUREACCESS_STREAMING, frame.w, frame.h);
-		if (texture == NULL) {
-			LOGE("SDL_CreateTexture: %s", SDL_GetError());
-			pthread_mutex_unlock(&frame_mutex);
-			return;
-		}
-		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
-		tex_w = frame.w;
-		tex_h = frame.h;
-	}
-
-	if (SDL_UpdateTexture(texture, NULL, frame.pixels, frame.w * 4) != 0) {
-		LOGE("SDL_UpdateTexture: %s", SDL_GetError());
-	}
 	SDL_RenderClear(renderer);
-	/* Letterboxed to the guest's aspect ratio rather than stretched: a RISC OS
-	   mode on a 16:10 tablet would otherwise be visibly wrong. */
 	if (SDL_RenderCopy(renderer, texture, NULL, NULL) != 0) {
 		LOGE("SDL_RenderCopy: %s", SDL_GetError());
 	}
 	SDL_RenderPresent(renderer);
-
-	frame.have = 0;
-	pthread_mutex_unlock(&frame_mutex);
 }
 
 /* ---- the machine ---------------------------------------------------------- */
@@ -691,13 +886,8 @@ machine_start(void)
 	/* Absolute pointer placement, which is what mouse_mouse_move() requires (it
 	   asserts mousehack) and what a touch screen wants. */
 	config.mousehackon = 1;
-	/* DIAGNOSTIC: let a host build of this front end be driven by the debug
-	   socket, which is how the guest can be asked where it is stuck. */
-	if (getenv("RPCEMU_DEBUG_SOCKET") != NULL) {
-		config.debug_enabled = 1;
-		snprintf(config.debug_socket, sizeof(config.debug_socket), "%s",
-		    getenv("RPCEMU_DEBUG_SOCKET"));
-	}
+	/* Menu on the right button: see core_button(). */
+	config.mousetwobutton = 1;
 	if (getenv("RPCEMU_ROM_DIR") != NULL) {
 		snprintf(config.rom_dir, sizeof(config.rom_dir), "%s",
 		    getenv("RPCEMU_ROM_DIR"));
@@ -724,6 +914,16 @@ main(int argc, char *argv[])
 {
 	NOT_USED(argc);
 	NOT_USED(argv);
+
+	/*
+	 * Touch and mouse must not be conflated. SDL will happily synthesise mouse
+	 * events from touches and touches from mouse events, and with both on every
+	 * tap arrived twice - once as a finger and once as a left click - so a
+	 * two-finger Menu was immediately overridden by a synthesised Select. Each
+	 * device is handled on its own terms below.
+	 */
+	SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+	SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
 
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
 		LOGE("SDL_Init: %s", SDL_GetError());
@@ -770,11 +970,11 @@ main(int argc, char *argv[])
 
 			case SDL_KEYDOWN:
 				if (ev.key.repeat == 0) {
-					handle_key(ev.key.keysym.scancode, 1);
+					queue_key(ev.key.keysym.scancode, 1);
 				}
 				break;
 			case SDL_KEYUP:
-				handle_key(ev.key.keysym.scancode, 0);
+				queue_key(ev.key.keysym.scancode, 0);
 				break;
 
 			/* A real mouse: the buttons are the buttons. */
@@ -786,12 +986,12 @@ main(int argc, char *argv[])
 			case SDL_MOUSEBUTTONDOWN:
 			case SDL_MOUSEBUTTONUP:
 				if (ev.button.which != SDL_TOUCH_MOUSEID) {
-					int b = RISCOS_LEFT;
+					int b = core_button(FN_SELECT);
 
 					if (ev.button.button == SDL_BUTTON_MIDDLE) {
-						b = RISCOS_MIDDLE;
+						b = core_button(FN_ADJUST);
 					} else if (ev.button.button == SDL_BUTTON_RIGHT) {
-						b = RISCOS_RIGHT;
+						b = core_button(FN_MENU);
 					}
 					pointer_to(ev.button.x, ev.button.y);
 					if (ev.type == SDL_MOUSEBUTTONDOWN) {
@@ -816,14 +1016,26 @@ main(int argc, char *argv[])
 				touch_button = button_for_fingers(
 				    SDL_GetNumTouchFingers(ev.tfinger.touchId));
 				mouse_mouse_press(touch_button);
+				press_started = rpcemu_nsec_timer_ticks();
+				press_x = (int) (ev.tfinger.x * ww);
+				press_y = (int) (ev.tfinger.y * wh);
 				break;
 			}
 			case SDL_FINGERMOTION: {
 				int ww = 0, wh = 0;
+				int mx, my;
 
 				SDL_GetWindowSize(window, &ww, &wh);
-				pointer_to((int) (ev.tfinger.x * ww),
-				    (int) (ev.tfinger.y * wh));
+				mx = (int) (ev.tfinger.x * ww);
+				my = (int) (ev.tfinger.y * wh);
+				pointer_to(mx, my);
+
+				/* Real movement means this is a drag, not a long press. */
+				if (press_started != 0 &&
+				    (abs(mx - press_x) > LONG_PRESS_SLOP ||
+				     abs(my - press_y) > LONG_PRESS_SLOP)) {
+					press_started = 0;
+				}
 				break;
 			}
 			case SDL_FINGERUP:
@@ -844,14 +1056,15 @@ main(int argc, char *argv[])
 		}
 
 		/* Run the guest. execrpcemu() also calls drawscr() when a frame is
-		   owed, which is what reaches rpcemu_video_update() above. */
-		/* Run the guest. execrpcemu() also calls drawscr() when a frame is
 		   owed, which wakes the video thread and reaches
 		   rpcemu_video_update(). */
 		for (n = 0; n < 32 && !quit_requested; n++) {
 			execrpcemu();
 		}
 
+		loop_turns++;
+		key_pump();
+		long_press_poll();
 		service_timers();
 		present();
 	}
