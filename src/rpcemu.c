@@ -1246,6 +1246,8 @@ void
 debugger_exception_hook(uint32_t mmode, uint32_t address, uint32_t pc)
 {
 	uint32_t kind;
+	uint32_t fault_address = 0;
+	uint32_t fault_status = 0;
 	int trap;
 
 	NOT_USED(mmode);
@@ -1257,10 +1259,21 @@ debugger_exception_hook(uint32_t mmode, uint32_t address, uint32_t pc)
 	default:   return; /* SWI (0x0c), IRQ, FIQ: not exception traps */
 	}
 
+	/* A data abort's fault status says WHY it faulted - translation versus
+	   permission - which the PC alone cannot. exception() has not touched any
+	   CPU state yet, so the CP15 registers still describe this fault.
+	   Read them for a data abort ONLY: cp15.c updates them for data aborts
+	   alone, so for a prefetch abort or an undefined instruction they hold a
+	   previous fault's values and would be a fabricated answer. */
+	if (kind == TraceException_DataAbort) {
+		cp15_get_fault(&fault_address, &fault_status);
+	}
+
 	/* Always record when trapping so the faulting PC is visible even if
 	   exception logging is otherwise off. */
 	if (debugger_trace_config.log_exceptions || trap) {
-		debugger_trace_push(TraceEvent_Exception, pc, 0, kind, pc, 0);
+		debugger_trace_push(TraceEvent_Exception, pc, 0, kind,
+		    fault_address, fault_status);
 	}
 
 	/* Deferred halt: let exception() finish setting up the vector, then the
