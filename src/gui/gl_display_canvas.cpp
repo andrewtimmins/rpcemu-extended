@@ -122,17 +122,13 @@ bool GlDisplayCanvas::EnsureContext()
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
 	/*
-	 * Mipmaps the GL 1.4 way: ask the driver to rebuild them whenever the
-	 * texture is uploaded to, which needs no extension loader and no core
-	 * profile. Deliberately NOT trusted - glGenerateMipmap resolved through
-	 * three different platform loaders is more machinery, and a mipmap filter
-	 * on a texture with no mipmaps is an incomplete texture, which draws
-	 * NOTHING AT ALL rather than looking wrong. So the filter stays linear
-	 * until the first upload has proved a second level exists (UpdateFrame).
+	 * Mipmaps the GL 1.4 way, turned on only while the picture is shrunk - see
+	 * UpdateFrame. Deliberately not glGenerateMipmap, which would need an
+	 * extension loader on three platforms. A mipmap filter on a texture with no
+	 * mipmaps is incomplete and draws NOTHING AT ALL, so the filter stays linear
+	 * until an upload has proved a second level exists.
 	 */
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_TRUE);
-	glGetError();	/* discarded: a core profile rejects the line above */
 
 	usable_ = true;
 
@@ -176,6 +172,14 @@ void GlDisplayCanvas::UpdateFrame(const uint32_t *pixels, int width, int height,
 		have_frame_ = false;
 		dirty_top = 0;
 		dirty_bottom = height;
+
+		/* The new texture has no levels, so the filter must not ask for them
+		   until an upload has rebuilt them. */
+		if (mipmap_filter_set_) {
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			mipmap_filter_set_ = false;
+		}
+		generating_mipmaps_ = false;
 	}
 
 	if (!have_frame_) {
@@ -193,6 +197,20 @@ void GlDisplayCanvas::UpdateFrame(const uint32_t *pixels, int width, int height,
 	}
 	if (dirty_bottom <= dirty_top) {
 		return;
+	}
+
+	/* GL_GENERATE_MIPMAP rebuilds the whole pyramid on every upload however few
+	   rows changed, which throws the dirty range away and costs real time on a
+	   software renderer. The levels are only sampled when minifying. */
+	const bool minified = display_rect_.GetWidth() > 0 &&
+	    display_rect_.GetHeight() > 0 &&
+	    (display_rect_.GetWidth() < width || display_rect_.GetHeight() < height);
+
+	if (minified != generating_mipmaps_) {
+		glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP,
+		    minified ? GL_TRUE : GL_FALSE);
+		glGetError();	/* discarded: a core profile rejects the line above */
+		generating_mipmaps_ = minified;
 	}
 
 	/* Rows of the source are contiguous and full width, so one call does the
@@ -218,15 +236,13 @@ void GlDisplayCanvas::UpdateFrame(const uint32_t *pixels, int width, int height,
 	 * wxINTERPOLATION_GOOD on the CPU path, and the same complaint
 	 * nearest-neighbour drew.
 	 */
-	if (!mipmaps_checked_) {
+	if (generating_mipmaps_ && !mipmaps_checked_) {
 		int level1 = 0;
 
 		mipmaps_checked_ = true;
 		glGetTexLevelParameteriv(GL_TEXTURE_2D, 1, GL_TEXTURE_WIDTH, &level1);
 
 		if (level1 > 0) {
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-			    GL_LINEAR_MIPMAP_LINEAR);
 			mipmaps_ = true;
 			rpclog("Manager: OpenGL display has mipmaps, so a scaled-down "
 			       "screen is filtered trilinearly\n");
@@ -234,6 +250,16 @@ void GlDisplayCanvas::UpdateFrame(const uint32_t *pixels, int width, int height,
 			rpclog("Manager: OpenGL display has no automatic mipmaps, so a "
 			       "scaled-down screen is filtered linearly\n");
 		}
+	}
+
+	/* Trilinear only while the levels are being kept up to date; sampling a
+	   pyramid that stopped being rebuilt would show a stale, blurred picture. */
+	const bool want_mipmap_filter = mipmaps_ && generating_mipmaps_;
+
+	if (want_mipmap_filter != mipmap_filter_set_) {
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+		    want_mipmap_filter ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+		mipmap_filter_set_ = want_mipmap_filter;
 	}
 }
 

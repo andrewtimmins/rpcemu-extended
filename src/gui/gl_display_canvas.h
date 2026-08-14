@@ -149,6 +149,9 @@ private:
 	bool have_frame_ = false;
 	bool mipmaps_ = false;
 	bool mipmaps_checked_ = false;
+	/* Both track GL state so it is only changed when the answer changes. */
+	bool generating_mipmaps_ = false;
+	bool mipmap_filter_set_ = false;
 
 	/* The frame handed over but not yet drawn, and the rows of it that are new.
 	   Held as a pointer only for the length of UpdateFrame(). */
