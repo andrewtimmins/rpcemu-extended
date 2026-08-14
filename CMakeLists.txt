@@ -79,8 +79,12 @@ option(RPCEMU_BUILD_TESTS "Build unit tests (amd64 dynarec only)" ON)
 # shipping quietly without it.
 option(RPCEMU_REQUIRE_LIBUSB "Fail the build if libusb-1.0 is missing" OFF)
 
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT WIN32 AND NOT APPLE)
-    message(FATAL_ERROR "RPCEmu (Extended Edition) supports Linux, Windows (MinGW-w64), and macOS.")
+# Android reports CMAKE_SYSTEM_NAME as "Android" rather than "Linux", so it needs
+# naming here even though it is a Linux kernel underneath. It is a core-only
+# target for now: see src/CMakeLists.txt, which skips the wxWidgets front end and
+# the host tools, and docs/android.md for where the port stands.
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT WIN32 AND NOT APPLE AND NOT ANDROID)
+    message(FATAL_ERROR "RPCEmu (Extended Edition) supports Linux, Windows (MinGW-w64), macOS and Android.")
 endif()
 
 if(WIN32 AND MSVC)

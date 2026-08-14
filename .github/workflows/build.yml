@@ -949,6 +949,82 @@ jobs:
           path: build-mac-arm64/appstage/
           if-no-files-found: error
 
+  # Android: the emulator core cross-compiled with the NDK. There is no APK and no
+  # release artefact yet - the front end lives in src/gui-android/ and does not
+  # exist - so this job exists to keep the core honestly portable while the port is
+  # built, and it is deliberately NOT in release's needs for that reason.
+  #
+  # The runner already has an NDK, so nothing is downloaded. Both engines are built
+  # because they compile different files: the interpreter is arm.c and the
+  # recompiler is arm_dynarec.c plus codegen_arm64.c, and only the linked one is
+  # compiled at all. x86_64 is built as well because that is what an Android
+  # emulator AVD runs, and it exercises the amd64 backend on this target.
+  android:
+    needs: build-gate
+    if: always() && needs.build-gate.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-tags: true
+
+      - name: Name the NDK being used
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_NDK_LATEST_HOME:-}" || { echo "no NDK on this runner"; exit 1; }
+          echo "NDK: $ANDROID_NDK_LATEST_HOME"
+          cat "$ANDROID_NDK_LATEST_HOME/source.properties"
+
+      - name: Build the core (arm64-v8a interpreter, arm64-v8a recompiler, x86_64)
+        run: |
+          set -euo pipefail
+          build() {
+            abi="$1"; dyn="$2"; dir="build-android-$abi-$dyn"
+            echo "::group::$abi dynarec=$dyn"
+            cmake -S . -B "$dir" \
+              -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake" \
+              -DANDROID_ABI="$abi" \
+              -DANDROID_PLATFORM=android-24 \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DRPCEMU_BUILD_TESTS=OFF \
+              -DRPCEMU_DYNAREC="$dyn" \
+              -DRPCEMU_ENABLE_VNC=OFF \
+              -DRPCEMU_ENABLE_GHOSTPDL=OFF
+            cmake --build "$dir" -j"$(nproc)"
+            echo "::endgroup::"
+          }
+          build arm64-v8a OFF
+          build arm64-v8a ON
+          build x86_64 ON
+
+      - name: Check the archives are for the target, not the host
+        run: |
+          set -euo pipefail
+          OBJDUMP="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump"
+          check() {
+            lib="$1/src/librpcemu_core.a"; want="$2"
+            test -f "$lib" || { echo "missing $lib"; exit 1; }
+            got=$("$OBJDUMP" -f "$lib" | grep -m1 "^architecture:" | awk '{print $2}')
+            echo "$lib -> $got (want $want)"
+            test "$got" = "$want" || { echo "wrong architecture"; exit 1; }
+          }
+          # pkg_check_modules() calls pkg-config directly, so it ignores the
+          # cross-compile root and will answer with the runner's own x86_64 SDL2,
+          # ALSA and libusb unless src/CMakeLists.txt skips it for Android. This
+          # check is what would notice that guard being lost: the build would still
+          # succeed and quietly produce host-tainted objects.
+          check build-android-arm64-v8a-OFF aarch64
+          check build-android-arm64-v8a-ON  aarch64
+          check build-android-x86_64-ON     x86_64
+
+      - name: Confirm each configuration compiled the engine it claims
+        run: |
+          set -euo pipefail
+          test -f build-android-arm64-v8a-OFF/src/CMakeFiles/rpcemu_core.dir/arm.c.o
+          test -f build-android-arm64-v8a-ON/src/CMakeFiles/rpcemu_core.dir/arm_dynarec.c.o
+          test -f build-android-arm64-v8a-ON/src/CMakeFiles/rpcemu_core.dir/codegen_arm64.c.o
+          echo "interpreter built arm.c; recompiler built arm_dynarec.c + codegen_arm64.c"
+
   macos-universal:
     # Fuse the two per-arch slices into a universal binary and stage the release.
     needs: [macos-x86_64, macos-arm64]
@@ -1175,6 +1251,7 @@ jobs:
       - macos-x86_64
       - macos-arm64
       - macos-universal
+      - android
       - release
     runs-on: ubuntu-latest
     permissions:

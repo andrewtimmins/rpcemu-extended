@@ -55,7 +55,6 @@ set(RPCEMU_CORE_SOURCES
     podules/common/6522.c
     podules/ad1848.c
     podules/am7202a.c
-    podules/common/sound_out_sdl2.c
     podulerom.c
     usb_ohci.c
     usbcard.c
@@ -114,7 +113,11 @@ endif()
 # Linux-only. On Windows and macOS use the null network platform layer (NAT
 # still works via SLiRP) and the portable ISO-file CD-ROM backend (cdrom-iso.c,
 # listed above).
-if(WIN32 OR APPLE)
+# Android is Linux but not desktop Linux: /dev/net/tun needs root and an app
+# cannot open it, and there is no CD-ROM to ioctl, so it takes the same null
+# network layer and ISO-file CD-ROM backend as Windows and macOS. NAT still
+# works, because that is SLiRP in user space.
+if(WIN32 OR APPLE OR ANDROID)
     list(APPEND RPCEMU_CORE_SOURCES network-null.c)
 else()
     list(APPEND RPCEMU_CORE_SOURCES network-tun.c cdrom-ioctl.c)
@@ -165,8 +168,17 @@ if(WIN32)
 endif()
 
 # SDL2 is needed by the podule sound-output pathway (common/sound_out_sdl2.c).
+#
+# The three pkg_check_modules() blocks below are skipped when cross-compiling to
+# Android, and that is not tidiness. pkg-config is called directly rather than
+# through find_package(), so it ignores CMAKE_FIND_ROOT_PATH and cheerfully
+# answers with the HOST's packages: an arm64 Android configure otherwise reported
+# "SDL2", "ALSA" and "libusb 1.0.27" from /usr/lib/x86_64, and would have compiled
+# the core against x86 headers before failing somewhere less obvious. Android
+# takes the null and stub backends instead, and will get SDL2 from the front end
+# subproject in gui-android/ rather than from pkg-config.
 find_package(PkgConfig QUIET)
-if(PkgConfig_FOUND)
+if(PkgConfig_FOUND AND NOT ANDROID)
     pkg_check_modules(SDL2 sdl2)
 endif()
 if(SDL2_FOUND)
@@ -179,9 +191,22 @@ if(SDL2_FOUND)
     target_link_libraries(rpcemu_core PUBLIC ${SDL2_LIBRARIES})
 endif()
 
+# Podule sound OUTPUT backend. sound_out_sdl2.c includes <SDL.h> unconditionally,
+# so listing it unconditionally made SDL2 a compile-time requirement of the core
+# while CMake was treating the link as optional - which only went unnoticed
+# because every machine this had been built on had the headers. Chosen here the
+# same way the MIDI and sound-input backends below are.
+if(SDL2_FOUND)
+    target_sources(rpcemu_core PRIVATE podules/common/sound_out_sdl2.c)
+    message(STATUS "Podule sound-out backend: SDL2")
+else()
+    target_sources(rpcemu_core PRIVATE podules/common/sound_out_null.c)
+    message(STATUS "Podule sound-out backend: null (no SDL2)")
+endif()
+
 # Podule MIDI and sound-input backends: real ALSA pathways where available,
 # stubs otherwise.
-if(PkgConfig_FOUND)
+if(PkgConfig_FOUND AND NOT ANDROID)
     pkg_check_modules(ALSA alsa)
 endif()
 if(ALSA_FOUND)
@@ -203,7 +228,7 @@ endif()
 # emulated controller is still there and a driver can still be developed against
 # its registers, but there is nothing to plug into it, and the USB dialogue says
 # so rather than offering an empty list.
-if(PkgConfig_FOUND)
+if(PkgConfig_FOUND AND NOT ANDROID)
     pkg_check_modules(LIBUSB libusb-1.0)
 endif()
 if(LIBUSB_FOUND)
@@ -264,7 +289,20 @@ endif()
 enable_language(CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-add_subdirectory(gui)
+# The wxWidgets front end and the host-side CLI tools are desktop-only: gui/
+# requires SDL2, GTK 3 and libvncserver through pkg-config and wxWidgets on top,
+# and none of those exist for Android. Android's front end lives in gui-android/
+# instead; until there is one, an Android configure builds the core alone, which
+# is still worth doing because it is what proves the core is portable.
+if(ANDROID)
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/gui-android/CMakeLists.txt)
+        add_subdirectory(gui-android)
+    else()
+        message(STATUS "Android: core only, no front end in gui-android/ yet")
+    endif()
+else()
+    add_subdirectory(gui)
 
 # Host-side HostCmd client (rpcemu-run / rpcemu-shell).
-add_subdirectory(tools)
+    add_subdirectory(tools)
+endif()
