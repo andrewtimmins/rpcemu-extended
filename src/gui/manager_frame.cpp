@@ -475,11 +475,34 @@ void ManagerFrame::EnterFullScreen()
 
 	full_screen_ = true;
 	ShowFullScreen(true, wxFULLSCREEN_ALL);
-	Layout();
+	RelayoutAroundToolBar();
 	panel->SetFocus();
 	SetFullScreenMenuChecked(true);
 }
 
+
+/*
+ * Put the window back together after showing or hiding the toolbar.
+ *
+ * The frame owns the toolbar's geometry rather than the sizer, so only a size
+ * event recomputes the client area around it - Layout() alone lays out the old
+ * area. Nor does either imply a repaint: on Windows the toolbar's band keeps
+ * stale pixels until something invalidates it.
+ */
+void ManagerFrame::RelayoutAroundToolBar()
+{
+	SendSizeEvent();
+	Layout();
+
+	if (tool_bar_ != nullptr && tool_bar_->IsShown()) {
+		tool_bar_->Refresh();
+		tool_bar_->Update();
+	}
+
+	Refresh();
+	Update();
+	PositionCollapseButton();
+}
 
 /* Hide the furniture and leave the machine. */
 void ManagerFrame::ApplyMinimalUi(bool minimal)
@@ -496,8 +519,7 @@ void ManagerFrame::ApplyMinimalUi(bool minimal)
 		minimal_ui_item_->Check(minimal);
 	}
 
-	Layout();
-	PositionCollapseButton();
+	RelayoutAroundToolBar();
 }
 
 void ManagerFrame::OnMinimalUi(wxCommandEvent &event)
@@ -531,8 +553,7 @@ void ManagerFrame::ExitFullScreen()
 		    machines_panel_width_);
 	}
 	SetMachinesPanelCollapsed(minimal_ui_ || collapsed_before_full_screen_);
-	Layout();
-	PositionCollapseButton();
+	RelayoutAroundToolBar();
 	SetFullScreenMenuChecked(false);
 
 	auto it = running_.find(active_machine_);

@@ -140,6 +140,10 @@ private:
 	void OnMinimalUi(wxCommandEvent &event);
 	void OnMachineListToggle(wxCommandEvent &event);
 	void ApplyMinimalUi(bool minimal);
+
+	/* Showing or hiding the toolbar needs both a size event and a repaint;
+	   neither implies the other. */
+	void RelayoutAroundToolBar();
 	void OnExit(wxCommandEvent &event);
 	void OnClose(wxCloseEvent &event);
 	void OnMachineListSize(wxSizeEvent &event);
