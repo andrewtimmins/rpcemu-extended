@@ -518,9 +518,6 @@ void ManagerFrame::BuildMenus()
 {
 	auto *file_menu = new wxMenu();
 	file_menu->Append(ID_NEW, "&New Machine...\tCtrl+N");
-	file_menu->Append(ID_EDIT, "&Edit Machine...");
-	file_menu->Append(ID_CLONE, "&Clone Machine...");
-	file_menu->Append(ID_DELETE, "&Delete Machine");
 	file_menu->AppendSeparator();
 	/*
 	 * RPCEmu's own settings, not a machine's - so wxID_PREFERENCES, which is
@@ -534,6 +531,10 @@ void ManagerFrame::BuildMenus()
 	file_menu->Append(wxID_EXIT, "E&xit\tCtrl+Q");
 
 	auto *machine_menu = new wxMenu();
+	machine_menu->Append(ID_EDIT, "&Edit...");
+	machine_menu->Append(ID_CLONE, "&Clone...");
+	machine_menu->Append(ID_DELETE, "&Delete");
+	machine_menu->AppendSeparator();
 	start_item_ = machine_menu->Append(ID_START, "&Start\tCtrl+S");
 	resume_item_ = machine_menu->Append(ID_RESUME, "Res&ume");
 	resume_item_->SetHelp(
@@ -548,7 +549,7 @@ void ManagerFrame::BuildMenus()
 	machine_menu->Append(ID_MENU_SAVE_STATE, "Save State...");
 	machine_menu->Append(ID_MENU_LOAD_STATE, "Load State...");
 	machine_menu->AppendSeparator();
-	machine_menu->Append(ID_MENU_SCREENSHOT, "Scr&eenshot...");
+	machine_menu->Append(ID_MENU_SCREENSHOT, "Screensh&ot...");
 	machine_menu->AppendSeparator();
 	shortcut_item_ = machine_menu->Append(ID_SHORTCUT, "Create S&hortcut...");
 	shortcut_item_->SetHelp(
@@ -840,6 +841,14 @@ void ManagerFrame::UpdateButtons()
 	edit_button_->Enable(have_selection && !is_running);
 	clone_button_->Enable(have_selection);
 	delete_button_->Enable(have_selection && !is_running);
+
+	/* The same commands as the buttons above, so the same rules: a menu that
+	   offers what the button beside it refuses is two answers to one question. */
+	if (wxMenuBar *bar = GetMenuBar()) {
+		bar->Enable(ID_EDIT, have_selection && !is_running);
+		bar->Enable(ID_CLONE, have_selection);
+		bar->Enable(ID_DELETE, have_selection && !is_running);
+	}
 
 	if (tool_bar_ != nullptr) {
 		tool_bar_->EnableTool(ID_START, have_selection && !is_running);

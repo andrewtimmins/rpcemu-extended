@@ -20,12 +20,28 @@
 
 #include "manager_settings_dialog.h"
 
+#include <wx/filename.h>
 #include <wx/statline.h>
 
 #include "gui_preferences.h"
 
 extern "C" {
 #include "rpcemu.h"
+}
+
+/*
+ * A directory as somebody would write it, rather than as the core keeps it.
+ * The core appends '/' whatever the platform, so a Windows path that already
+ * ends in '\' comes back as "C:\Users\David\RPCEmu\/".
+ */
+static wxString
+DisplayPath(wxString path)
+{
+	while (!path.empty() &&
+	    (path.Last() == '/' || path.Last() == wxFileName::GetPathSeparator())) {
+		path.RemoveLast();
+	}
+	return path;
 }
 
 /*
@@ -71,7 +87,7 @@ ManagerSettingsDialog::ManagerSettingsDialog(wxWindow *parent,
 		    0, wxLEFT | wxRIGHT | wxTOP, 8);
 
 		data_folder_text_ = new wxStaticText(this, wxID_ANY,
-		    wxString::FromUTF8(rpcemu_get_datadir()));
+		    DisplayPath(wxString::FromUTF8(rpcemu_get_datadir())));
 		data_folder_text_->SetFont(data_folder_text_->GetFont().Bold());
 		box->Add(data_folder_text_, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 8);
 
@@ -162,7 +178,7 @@ void ManagerSettingsDialog::OnChangeDataFolder(wxCommandEvent & /*event*/)
 	const wxString now = change_data_folder_();
 
 	if (!now.empty() && data_folder_text_ != nullptr) {
-		data_folder_text_->SetLabel(now);
+		data_folder_text_->SetLabel(DisplayPath(now));
 		Layout();
 		Fit();
 	}
