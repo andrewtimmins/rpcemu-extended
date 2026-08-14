@@ -32,6 +32,7 @@ extern "C" {
 }
 
 #include "arm_disasm.h"
+#include "cp15.h"
 
 namespace {
 
@@ -742,6 +743,14 @@ void MachineInspectorWindow::DrainTraceEvents()
 			}
 			line = wxString::Format("%08u  PC=%s  EXCEPTION  %s",
 			                        ev.seq, FormatHex(ev.pc), kind);
+			/* Only a data abort carries a fault address and status; the
+			   others leave them zero on purpose (see DebugTraceEvent). */
+			if (ev.arg0 == TraceException_DataAbort) {
+				line += wxString::Format("  addr=%s  status=%02X %s",
+				                         FormatHex(ev.arg1),
+				                         ev.arg2 & 0xff,
+				                         wxString::FromUTF8(cp15_fault_status_name(ev.arg2)));
+			}
 			break;
 		}
 		case TraceEvent_Watchpoint: {

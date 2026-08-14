@@ -194,10 +194,16 @@ typedef struct DebugTraceEvent {
 	uint32_t pc;		/**< Faulting / calling PC */
 	uint32_t opcode;	/**< Instruction word (0 if not available) */
 	uint32_t arg0;		/**< exc: TraceExceptionKind | swi: number | wp: address */
-	/* exc: the faulting PC again, not the address that faulted - the
-	   exception hook is passed the vector, which arg0 already says. */
-	uint32_t arg1;		/**< exc: faulting PC | swi: R0 | wp: value */
-	uint32_t arg2;		/**< swi: cpsr flags | wp: (size << 1) | is_write */
+	/* exc: the CP15 Fault Address and Fault Status of a DATA ABORT, which is
+	   what distinguishes a translation fault from a permission fault - the
+	   difference between "nothing is mapped there" and "the MMU refused the
+	   access", and the only way to tell them apart from outside.
+	   Both are zero for a prefetch abort and for an undefined instruction:
+	   cp15.c updates the fault registers for data aborts only (see do_fault),
+	   so for the others they still hold whatever an earlier data abort left
+	   behind, and reporting that would be worse than reporting nothing. */
+	uint32_t arg1;		/**< exc: fault address | swi: R0 | wp: value */
+	uint32_t arg2;		/**< exc: fault status | swi: cpsr flags | wp: (size << 1) | is_write */
 } DebugTraceEvent;
 
 /** Runtime configuration of debug tracing/trapping, set from the GUI */

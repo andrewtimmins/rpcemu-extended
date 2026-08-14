@@ -742,6 +742,37 @@ cp15_get_fault(uint32_t *fault_address, uint32_t *fault_status)
 	}
 }
 
+/**
+ * Name the fault a Fault Status register value describes.
+ *
+ * Worth having as a function rather than left to whoever reads the number: a
+ * translation fault and a permission fault mean completely different things
+ * when chasing a guest that will not run. Translation is "nothing is mapped
+ * there"; permission is "something is, and the MMU refused this access" -
+ * which is what ADFFS's JIT relies on and what docs/mmu-permissions.md is
+ * about. Confusing the two sends an investigation the wrong way.
+ *
+ * Only the codes this emulator can actually produce are named individually;
+ * the rest are reported by their number rather than guessed at, since naming a
+ * code we never generate would invite trust in a value that cannot appear.
+ *
+ * @param fault_status FSR value: fault code in bits 0-3, domain in bits 4-7
+ * @return Static string, never NULL
+ */
+const char *
+cp15_fault_status_name(uint32_t fault_status)
+{
+	switch (fault_status & 0xf) {
+	case CP15_FAULT_TRANSLATION_SECTION:	return "translation (section)";
+	case CP15_FAULT_TRANSLATION_PAGE:	return "translation (page)";
+	case CP15_FAULT_DOMAIN_SECTION:		return "domain (section)";
+	case CP15_FAULT_DOMAIN_PAGE:		return "domain (page)";
+	case CP15_FAULT_PERMISSION_SECTION:	return "permission (section)";
+	case CP15_FAULT_PERMISSION_PAGE:	return "permission (page)";
+	default:				return "other";
+	}
+}
+
 /*uint32_t translateaddress(uint32_t addr, int rw)
 {
         if (!(addr&0xFC000000) && !(tlbcache[(addr>>12)&0x3FFF]&0xFFF))

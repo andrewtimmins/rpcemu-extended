@@ -41,6 +41,7 @@ extern int tlbs;
 extern int dcache;
 
 extern void cp15_get_fault(uint32_t *fault_address, uint32_t *fault_status);
+extern const char *cp15_fault_status_name(uint32_t fault_status);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -65,6 +65,20 @@ if(RPCEMU_DYNAREC AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|aarch64|arm64
     add_executable(test_jit_seqfuzz test_jit_seqfuzz.c test_stubs.c)
     target_link_libraries(test_jit_seqfuzz PRIVATE rpcemu_core m)
     rpcemu_add_test(test_jit_seqfuzz 1 50000)
+
+    # 26-bit program configuration: R15 carries the PSR, and no other jit test
+    # runs that configuration or compares R15 at all. Matrix plus a sweep; more
+    # by hand, e.g. `test_jit_26bit <seed> <sweep>`.
+    add_executable(test_jit_26bit test_jit_26bit.c test_stubs.c)
+    target_link_libraries(test_jit_26bit PRIVATE rpcemu_core m)
+    rpcemu_add_test(test_jit_26bit 1 50000)
+
+    # 26-bit sequences: whole programs through arm_exec() under both engines, so
+    # block linking and mid-run mode changes are covered. Code runs from VRAM
+    # because a 26-bit PC cannot reach the RAM at 0x10000000.
+    add_executable(test_jit_26bit_seq test_jit_26bit_seq.c test_stubs.c)
+    target_link_libraries(test_jit_26bit_seq PRIVATE rpcemu_core m)
+    rpcemu_add_test(test_jit_26bit_seq 1 20000)
 else()
     set(RPCEMU_JIT_TESTS FALSE)
     # An interpreter build has no recompiler to differentially test, which is
@@ -72,7 +86,7 @@ else()
     # rather than only in the log, because eight of the tests are the ones being
     # given up.
     message(STATUS
-        "RPCEmu: no dynarec backend here, so the 8 JIT differential tests are "
+        "RPCEmu: no dynarec backend here, so the 10 JIT differential tests are "
         "not built (RPCEMU_DYNAREC=${RPCEMU_DYNAREC}, "
         "processor ${CMAKE_SYSTEM_PROCESSOR})")
 endif()
@@ -756,7 +770,7 @@ rpcemu_add_test(test_unzip)
 # is the only line in the file that cannot go stale without being noticed.
 set(RPCEMU_EXPECTED_TESTS 45)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
-    math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
+    math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 10")	# JIT differential
 endif()
 if(RPCEMU_PYTHON_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 1")	# abort watcher

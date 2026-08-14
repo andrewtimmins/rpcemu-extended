@@ -69,6 +69,27 @@ KIND_NAMES = {
 # deliberately - see the note at the top of this file.
 ABORT_KINDS = (KIND_PREFETCH_ABORT, KIND_DATA_ABORT)
 
+# CP15 Fault Status codes, in FSR bits 0-3. This mirrors cp15_fault_status_name()
+# in src/cp15.c; the two are separate because this file must run with no build.
+#
+# The distinction earns its keep: "translation" means nothing was mapped at that
+# address, "permission" means something was and the MMU refused the access. They
+# read identically in a log that prints only an address, and they send an
+# investigation in opposite directions.
+FAULT_NAMES = {
+    0x5: "translation (section)",
+    0x7: "translation (page)",
+    0x9: "domain (section)",
+    0xb: "domain (page)",
+    0xd: "permission (section)",
+    0xf: "permission (page)",
+}
+
+
+def fault_status_name(status: int) -> str:
+    """Name an FSR value's fault code; codes we never generate stay unnamed."""
+    return FAULT_NAMES.get(status & 0xf, "other")
+
 
 class DebugCmd:
     """
@@ -146,6 +167,10 @@ class AbortWatcher:
     def __init__(self, cmd):
         self.cmd = cmd
         self.events = []        # (phase, kind, pc)
+        # (kind, pc) -> {(fault_address, fault_status): count}. Kept beside the
+        # events rather than in them so the phase split, the baseline format and
+        # the verdict are all unchanged by carrying the extra detail.
+        self.faults = {}
         self.dropped = 0
         self.phase = "boot"
 
@@ -194,6 +219,15 @@ class AbortWatcher:
                 kind = int(ev["arg0"], 16)
                 pc = int(ev["pc"], 16)
                 self.events.append((self.phase, kind, pc))
+                # arg1/arg2 are the CP15 fault address and status, and are set
+                # for a DATA ABORT only - see DebugTraceEvent in src/rpcemu.h.
+                # Recording them for the other kinds would report a previous
+                # fault's values as though they belonged to this one.
+                if kind == KIND_DATA_ABORT:
+                    detail = (int(ev.get("arg1", "0"), 16),
+                              int(ev.get("arg2", "0"), 16))
+                    seen = self.faults.setdefault((kind, pc), {})
+                    seen[detail] = seen.get(detail, 0) + 1
             taken += len(events)
             if len(events) < 128:
                 return taken
@@ -239,7 +273,32 @@ class AbortWatcher:
                 text = "  " + rest.strip()
         except (AbortWatchError, OSError):
             pass
-        return f"{KIND_NAMES.get(kind, '?')} at {pc:08x}{text}"
+        return f"{KIND_NAMES.get(kind, '?')} at {pc:08x}{text}{self.describe_fault(kind, pc)}"
+
+    def describe_fault(self, kind: int, pc: int) -> str:
+        """
+        Why the abort happened, for a site that has a fault status.
+
+        One instruction can fault for more than one reason at different times -
+        a page that was absent once and refused another time is two different
+        problems - so every distinct (address, status) pair seen is named rather
+        than only the first.
+        """
+        seen = self.faults.get((kind, pc))
+        if not seen:
+            return ""
+        # A status of zero is not a fault code this emulator generates, so an
+        # all-zero pair means the abort arrived without the CP15 registers being
+        # set. Say nothing rather than dress that up as "fault code 0".
+        seen = {k: v for k, v in seen.items() if k != (0, 0)}
+        if not seen:
+            return ""
+        parts = []
+        for (addr, status), n in sorted(seen.items(), key=lambda kv: -kv[1]):
+            times = "" if len(seen) == 1 else f" x{n}"
+            parts.append(f"{fault_status_name(status)} "
+                         f"(status {status & 0xff:02x}) on {addr:08x}{times}")
+        return "  [" + "; ".join(parts) + "]"
 
     def report(self, out) -> None:
         """Print everything seen, whether or not it fails the build."""
