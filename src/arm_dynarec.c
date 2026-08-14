@@ -629,13 +629,23 @@ exception(uint32_t mmode, uint32_t address, uint32_t diff)
 		arm.reg[16] |= irq_disable;
 		arm.reg[15] = address;
 	} else {
-		arm.reg[15] |= 3;
-		/* When in 26-bit config, Abort and Undefined exceptions enter
-		   mode SVC_26 */
-		updatemode(mmode >= SUPERVISOR ? SUPERVISOR : mmode);
+		/* A 26-bit CPU has only User, FIQ, IRQ and Supervisor, so Abort
+		   and Undefined exceptions enter mode SVC_26. */
+		const uint32_t new_mode = (mmode >= SUPERVISOR) ? SUPERVISOR : mmode;
+
+		updatemode(new_mode);
 		arm.reg[14] = link;
-		arm.reg[15] &= 0xfc000003;
-		arm.reg[15] |= ((irq_disable << 20) | address);
+		/* Keep N, Z, C, V, I and F; the PC and the mode are replaced.
+		   The mode has to be the mode actually entered: this used to set
+		   the bits to Supervisor for every exception, so an IRQ or an FIQ
+		   left arm.mode saying IRQ/FIQ - which is what the register banks
+		   follow - while the guest-visible PSR in R15 said Supervisor.
+		   Anything reading its own mode back got the wrong answer, and a
+		   mode change derived from R15 would swap R13 and R14 to the
+		   wrong bank. Abort and Undefined are unaffected either way,
+		   since they do enter Supervisor. */
+		arm.reg[15] &= 0xfc000000;
+		arm.reg[15] |= (irq_disable << 20) | address | new_mode;
 	}
 	refillpipeline();
 }

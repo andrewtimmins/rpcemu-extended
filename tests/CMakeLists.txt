@@ -132,6 +132,27 @@ add_executable(test_mmu_perms test_mmu_perms.c test_stubs.c)
 target_link_libraries(test_mmu_perms PRIVATE rpcemu_core m)
 rpcemu_add_test(test_mmu_perms)
 
+# What the CPU hands an exception handler: the mode entered, the return address
+# in R14, the saved status register, and whether interrupts end up disabled.
+#
+# Get any of those wrong and the handler runs but returns to the wrong place,
+# which does not present as a CPU bug - it presents as the guest going mad some
+# time later, usually a wild branch a long way from the cause. None of it was
+# covered until an ADFFS game did exactly that.
+#
+# The case that earns this test is 26-bit code interrupted on a 32-bit-configured
+# CPU: what every Archimedes game under ADFFS does thousands of times a second,
+# and the least exercised path in the emulator, since RISC OS 5 is 32-bit
+# throughout and RISC OS 3.1x is 26-bit throughout. Expected values come from
+# DDI 0100, not from the implementation.
+#
+# Links rpcemu_core for the real exception(), updatemode() and register banks.
+# Note the interpreter and the recompiler have separate exception() bodies, so
+# whichever this build links is the one covered.
+add_executable(test_exception test_exception.c test_stubs.c)
+target_link_libraries(test_exception PRIVATE rpcemu_core m)
+rpcemu_add_test(test_exception)
+
 # The disassembler, and the instruction description the debugger acts on. Needs
 # nothing but arm_disasm.c - it is pure decoding, no machine state.
 #
@@ -733,7 +754,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 44)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 45)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()
