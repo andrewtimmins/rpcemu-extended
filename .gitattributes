@@ -1,2 +1,11 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# RISC OS text files, which are copied to a guest rather than read by a host
+# tool. text=auto checks them out with the host's line ending, so a Windows
+# checkout turned LF into CRLF and RISC OS showed every line as ending [0d].
+# Module images are safe without this - they hold NULs, so git detects them as
+# binary - but these are text and it does not.
+*,feb -text
+*,fff -text
+*,fd7 -text
