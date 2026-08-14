@@ -33,7 +33,13 @@ FetchContent_MakeAvailable(SDL2)
 # The library has to be called "main". SDL's SDLActivity loads "SDL2" and then
 # "main" by those names (SDLActivity.getLibraries()), so renaming this breaks the
 # app with nothing more informative than a missing library.
-add_library(main SHARED rpcemu_android.c)
+# keyboard_x.c is the authoritative X11-keycode to PS/2 Set 2 table. It is a pure
+# table with no X11 dependency (stddef.h and stdint.h only), so it is compiled in
+# here rather than the mapping being duplicated for Android.
+add_library(main SHARED
+    rpcemu_android.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../gui/keyboard_x.c
+)
 
 target_include_directories(main PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/..

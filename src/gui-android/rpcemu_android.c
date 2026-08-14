@@ -54,6 +54,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <pthread.h>
 #include <time.h>
 
 #include <SDL.h>
@@ -65,6 +67,8 @@
 #include "vidc20.h"
 #include "iomd.h"
 #include "keyboard.h"
+#include "sound.h"
+#include "podulerom.h"
 
 #define TAG "rpcemu"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  TAG, __VA_ARGS__)
@@ -78,6 +82,8 @@
 extern void execrpcemu(void);
 
 /* ---- the frame the core last gave us -------------------------------------- */
+
+static pthread_mutex_t frame_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static struct {
 	uint32_t	*pixels;	/* our own copy, so the core may carry on */
@@ -119,11 +125,16 @@ rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize, int yl, int yh
 		return;
 	}
 
+	/* This runs on the video thread now; present() reads the copy on the SDL
+	   thread. */
+	pthread_mutex_lock(&frame_mutex);
+
 	if (frame.pixels == NULL || frame.w != xsize || frame.h != ysize) {
 		free(frame.pixels);
 		frame.pixels = malloc((size_t) xsize * (size_t) ysize * 4);
 		if (frame.pixels == NULL) {
 			frame.w = frame.h = 0;
+			pthread_mutex_unlock(&frame_mutex);
 			return;
 		}
 		frame.w = xsize;
@@ -134,28 +145,147 @@ rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize, int yl, int yh
 	bytes = (size_t) xsize * (size_t) ysize * 4;
 	memcpy(frame.pixels, buffer, bytes);
 	frame.have = 1;
+	pthread_mutex_unlock(&frame_mutex);
 }
 
-/* No video thread: everything runs on the one thread, so there is nothing to
-   start, wake or lock against. vidctrymutex() reporting success is what lets the
-   core go on and call drawscr(). */
-void vidcstartthread(void) {}
-void vidcendthread(void) {}
-void vidcwakeupthread(void) {}
-void vidcreleasemutex(void) {}
-int  vidctrymutex(void) { return 0; }
+/*
+ * The video and sound threads, as real threads.
+ *
+ * The first attempt ran everything on one thread and called vidcthread() and
+ * sound_buffer_update() from the main loop. That is a plausible-looking
+ * simplification and it was wrong twice over: drawscr() wakes the video thread
+ * from inside the video mutex and expects it to run afterwards, and the sound
+ * producer expects its buffers to be consumed. Rather than keep discovering which
+ * call the core expects a thread to make, this now mirrors
+ * src/gui/emulator_host.cpp exactly - the same two threads, the same condition
+ * variables, the same mutex semantics - because that is the arrangement the core
+ * is actually written against and tested with.
+ *
+ * Note the sense of vidctrymutex(): drawscr() reads "if (!vidctrymutex()) return;",
+ * so 1 means the mutex was obtained and 0 means busy. Returning 0 unconditionally,
+ * as tests/test_stubs.c does, makes drawscr() bail on every frame - a machine that
+ * runs perfectly and never draws. That is also why tests/boot_trace.c has never
+ * drawn anything on any platform.
+ */
 
-/* Sound is not wired up yet: the core keeps producing samples and they are
-   dropped, exactly as podules/common/sound_out_null.c does for a podule. Doing
-   this properly means SDL2 audio, which is a later step. */
-void plt_sound_init(int samples) { NOT_USED(samples); }
-void plt_sound_buffer_play(void) {}
-void plt_sound_buffer_free(void) {}
-void plt_sound_pause(void) {}
+static pthread_t	video_thread, sound_thread;
+static pthread_mutex_t	video_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t	sound_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t	video_cond = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t	sound_cond = PTHREAD_COND_INITIALIZER;
+static int		threads_running;
+
+static void *
+video_thread_fn(void *arg)
+{
+	NOT_USED(arg);
+
+	pthread_mutex_lock(&video_mutex);
+	while (!quited) {
+		pthread_cond_wait(&video_cond, &video_mutex);
+		if (!quited) {
+			vidcthread();
+		}
+	}
+	pthread_mutex_unlock(&video_mutex);
+	return NULL;
+}
+
+static void *
+sound_thread_fn(void *arg)
+{
+	NOT_USED(arg);
+
+	pthread_mutex_lock(&sound_mutex);
+	while (!quited) {
+		pthread_cond_wait(&sound_cond, &sound_mutex);
+		if (!quited) {
+			sound_buffer_update();
+		}
+	}
+	pthread_mutex_unlock(&sound_mutex);
+	return NULL;
+}
+
+void
+vidcstartthread(void)
+{
+	if (pthread_create(&video_thread, NULL, video_thread_fn, NULL) != 0) {
+		fatal("cannot create the video thread");
+	}
+	threads_running = 1;
+}
+
+void
+vidcendthread(void)
+{
+	if (!threads_running) {
+		return;
+	}
+	vidcwakeupthread();
+	pthread_join(video_thread, NULL);
+	threads_running = 0;
+}
+
+void
+vidcwakeupthread(void)
+{
+	pthread_cond_signal(&video_cond);
+}
+
+void vidcreleasemutex(void) { pthread_mutex_unlock(&video_mutex); }
+
+/** 1 if the mutex was obtained, 0 if busy - see the note above. */
+int
+vidctrymutex(void)
+{
+	const int ret = pthread_mutex_trylock(&video_mutex);
+
+	if (ret == EBUSY) {
+		return 0;
+	}
+	if (ret != 0) {
+		fatal("obtaining the vidc mutex failed: %d", ret);
+	}
+	return 1;
+}
+
+/*
+ * Sound. Nothing is audible yet - the plt_sound_* hooks accept buffers and drop
+ * them, as podules/common/sound_out_null.c does - but the thread still has to
+ * consume them or the guest's sound DMA never completes.
+ */
+void plt_sound_init(uint32_t bufferlen) { NOT_USED(bufferlen); }
 void plt_sound_restart(void) {}
-void sound_thread_start(void) {}
-void sound_thread_close(void) {}
-void sound_thread_wakeup(void) {}
+void plt_sound_pause(void) {}
+
+/** Always room: nothing is played, and answering zero would stall the producer. */
+int32_t plt_sound_buffer_free(void) { return 1 << 20; }
+
+void
+plt_sound_buffer_play(uint32_t samplerate, const char *buffer, uint32_t length)
+{
+	NOT_USED(samplerate);
+	NOT_USED(buffer);
+	NOT_USED(length);
+}
+
+void
+sound_thread_start(void)
+{
+	if (pthread_create(&sound_thread, NULL, sound_thread_fn, NULL) != 0) {
+		fatal("cannot create the sound thread");
+	}
+}
+
+void
+sound_thread_close(void)
+{
+	sound_thread_wakeup();
+	pthread_join(sound_thread, NULL);
+}
+
+void sound_thread_wakeup(void) { pthread_cond_signal(&sound_cond); }
 
 /* Activity indicators drive lights on the desktop toolbar. There is no toolbar. */
 void fdc_activity_increment(void) {}
@@ -170,8 +300,8 @@ void network_activity_increment(void) {}
  * timer deadlines, and a millisecond clock would quantise the IOMD tick to five
  * times its own interval.
  */
-uint64_t
-rpcemu_nsec_timer_ticks(void)
+static uint64_t
+monotonic_ns(void)
 {
 	struct timespec ts;
 
@@ -179,6 +309,29 @@ rpcemu_nsec_timer_ticks(void)
 		return 0;
 	}
 	return (uint64_t) ts.tv_sec * 1000000000ULL + (uint64_t) ts.tv_nsec;
+}
+
+/** Nanoseconds at machine start; the clock below is relative to it. */
+static uint64_t start_ns;
+
+/**
+ * Emulated time, in nanoseconds SINCE THE MACHINE STARTED.
+ *
+ * Relative, not absolute, and that is not a detail. The core compares this clock
+ * against the value the front end hands gentimerirq(), and the desktop derives both
+ * from one relative base (EmulatorHost::GetElapsedTimerNs() is "now - start_time_").
+ * Returning absolute CLOCK_MONOTONIC here while passing a relative elapsed to
+ * gentimerirq() puts the two timebases however long the host has been up apart, so
+ * the IOMD timers never fire - and RISC OS sits for ever polling IOMD IRQ status A
+ * for the timer 0 bit, which is exactly what it was doing.
+ */
+uint64_t
+rpcemu_nsec_timer_ticks(void)
+{
+	if (start_ns == 0) {
+		return 0;
+	}
+	return monotonic_ns() - start_ns;
 }
 
 /**
@@ -237,14 +390,52 @@ rpcemu_request_poweroff(void)
 	quit_requested = 1;
 }
 
-/* Called from the core's idle path. Servicing input here as well as in the main
-   loop keeps the pointer moving while the guest is idling, which is what issue
-   #36 was about on the desktop. */
+/* Timer deadlines, shared by the main loop and the idle hook so the two cannot
+   drift apart - the same reason emulator_host.cpp keeps them in one place. */
+static uint64_t iomd_next, video_next, video_interval;
+
+/**
+ * Bring the IOMD timers and the frame clock up to date.
+ *
+ * Mirrors EmulatorHost::ServiceTimers(), catch-up caps included.
+ */
+static void
+service_timers(void)
+{
+	const uint64_t elapsed = rpcemu_nsec_timer_ticks();
+	int n;
+
+	for (n = 0; elapsed >= iomd_next && n < MAX_IOMD_CATCH_UP; n++) {
+		gentimerirq(elapsed);
+		iomd_next += IOMD_INTERVAL_NS;
+	}
+	if (elapsed >= iomd_next) {
+		iomd_next = elapsed + IOMD_INTERVAL_NS;
+	}
+
+	for (n = 0; elapsed >= video_next && n < MAX_VIDEO_CATCH_UP; n++) {
+		drawscre++;	/* one frame owed, as vblupdate() does */
+		video_next += video_interval;
+	}
+	if (elapsed >= video_next) {
+		video_next = elapsed + video_interval;
+	}
+}
+
+/**
+ * Called from the core's idle path, and it must do the timers.
+ *
+ * This is not optional and it is not only about input. When the guest idles - RISC
+ * OS waiting for an interrupt - the core stays inside execrpcemu() and calls this.
+ * If it does nothing, the IOMD timers are only serviced after execrpcemu() returns,
+ * so the interrupt the guest is waiting for can never arrive and the machine waits
+ * for ever. The desktop's IdleProcessEvents() calls ServiceTimers() for exactly
+ * this reason.
+ */
 void
 rpcemu_idle_process_events(void)
 {
-	/* Nothing yet: input arrives in the main loop. Wired up with the input
-	   work, and left present so the core's idle path has something to call. */
+	service_timers();
 }
 
 int
@@ -253,12 +444,174 @@ rpcemu_host_commands_pending(void)
 	return 0;
 }
 
+/* ---- input ---------------------------------------------------------------- */
+
+/*
+ * Keys.
+ *
+ * keyboard_map_key() wants an X11 hardware keycode and returns the PS/2 Set 2
+ * bytes for it (src/gui/keyboard_x.c, which is a pure table and is compiled into
+ * this front end too rather than duplicated). An X11 keycode is the Linux evdev
+ * code plus 8 - checked against that table, where Down is 0x74 and evdev KEY_DOWN
+ * is 108.
+ *
+ * So the only new knowledge here is SDL scancode to evdev code. SDL's scancodes
+ * are USB HID usages, which are a different numbering again, so this has to be a
+ * table. It maps positions, not characters, which is what RISC OS wants: the guest
+ * decides what a position types (see the keyboard notes in the README).
+ */
+static const struct { SDL_Scancode sdl; uint8_t evdev; } key_table[] = {
+	{ SDL_SCANCODE_ESCAPE, 1 },
+	{ SDL_SCANCODE_1, 2 }, { SDL_SCANCODE_2, 3 }, { SDL_SCANCODE_3, 4 },
+	{ SDL_SCANCODE_4, 5 }, { SDL_SCANCODE_5, 6 }, { SDL_SCANCODE_6, 7 },
+	{ SDL_SCANCODE_7, 8 }, { SDL_SCANCODE_8, 9 }, { SDL_SCANCODE_9, 10 },
+	{ SDL_SCANCODE_0, 11 },
+	{ SDL_SCANCODE_MINUS, 12 }, { SDL_SCANCODE_EQUALS, 13 },
+	{ SDL_SCANCODE_BACKSPACE, 14 }, { SDL_SCANCODE_TAB, 15 },
+	{ SDL_SCANCODE_Q, 16 }, { SDL_SCANCODE_W, 17 }, { SDL_SCANCODE_E, 18 },
+	{ SDL_SCANCODE_R, 19 }, { SDL_SCANCODE_T, 20 }, { SDL_SCANCODE_Y, 21 },
+	{ SDL_SCANCODE_U, 22 }, { SDL_SCANCODE_I, 23 }, { SDL_SCANCODE_O, 24 },
+	{ SDL_SCANCODE_P, 25 },
+	{ SDL_SCANCODE_LEFTBRACKET, 26 }, { SDL_SCANCODE_RIGHTBRACKET, 27 },
+	{ SDL_SCANCODE_RETURN, 28 }, { SDL_SCANCODE_LCTRL, 29 },
+	{ SDL_SCANCODE_A, 30 }, { SDL_SCANCODE_S, 31 }, { SDL_SCANCODE_D, 32 },
+	{ SDL_SCANCODE_F, 33 }, { SDL_SCANCODE_G, 34 }, { SDL_SCANCODE_H, 35 },
+	{ SDL_SCANCODE_J, 36 }, { SDL_SCANCODE_K, 37 }, { SDL_SCANCODE_L, 38 },
+	{ SDL_SCANCODE_SEMICOLON, 39 }, { SDL_SCANCODE_APOSTROPHE, 40 },
+	{ SDL_SCANCODE_GRAVE, 41 }, { SDL_SCANCODE_LSHIFT, 42 },
+	{ SDL_SCANCODE_BACKSLASH, 43 },
+	{ SDL_SCANCODE_Z, 44 }, { SDL_SCANCODE_X, 45 }, { SDL_SCANCODE_C, 46 },
+	{ SDL_SCANCODE_V, 47 }, { SDL_SCANCODE_B, 48 }, { SDL_SCANCODE_N, 49 },
+	{ SDL_SCANCODE_M, 50 },
+	{ SDL_SCANCODE_COMMA, 51 }, { SDL_SCANCODE_PERIOD, 52 },
+	{ SDL_SCANCODE_SLASH, 53 }, { SDL_SCANCODE_RSHIFT, 54 },
+	{ SDL_SCANCODE_KP_MULTIPLY, 55 }, { SDL_SCANCODE_LALT, 56 },
+	{ SDL_SCANCODE_SPACE, 57 }, { SDL_SCANCODE_CAPSLOCK, 58 },
+	{ SDL_SCANCODE_F1, 59 }, { SDL_SCANCODE_F2, 60 }, { SDL_SCANCODE_F3, 61 },
+	{ SDL_SCANCODE_F4, 62 }, { SDL_SCANCODE_F5, 63 }, { SDL_SCANCODE_F6, 64 },
+	{ SDL_SCANCODE_F7, 65 }, { SDL_SCANCODE_F8, 66 }, { SDL_SCANCODE_F9, 67 },
+	{ SDL_SCANCODE_F10, 68 },
+	{ SDL_SCANCODE_NUMLOCKCLEAR, 69 }, { SDL_SCANCODE_SCROLLLOCK, 70 },
+	{ SDL_SCANCODE_KP_7, 71 }, { SDL_SCANCODE_KP_8, 72 }, { SDL_SCANCODE_KP_9, 73 },
+	{ SDL_SCANCODE_KP_MINUS, 74 },
+	{ SDL_SCANCODE_KP_4, 75 }, { SDL_SCANCODE_KP_5, 76 }, { SDL_SCANCODE_KP_6, 77 },
+	{ SDL_SCANCODE_KP_PLUS, 78 },
+	{ SDL_SCANCODE_KP_1, 79 }, { SDL_SCANCODE_KP_2, 80 }, { SDL_SCANCODE_KP_3, 81 },
+	{ SDL_SCANCODE_KP_0, 82 }, { SDL_SCANCODE_KP_PERIOD, 83 },
+	{ SDL_SCANCODE_F11, 87 }, { SDL_SCANCODE_F12, 88 },
+	{ SDL_SCANCODE_KP_ENTER, 96 }, { SDL_SCANCODE_RCTRL, 97 },
+	{ SDL_SCANCODE_KP_DIVIDE, 98 }, { SDL_SCANCODE_RALT, 100 },
+	{ SDL_SCANCODE_HOME, 102 }, { SDL_SCANCODE_UP, 103 },
+	{ SDL_SCANCODE_PAGEUP, 104 }, { SDL_SCANCODE_LEFT, 105 },
+	{ SDL_SCANCODE_RIGHT, 106 }, { SDL_SCANCODE_END, 107 },
+	{ SDL_SCANCODE_DOWN, 108 }, { SDL_SCANCODE_PAGEDOWN, 109 },
+	{ SDL_SCANCODE_INSERT, 110 }, { SDL_SCANCODE_DELETE, 111 },
+	{ SDL_SCANCODE_PAUSE, 119 },
+	{ SDL_SCANCODE_LGUI, 125 }, { SDL_SCANCODE_RGUI, 126 },
+	{ SDL_SCANCODE_APPLICATION, 127 },
+};
+
+static void
+handle_key(SDL_Scancode sc, int pressed)
+{
+	size_t i;
+
+	for (i = 0; i < sizeof(key_table) / sizeof(key_table[0]); i++) {
+		if (key_table[i].sdl == sc) {
+			const uint8_t *codes = keyboard_map_key(key_table[i].evdev + 8u);
+
+			if (codes == NULL) {
+				return;
+			}
+			if (pressed) {
+				keyboard_key_press(codes);
+			} else {
+				/* Break is a one-shot sequence; releasing it would send
+				   nonsense, which is what the desktop guards against too. */
+				if (codes[0] != 0xe1) {
+					keyboard_key_release(codes);
+				}
+			}
+			return;
+		}
+	}
+}
+
+/*
+ * The pointer.
+ *
+ * mousehack is on, so the guest's pointer is placed absolutely - which is what a
+ * touch screen wants: the pointer goes where the finger is rather than drifting
+ * relative to it. mouse_mouse_move() takes guest pixels, and the frame is stretched
+ * across the whole window, so window coordinates scale linearly onto it.
+ */
+static void
+pointer_to(int win_x, int win_y)
+{
+	int ww = 0, wh = 0;
+	int gx, gy;
+
+	SDL_GetWindowSize(window, &ww, &wh);
+	if (ww <= 0 || wh <= 0 || frame.w <= 0 || frame.h <= 0) {
+		return;
+	}
+
+	gx = win_x * frame.w / ww;
+	gy = win_y * frame.h / wh;
+	if (gx < 0) { gx = 0; }
+	if (gy < 0) { gy = 0; }
+	if (gx >= frame.w) { gx = frame.w - 1; }
+	if (gy >= frame.h) { gy = frame.h - 1; }
+
+	mouse_mouse_move(gx, gy);
+}
+
+/*
+ * Touch, on an OS built for three buttons.
+ *
+ * RISC OS puts Select on the left button, Menu on the middle and Adjust on the
+ * right, and Menu is used constantly - so the count of fingers down chooses the
+ * button: one finger Select, two Menu, three Adjust. That keeps the common case a
+ * plain tap while making the menu reachable without any on-screen furniture.
+ *
+ * A real mouse is handled separately and needs none of this: Android supports one
+ * over USB or Bluetooth, and then the buttons are simply the buttons.
+ */
+#define RISCOS_LEFT	1
+#define RISCOS_RIGHT	2
+#define RISCOS_MIDDLE	4
+
+static int touch_button;	/* the button this touch is holding, 0 if none */
+
+static int
+button_for_fingers(int fingers)
+{
+	if (fingers >= 3) {
+		return RISCOS_RIGHT;
+	}
+	if (fingers == 2) {
+		return RISCOS_MIDDLE;
+	}
+	return RISCOS_LEFT;
+}
+
+static void
+touch_release(void)
+{
+	if (touch_button != 0) {
+		mouse_mouse_release(touch_button);
+		touch_button = 0;
+	}
+}
+
 /* ---- presenting a frame --------------------------------------------------- */
 
 static void
 present(void)
 {
+	pthread_mutex_lock(&frame_mutex);
 	if (!frame.have || frame.pixels == NULL) {
+		pthread_mutex_unlock(&frame_mutex);
 		return;
 	}
 
@@ -266,24 +619,38 @@ present(void)
 		if (texture != NULL) {
 			SDL_DestroyTexture(texture);
 		}
-		/* ARGB8888 to match the core's uint32_t pixels. */
-		texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+		/*
+		 * RGB888 (which is XRGB8888: the top byte is ignored) rather than
+		 * ARGB8888. The core writes 0x00RRGGBB, so the alpha byte is zero, and
+		 * with a format that honours alpha the whole frame is transparent and
+		 * the screen stays black while frames arrive perfectly well. Blending
+		 * is turned off for the same reason.
+		 */
+		texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB888,
 		    SDL_TEXTUREACCESS_STREAMING, frame.w, frame.h);
 		if (texture == NULL) {
 			LOGE("SDL_CreateTexture: %s", SDL_GetError());
+			pthread_mutex_unlock(&frame_mutex);
 			return;
 		}
+		SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
 		tex_w = frame.w;
 		tex_h = frame.h;
 	}
 
-	SDL_UpdateTexture(texture, NULL, frame.pixels, frame.w * 4);
+	if (SDL_UpdateTexture(texture, NULL, frame.pixels, frame.w * 4) != 0) {
+		LOGE("SDL_UpdateTexture: %s", SDL_GetError());
+	}
 	SDL_RenderClear(renderer);
 	/* Letterboxed to the guest's aspect ratio rather than stretched: a RISC OS
 	   mode on a 16:10 tablet would otherwise be visibly wrong. */
-	SDL_RenderCopy(renderer, texture, NULL, NULL);
+	if (SDL_RenderCopy(renderer, texture, NULL, NULL) != 0) {
+		LOGE("SDL_RenderCopy: %s", SDL_GetError());
+	}
 	SDL_RenderPresent(renderer);
+
 	frame.have = 0;
+	pthread_mutex_unlock(&frame_mutex);
 }
 
 /* ---- the machine ---------------------------------------------------------- */
@@ -321,6 +688,16 @@ machine_start(void)
 	config.vram_size = 8;
 	config.refresh = 60;
 	config.cpu_idle = 0;
+	/* Absolute pointer placement, which is what mouse_mouse_move() requires (it
+	   asserts mousehack) and what a touch screen wants. */
+	config.mousehackon = 1;
+	/* DIAGNOSTIC: let a host build of this front end be driven by the debug
+	   socket, which is how the guest can be asked where it is stuck. */
+	if (getenv("RPCEMU_DEBUG_SOCKET") != NULL) {
+		config.debug_enabled = 1;
+		snprintf(config.debug_socket, sizeof(config.debug_socket), "%s",
+		    getenv("RPCEMU_DEBUG_SOCKET"));
+	}
 	if (getenv("RPCEMU_ROM_DIR") != NULL) {
 		snprintf(config.rom_dir, sizeof(config.rom_dir), "%s",
 		    getenv("RPCEMU_ROM_DIR"));
@@ -330,6 +707,11 @@ machine_start(void)
 	    rpcemu_get_datadir(), rpcemu_get_machine_datadir(), config.rom_dir);
 
 	rpcemu_model_changed(config.model);
+
+	/* Before rpcemu_start(): the core reads the clock while starting up, and a
+	   zero base there would make its first deadlines meaningless. */
+	start_ns = monotonic_ns();
+
 	rpcemu_start();
 
 	LOGI("machine started, %s backend",
@@ -340,8 +722,6 @@ machine_start(void)
 int
 main(int argc, char *argv[])
 {
-	uint64_t start_ns, iomd_next, video_next, video_interval;
-
 	NOT_USED(argc);
 	NOT_USED(argv);
 
@@ -362,25 +742,92 @@ main(int argc, char *argv[])
 		LOGE("SDL_CreateRenderer: %s", SDL_GetError());
 		return 1;
 	}
+	{
+		int ww = -1, wh = -1, ow = -1, oh = -1;
+
+		SDL_GetWindowSize(window, &ww, &wh);
+		SDL_GetRendererOutputSize(renderer, &ow, &oh);
+		LOGI("window %dx%d, renderer output %dx%d", ww, wh, ow, oh);
+	}
 
 	if (!machine_start()) {
 		return 1;
 	}
 
 	video_interval = 1000000000ULL / (config.refresh > 0 ? (unsigned) config.refresh : 60u);
-	start_ns = rpcemu_nsec_timer_ticks();
 	iomd_next = IOMD_INTERVAL_NS;
 	video_next = video_interval;
 
 	while (!quit_requested) {
 		SDL_Event ev;
-		uint64_t elapsed;
 		int n;
 
 		while (SDL_PollEvent(&ev)) {
 			switch (ev.type) {
 			case SDL_QUIT:
 				quit_requested = 1;
+				break;
+
+			case SDL_KEYDOWN:
+				if (ev.key.repeat == 0) {
+					handle_key(ev.key.keysym.scancode, 1);
+				}
+				break;
+			case SDL_KEYUP:
+				handle_key(ev.key.keysym.scancode, 0);
+				break;
+
+			/* A real mouse: the buttons are the buttons. */
+			case SDL_MOUSEMOTION:
+				if (ev.motion.which != SDL_TOUCH_MOUSEID) {
+					pointer_to(ev.motion.x, ev.motion.y);
+				}
+				break;
+			case SDL_MOUSEBUTTONDOWN:
+			case SDL_MOUSEBUTTONUP:
+				if (ev.button.which != SDL_TOUCH_MOUSEID) {
+					int b = RISCOS_LEFT;
+
+					if (ev.button.button == SDL_BUTTON_MIDDLE) {
+						b = RISCOS_MIDDLE;
+					} else if (ev.button.button == SDL_BUTTON_RIGHT) {
+						b = RISCOS_RIGHT;
+					}
+					pointer_to(ev.button.x, ev.button.y);
+					if (ev.type == SDL_MOUSEBUTTONDOWN) {
+						mouse_mouse_press(b);
+					} else {
+						mouse_mouse_release(b);
+					}
+				}
+				break;
+			case SDL_MOUSEWHEEL:
+				podulerom_mouse_wheel_change(ev.wheel.y);
+				break;
+
+			/* Touch: finger count picks the button. */
+			case SDL_FINGERDOWN: {
+				int ww = 0, wh = 0;
+
+				SDL_GetWindowSize(window, &ww, &wh);
+				pointer_to((int) (ev.tfinger.x * ww),
+				    (int) (ev.tfinger.y * wh));
+				touch_release();
+				touch_button = button_for_fingers(
+				    SDL_GetNumTouchFingers(ev.tfinger.touchId));
+				mouse_mouse_press(touch_button);
+				break;
+			}
+			case SDL_FINGERMOTION: {
+				int ww = 0, wh = 0;
+
+				SDL_GetWindowSize(window, &ww, &wh);
+				pointer_to((int) (ev.tfinger.x * ww),
+				    (int) (ev.tfinger.y * wh));
+				break;
+			}
+			case SDL_FINGERUP:
+				touch_release();
 				break;
 			case SDL_APP_WILLENTERBACKGROUND:
 				/* Android will stop giving us frames. Nothing is
@@ -398,28 +845,14 @@ main(int argc, char *argv[])
 
 		/* Run the guest. execrpcemu() also calls drawscr() when a frame is
 		   owed, which is what reaches rpcemu_video_update() above. */
+		/* Run the guest. execrpcemu() also calls drawscr() when a frame is
+		   owed, which wakes the video thread and reaches
+		   rpcemu_video_update(). */
 		for (n = 0; n < 32 && !quit_requested; n++) {
 			execrpcemu();
 		}
 
-		elapsed = rpcemu_nsec_timer_ticks() - start_ns;
-
-		for (n = 0; elapsed >= iomd_next && n < MAX_IOMD_CATCH_UP; n++) {
-			gentimerirq(elapsed);
-			iomd_next += IOMD_INTERVAL_NS;
-		}
-		if (elapsed >= iomd_next) {
-			iomd_next = elapsed + IOMD_INTERVAL_NS;
-		}
-
-		for (n = 0; elapsed >= video_next && n < MAX_VIDEO_CATCH_UP; n++) {
-			drawscre++;	/* one frame owed, as vblupdate() does */
-			video_next += video_interval;
-		}
-		if (elapsed >= video_next) {
-			video_next = elapsed + video_interval;
-		}
-
+		service_timers();
 		present();
 	}
 

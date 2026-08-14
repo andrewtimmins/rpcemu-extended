@@ -1,0 +1,93 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'uk.co.rpcemu.android'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "uk.co.rpcemu.android"
+        // API 24 is the floor because broadcast_relay.c calls getifaddrs(), which
+        // bionic gained there. That is Android 7, no real constraint on a tablet.
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName "1.1.13"
+
+        externalNativeBuild {
+            cmake {
+                // The emulator's own CMakeLists, four directories up. AGP supplies
+                // the NDK toolchain, the ABI and the platform level; everything
+                // here is the same set of options the command-line Android build
+                // uses (see docs/android.md).
+                arguments "-DRPCEMU_BUILD_TESTS=OFF",
+                          "-DRPCEMU_ENABLE_VNC=OFF",
+                          "-DRPCEMU_ENABLE_GHOSTPDL=OFF",
+                          "-DRPCEMU_DYNAREC=ON",
+                          // Keep the fetched SDL2 out of the Gradle build tree so
+                          // a clean does not throw away a 7.6MB download.
+                          "-DFETCHCONTENT_BASE_DIR=${rootDir}/../../../build-android-deps"
+                // Only the front end. Building every desktop target here would
+                // fail, since gui/ needs wxWidgets and GTK.
+                targets "main"
+            }
+        }
+
+        ndk {
+            // arm64 is what a tablet runs; x86_64 is what an emulator AVD runs and
+            // is how this gets tested on a desktop. armeabi-v7a is deliberately
+            // absent: there is no 32-bit ARM dynarec backend worth shipping and
+            // no tablet that needs it.
+            abiFilters 'arm64-v8a', 'x86_64'
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path '../../../../CMakeLists.txt'
+            version '3.22.1+'
+        }
+    }
+
+    buildTypes {
+        debug {
+            // Native debug symbols are what make a tombstone readable, and a
+            // tombstone is how a fault on somebody else's tablet gets diagnosed.
+            ndk { debugSymbolLevel 'FULL' }
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    // SDL2's Java half is vendored under org/libsdl/app - see the README there.
+    sourceSets {
+        main {
+            java.srcDirs += ['src/main/java']
+        }
+    }
+
+    packagingOptions {
+        jniLibs {
+            // The Java side loads libSDL2.so and libmain.so by name, so they must
+            // stay as real files in the APK rather than be extracted on demand.
+            useLegacyPackaging true
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.core:core-ktx:1.13.1'
+}

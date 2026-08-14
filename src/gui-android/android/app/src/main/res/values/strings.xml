@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RPCEmu</string>
+    <string name="no_roms">No ROM found.\n\nPut a RISC OS ROM in:\nAndroid/data/uk.co.rpcemu.android/files/roms/\n\nThen come back and pull to refresh.</string>
+</resources>

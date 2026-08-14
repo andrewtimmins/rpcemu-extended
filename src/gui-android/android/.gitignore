@@ -1,0 +1,10 @@
+# Gradle and AGP build outputs. AGP puts the native build under app/.cxx and the
+# APK under app/build, and both are large - a debug APK is nearly 6MB and the
+# intermediate .so files more - so they must never be committed.
+.gradle/
+build/
+app/build/
+app/.cxx/
+local.properties
+*.iml
+.idea/
