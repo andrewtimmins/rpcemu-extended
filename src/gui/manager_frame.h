@@ -133,6 +133,7 @@ private:
 	void OnStop(wxCommandEvent &event);
 	void OnReset(wxCommandEvent &event);
 	void OnRestart(wxCommandEvent &event);
+	void OnCreateShortcut(wxCommandEvent &event);
 	void OnExit(wxCommandEvent &event);
 	void OnClose(wxCloseEvent &event);
 	void OnMachineListSize(wxSizeEvent &event);
@@ -196,6 +197,7 @@ private:
 	wxMenuItem *reset_item_ = nullptr;
 	wxMenuItem *restart_item_ = nullptr;
 	wxMenuItem *resume_item_ = nullptr;
+	wxMenuItem *shortcut_item_ = nullptr;
 	wxMenuItem *stop_item_ = nullptr;
 	wxMenuItem *start_item_ = nullptr;
 
