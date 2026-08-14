@@ -728,7 +728,6 @@ void RemoteEmulatorPanel::TryCreateGlCanvas()
 
 	gl_canvas_ = new GlDisplayCanvas(this);
 	gl_canvas_->SetSize(GetClientSize());
-	gl_canvas_->SetCursor(wxCursor(wxCURSOR_BLANK));
 
 	/* The canvas asks for the newest frame from inside its paint, so that the
 	   upload is always followed by the swap that retires it. */
@@ -759,6 +758,10 @@ void RemoteEmulatorPanel::TryCreateGlCanvas()
 	gl_canvas_->Bind(wxEVT_KILL_FOCUS, &RemoteEmulatorPanel::OnKillFocus, this);
 
 	gl_canvas_->SetFocus();
+
+	/* The canvas is new, so it has whatever cursor it was born with. One place
+	   decides which cursor is right; ask it rather than guessing here. */
+	UpdateCursor();
 #endif
 #endif
 }
