@@ -34,7 +34,12 @@
 #include <wx/textdlg.h>
 #include <wx/choicdlg.h>
 #include <wx/filedlg.h>
+#include <wx/ffile.h>
 #include <wx/tokenzr.h>
+
+#ifdef _WIN32
+#include <shlobj.h>	/* IShellLink, IPersistFile */
+#endif
 
 #include "about_dialog.h"
 #include "check_update.h"
@@ -76,6 +81,7 @@ enum {
 	ID_RESET,
 	ID_RESTART,
 	ID_RESUME,
+	ID_SHORTCUT,
 	ID_DATA_FOLDER,
 	ID_POLL_TIMER,
 };
@@ -168,6 +174,7 @@ wxBEGIN_EVENT_TABLE(ManagerFrame, wxFrame)
 	EVT_MENU(ID_STOP, ManagerFrame::OnStop)
 	EVT_MENU(ID_RESET, ManagerFrame::OnReset)
 	EVT_MENU(ID_RESTART, ManagerFrame::OnRestart)
+	EVT_MENU(ID_SHORTCUT, ManagerFrame::OnCreateShortcut)
 	EVT_MENU(wxID_EXIT, ManagerFrame::OnExit)
 	EVT_CLOSE(ManagerFrame::OnClose)
 	EVT_TIMER(ID_POLL_TIMER, ManagerFrame::OnPollTimer)
@@ -535,6 +542,10 @@ void ManagerFrame::BuildMenus()
 	machine_menu->AppendSeparator();
 	reset_item_ = machine_menu->Append(ID_RESET, "&Reset");
 	restart_item_ = machine_menu->Append(ID_RESTART, "Re&start");
+	machine_menu->AppendSeparator();
+	shortcut_item_ = machine_menu->Append(ID_SHORTCUT, "Create S&hortcut...");
+	shortcut_item_->SetHelp(
+	    "A shortcut that opens this machine directly, without the manager");
 
 	auto *menu_bar = new wxMenuBar();
 	menu_bar->Append(file_menu, "&File");
@@ -856,6 +867,7 @@ void ManagerFrame::UpdateButtons()
 	if (stop_item_ != nullptr) stop_item_->Enable(is_running);
 	if (reset_item_ != nullptr) reset_item_->Enable(is_live);
 	if (restart_item_ != nullptr) restart_item_->Enable(is_live);
+	if (shortcut_item_ != nullptr) shortcut_item_->Enable(have_selection);
 }
 
 void ManagerFrame::DiscoverAlreadyRunningMachines()
@@ -1242,7 +1254,7 @@ void ManagerFrame::OnMachineActivated(wxListEvent & /*event*/)
 	StartMachine(name);
 }
 
-/* Start and Stop on the machine that was clicked. */
+/* The machine that was clicked: start it, stop it, or make a shortcut to it. */
 void ManagerFrame::OnMachineRightClick(wxListEvent &event)
 {
 	/* Right-clicking does not move the selection by itself, so without this the
@@ -1265,6 +1277,8 @@ void ManagerFrame::OnMachineRightClick(wxListEvent &event)
 	menu.Append(ID_STOP, "Stop");
 	menu.Enable(ID_START, !is_running);
 	menu.Enable(ID_STOP, is_running);
+	menu.AppendSeparator();
+	menu.Append(ID_SHORTCUT, "Create Shortcut...");
 
 	PopupMenu(&menu);
 }
@@ -1713,6 +1727,138 @@ void ManagerFrame::OnReset(wxCommandEvent & /*event*/)
 	it->second.panel->SendRequest(request);
 }
 
+
+/*
+ * A shortcut that opens one machine, without the manager.
+ *
+ * Written where the user says, and a snapshot of how things are now: it names
+ * the binary and the machine by their current paths, so moving either means
+ * making the shortcut again.
+ *
+ * wxWidgets has nothing for this - a shortcut is whatever the desktop it is
+ * dropped on understands - so there is a writer per platform.
+ */
+#ifdef _WIN32
+/*
+ * A .lnk, through the shell's own COM interfaces. The arguments are a separate
+ * field rather than part of the path, which is why this cannot be a text file.
+ */
+static bool WriteShortcut(const wxString &path, const wxString &exe,
+                          const wxString &args, const wxString &working_dir,
+                          const wxString &description)
+{
+	IShellLinkW *link = nullptr;
+	bool ok = false;
+
+	/* Apartment threaded, and tolerant of somebody having already done it:
+	   RPC_E_CHANGED_MODE means the process is initialised the other way, which
+	   is still usable here. */
+	const HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+	const bool uninit = SUCCEEDED(init) || init == RPC_E_CHANGED_MODE;
+
+	if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+	        IID_IShellLinkW, (void **) &link))) {
+		IPersistFile *file = nullptr;
+
+		link->SetPath(exe.wc_str());
+		link->SetArguments(args.wc_str());
+		link->SetWorkingDirectory(working_dir.wc_str());
+		link->SetDescription(description.wc_str());
+		/* The emulator's own icon, from the binary itself. */
+		link->SetIconLocation(exe.wc_str(), 0);
+
+		if (SUCCEEDED(link->QueryInterface(IID_IPersistFile, (void **) &file))) {
+			ok = SUCCEEDED(file->Save(path.wc_str(), TRUE));
+			file->Release();
+		}
+		link->Release();
+	}
+
+	if (uninit) {
+		CoUninitialize();
+	}
+	return ok;
+}
+#elif defined(__WXOSX__)
+/*
+ * A .command file, run in Terminal: macOS has no shortcut that carries
+ * arguments. Through "open" rather than the binary inside the bundle, which
+ * would bypass the icon and the dock; -n for a new instance, without which the
+ * arguments are dropped; --args last, as it must be.
+ */
+static bool WriteShortcut(const wxString &path, const wxString &exe,
+                          const wxString &args, const wxString &working_dir,
+                          const wxString &description)
+{
+	wxFFile file(path, "wb");
+
+	if (!file.IsOpened()) {
+		return false;
+	}
+
+	/* Contents/MacOS/<binary> back up to the .app itself. */
+	wxFileName bundle(exe);
+
+	bundle.RemoveLastDir();
+	bundle.RemoveLastDir();
+
+	const wxString app = bundle.GetPath();
+	wxString text;
+
+	text << "#!/bin/sh\n"
+	     << "# " << description << "\n"
+	     << "open -n -a \"" << app << "\" --args " << args << "\n";
+
+	if (!file.Write(text) || !file.Close()) {
+		return false;
+	}
+
+	wxFileName(path).SetPermissions(wxPOSIX_USER_READ | wxPOSIX_USER_WRITE |
+	    wxPOSIX_USER_EXECUTE | wxPOSIX_GROUP_READ | wxPOSIX_GROUP_EXECUTE |
+	    wxPOSIX_OTHERS_READ | wxPOSIX_OTHERS_EXECUTE);
+	return true;
+}
+#else
+/*
+ * A .desktop file, as packaging/rpcemu.desktop is. Executable, because a
+ * launcher that is not is shown as a text file to be opened rather than run.
+ */
+static bool WriteShortcut(const wxString &path, const wxString &exe,
+                          const wxString &args, const wxString &working_dir,
+                          const wxString &description)
+{
+	wxFFile file(path, "wb");
+
+	if (!file.IsOpened()) {
+		return false;
+	}
+
+	wxString text;
+
+	text << "[Desktop Entry]\n"
+	     << "Type=Application\n"
+	     << "Name=" << description << "\n"
+	     << "Comment=Risc PC and A7000 emulator\n"
+	     << "Exec=\"" << exe << "\" " << args << "\n"
+	     << "Path=" << working_dir << "\n"
+	     << "Icon=rpcemu\n"
+	     << "Terminal=false\n"
+	     << "Categories=Game;Emulator;\n"
+	     << "Keywords=RISC OS;Acorn;RiscPC;\n";
+
+	if (!file.Write(text) || !file.Close()) {
+		return false;
+	}
+
+	/* 0755. A .desktop file on the desktop is only offered as a launcher when
+	   it can be executed; without this the file manager shows it as text. */
+	wxFileName(path).SetPermissions(wxPOSIX_USER_READ | wxPOSIX_USER_WRITE |
+	    wxPOSIX_USER_EXECUTE | wxPOSIX_GROUP_READ | wxPOSIX_GROUP_EXECUTE |
+	    wxPOSIX_OTHERS_READ | wxPOSIX_OTHERS_EXECUTE);
+	return true;
+}
+#endif
+
 void ManagerFrame::OnRestart(wxCommandEvent & /*event*/)
 {
 	if (active_machine_.empty()) {
@@ -1725,6 +1871,67 @@ void ManagerFrame::OnRestart(wxCommandEvent & /*event*/)
 	IpcRequest request;
 	request.type = IpcRequestType::Restart;
 	it->second.panel->SendRequest(request);
+}
+
+void ManagerFrame::OnCreateShortcut(wxCommandEvent & /*event*/)
+{
+	const wxString name = SelectedMachineName();
+
+	if (name.empty()) {
+		return;
+	}
+
+	const wxString exe = wxStandardPaths::Get().GetExecutablePath();
+	wxString args = wxString::Format("--machine \"%s\"", name);
+
+	/*
+	 * --datadir on the same terms StartMachine uses it: it also decides where
+	 * the read-only payload is looked for, so passing it when the two
+	 * directories differ would send the machine hunting for its CMOS template
+	 * and podule ROMs in the data folder, where they are not.
+	 */
+	const wxString datadir = wxString::FromUTF8(rpcemu_get_datadir());
+	const wxString resourcedir = wxString::FromUTF8(rpcemu_get_resourcedir());
+
+	if (!datadir.empty() && datadir == resourcedir) {
+		args << " --datadir \"" << datadir << '"';
+	}
+
+#ifdef _WIN32
+	const wxString extension = ".lnk";
+	const wxString wildcard = "Shortcuts (*.lnk)|*.lnk";
+#elif defined(__WXOSX__)
+	const wxString extension = ".command";
+	const wxString wildcard = "Shell commands (*.command)|*.command";
+#else
+	const wxString extension = ".desktop";
+	const wxString wildcard = "Desktop entries (*.desktop)|*.desktop";
+#endif
+
+	/* The desktop, which is where a shortcut is usually wanted. Not forced:
+	   the applications menu is a folder away, and some people keep neither. */
+	wxFileName desktop(wxStandardPaths::Get().GetDocumentsDir(), wxEmptyString);
+
+	desktop.AppendDir("Desktop");
+
+	wxFileDialog dialog(this, "Create Shortcut",
+	    desktop.DirExists() ? desktop.GetPath() : wxString(),
+	    ConfigPathsSanitizeName(name) + extension,
+	    wildcard, wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+
+	if (dialog.ShowModal() != wxID_OK) {
+		return;
+	}
+
+	if (!WriteShortcut(dialog.GetPath(), exe, args,
+	        wxFileName(exe).GetPath(), name)) {
+		wxMessageBox("The shortcut could not be written.",
+		    "RPCEmu Extended Manager", wxOK | wxICON_ERROR, this);
+		return;
+	}
+
+	rpclog("Manager: shortcut for '%s' written to %s\n",
+	    name.utf8_str().data(), dialog.GetPath().utf8_str().data());
 }
 
 /*
