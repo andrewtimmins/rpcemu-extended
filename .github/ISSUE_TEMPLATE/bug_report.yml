@@ -7,7 +7,7 @@ body:
       value: |
         Thanks for taking the time to report this.
 
-        Only the starred fields are needed. They are the ones that otherwise
+        Only the required fields are needed. They are the ones that otherwise
         have to be asked for before anything can start: almost every
         difference in behaviour comes down to the host or to which build it is.
 
@@ -64,18 +64,30 @@ body:
         - Most times
         - Occasionally
         - Only happened once
+        - Not sure
+      default: 4
     validations:
       required: false
 
-  - type: textarea
-    id: log
+  - type: upload
+    id: support-files
     attributes:
       label: Support files
       description: >
         Help > Save Support Files writes a zip holding the log, this machine's
-        settings and its CMOS. Attach it to this issue, or paste anything
-        relevant from rpclog.txt in here instead. Leave it empty if neither
-        applies.
+        settings and its CMOS, with the VNC password and any home folder paths
+        taken out of both. Drop it here.
+    validations:
+      required: false
+      accept: ".zip"
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Anything from the log
+      description: >
+        If you would rather not attach the whole zip, paste whatever looks
+        relevant from rpclog.txt instead.
       render: text
     validations:
       required: false
