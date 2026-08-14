@@ -166,7 +166,6 @@ private:
 	 */
 	void CreateSupportBundle();
 
-	wxMenu *machine_file_menu_ = nullptr;
 	wxMenu *machine_disc_menu_ = nullptr;
 	wxMenu *machine_settings_menu_ = nullptr;
 	wxMenu *machine_tools_menu_ = nullptr;

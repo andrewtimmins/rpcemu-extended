@@ -543,6 +543,13 @@ void ManagerFrame::BuildMenus()
 	reset_item_ = machine_menu->Append(ID_RESET, "&Reset");
 	restart_item_ = machine_menu->Append(ID_RESTART, "Re&start");
 	machine_menu->AppendSeparator();
+	machine_menu->Append(ID_MENU_SUSPEND, "Sus&pend");
+	machine_menu->AppendCheckItem(ID_MENU_SUSPEND_ON_EXIT, "Suspend on E&xit");
+	machine_menu->Append(ID_MENU_SAVE_STATE, "Save State...");
+	machine_menu->Append(ID_MENU_LOAD_STATE, "Load State...");
+	machine_menu->AppendSeparator();
+	machine_menu->Append(ID_MENU_SCREENSHOT, "Scr&eenshot...");
+	machine_menu->AppendSeparator();
 	shortcut_item_ = machine_menu->Append(ID_SHORTCUT, "Create S&hortcut...");
 	shortcut_item_->SetHelp(
 	    "A shortcut that opens this machine directly, without the manager");
@@ -571,14 +578,6 @@ void ManagerFrame::BuildMenus()
  */
 void ManagerFrame::BuildMachineMenus(wxMenuBar *menu_bar)
 {
-	machine_file_menu_ = new wxMenu();
-	machine_file_menu_->Append(ID_MENU_SCREENSHOT, "Screenshot...");
-	machine_file_menu_->Append(ID_MENU_SAVE_STATE, "Save State...");
-	machine_file_menu_->Append(ID_MENU_LOAD_STATE, "Load State...");
-	machine_file_menu_->AppendSeparator();
-	machine_file_menu_->Append(ID_MENU_SUSPEND, "Suspend");
-	machine_file_menu_->AppendCheckItem(ID_MENU_SUSPEND_ON_EXIT, "Suspend on Exit");
-
 	machine_disc_menu_ = new wxMenu();
 	auto *floppy_menu = new wxMenu();
 	floppy_menu->Append(ID_MENU_LOAD_DISC0, "Load Drive :0...");
@@ -642,7 +641,6 @@ void ManagerFrame::BuildMachineMenus(wxMenuBar *menu_bar)
 	machine_help_menu_->Append(ID_MENU_ABOUT_RISCOS, "About RISC OS");
 	machine_help_menu_->Append(wxID_ABOUT, "About RPCEmu");
 
-	menu_bar->Append(machine_file_menu_, "&Media");
 	menu_bar->Append(machine_disc_menu_, "&Disc");
 	menu_bar->Append(machine_settings_menu_, "&Settings");
 	menu_bar->Append(machine_tools_menu_, "&Tools");
@@ -2149,7 +2147,7 @@ void ManagerFrame::UpdateMachineMenuState()
 		ID_MENU_SUPPORT_BUNDLE, ID_MENU_CHECK_UPDATE,
 	};
 
-	for (wxMenu *menu : { machine_file_menu_, machine_disc_menu_,
+	for (wxMenu *menu : { machine_disc_menu_,
 	                      machine_settings_menu_, machine_tools_menu_,
 	                      machine_debug_menu_, machine_help_menu_ }) {
 		if (menu == nullptr) {
@@ -2169,6 +2167,18 @@ void ManagerFrame::UpdateMachineMenuState()
 			}
 			bar->Enable(item->GetId(), have_machine);
 		}
+	}
+
+	/* Forwarded to the machine, but sharing the Machine menu with this
+	   window's own commands, which have their own rules - so they are named
+	   rather than reached by walking a menu. */
+	static const int forwarded_machine_items[] = {
+		ID_MENU_SUSPEND, ID_MENU_SUSPEND_ON_EXIT,
+		ID_MENU_SAVE_STATE, ID_MENU_LOAD_STATE, ID_MENU_SCREENSHOT,
+	};
+
+	for (int id : forwarded_machine_items) {
+		bar->Enable(id, have_machine);
 	}
 
 	for (int id : always_enabled) {
