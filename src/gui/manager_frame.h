@@ -68,6 +68,9 @@ private:
 		/* The machine's own setting, from its state report. Starts true so a
 		   machine that has not reported yet still explains itself. */
 		bool show_fullscreen_message = true;
+		/* Also from the state report. Starts false, so a machine that has not
+		   said yet is asked about rather than stopped without warning. */
+		bool suspend_on_exit = false;
 	};
 
 	void BuildUi();
@@ -134,6 +137,9 @@ private:
 	void OnReset(wxCommandEvent &event);
 	void OnRestart(wxCommandEvent &event);
 	void OnCreateShortcut(wxCommandEvent &event);
+	void OnMinimalUi(wxCommandEvent &event);
+	void OnMachineListToggle(wxCommandEvent &event);
+	void ApplyMinimalUi(bool minimal);
 	void OnExit(wxCommandEvent &event);
 	void OnClose(wxCloseEvent &event);
 	void OnMachineListSize(wxSizeEvent &event);
@@ -197,6 +203,9 @@ private:
 	wxMenuItem *restart_item_ = nullptr;
 	wxMenuItem *resume_item_ = nullptr;
 	wxMenuItem *shortcut_item_ = nullptr;
+	wxMenuItem *minimal_ui_item_ = nullptr;
+	wxMenuItem *machine_list_item_ = nullptr;
+	bool minimal_ui_ = false;
 	wxMenuItem *stop_item_ = nullptr;
 	wxMenuItem *start_item_ = nullptr;
 

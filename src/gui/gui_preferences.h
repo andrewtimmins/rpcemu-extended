@@ -73,6 +73,17 @@ void SetHardwareAccelerationOverride(int state);
 /* The answer to act on: the override if there is one, the preference if not. */
 bool HardwareAccelerationWanted();
 
+/* Whether the Manager opens with its toolbar and machine list hidden. The View
+   menu turns it off and on for a session without writing it back. */
+bool GetMinimalUi();
+void SetMinimalUi(bool minimal);
+
+/* Whether stopping a machine, and closing with machines running, ask first. */
+bool GetWarnOnStop();
+void SetWarnOnStop(bool warn);
+bool GetWarnOnExit();
+void SetWarnOnExit(bool warn);
+
 std::string GetDefaultMachine();
 void SetDefaultMachine(const std::string &machine_name);
 void ClearDefaultMachine();

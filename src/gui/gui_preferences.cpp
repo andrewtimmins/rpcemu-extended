@@ -154,6 +154,77 @@ SetHardwareAcceleration(bool enabled)
 	delete config;
 }
 
+/*
+ * Whether the Manager opens with its toolbar and machine list hidden.
+ *
+ * Off when absent, so a preferences file written before this existed opens the
+ * window the way it always did.
+ */
+bool
+GetMinimalUi()
+{
+	wxConfig *config = OpenPreferences();
+	bool minimal = false;
+
+	config->Read("MinimalUi", &minimal, false);
+	delete config;
+	return minimal;
+}
+
+void
+SetMinimalUi(bool minimal)
+{
+	wxConfig *config = OpenPreferences();
+
+	config->Write("MinimalUi", minimal);
+	config->Flush();
+	delete config;
+}
+
+/* Whether stopping a machine asks first. On when absent. */
+bool
+GetWarnOnStop()
+{
+	wxConfig *config = OpenPreferences();
+	bool warn = true;
+
+	config->Read("WarnOnStop", &warn, true);
+	delete config;
+	return warn;
+}
+
+void
+SetWarnOnStop(bool warn)
+{
+	wxConfig *config = OpenPreferences();
+
+	config->Write("WarnOnStop", warn);
+	config->Flush();
+	delete config;
+}
+
+/* Whether closing with machines running says so. On when absent. */
+bool
+GetWarnOnExit()
+{
+	wxConfig *config = OpenPreferences();
+	bool warn = true;
+
+	config->Read("WarnOnExit", &warn, true);
+	delete config;
+	return warn;
+}
+
+void
+SetWarnOnExit(bool warn)
+{
+	wxConfig *config = OpenPreferences();
+
+	config->Write("WarnOnExit", warn);
+	config->Flush();
+	delete config;
+}
+
 /* The command line's answer for this session, or none. See
    display_acceleration.h for why the precedence is spelled out separately. */
 static int g_acceleration_override = DISPLAY_ACCELERATION_NO_OVERRIDE;
