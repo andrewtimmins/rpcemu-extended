@@ -126,6 +126,12 @@ RISC OS Open — applications, fonts, `!System` and a `!Boot` configured for the
 ROM you chose. Without it the machine starts to a command prompt with nothing on
 it.
 
+**Whether to set up networking.** Leave this ticked too. It adds the `!Boot`
+files that bring the network up when RISC OS starts: an address from DHCP, name
+resolution, and Access sharing so the machine can see others on your network.
+Without it networking has to be configured by hand inside RISC OS, which is
+fiddly. It needs the hard disc, since the files go into that disc's `!Boot`.
+
 You will be asked to accept RISC OS Open's licence, which is theirs.
 
 Select the machine and press **Start**.
@@ -137,10 +143,29 @@ Select the machine and press **Start**.
 | **Edit...** | The machine's settings, before it starts |
 | **Clone...** | A complete copy, including its hard disc — the safe way to experiment |
 | **Delete** | Removes the machine and its files |
-| **Set as Default** | That machine starts when you open RPCEmu |
-| **Resume** | Picks up a machine you suspended, exactly where it was |
-| **Load State...** | Opens a snapshot you saved |
-| **Options ▸ Data Folder...** | Moves where everything is kept |
+
+The rest is on the menus:
+
+| Menu item | What it does |
+| --- | --- |
+| **Machine ▸ Resume** | Picks up a machine you suspended, exactly where it was |
+| **Media ▸ Load State...** | Opens a snapshot you saved |
+| **Settings ▸ Default Machine** | That machine opens when you start RPCEmu |
+| **File ▸ Settings...** | Where everything is kept, and how the display is drawn |
+
+### Opening one machine every time
+
+If you always use the same machine, you do not have to pick it from the list.
+Tick **Open this machine automatically at startup** on the machine's **System**
+settings — or **Settings ▸ Default Machine** while it is running — and RPCEmu
+opens straight into it.
+
+**Hold Shift while starting** to get the list back. You will want that if the
+machine you chose stops working, and it is the only way back other than editing
+the setting from another machine.
+
+`--machine <name>` does the same thing for one run without changing the setting;
+see [Running it from a command line](#running-it-from-a-command-line).
 
 ## Choosing a machine to emulate
 
@@ -500,18 +525,39 @@ Snapshots belong to the machine that made them.
 ## Several machines at once
 
 Run as many as your computer will take. Each is its own process with its own
-window, its own network address and its own ports, so they do not tread on one
-another. A machine refuses to start twice, because two copies writing to one
-disc image will corrupt it — and you would not find out until much later.
+network address and its own ports, so they do not tread on one another. A
+machine refuses to start twice, because two copies writing to one disc image
+will corrupt it — and you would not find out until much later.
 
-Start them from the list, or by name:
+Each machine costs a core when busy, plus its own RAM.
+
+### From the manager window
+
+The window RPCEmu opens on lists your machines down the left and shows one of
+them on the right. Select a machine and press **Start**; select another and
+start that one too. The list says which are running, and clicking a running
+machine switches the display to it. The one being shown is named in the title
+bar and in the status bar.
+
+**Closing the window does not stop the machines.** They keep running, and
+opening RPCEmu again reconnects to them — you are asked about this the first
+time, with the option to stop them instead. **Machine ▸ Stop** shuts one down.
+
+Drag the divider to make the list wider or narrower, or use the arrow at the
+bottom left to hide it and give the whole window to the machine.
+
+### One window per machine
+
+`--machine` starts a machine in a window of its own, with no manager:
 
 ```sh
 ./rpcemu-recompiler --machine os530 &
 ./rpcemu-recompiler --machine os371 &
 ```
 
-Each machine costs a core when busy, plus its own RAM.
+That is the older arrangement, and it still works. It is also what a machine
+started from the manager runs as underneath — the manager draws that machine's
+screen in its own window rather than letting it open one.
 
 ## Speed and CPU usage
 
