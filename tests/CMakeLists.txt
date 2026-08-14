@@ -441,6 +441,11 @@ enable_language(CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Skipped on Android: this is the one test that needs wxWidgets, and there is no wx
+# for Android (see docs/android.md). Everything else here is core or plain C++, so
+# the rest of the suite cross-compiles and can be run on a device or an emulator,
+# which is the point - a port whose tests cannot run is a port nobody can trust.
+if(NOT ANDROID)
 # The doing, on real files: copy, verify, delete, and above all what happens when a
 # transfer fails half way through. Needs wx (wxBase, for file and directory work)
 # but NOT a display: FolderTransferRun() creates its progress dialogue only when
@@ -456,7 +461,13 @@ target_include_directories(test_folder_transfer PRIVATE
 target_link_libraries(test_folder_transfer PRIVATE rpcemu_core m)
 rpcemu_setup_wxwidgets(test_folder_transfer)
 rpcemu_add_test(test_folder_transfer)
+endif()
 
+# Skipped on Android: the transport is POSIX shared memory, and bionic has no
+# shm_open/shm_unlink - Android uses ashmem/memfd instead. This is the Manager's
+# framebuffer channel, which is desktop-only, so there is nothing here for Android
+# to test rather than something Android is failing at.
+if(NOT ANDROID)
 # machine_ipc: the shared-memory framebuffer and local control-channel
 # transport the Manager window and a --managed machine talk over (see
 # src/gui/machine_ipc.h). Pure std::thread + BSD/Winsock sockets, so this
@@ -482,6 +493,7 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(test_machine_ipc PRIVATE rt)
 endif()
 rpcemu_add_test(test_machine_ipc)
+endif()
 
 # What the machine editor warns about when a HostFS folder is chosen. Split out of
 # the dialog because the decision was wrong in a way that read correctly: the
@@ -768,7 +780,13 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 45)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 45)
+if(ANDROID)
+    # Two are desktop-only: test_folder_transfer needs wxWidgets, which does not
+    # exist for Android, and test_machine_ipc tests the Manager's POSIX shared
+    # memory transport, which bionic has no shm_open for.
+    math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} - 2")
+endif()	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 10")	# JIT differential
 endif()

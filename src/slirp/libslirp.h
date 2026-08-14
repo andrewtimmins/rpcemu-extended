@@ -6,7 +6,13 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #else
+/* sys/select.h for fd_set, which the slirp_select_* prototypes below take.
+   glibc happens to declare it via netinet/in.h's own includes, so this header
+   compiled for years without asking for it; bionic does not, and an Android
+   build fails with "unknown type name 'fd_set'" in a header that looks
+   self-contained. Asking for what is used is right either way. */
 #include <netinet/in.h>
+#include <sys/select.h>
 #endif
 
 struct Slirp;

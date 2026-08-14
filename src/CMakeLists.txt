@@ -159,7 +159,14 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "ppc|ppc64|powerpc")
     target_compile_definitions(rpcemu_core PUBLIC _RPCEMU_BIG_ENDIAN)
 endif()
 
-target_link_libraries(rpcemu_core PUBLIC pthread ${CMAKE_DL_LIBS})
+# bionic puts pthreads in libc, so there is no libpthread to link and asking for
+# one fails at link time with "unable to find library -lpthread". libdl exists as
+# a stub there, so CMAKE_DL_LIBS is still fine.
+if(ANDROID)
+    target_link_libraries(rpcemu_core PUBLIC ${CMAKE_DL_LIBS})
+else()
+    target_link_libraries(rpcemu_core PUBLIC pthread ${CMAKE_DL_LIBS})
+endif()
 
 # Windows: Winsock (control sockets, SLiRP NAT, TCP modem, broadcast relay) and
 # the IP Helper API (adapter enumeration in broadcast_relay.c).
