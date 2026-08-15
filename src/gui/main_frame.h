@@ -119,6 +119,15 @@ enum MainFrameMenuId {
 	ID_MENU_CHECK_UPDATE,
 };
 
+/*
+ * These ids cross a process boundary: the Manager forwards a menu command to a
+ * machine by id (machine_ipc.h), so the two processes must agree on what each
+ * one means. Append to the enum above rather than inserting into it, or an old
+ * Manager talking to a newer machine sends one command and gets another.
+ */
+constexpr int kForwardableFirst = ID_MENU_SCREENSHOT;
+constexpr int kForwardableLast = ID_MENU_CHECK_UPDATE;
+
 enum TimerId {
 	ID_TIMER_MIPS = wxID_HIGHEST + 100,
 	ID_TIMER_VIDEO,
@@ -128,6 +137,10 @@ enum TimerId {
 	ID_TIMER_NETWORK_LED,
 	ID_TIMER_CLIPBOARD,
 };
+
+/* The menu ids are bound as a range, so they must not grow into the timers. */
+static_assert(kForwardableLast < ID_TIMER_MIPS,
+    "menu command ids have run into the timer ids");
 
 enum StatusBarField {
 	STATUS_MIPS = 0,
