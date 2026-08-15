@@ -247,8 +247,17 @@ void MainFrame::BuildMenus()
 	    ->SetHelp("Visit RISC OS Open, who publish RISC OS.");
 	help_menu->Append(wxID_ABOUT, "About RPCEmu Extended...");
 
+	/* A tick for the session, not a preference: the one in the Manager's
+	   Settings is what decides how the next window opens. */
+	auto *view_menu = new wxMenu();
+
+	minimal_ui_item_ = view_menu->AppendCheckItem(ID_MENU_MINIMAL_UI,
+	    "&Minimal Interface");
+	minimal_ui_item_->SetHelp("Hide the toolbar and the status bar.");
+
 	auto *menu_bar = new wxMenuBar;
 	menu_bar->Append(file_menu, "&File");
+	menu_bar->Append(view_menu, "&View");
 	menu_bar->Append(disc_menu, "&Disc");
 	menu_bar->Append(settings_menu, "&Settings");
 	menu_bar->Append(tools_menu, "&Tools");
@@ -291,6 +300,7 @@ void MainFrame::BuildMenus()
 	BindMenuItem(settings_menu, ID_MENU_MACHINE, this, &MainFrame::OnMachine);
 	BindMenuItem(settings_menu, ID_MENU_MUTE, this, &MainFrame::OnMute);
 	BindMenuItem(settings_menu, ID_MENU_FULLSCREEN, this, &MainFrame::OnFullscreen);
+	BindMenuItem(view_menu, ID_MENU_MINIMAL_UI, this, &MainFrame::OnMinimalUi);
 	BindMenuItem(settings_menu, ID_MENU_INTEGER_SCALING, this, &MainFrame::OnIntegerScaling);
 	BindMenuItem(settings_menu, ID_MENU_FIT_TO_WINDOW, this, &MainFrame::OnFitToWindow);
 	BindMenuItem(settings_menu, ID_MENU_FOLLOW_HOST_DISPLAY, this,

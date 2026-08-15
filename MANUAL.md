@@ -182,7 +182,7 @@ another computer does not bring them along.
 | --- | --- |
 | **Data folder** | Where machines, ROMs, discs and settings are kept. **Change...** moves them, and offers to bring your files along |
 | **Enable hardware acceleration** | Draws a machine's screen on the graphics card. On by default, and falls back on its own where it cannot start. Applies only to a machine shown in the manager |
-| **Start with a minimal interface** | Open with the toolbar and machine list hidden |
+| **Start with a minimal interface** | Open with the toolbar hidden, along with the machine list in the manager and the status bar in a machine's own window |
 | **Ask before stopping a machine** | Not asked for a machine set to suspend on exit, which loses nothing by being stopped |
 | **Ask when closing with machines running** | The warning when the window closes with something still going |
 | **Automatically check for updates** | Looks for a newer release once a day, when the manager opens. On by default |
@@ -204,13 +204,19 @@ released version to compare itself with.
 
 ### A less cluttered window
 
-**View ▸ Minimal Interface** hides the toolbar and the machine list, leaving the
-window to the machine it is showing. It is a tick rather than a preference: it
+**View ▸ Minimal Interface** hides the manager's toolbar and machine list,
+leaving the window to the machine it is showing. It is a tick rather than a preference: it
 lasts for the session and does not change what the next launch does. The
 **Settings** entry above is the one that persists.
 
 **View ▸ Machine List** shows and hides the list on its own — the same thing as
 the arrow at the left of the status bar, which is the quicker way to reach it.
+
+A machine's own window has the same **View ▸ Minimal Interface**, where it hides
+the toolbar and the status bar — the MIPS figures and the drive lights along the
+bottom. It is a tick there too, lasting the session and writing nothing back, but
+it opens the way the **Settings** entry above says, so a machine started from a
+shortcut or with `--machine` looks the way the manager would have.
 
 ## Choosing a machine to emulate
 
