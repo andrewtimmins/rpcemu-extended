@@ -827,6 +827,11 @@ void ManagerFrame::RefreshMachineList()
 {
 	const wxString was_selected = SelectedMachineName();
 
+	/* Emptying and refilling the rows makes the list announce selections that
+	   the user did not make - a deselect from DeleteAllItems() with the names
+	   already gone, which would take the active machine away with it. */
+	rebuilding_machine_list_ = true;
+
 	machine_list_->DeleteAllItems();
 	machine_names_.clear();
 
@@ -866,8 +871,16 @@ void ManagerFrame::RefreshMachineList()
 		    wxLIST_STATE_SELECTED | wxLIST_STATE_FOCUSED);
 	}
 
+	rebuilding_machine_list_ = false;
 	running_count_ = running_count;
-	RefreshUiState();
+
+	/* The rows the user was pointing at are back, so let the selection mean
+	   what it did before: the events during the rebuild were ignored. */
+	if (SelectedMachineName() != active_machine_) {
+		ShowMachinePanel(SelectedMachineName());
+	} else {
+		RefreshUiState();
+	}
 }
 
 /*
@@ -916,6 +929,21 @@ wxString ManagerFrame::SelectedMachineName() const
 	return machine_names_[(size_t) sel];
 }
 
+/* Only when it actually changes: on MSW setting a tool's bitmap re-realizes the
+   whole toolbar, and reports arrive repeatedly saying the same thing. */
+void ManagerFrame::SetMuteToolState(bool muted)
+{
+	if (tool_bar_ == nullptr || muted == mute_tool_muted_) {
+		return;
+	}
+	mute_tool_muted_ = muted;
+	tool_bar_->SetToolNormalBitmap(ID_MENU_MUTE, ToolbarIconMute(muted));
+
+	/* The new bitmap is not always drawn on its own. */
+	tool_bar_->Refresh();
+	tool_bar_->Update();
+}
+
 /* Everything that depends on which machine is selected, active or running. The
    three are idempotent, so any path that moves a machine can just call this.
    RefreshMachineList() is not here: rebuilding the rows is the costly part. */
@@ -950,6 +978,7 @@ void ManagerFrame::UpdateButtons()
 		tool_bar_->EnableTool(ID_START, have_selection && !is_running);
 		tool_bar_->EnableTool(ID_STOP, is_running);
 		tool_bar_->EnableTool(ID_RESET, is_live);
+		tool_bar_->Refresh();	/* see UpdateMachineMenuState */
 	}
 	if (start_item_ != nullptr) start_item_->Enable(have_selection && !is_running);
 	/* Resume only offers itself when there is something to resume from: a
@@ -1093,8 +1122,19 @@ void ManagerFrame::AttachPanelFor(const wxString &name, const wxString &shared_f
 	display_book_->AddPage(panel, name, false);
 
 	RefreshMachineList();
-	if (name == SelectedMachineName() || newly_started) {
+
+	/* Only if it is still the machine the user is pointing at. A machine takes
+	   a second or two to come up, and showing it because it was started puts it
+	   on screen over whatever was selected while it did. */
+	if (name == SelectedMachineName()) {
 		ShowMachinePanel(name);
+	} else {
+		/* Ask now rather than when it is first shown: a machine only reports
+		   when asked, so without this its settings are unknown until somebody
+		   looks at it, and the toolbar has nothing to be set from. */
+		IpcRequest request;
+		request.type = IpcRequestType::RequestState;
+		panel->SendRequest(request);
 	}
 }
 
@@ -1236,6 +1276,7 @@ void ManagerFrame::ShowMachinePanel(const wxString &name)
 {
 	auto it = running_.find(name);
 
+
 	if (active_machine_ != name && !active_machine_.empty()) {
 		auto prev = running_.find(active_machine_);
 		if (prev != running_.end() && prev->second.panel != nullptr) {
@@ -1248,6 +1289,10 @@ void ManagerFrame::ShowMachinePanel(const wxString &name)
 		display_book_->SetSelection((size_t) it->second.book_page);
 		it->second.panel->SetActive(true);
 
+		/* What this machine last said, now, rather than leaving the previous
+		   machine's answer up until the reply below arrives. */
+		SetMuteToolState(it->second.muted);
+
 		/* The menus now belong to a different machine, so ask it what its
 		   tick-boxes say rather than leaving the previous machine's answers
 		   on display. */
@@ -1257,6 +1302,7 @@ void ManagerFrame::ShowMachinePanel(const wxString &name)
 	} else {
 		active_machine_.clear();
 		display_book_->SetSelection((size_t) placeholder_page_);
+		SetMuteToolState(false);
 	}
 	RefreshUiState();
 }
@@ -1340,15 +1386,13 @@ void ManagerFrame::OnChildProcessEnded(const wxString &machine_name, int /*pid*/
 
 void ManagerFrame::OnMachineSelected(wxListEvent & /*event*/)
 {
-	const wxString name = SelectedMachineName();
-
-	/* ShowMachinePanel ends with the same refresh, and has to run first: it is
-	   what makes the selected machine the active one. */
-	if (!name.empty() && running_.count(name) != 0 && running_[name].panel != nullptr) {
-		ShowMachinePanel(name);
-	} else {
-		RefreshUiState();
+	if (rebuilding_machine_list_) {
+		return;
 	}
+
+	/* Always, including for a machine that is not running: that is what clears
+	   the active one, and it ends with the refresh either way. */
+	ShowMachinePanel(SelectedMachineName());
 }
 
 void ManagerFrame::OnMachineActivated(wxListEvent & /*event*/)
@@ -2295,13 +2339,13 @@ void ManagerFrame::OnMachineMenuCommand(wxCommandEvent &event)
 void ManagerFrame::UpdateMachineMenuState()
 {
 	/*
-	 * The selected machine, not the displayed one. They are usually the same,
-	 * but selecting a stopped machine while another is still on screen left
-	 * these enabled for a machine the user was no longer pointing at.
+	 * The active machine, which ShowMachinePanel sets from the selection and
+	 * clears when the selected one is not running. Deliberately not the list's
+	 * own selection: RefreshMachineList() empties and refills the rows, and
+	 * during that this would read a selection that is briefly not there.
 	 */
-	const wxString name = SelectedMachineName();
-	const bool have_machine = !name.empty() &&
-	    running_.find(name) != running_.end();
+	const bool have_machine = !active_machine_.empty() &&
+	    running_.find(active_machine_) != running_.end();
 
 	wxMenuBar *bar = GetMenuBar();
 
@@ -2376,6 +2420,9 @@ void ManagerFrame::UpdateMachineMenuState()
 		for (int id : forwarded_tools) {
 			tool_bar_->EnableTool(id, have_machine);
 		}
+
+		/* Greying a tool does not always redraw it. */
+		tool_bar_->Refresh();
 	}
 }
 
@@ -2434,6 +2481,15 @@ void ManagerFrame::ApplyStateReport(const wxString &machine, const wxString &rep
 			}
 		}
 
+		/* Likewise: the toolbar is set from this when a machine is shown. */
+		if (id == ID_MENU_MUTE) {
+			auto it = running_.find(machine);
+
+			if (it != running_.end()) {
+				it->second.muted = (value != 0);
+			}
+		}
+
 		if (!active) {
 			continue;
 		}
@@ -2462,17 +2518,8 @@ void ManagerFrame::ApplyStateReport(const wxString &machine, const wxString &rep
 
 		/* Mute also has a toolbar tool, which has to agree with its menu
 		   item or the toolbar shows the opposite of the truth. */
-		if (id == ID_MENU_MUTE && tool_bar_ != nullptr) {
-			const bool muted = value != 0;
-
-			/* Only when it actually changes: on MSW this re-realizes the
-			   whole toolbar, and reports arrive repeatedly saying the same
-			   thing. */
-			if (muted != mute_tool_muted_) {
-				mute_tool_muted_ = muted;
-				tool_bar_->SetToolNormalBitmap(ID_MENU_MUTE,
-				    ToolbarIconMute(muted));
-			}
+		if (id == ID_MENU_MUTE) {
+			SetMuteToolState(value != 0);
 		}
 	}
 }
