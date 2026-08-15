@@ -142,7 +142,20 @@
 	WS_NAME		= WS_IT_FIXED + 4	@ a name built from a directory entry
 	WS_FOUND	= WS_NAME + 16		@ a copy of the entry a lookup found
 	WS_COMP		= WS_FOUND + 32		@ one component of a path
-	WS_SIZE		= WS_COMP + 16
+
+
+	@ Fixed, and fixed at values an ADD can carry as an immediate: these two
+	@ are added to wp constantly, and a chained offset that lands on an
+	@ awkward number stops assembling.
+	WS_FILESEC	= 3072			@ a sector while copying file data
+	WS_FILES	= 3584
+	FH_USED		= 0
+	FH_VOL		= 4
+	FH_CLUSTER	= 8
+	FH_SIZE		= 12
+	FH_ENTRY	= 16
+	MAX_OPEN	= 8
+	WS_SIZE		= WS_FILES + (MAX_OPEN * FH_ENTRY)
 
 	@ Partition types worth looking at. Anything else in the table is skipped
 	@ rather than probed, so a Linux or FileCore partition is left alone.
@@ -1935,7 +1948,15 @@ fs_func:
 	cmp	pc, #0
 	ldmfd	sp!, {r0-r2, r5-r12, pc}
 
-	/* Reason 11: read disc name and boot option, R2 = buffer. */
+	/* Reason 11: read disc name and boot option, R2 = buffer.
+	 *
+	 * The buffer is not a plain string. Byte 0 is the LENGTH of the name,
+	 * the name follows at byte 1, and the boot option comes after it. Writing
+	 * the name from byte 0 instead makes FileSwitch read the name's first
+	 * character as a length - a disc called "USB STICK" then announces itself
+	 * as 85 characters of rubbish beginning "SB STICK", and every path built
+	 * from it fails to resolve.
+	 */
 fs_func_discname:
 	bl	current_volume
 	bvs	fs_func_out
@@ -1945,15 +1966,18 @@ fs_func_discname:
 	mov	r3, #0
 fs_func_dn_copy:
 	ldrb	r0, [r8, r3]
-	strb	r0, [r2, r3]
 	cmp	r0, #0
 	beq	fs_func_dn_done
+	add	r1, r3, #1
+	strb	r0, [r2, r1]
 	add	r3, r3, #1
 	cmp	r3, #11
 	blo	fs_func_dn_copy
 fs_func_dn_done:
-	mov	r0, #0
-	strb	r0, [r2, r3]
+	strb	r3, [r2]		@ the length, at the front
+	add	r1, r3, #1
+	mov	r0, #0			@ boot option: none
+	strb	r0, [r2, r1]
 	cmp	pc, #0
 	ldmfd	sp!, {r0-r2, r5-r12, pc}
 
@@ -2137,12 +2161,319 @@ copy_name_loop:
 	.ltorg
 
 
+	/* FSEntry_Open - open a file.
+	 *
+	 *   In   R0 = reason: 0 read, 1 create and update, 2 update
+	 *        R1 = name, R3 = FileSwitch's handle, R6 = special field
+	 *   Out  R0 = information word, R1 = our handle, R2 = buffer size,
+	 *        R3 = extent, R4 = space allocated
+	 *
+	 * Read only for now, and it says so rather than opening something it
+	 * cannot honour: a file opened for update that silently discards writes
+	 * is how data gets lost.
+	 */
 fs_open:
+	stmfd	sp!, {r5-r12, lr}
+	ldr	wp, [wp]
+
+	cmp	r0, #0
+	bne	fs_open_readonly
+
+	stmfd	sp!, {r1}
+	bl	current_volume
+	ldmfd	sp!, {r1}
+	bvs	fs_open_out
+	mov	r7, r0
+
+	bl	path_lookup
+	bvs	fs_open_out
+	cmp	r0, #1
+	bne	fs_open_none
+
+	@ A free slot
+	add	r8, wp, #WS_FILES
+	mov	r5, #0
+fs_open_slot:
+	ldr	r0, [r8, #FH_USED]
+	cmp	r0, #0
+	beq	fs_open_got_slot
+	add	r8, r8, #FH_ENTRY
+	add	r5, r5, #1
+	cmp	r5, #MAX_OPEN
+	blo	fs_open_slot
+	b	fs_open_toomany
+
+fs_open_got_slot:
+	ldr	r6, =WS_FOUND
+	add	r6, wp, r6
+
+	mov	r0, #1
+	str	r0, [r8, #FH_USED]
+	str	r7, [r8, #FH_VOL]
+
+	mov	r0, r6
+	mov	r1, #20
+	bl	ld16
+	mov	r9, r0, lsl #16
+	mov	r0, r6
+	mov	r1, #26
+	bl	ld16
+	orr	r9, r9, r0
+	str	r9, [r8, #FH_CLUSTER]
+
+	mov	r0, r6
+	mov	r1, #28
+	bl	ld32
+	str	r0, [r8, #FH_SIZE]
+
+	mov	r3, r0			@ extent
+	mov	r4, r0			@ and all of it is allocated
+	add	r1, r5, #1		@ our handle
+	mov	r2, #512		@ buffer size FileSwitch should use
+	@ Bit 30 says the file may be READ and bit 31 that it may be written -
+	@ that way round, which is the opposite of the obvious guess. Claiming
+	@ bit 31 alone gets "Not open for reading" on the first *Type.
+	mov	r0, #(1 << 30)
+	cmp	pc, #0
+	ldmfd	sp!, {r5-r12, pc}
+
+fs_open_none:
+	mov	r0, #0
+	mov	r1, #0
+	mov	r2, #0
+	mov	r3, #0
+	mov	r4, #0
+	cmp	pc, #0
+	ldmfd	sp!, {r5-r12, pc}
+
+fs_open_readonly:
+	adr	r0, err_readonly
+	b	fs_open_setv
+
+fs_open_toomany:
+	adr	r0, err_toomany
+
+fs_open_setv:
+	cmp	r0, #NBIT
+	cmnvc	r0, #NBIT
+
+fs_open_out:
+	ldmfd	sp!, {r5-r12, pc}
+
+err_readonly:
+	.int	0xc9
+	.string	"MultiFS is read only so far"
+	.align
+err_toomany:
+	.int	0xc2
+	.string	"Too many open files on MultiFS"
+	.align
+err_badhandle:
+	.int	0xde
+	.string	"Bad MultiFS file handle"
+	.align
+
+	.ltorg
+
+
+	/* Turn a handle into its slot. Exit R0 = slot, or VS. */
+handle_slot:
+	stmfd	sp!, {r1, lr}
+	subs	r0, r1, #1
+	bmi	handle_slot_bad
+	cmp	r0, #MAX_OPEN
+	bhs	handle_slot_bad
+	mov	r1, #FH_ENTRY
+	mul	r0, r1, r0
+	add	r0, wp, r0
+	add	r0, r0, #WS_FILES
+	ldr	r1, [r0, #FH_USED]
+	cmp	r1, #0
+	beq	handle_slot_bad
+	cmp	pc, #0
+	ldmfd	sp!, {r1, pc}
+handle_slot_bad:
+	adr	r0, err_badhandle
+	cmp	r0, #NBIT
+	cmnvc	r0, #NBIT
+	ldmfd	sp!, {r1, pc}
+
+
+	/* FSEntry_GetBytes - read from an open file.
+	 *
+	 *   R1 = our handle, R2 = buffer, R3 = bytes wanted, R4 = file offset
+	 *
+	 * The chain is walked from the beginning on every call. That is honest
+	 * rather than clever: a cache of the last position belongs here once
+	 * something large is being read, and would be a bug farm before then.
+	 */
 fs_getbytes:
-fs_putbytes:
-fs_args:
+	stmfd	sp!, {r0-r12, lr}
+	ldr	wp, [wp]
+	mov	r5, #0			@ bytes copied so far
+
+	bl	handle_slot
+	bvs	fs_getbytes_out
+	mov	r8, r0			@ slot
+
+	cmp	r3, #0
+	beq	fs_getbytes_done
+
+	ldr	r7, [r8, #FH_VOL]
+	ldr	r9, [r8, #FH_SIZE]
+
+	@ Nothing past the end
+	cmp	r4, r9
+	bhs	fs_getbytes_done
+	sub	r0, r9, r4
+	cmp	r3, r0
+	movhi	r3, r0
+
+	@ Which cluster the offset falls in, and where inside it
+	ldr	r0, [r7, #VOL_SPCLOG]
+	add	r0, r0, #9		@ bytes per cluster, as a shift
+	mov	r10, r4, lsr r0		@ clusters to skip
+	mov	r1, #1
+	mov	r1, r1, lsl r0
+	sub	r1, r1, #1
+	and	r11, r4, r1		@ offset within the cluster
+
+	ldr	r6, [r8, #FH_CLUSTER]
+fs_getbytes_skip:
+	cmp	r10, #0
+	beq	fs_getbytes_ready
+	mov	r0, r7
+	mov	r1, r6
+	bl	fat_next
+	bvs	fs_getbytes_out
+	cmp	r0, #0
+	beq	fs_getbytes_done	@ chain shorter than the size claims
+	mov	r6, r0
+	sub	r10, r10, #1
+	b	fs_getbytes_skip
+
+fs_getbytes_ready:
+	mov	r5, #0			@ bytes copied
+
+fs_getbytes_loop:
+	cmp	r5, r3
+	bhs	fs_getbytes_done
+
+	@ Sector holding the current position, and the offset within it
+	mov	r0, r7
+	mov	r1, r6
+	bl	cluster_sector
+	add	r0, r0, r11, lsr #9
+	mov	r1, r0
+	ldr	r0, [r7, #VOL_DRIVE]
+	add	r2, wp, #WS_FILESEC
+	bl	read_sector
+	bvs	fs_getbytes_out
+
+	@ Nothing in here may touch R12: that is wp, and the workspace address is
+	@ needed on every turn of this loop. Using it as a scratch register for
+	@ one byte of the copy destroyed the workspace on the first iteration,
+	@ which read as an empty file and then as a hung machine.
+	ldr	r0, =511
+	and	r10, r11, r0		@ offset within the sector
+	rsb	r0, r10, #512		@ how much of it is left
+	sub	r1, r3, r5		@ how much is still wanted
+	cmp	r0, r1
+	movhi	r0, r1			@ copy the smaller
+
+	@ Copy it out
+	ldr	r1, [sp, #8]		@ the caller's R2, the destination
+	add	r1, r1, r5
+	add	r2, wp, #WS_FILESEC
+	add	r2, r2, r10
+	mov	r10, #0
+fs_getbytes_copy:
+	ldrb	r4, [r2, r10]
+	strb	r4, [r1, r10]
+	add	r10, r10, #1
+	cmp	r10, r0
+	blo	fs_getbytes_copy
+
+	add	r5, r5, r0
+	add	r11, r11, r0
+
+	@ Off the end of this cluster?
+	ldr	r0, [r7, #VOL_SPCLOG]
+	add	r0, r0, #9
+	mov	r1, #1
+	mov	r1, r1, lsl r0
+	cmp	r11, r1
+	blo	fs_getbytes_loop
+
+	sub	r11, r11, r1
+	mov	r0, r7
+	mov	r1, r6
+	bl	fat_next
+	bvs	fs_getbytes_out
+	cmp	r0, #0
+	beq	fs_getbytes_done
+	mov	r6, r0
+	b	fs_getbytes_loop
+
+fs_getbytes_done:
+	@ FileSwitch wants to be told how many bytes did NOT arrive, and it asks
+	@ for more than the file holds as a matter of course - 1088 bytes of a
+	@ 77 byte file, in the first case this was tried on. Returning R3
+	@ untouched says "none of them arrived", and *Type prints nothing at all
+	@ while every layer below reports success.
+	ldr	r0, [sp, #12]		@ the caller's R3, what was asked for
+	subs	r0, r0, r5
+	movmi	r0, #0
+	str	r0, [sp, #12]
+	cmp	pc, #0
+
+fs_getbytes_out:
+	ldmfd	sp!, {r0-r12, pc}
+
+	.ltorg
+
+
+	/* FSEntry_Close - R1 = our handle. */
 fs_close:
+	stmfd	sp!, {r0-r2, r12, lr}
+	ldr	wp, [wp]
+	bl	handle_slot
+	bvs	fs_close_out
+	mov	r1, #0
+	str	r1, [r0, #FH_USED]
+	cmp	pc, #0
+fs_close_out:
+	ldmfd	sp!, {r0-r2, r12, pc}
+
+
+	/* FSEntry_Args - R0 = reason, R1 = our handle.
+	 *
+	 * 2 and 4 are the extent and the allocated size, which is all a reader
+	 * asks for; the rest are accepted and left alone.
+	 */
+fs_args:
+	stmfd	sp!, {r1, r3-r12, lr}
+	ldr	wp, [wp]
+
+	cmp	r0, #2
+	cmpne	r0, #4
+	bne	fs_args_ignore
+
+	bl	handle_slot
+	bvs	fs_args_out
+	ldr	r2, [r0, #FH_SIZE]
+	cmp	pc, #0
+	ldmfd	sp!, {r1, r3-r12, pc}
+
+fs_args_ignore:
+	cmp	pc, #0
+
+fs_args_out:
+	ldmfd	sp!, {r1, r3-r12, pc}
+
+
 fs_gbpb:
+fs_putbytes:
 	stmfd	sp!, {lr}
 	adr	r0, err_not_yet
 	cmp	r0, #NBIT
