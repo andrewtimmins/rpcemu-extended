@@ -18,6 +18,7 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include "gui_resources.h"
 #include "machine_inspector_window.h"
 
 #include <algorithm>
@@ -135,6 +136,7 @@ MachineInspectorWindow::MachineInspectorWindow(wxWindow *parent, EmulatorHost &e
 	          wxDEFAULT_FRAME_STYLE | wxRESIZE_BORDER)
 	, emulator_(emulator)
 {
+	SetFrameIcon(this);
 	BuildUi();
 	refresh_timer_.Start(500);
 	RefreshSnapshot();

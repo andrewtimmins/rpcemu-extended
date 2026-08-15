@@ -18,6 +18,7 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include "gui_resources.h"
 #include "about_dialog.h"
 
 #include <algorithm>
@@ -98,8 +99,7 @@ CreateAboutIcon(int size)
 wxBitmap
 AboutLogo(int size)
 {
-	const wxString path = wxString::FromUTF8(rpcemu_get_resourcedir()) +
-	    "resources" + wxFileName::GetPathSeparator() + "rpcemu.png";
+	const wxString path = AppLogoPath();
 	wxImage image;
 
 	if (wxFileExists(path) && image.LoadFile(path, wxBITMAP_TYPE_PNG)) {

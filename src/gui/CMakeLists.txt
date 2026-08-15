@@ -17,6 +17,7 @@ set(GUI_SOURCES
     emulator_host.cpp
     emulator_snapshot.cpp
     gui_preferences.cpp
+    gui_resources.cpp
     input_helpers.cpp
     config_paths.cpp
     folder_transfer.cpp
