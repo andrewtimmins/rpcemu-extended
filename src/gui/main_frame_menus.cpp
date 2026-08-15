@@ -342,7 +342,11 @@ void MainFrame::BuildToolBar()
 	tool_bar_ = CreateToolBar(wxTB_HORIZONTAL | wxTB_NODIVIDER);
 	tool_bar_->SetToolBitmapSize(icon_size);
 
-	// Normal operations (left)
+	// Normal operations (left). Reset leads, as the Manager's toolbar has it
+	// leading the machine controls there.
+	tool_bar_->AddTool(ID_MENU_RESET, wxEmptyString, ToolbarIconReset(icon_size),
+	                   "Reset machine");
+	tool_bar_->AddSeparator();
 	tool_bar_->AddTool(ID_MENU_SCREENSHOT, wxEmptyString, ToolbarIconScreenshot(icon_size),
 	                   "Save screenshot");
 	tool_bar_->AddSeparator();
@@ -350,9 +354,6 @@ void MainFrame::BuildToolBar()
 	                   "Load floppy disc into drive :0");
 	tool_bar_->AddTool(ID_MENU_CDROM_ISO, wxEmptyString, ToolbarIconCdrom(icon_size),
 	                   "Load CD-ROM ISO image");
-	tool_bar_->AddSeparator();
-	tool_bar_->AddTool(ID_MENU_RESET, wxEmptyString, ToolbarIconReset(icon_size),
-	                   "Reset machine");
 	tool_bar_->AddSeparator();
 	tb_mute_tool_ = tool_bar_->AddCheckTool(ID_MENU_MUTE, wxEmptyString,
 	                                        ToolbarIconMute(false, icon_size), wxNullBitmap,
