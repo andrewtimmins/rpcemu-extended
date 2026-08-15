@@ -18,6 +18,7 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include "gui_resources.h"
 #include "manager_frame.h"
 
 #include "manager_settings_dialog.h"
@@ -189,6 +190,7 @@ ManagerFrame::ManagerFrame()
 	, poll_timer_(this, ID_POLL_TIMER)
 {
 	SetMinSize(wxSize(760, 520));
+	SetFrameIcon(this);
 
 	BuildUi();
 	BuildMenus();
@@ -226,8 +228,7 @@ wxPanel *ManagerFrame::BuildPlaceholderPage()
 	auto *sizer = new wxBoxSizer(wxVERTICAL);
 	sizer->AddStretchSpacer();
 
-	const wxString icon_path = wxString::FromUTF8(rpcemu_get_resourcedir()) +
-	    "resources" + wxFileName::GetPathSeparator() + "rpcemu.png";
+	const wxString icon_path = AppLogoPath();
 	wxImage icon_image;
 	if (wxFileExists(icon_path) && icon_image.LoadFile(icon_path, wxBITMAP_TYPE_PNG)) {
 		icon_image.Rescale(64, 64, wxIMAGE_QUALITY_HIGH);

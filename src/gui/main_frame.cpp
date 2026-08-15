@@ -21,6 +21,7 @@
 #include <memory>
 #include <vector>
 
+#include "gui_resources.h"
 #include "main_frame.h"
 
 #include <algorithm>
@@ -243,20 +244,7 @@ MainFrame::MainFrame()
 	pconfig_copy = &config_copy_;
 	model_copy_ = machine.model;
 
-	// Window / taskbar / Alt-Tab icon (both platforms). Shipped in
-	// <resourcedir>/resources/rpcemu.png. On Windows the .exe file icon comes
-	// from the compiled-in .ico (see cmake/FindWxWidgets.cmake).
-	{
-		const wxString icon_path = wxString::FromUTF8(rpcemu_get_resourcedir()) +
-		    "resources" + wxFileName::GetPathSeparator() + "rpcemu.png";
-		wxImage icon_image;
-		if (wxFileExists(icon_path) &&
-		    icon_image.LoadFile(icon_path, wxBITMAP_TYPE_PNG)) {
-			wxIcon icon;
-			icon.CopyFromBitmap(wxBitmap(icon_image));
-			SetIcon(icon);
-		}
-	}
+	SetFrameIcon(this);
 
 	emulator_ = std::make_unique<EmulatorHost>(this);
 
