@@ -2387,9 +2387,18 @@ void ManagerFrame::ApplyStateReport(const wxString &machine, const wxString &rep
 		/* Mute also has a toolbar tool, which has to agree with its menu
 		   item or the toolbar shows the opposite of the truth. */
 		if (id == ID_MENU_MUTE && tool_bar_ != nullptr) {
-			tool_bar_->ToggleTool(ID_MENU_MUTE, value != 0);
-			tool_bar_->SetToolNormalBitmap(ID_MENU_MUTE,
-			    ToolbarIconMute(value != 0));
+			const bool muted = value != 0;
+
+			tool_bar_->ToggleTool(ID_MENU_MUTE, muted);
+
+			/* Only when it actually changes: on MSW this re-realizes the
+			   whole toolbar, and reports arrive repeatedly saying the same
+			   thing. */
+			if (muted != mute_tool_muted_) {
+				mute_tool_muted_ = muted;
+				tool_bar_->SetToolNormalBitmap(ID_MENU_MUTE,
+				    ToolbarIconMute(muted));
+			}
 		}
 	}
 }

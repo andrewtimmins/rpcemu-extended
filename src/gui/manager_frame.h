@@ -203,6 +203,7 @@ private:
 	wxButton *clone_button_ = nullptr;
 	wxButton *delete_button_ = nullptr;
 	wxToolBar *tool_bar_ = nullptr;
+	bool mute_tool_muted_ = false;	/* which bitmap the mute tool is showing */
 	wxMenuItem *reset_item_ = nullptr;
 	wxMenuItem *restart_item_ = nullptr;
 	wxMenuItem *resume_item_ = nullptr;
