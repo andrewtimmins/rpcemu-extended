@@ -769,7 +769,9 @@ void ManagerFrame::BuildToolBar()
 	    "Start the selected machine");
 	tool_bar_->AddTool(ID_STOP, "Stop", ToolbarIconPower(icon_size, false),
 	    "Stop the selected machine");
-	tool_bar_->AddTool(ID_MENU_RESET, wxEmptyString, ToolbarIconReset(icon_size),
+	/* ID_RESET, this window's own, rather than the machine menu's
+	   ID_MENU_RESET: it is bound and greyed here with Start and Stop. */
+	tool_bar_->AddTool(ID_RESET, wxEmptyString, ToolbarIconReset(icon_size),
 	    "Reset machine");
 	tool_bar_->AddSeparator();
 
@@ -1887,10 +1889,14 @@ void ManagerFrame::OnStop(wxCommandEvent & /*event*/)
 
 void ManagerFrame::OnReset(wxCommandEvent & /*event*/)
 {
-	if (active_machine_.empty()) {
+	/* The selected machine, which is what UpdateButtons greys this from and
+	   what Start and Stop beside it act on. */
+	const wxString name = SelectedMachineName();
+
+	if (name.empty()) {
 		return;
 	}
-	auto it = running_.find(active_machine_);
+	auto it = running_.find(name);
 	if (it == running_.end() || it->second.panel == nullptr) {
 		return;
 	}
@@ -2033,10 +2039,12 @@ static bool WriteShortcut(const wxString &path, const wxString &exe,
 
 void ManagerFrame::OnRestart(wxCommandEvent & /*event*/)
 {
-	if (active_machine_.empty()) {
+	const wxString name = SelectedMachineName();	/* see OnReset */
+
+	if (name.empty()) {
 		return;
 	}
-	auto it = running_.find(active_machine_);
+	auto it = running_.find(name);
 	if (it == running_.end() || it->second.panel == nullptr) {
 		return;
 	}
@@ -2412,7 +2420,7 @@ void ManagerFrame::UpdateMachineMenuState()
 	if (tool_bar_ != nullptr) {
 		static const int forwarded_tools[] = {
 			ID_MENU_SCREENSHOT, ID_MENU_LOAD_DISC0, ID_MENU_CDROM_ISO,
-			ID_MENU_RESET, ID_MENU_MUTE, ID_MENU_FULLSCREEN,
+			ID_MENU_MUTE, ID_MENU_FULLSCREEN,
 			ID_MENU_MACHINE, ID_MENU_DEBUG_RUN, ID_MENU_DEBUG_PAUSE,
 			ID_MENU_DEBUG_STEP, ID_MENU_MACHINE_INSPECTOR,
 		};
