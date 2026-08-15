@@ -234,6 +234,15 @@ enum class IpcRequestType : uint32_t {
  */
 constexpr int kStateFullscreenMessage = 100001;
 
+/* Two flags rather than one: pausing is asked for and taken later, and a Pause
+   button that greys before the machine has stopped is worse than one that
+   stays lit until it has. */
+constexpr int kStateDebugPaused = 100002;
+constexpr int kStateDebugPauseRequested = 100003;
+
+constexpr int kStateCdromSource = 100004;
+constexpr int kStateNetworkIsNat = 100005;
+
 struct IpcRequest {
 	IpcRequestType type = IpcRequestType::RequestKeyFrame;
 	int32_t arg1 = 0;

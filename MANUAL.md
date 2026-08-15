@@ -405,7 +405,7 @@ Full details in [docs/packages.md](docs/packages.md).
 formatted image. ADFS `.adf` and `.adl`, DOS `.img` and HFE are understood.
 
 **CD-ROM** attaches an ISO image, empties the drive, or on Linux uses a real
-drive in your computer.
+drive in your computer. The one in use is ticked.
 
 Both keep a list of what you have used recently.
 
@@ -435,6 +435,11 @@ Both keep a list of what you have used recently.
 Run, Pause, Step and Step ×5 control the emulated processor, and **Machine
 Inspector** opens a window with registers, disassembly and a memory browser.
 Useful if you are writing ARM code; ignorable otherwise.
+
+Which of them can be used depends on what the machine is doing: Run and the two
+Steps want a machine that has been stopped, Pause one that is still going. The
+manager shows this for whichever machine it is displaying, so two machines with
+one paused offer different things as you move between them.
 
 ### Help
 
@@ -518,7 +523,8 @@ your LAN.
 
 **NAT Port Forwarding Rules** lets something outside reach a server inside the
 guest: give it a host port and the guest port to send it to. The dialogue names
-the machine and the address it will forward to.
+the machine and the address it will forward to. Available only on a machine
+using NAT, there being nothing to forward otherwise.
 
 Machines running on one computer see each other automatically, each with its own
 address. See [docs/multi-machine.md](docs/multi-machine.md).
