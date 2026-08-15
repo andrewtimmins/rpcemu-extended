@@ -677,14 +677,18 @@ void ManagerFrame::BuildMachineMenus(wxMenuBar *menu_bar)
 	machine_disc_menu_->AppendSubMenu(floppy_menu, "&Floppy");
 
 	auto *cdrom_menu = new wxMenu();
-	cdrom_menu->Append(ID_MENU_CDROM_DISABLED, "Disabled");
-	cdrom_menu->Append(ID_MENU_CDROM_EMPTY, "Empty");
-	cdrom_menu->Append(ID_MENU_CDROM_ISO, "ISO Image...");
+	/* Radio items, as the machine's own window has them: these are which source
+	   the drive is using, not three separate things to do. */
+	cdrom_disabled_item_ = cdrom_menu->AppendRadioItem(ID_MENU_CDROM_DISABLED,
+	    "Disabled");
+	cdrom_empty_item_ = cdrom_menu->AppendRadioItem(ID_MENU_CDROM_EMPTY, "Empty");
+	cdrom_iso_item_ = cdrom_menu->AppendRadioItem(ID_MENU_CDROM_ISO, "ISO Image...");
 	machine_disc_menu_->AppendSubMenu(cdrom_menu, "&CD-ROM");
 
 	machine_settings_menu_ = new wxMenu();
 	machine_settings_menu_->Append(ID_MENU_MACHINE, "Machine Settings...");
-	machine_settings_menu_->Append(ID_MENU_NAT_LIST, "NAT Port Forwarding...");
+	nat_list_item_ = machine_settings_menu_->Append(ID_MENU_NAT_LIST,
+	    "NAT Port Forwarding...");
 	machine_settings_menu_->Append(ID_MENU_VNC, "VNC Server...");
 	machine_settings_menu_->Append(ID_MENU_SERIAL, "Serial Port...");
 	machine_settings_menu_->Append(ID_MENU_PARALLEL, "Parallel Port...");
@@ -948,6 +952,44 @@ void ManagerFrame::SetMuteToolState(bool muted)
 /* Everything that depends on which machine is selected, active or running. The
    three are idempotent, so any path that moves a machine can just call this.
    RefreshMachineList() is not here: rebuilding the rows is the costly part. */
+/* The machine's own rules, from UpdateDebuggerActionStates: Run and Step want a
+   machine that has stopped, Pause one that has not stopped yet - it stays lit
+   through the gap between asking and the emulator thread reaching a hook. */
+void ManagerFrame::SetDebugToolState(bool paused, bool pausing)
+{
+	wxMenuBar *bar = GetMenuBar();
+
+	if (bar != nullptr) {
+		bar->Enable(ID_MENU_DEBUG_RUN, paused);
+		bar->Enable(ID_MENU_DEBUG_PAUSE, !paused || pausing);
+		bar->Enable(ID_MENU_DEBUG_STEP, paused);
+		bar->Enable(ID_MENU_DEBUG_STEP5, paused);
+	}
+	if (tool_bar_ != nullptr) {
+		tool_bar_->EnableTool(ID_MENU_DEBUG_RUN, paused);
+		tool_bar_->EnableTool(ID_MENU_DEBUG_PAUSE, !paused || pausing);
+		tool_bar_->EnableTool(ID_MENU_DEBUG_STEP, paused);
+		tool_bar_->Refresh();
+	}
+}
+
+void ManagerFrame::SetCdromMenuState(int source)
+{
+	wxMenuItem *item = (source == 2) ? cdrom_iso_item_
+	    : (source == 1) ? cdrom_empty_item_ : cdrom_disabled_item_;
+
+	if (item != nullptr) {
+		item->Check(true);
+	}
+}
+
+void ManagerFrame::SetNatMenuState(bool is_nat)
+{
+	if (nat_list_item_ != nullptr) {
+		nat_list_item_->Enable(is_nat);
+	}
+}
+
 void ManagerFrame::RefreshUiState()
 {
 	UpdateStatusText();
@@ -1293,6 +1335,10 @@ void ManagerFrame::ShowMachinePanel(const wxString &name)
 		/* What this machine last said, now, rather than leaving the previous
 		   machine's answer up until the reply below arrives. */
 		SetMuteToolState(it->second.muted);
+		SetDebugToolState(it->second.debug_paused,
+		    it->second.debug_pause_requested);
+		SetCdromMenuState(it->second.cdrom_source);
+		SetNatMenuState(it->second.network_is_nat);
 
 		/* The menus now belong to a different machine, so ask it what its
 		   tick-boxes say rather than leaving the previous machine's answers
@@ -2300,6 +2346,22 @@ void ManagerFrame::UpdateMachineMenuState()
 		/* Greying a tool does not always redraw it. */
 		tool_bar_->Refresh();
 	}
+
+	/*
+	 * Last, because the walks above have just enabled every forwarded item from
+	 * "is there a machine" alone, and the debugger's have a second rule on top
+	 * of that: Step on a machine that is running free does not step it, it
+	 * quietly stops it.
+	 */
+	if (have_machine) {
+		auto it = running_.find(active_machine_);
+
+		if (it != running_.end()) {
+			SetDebugToolState(it->second.debug_paused,
+			    it->second.debug_pause_requested);
+			SetNatMenuState(it->second.network_is_nat);
+		}
+	}
 }
 
 /*
@@ -2357,12 +2419,30 @@ void ManagerFrame::ApplyStateReport(const wxString &machine, const wxString &rep
 			}
 		}
 
-		/* Likewise: the toolbar is set from this when a machine is shown. */
-		if (id == ID_MENU_MUTE) {
+		/* Likewise: the toolbar is set from these when a machine is shown. */
+		if (id == ID_MENU_MUTE || id == kStateDebugPaused ||
+		    id == kStateDebugPauseRequested || id == kStateCdromSource ||
+		    id == kStateNetworkIsNat) {
 			auto it = running_.find(machine);
 
 			if (it != running_.end()) {
-				it->second.muted = (value != 0);
+				switch (id) {
+				case ID_MENU_MUTE:
+					it->second.muted = (value != 0);
+					break;
+				case kStateDebugPaused:
+					it->second.debug_paused = (value != 0);
+					break;
+				case kStateDebugPauseRequested:
+					it->second.debug_pause_requested = (value != 0);
+					break;
+				case kStateCdromSource:
+					it->second.cdrom_source = (int) value;
+					break;
+				case kStateNetworkIsNat:
+					it->second.network_is_nat = (value != 0);
+					break;
+				}
 			}
 		}
 
@@ -2396,6 +2476,23 @@ void ManagerFrame::ApplyStateReport(const wxString &machine, const wxString &rep
 		   item or the toolbar shows the opposite of the truth. */
 		if (id == ID_MENU_MUTE) {
 			SetMuteToolState(value != 0);
+		}
+		if (id == kStateCdromSource) {
+			SetCdromMenuState((int) value);
+		}
+		if (id == kStateNetworkIsNat) {
+			SetNatMenuState(value != 0);
+		}
+
+		/* Both flags travel in the same report, so apply once either has
+		   arrived, from what this machine has said so far. */
+		if (id == kStateDebugPaused || id == kStateDebugPauseRequested) {
+			auto it = running_.find(machine);
+
+			if (it != running_.end()) {
+				SetDebugToolState(it->second.debug_paused,
+				    it->second.debug_pause_requested);
+			}
 		}
 	}
 }

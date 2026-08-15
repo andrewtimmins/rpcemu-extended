@@ -74,6 +74,10 @@ private:
 		/* Kept per machine so the toolbar can be set from it when this one is
 		   shown, rather than keeping whatever the last one to report said. */
 		bool muted = false;
+		bool debug_paused = false;
+		bool debug_pause_requested = false;
+		int cdrom_source = 0;		/* 0 disabled, 1 empty, 2 an image */
+		bool network_is_nat = false;
 	};
 
 	void BuildUi();
@@ -85,6 +89,12 @@ private:
 	void UpdateStatusText();
 	void RefreshUiState();
 	void SetMuteToolState(bool muted);
+
+	/* The machine's own rules, applied here: Run and Step want a stopped
+	   machine, Pause one that is not stopped yet. */
+	void SetDebugToolState(bool paused, bool pausing);
+	void SetCdromMenuState(int source);
+	void SetNatMenuState(bool is_nat);
 	wxString SelectedMachineName() const;
 	void UpdateButtons();
 	wxString MachineDirFor(const wxString &name) const;
@@ -216,6 +226,10 @@ private:
 	wxMenuItem *resume_item_ = nullptr;
 	wxMenuItem *shortcut_item_ = nullptr;
 	wxMenuItem *minimal_ui_item_ = nullptr;
+	wxMenuItem *cdrom_disabled_item_ = nullptr;
+	wxMenuItem *cdrom_empty_item_ = nullptr;
+	wxMenuItem *cdrom_iso_item_ = nullptr;
+	wxMenuItem *nat_list_item_ = nullptr;
 	wxMenuItem *machine_list_item_ = nullptr;
 	bool minimal_ui_ = false;
 	wxMenuItem *stop_item_ = nullptr;
