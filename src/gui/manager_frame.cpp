@@ -2516,7 +2516,9 @@ void ManagerFrame::CreateSupportBundle()
 
 void ManagerFrame::OnExit(wxCommandEvent & /*event*/)
 {
-	Close(true);
+	/* Not Close(true): OnClose asks about running machines and has to be able
+	   to change its mind, which a forced close does not allow. */
+	Close();
 }
 
 void ManagerFrame::OnClose(wxCloseEvent &event)
@@ -2545,8 +2547,14 @@ void ManagerFrame::OnClose(wxCloseEvent &event)
 
 		if (dlg.IsCheckBoxChecked()) {
 			StopAllAndClose();
-			event.Veto();	/* closes itself once they have gone */
-			return;
+
+			/* Only stay open if something is still stopping: a machine can
+			   go while StopAllAndClose() is still running, which queues the
+			   close itself, and vetoing that one is not allowed. */
+			if (!running_.empty() && event.CanVeto()) {
+				event.Veto();
+				return;
+			}
 		}
 	}
 
