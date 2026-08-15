@@ -52,7 +52,7 @@ static wxString NormalizeDirPath(const wxString &path)
 
 	wxFileName fn;
 	fn.AssignDir(path);
-	fn.Normalize(wxPATH_NORM_ALL);
+	fn.Normalize(wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS | wxPATH_NORM_TILDE);
 	return fn.GetPathWithSep();
 }
 
@@ -194,7 +194,7 @@ static void SeedDirIfMissing(const wxString &src, const wxString &dst)
 
 	wxFileName src_root;
 	src_root.AssignDir(src); /* treat src as a directory, not a file */
-	src_root.Normalize(wxPATH_NORM_ALL);
+	src_root.Normalize(wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS | wxPATH_NORM_TILDE);
 	const wxString src_prefix = src_root.GetPathWithSep();
 
 	wxArrayString files;
