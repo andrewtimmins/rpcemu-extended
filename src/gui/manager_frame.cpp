@@ -782,8 +782,10 @@ void ManagerFrame::BuildToolBar()
 	tool_bar_->AddTool(ID_MENU_CDROM_ISO, wxEmptyString, ToolbarIconCdrom(icon_size),
 	    "Load CD-ROM ISO image");
 	tool_bar_->AddSeparator();
-	tool_bar_->AddCheckTool(ID_MENU_MUTE, wxEmptyString,
-	    ToolbarIconMute(false, icon_size), wxNullBitmap, "Toggle sound mute");
+	/* Plain rather than a check tool: the state arrives over IPC, and the two
+	   icons say which it is. */
+	tool_bar_->AddTool(ID_MENU_MUTE, wxEmptyString,
+	    ToolbarIconMute(false, icon_size), "Toggle sound mute");
 	tool_bar_->AddTool(ID_MENU_FULLSCREEN, wxEmptyString, ToolbarIconFullscreen(icon_size),
 	    "Toggle full-screen mode");
 	tool_bar_->AddTool(ID_MENU_MACHINE, wxEmptyString, ToolbarIconConfigure(icon_size),
@@ -865,9 +867,7 @@ void ManagerFrame::RefreshMachineList()
 	}
 
 	running_count_ = running_count;
-	UpdateStatusText();
-
-	UpdateButtons();
+	RefreshUiState();
 }
 
 /*
@@ -914,6 +914,16 @@ wxString ManagerFrame::SelectedMachineName() const
 		return wxString();
 	}
 	return machine_names_[(size_t) sel];
+}
+
+/* Everything that depends on which machine is selected, active or running. The
+   three are idempotent, so any path that moves a machine can just call this.
+   RefreshMachineList() is not here: rebuilding the rows is the costly part. */
+void ManagerFrame::RefreshUiState()
+{
+	UpdateStatusText();
+	UpdateButtons();
+	UpdateMachineMenuState();
 }
 
 void ManagerFrame::UpdateButtons()
@@ -1154,6 +1164,7 @@ void ManagerFrame::StartMachine(const wxString &name, bool resume)
 	running_[name] = rm;
 
 	RefreshMachineList();
+	RefreshUiState();
 }
 
 void ManagerFrame::OnPollTimer(wxTimerEvent & /*event*/)
@@ -1247,9 +1258,7 @@ void ManagerFrame::ShowMachinePanel(const wxString &name)
 		active_machine_.clear();
 		display_book_->SetSelection((size_t) placeholder_page_);
 	}
-	UpdateStatusText();
-	UpdateButtons();
-	UpdateMachineMenuState();
+	RefreshUiState();
 }
 
 void ManagerFrame::StopMachine(const wxString &name)
@@ -1283,7 +1292,7 @@ void ManagerFrame::StopAllAndClose()
 		StopMachine(name);
 	}
 
-	UpdateButtons();
+	RefreshUiState();
 }
 
 void ManagerFrame::RemoveRunningEntry(const wxString &name)
@@ -1314,6 +1323,7 @@ void ManagerFrame::RemoveRunningEntry(const wxString &name)
 
 	running_.erase(it);
 	RefreshMachineList();
+	RefreshUiState();
 
 	/* The last one asked to stop before closing has gone, so the window can
 	   follow it. Queued rather than closed here: this runs from a panel
@@ -1330,11 +1340,14 @@ void ManagerFrame::OnChildProcessEnded(const wxString &machine_name, int /*pid*/
 
 void ManagerFrame::OnMachineSelected(wxListEvent & /*event*/)
 {
-	UpdateButtons();
-
 	const wxString name = SelectedMachineName();
+
+	/* ShowMachinePanel ends with the same refresh, and has to run first: it is
+	   what makes the selected machine the active one. */
 	if (!name.empty() && running_.count(name) != 0 && running_[name].panel != nullptr) {
 		ShowMachinePanel(name);
+	} else {
+		RefreshUiState();
 	}
 }
 
@@ -1757,6 +1770,16 @@ void ManagerFrame::OnDataFolder(wxCommandEvent & /*event*/)
 	             "RPCEmu Extended - Data Folder", wxOK | wxICON_INFORMATION, this);
 }
 
+/* Nothing to lose: a machine set to suspend on exit saves its state, and one
+   that is not running has none. */
+bool ManagerFrame::WillAskBeforeStopping(const wxString &name) const
+{
+	auto running = running_.find(name);
+
+	return running != running_.end() && GetWarnOnStop() &&
+	    !running->second.suspend_on_exit;
+}
+
 /*
  * Ask before stopping a machine.
  *
@@ -1777,12 +1800,7 @@ void ManagerFrame::OnDataFolder(wxCommandEvent & /*event*/)
  */
 bool ManagerFrame::ConfirmStop(const wxString &name)
 {
-	auto running = running_.find(name);
-
-	/* Nothing to lose: a machine set to suspend on exit saves its state, and
-	   one that is not running has none. */
-	if (running == running_.end() || !GetWarnOnStop() ||
-	    running->second.suspend_on_exit) {
+	if (!WillAskBeforeStopping(name)) {
 		return true;
 	}
 
@@ -1805,7 +1823,19 @@ void ManagerFrame::OnStop(wxCommandEvent & /*event*/)
 {
 	const wxString name = SelectedMachineName();
 
-	if (name.empty() || !ConfirmStop(name)) {
+	if (name.empty()) {
+		return;
+	}
+
+	/* Queued only when something will be asked: a dialogue opened from inside
+	   the click leaves the button drawn pressed, and with the warning turned
+	   off there is nothing to open. */
+	if (WillAskBeforeStopping(name)) {
+		CallAfter([this, name] {
+			if (running_.find(name) != running_.end() && ConfirmStop(name)) {
+				StopMachine(name);
+			}
+		});
 		return;
 	}
 	StopMachine(name);
@@ -2074,17 +2104,23 @@ bool ManagerFrame::SendMenuCommand(int id, bool checked, const wxString &argumen
  * The dialogue belongs in this process because this is the one with a window:
  * a managed machine never shows its own, so a file dialogue opened over there
  * would appear detached from anything the user was looking at.
+ *
+ * Queued so the toolbar has finished with the mouse first: a modal opened from
+ * inside a tool's click leaves the button drawn pressed.
  */
 void ManagerFrame::ForwardWithFileDialog(int id, const wxString &title,
     const wxString &wildcard, bool save)
 {
-	wxFileDialog dialog(this, title, "", "", wildcard,
-	    save ? (wxFD_SAVE | wxFD_OVERWRITE_PROMPT) : (wxFD_OPEN | wxFD_FILE_MUST_EXIST));
+	CallAfter([this, id, title, wildcard, save] {
+		wxFileDialog dialog(this, title, "", "", wildcard,
+		    save ? (wxFD_SAVE | wxFD_OVERWRITE_PROMPT)
+		         : (wxFD_OPEN | wxFD_FILE_MUST_EXIST));
 
-	if (dialog.ShowModal() != wxID_OK) {
-		return;
-	}
-	SendMenuCommand(id, false, dialog.GetPath());
+		if (dialog.ShowModal() != wxID_OK) {
+			return;
+		}
+		SendMenuCommand(id, false, dialog.GetPath());
+	});
 }
 
 /*
@@ -2164,23 +2200,30 @@ void ManagerFrame::OnMachineMenuCommand(wxCommandEvent &event)
 		 * the pixels it is displaying, so it writes them itself, at the
 		 * guest's own resolution.
 		 */
-		auto it = running_.find(active_machine_);
-
-		if (it == running_.end() || it->second.panel == nullptr) {
+		if (running_.find(active_machine_) == running_.end()) {
 			return;
 		}
 
-		wxFileDialog dialog(this, "Save Screenshot", "", "screenshot.png",
-		    "PNG files (*.png)|*.png", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+		/* Queued for the same reason as ForwardWithFileDialog. */
+		CallAfter([this] {
+			auto it = running_.find(active_machine_);
 
-		if (dialog.ShowModal() != wxID_OK) {
-			return;
-		}
-		if (!it->second.panel->SaveScreenshot(dialog.GetPath())) {
-			wxMessageBox("Could not save the screenshot.",
-			    "RPCEmu Extended Manager",
-			    wxOK | wxICON_WARNING, this);
-		}
+			if (it == running_.end() || it->second.panel == nullptr) {
+				return;
+			}
+
+			wxFileDialog dialog(this, "Save Screenshot", "", "screenshot.png",
+			    "PNG files (*.png)|*.png", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+
+			if (dialog.ShowModal() != wxID_OK) {
+				return;
+			}
+			if (!it->second.panel->SaveScreenshot(dialog.GetPath())) {
+				wxMessageBox("Could not save the screenshot.",
+				    "RPCEmu Extended Manager",
+				    wxOK | wxICON_WARNING, this);
+			}
+		});
 		return;
 	}
 	case ID_MENU_SAVE_STATE:
@@ -2213,7 +2256,34 @@ void ManagerFrame::OnMachineMenuCommand(wxCommandEvent &event)
 	/* Everything else goes across as it stands. A tick-box has already moved
 	   on this window, so its new state travels with it and the machine sets
 	   its own copy to match before running the handler. */
-	SendMenuCommand(id, event.IsChecked());
+	bool checked = event.IsChecked();
+
+	/*
+	 * Only one of the two moved: a menu tick and a toolbar tool are separate
+	 * copies of one command, and wx moves whichever was clicked. Left alone,
+	 * the next click read the stale one and sent the state that had just been
+	 * asked for, so mute inverted itself every other press.
+	 */
+	if (wxMenuBar *bar = GetMenuBar()) {
+		if (wxMenuItem *item = bar->FindItem(id)) {
+			if (item->IsCheckable()) {
+				/* From a tool the tick is what is being flipped, the tool
+				   having no state of its own; from the menu wx has already
+				   moved the tick and the event agrees with it. */
+				checked = (event.GetEventType() == wxEVT_TOOL)
+				    ? !item->IsChecked()
+				    : item->IsChecked();
+				item->Check(checked);
+			}
+		}
+	}
+	/*
+	 * The tool itself is deliberately not set here. The machine's state report
+	 * is what moves it, and this window asking for one thing while a report
+	 * said another left the two racing: whichever landed last won, so the
+	 * button could end up showing the opposite of the sound.
+	 */
+	SendMenuCommand(id, checked);
 }
 
 /*
@@ -2224,8 +2294,14 @@ void ManagerFrame::OnMachineMenuCommand(wxCommandEvent &event)
  */
 void ManagerFrame::UpdateMachineMenuState()
 {
-	const bool have_machine = !active_machine_.empty() &&
-	    running_.find(active_machine_) != running_.end();
+	/*
+	 * The selected machine, not the displayed one. They are usually the same,
+	 * but selecting a stopped machine while another is still on screen left
+	 * these enabled for a machine the user was no longer pointing at.
+	 */
+	const wxString name = SelectedMachineName();
+	const bool have_machine = !name.empty() &&
+	    running_.find(name) != running_.end();
 
 	wxMenuBar *bar = GetMenuBar();
 
@@ -2388,8 +2464,6 @@ void ManagerFrame::ApplyStateReport(const wxString &machine, const wxString &rep
 		   item or the toolbar shows the opposite of the truth. */
 		if (id == ID_MENU_MUTE && tool_bar_ != nullptr) {
 			const bool muted = value != 0;
-
-			tool_bar_->ToggleTool(ID_MENU_MUTE, muted);
 
 			/* Only when it actually changes: on MSW this re-realizes the
 			   whole toolbar, and reports arrive repeatedly saying the same
