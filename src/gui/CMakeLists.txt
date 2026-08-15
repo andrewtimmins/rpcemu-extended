@@ -51,6 +51,7 @@ set(GUI_SOURCES
     data_dir_store.c
     data_dir_dialog.cpp
     machine_ipc.cpp
+    machine_shortcut.cpp
     manager_frame.cpp
     gl_display_canvas.cpp
     manager_settings_dialog.cpp
