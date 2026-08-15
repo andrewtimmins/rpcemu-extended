@@ -928,6 +928,11 @@ covered.
   waits on, so neither side polls. The Latin-1 UCS table the module carries is
   **NetSurf's** (Copyright 2005 **John M Bell**, GNU GPL v2), by way of
   Cloverleaf's `ucstables.c`. See `docs/clipboard.md`.
+- The **toolbar icons** are **[Lucide](https://github.com/lucide-icons/lucide)**
+  (Copyright Lucide Icons and Contributors, ISC), recoloured to the green of the
+  Acorn logo. Lucide is a fork of **Feather** (Copyright Cole Bemis, MIT), which
+  covers some of the set. The SVGs are in `src/gui/icons/` and are built into the
+  binary rather than installed.
 - **SyncClock** is **DEEJ Technology PLC's** module (Copyright 2002, GNU GPL v2),
   carried in the expansion ROM as `poduleroms/syncclock,ffa`. It re-reads the
   emulated real-time clock every ten seconds and sets RISC OS's soft copy from it,
