@@ -541,6 +541,15 @@ bool MainFrame::AskForFile(const wxString &title, const wxString &wildcard,
 void MainFrame::DispatchMenuCommand(int id, bool checked, const wxString &argument,
     int filter)
 {
+	/* The id arrives from another process, so say so rather than turning
+	   whatever it was into a menu event. wxID_ABOUT sits outside the range and
+	   is forwarded on purpose. */
+	if ((id < kForwardableFirst || id > kForwardableLast) && id != wxID_ABOUT) {
+		rpclog("Machine: ignoring a forwarded command outside the range (%d)\n",
+		    id);
+		return;
+	}
+
 	CallAfter([this, id, checked, argument, filter] {
 		/*
 		 * A tick-box handler asks the event whether it is now ticked, and
