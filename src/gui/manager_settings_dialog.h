@@ -75,6 +75,7 @@ private:
 	wxCheckBox *minimal_ui_check_ = nullptr;
 	wxCheckBox *warn_stop_check_ = nullptr;
 	wxCheckBox *warn_exit_check_ = nullptr;
+	wxCheckBox *update_check_ = nullptr;
 
 	bool acceleration_was_ = true;
 	bool acceleration_chosen_ = true;

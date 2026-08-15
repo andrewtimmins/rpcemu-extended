@@ -78,6 +78,13 @@ bool HardwareAccelerationWanted();
 bool GetMinimalUi();
 void SetMinimalUi(bool minimal);
 
+/* Whether the Manager looks for a newer release when it opens, and when it last
+   did. The time is stored as a Unix timestamp, 0 meaning never. */
+bool GetCheckForUpdates();
+void SetCheckForUpdates(bool check);
+long long GetLastUpdateCheck();
+void SetLastUpdateCheck(long long when);
+
 /* Whether stopping a machine, and closing with machines running, ask first. */
 bool GetWarnOnStop();
 void SetWarnOnStop(bool warn);
