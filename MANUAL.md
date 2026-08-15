@@ -149,9 +149,14 @@ The rest is on the menus:
 | Menu item | What it does |
 | --- | --- |
 | **Machine ▸ Resume** | Picks up a machine you suspended, exactly where it was |
-| **Media ▸ Load State...** | Opens a snapshot you saved |
+| **Machine ▸ Load State...** | Opens a snapshot you saved |
+| **Machine ▸ Create Shortcut...** | A shortcut that opens this machine directly, skipping the manager |
 | **Settings ▸ Default Machine** | That machine opens when you start RPCEmu |
-| **File ▸ Settings...** | Where everything is kept, and how the display is drawn |
+| **File ▸ Settings...** | Where everything is kept, how a machine is drawn, and what the window asks before it does something |
+
+Everything that belongs to a machine is on the **Machine** menu, including
+**Edit...**, **Clone...** and **Delete**, which are greyed until one is selected.
+**File** keeps **New Machine...**, **Settings...** and **Exit**.
 
 ### Opening one machine every time
 
@@ -166,6 +171,30 @@ the setting from another machine.
 
 `--machine <name>` does the same thing for one run without changing the setting;
 see [Running it from a command line](#running-it-from-a-command-line).
+
+### The manager's own settings
+
+**File ▸ Settings...** is about RPCEmu rather than any one machine. These are
+kept per computer, not in the data folder, so a set of machines carried to
+another computer does not bring them along.
+
+| Setting | What it does |
+| --- | --- |
+| **Data folder** | Where machines, ROMs, discs and settings are kept. **Change...** moves them, and offers to bring your files along |
+| **Enable hardware acceleration** | Draws a machine's screen on the graphics card. On by default, and falls back on its own where it cannot start. Applies only to a machine shown in the manager |
+| **Start with a minimal interface** | Open with the toolbar and machine list hidden |
+| **Ask before stopping a machine** | Not asked for a machine set to suspend on exit, which loses nothing by being stopped |
+| **Ask when closing with machines running** | The warning when the window closes with something still going |
+
+### A less cluttered window
+
+**View ▸ Minimal Interface** hides the toolbar and the machine list, leaving the
+window to the machine it is showing. It is a tick rather than a preference: it
+lasts for the session and does not change what the next launch does. The
+**Settings** entry above is the one that persists.
+
+**View ▸ Machine List** shows and hides the list on its own — the same thing as
+the arrow at the left of the status bar, which is the quicker way to reach it.
 
 ## Choosing a machine to emulate
 
@@ -610,9 +639,9 @@ Everything is under the data directory you chose on first run:
     rpclog.txt          the log
 ```
 
-Moving it: **Options ▸ Data Folder...** in the machine list, which offers to
-bring your files along. `--datadir <path>` points one run elsewhere without
-changing anything permanently. See [docs/paths.md](docs/paths.md).
+Moving it: **File ▸ Settings...**, then **Change...** under Data folder, which
+offers to bring your files along. `--datadir <path>` points one run elsewhere
+without changing anything permanently. See [docs/paths.md](docs/paths.md).
 
 ## Running it from a command line
 
