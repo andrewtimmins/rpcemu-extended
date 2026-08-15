@@ -20,9 +20,14 @@
 
 #include "check_update.h"
 
+#include <cstdlib>
+
+#include <wx/datetime.h>
 #include <wx/msgdlg.h>
+#include <wx/richmsgdlg.h>
 #include <wx/utils.h>
 
+#include "gui_preferences.h"
 #include "http_transfer.h"	/* RPCEMU_HAVE_HTTP, HttpUnavailableMessage */
 #include "riscos_fetch.h"	/* RiscosFetchProgressReporter */
 
@@ -84,7 +89,83 @@ wxString TagNameFromReleaseJson(const wxString &json)
 	}
 	return rest.Mid(1).BeforeFirst('"');
 }
+/* Nothing on screen: the background check is not allowed to interrupt, and it
+   has nothing to offer a Cancel button either. */
+class SilentReporter : public RiscosFetchReporter {
+public:
+	bool Stage(const wxString &) override { return true; }
+	bool Progress(long long, long long) override { return true; }
+};
+
 } // namespace
+
+void CheckForUpdateInBackground(wxWindow *parent)
+{
+	const bool testing = getenv("RPCEMU_UPDATE_TEST") != nullptr;
+	const wxString current = testing ? wxString("1.0.0") : wxString(VERSION);
+
+	if (!GetCheckForUpdates() || !RPCEMU_HAVE_HTTP) {
+		return;
+	}
+	if (!testing && current.Contains("-")) {
+		return;
+	}
+
+	const long long now = wxDateTime::Now().GetTicks();
+	const long long last = GetLastUpdateCheck();
+	const long long a_day = 24 * 60 * 60;
+
+	/* A stored time in the future is deliberate - see the postponement below -
+	   but cap it, so a clock that jumped years ahead and back does not silence
+	   this for ever. */
+	if (last > now + 7 * a_day) {
+		SetLastUpdateCheck(0);
+	} else if (last > now) {
+		return;		/* postponed, and still is */
+	} else if (!testing && last != 0 && now - last < a_day) {
+		return;
+	}
+
+	/* Recorded before asking rather than after: a GitHub that cannot be reached
+	   should not mean trying again at every launch. */
+	SetLastUpdateCheck(now);
+
+	wxString body;
+	{
+		SilentReporter reporter;
+		Transfer transfer(reporter, wxString(), {});
+
+		if (!transfer.ToMemory(URL_LATEST_RELEASE_API)) {
+			return;
+		}
+		body = transfer.Body();
+	}
+
+	const wxString tag = TagNameFromReleaseJson(body);
+
+	if (tag.empty() || !IsNewerVersion(tag, current)) {
+		return;
+	}
+
+	wxRichMessageDialog dlg(parent,
+	    wxString::Format("RPCEmu Extended %s is available.", tag),
+	    "RPCEmu Extended - Update Available",
+	    wxOK | wxCANCEL | wxICON_INFORMATION);
+
+	dlg.SetExtendedMessage(wxString::Format(
+	    "You are running v%s.\n\n"
+	    "Open the release page to read the notes and download it?", current));
+	dlg.SetOKCancelLabels("Open Release Page", "Remind Me in a Week");
+
+	if (dlg.ShowModal() == wxID_OK) {
+		wxLaunchDefaultBrowser(wxString(URL_RELEASE_TAG) + tag);
+		return;
+	}
+
+	/* Dated into the future rather than kept as a second preference: the gate
+	   above finds it has not been long enough, six more times. */
+	SetLastUpdateCheck(now + 6 * a_day);
+}
 
 void CheckForUpdate(wxWindow *parent)
 {
@@ -139,14 +220,14 @@ void CheckForUpdate(wxWindow *parent)
 	}
 
 	if (!IsNewerVersion(tag, current)) {
-		wxMessageBox(wxString::Format("You are running the latest version (%s).", current),
+		wxMessageBox(wxString::Format("You are running the latest version (v%s).", current),
 		             "RPCEmu Extended - Check for Update", wxOK | wxICON_INFORMATION, parent);
 		return;
 	}
 
 	if (wxMessageBox(
 	        wxString::Format(
-	            "RPCEmu Extended %s is available. You are running %s.\n\n"
+	            "RPCEmu Extended %s is available. You are running v%s.\n\n"
 	            "Open the release page to read the notes and download it?",
 	            tag, current),
 	        "RPCEmu Extended - Check for Update",

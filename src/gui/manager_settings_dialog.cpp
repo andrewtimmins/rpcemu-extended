@@ -172,6 +172,12 @@ ManagerSettingsDialog::ManagerSettingsDialog(wxWindow *parent,
 		    "Ask when closing with machines running");
 		warn_exit_check_->SetValue(GetWarnOnExit());
 		box->Add(warn_exit_check_, 0, wxLEFT | wxRIGHT | wxTOP, 8);
+
+		update_check_ = new wxCheckBox(this, wxID_ANY,
+		    "Automatically check for updates");
+		update_check_->SetValue(GetCheckForUpdates());
+		update_check_->SetToolTip("Checks for updates once per day.");
+		box->Add(update_check_, 0, wxLEFT | wxRIGHT | wxTOP, 8);
 		box->AddSpacer(8);
 
 		root->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 10);
@@ -233,6 +239,9 @@ void ManagerSettingsDialog::OnOk(wxCommandEvent &event)
 	}
 	if (warn_exit_check_ != nullptr) {
 		SetWarnOnExit(warn_exit_check_->GetValue());
+	}
+	if (update_check_ != nullptr) {
+		SetCheckForUpdates(update_check_->GetValue());
 	}
 	event.Skip();	/* let wxDialog close with wxID_OK */
 }

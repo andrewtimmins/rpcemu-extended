@@ -181,6 +181,54 @@ SetMinimalUi(bool minimal)
 	delete config;
 }
 
+/* Whether the Manager looks for a newer release. On when absent. */
+bool
+GetCheckForUpdates()
+{
+	wxConfig *config = OpenPreferences();
+	bool check = true;
+
+	config->Read("CheckForUpdates", &check, true);
+	delete config;
+	return check;
+}
+
+void
+SetCheckForUpdates(bool check)
+{
+	wxConfig *config = OpenPreferences();
+
+	config->Write("CheckForUpdates", check);
+	config->Flush();
+	delete config;
+}
+
+/* When it last looked, as a Unix timestamp. Zero means never, which is what a
+   preferences file written before this existed looks like. */
+long long
+GetLastUpdateCheck()
+{
+	wxConfig *config = OpenPreferences();
+	wxString value;
+	long long when = 0;
+
+	if (config->Read("LastUpdateCheck", &value, wxEmptyString)) {
+		value.ToLongLong(&when);
+	}
+	delete config;
+	return when;
+}
+
+void
+SetLastUpdateCheck(long long when)
+{
+	wxConfig *config = OpenPreferences();
+
+	config->Write("LastUpdateCheck", wxString::Format("%lld", when));
+	config->Flush();
+	delete config;
+}
+
 /* Whether stopping a machine asks first. On when absent. */
 bool
 GetWarnOnStop()

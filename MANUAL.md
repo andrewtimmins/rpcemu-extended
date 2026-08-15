@@ -185,6 +185,22 @@ another computer does not bring them along.
 | **Start with a minimal interface** | Open with the toolbar and machine list hidden |
 | **Ask before stopping a machine** | Not asked for a machine set to suspend on exit, which loses nothing by being stopped |
 | **Ask when closing with machines running** | The warning when the window closes with something still going |
+| **Automatically check for updates** | Looks for a newer release once a day, when the manager opens. On by default |
+
+### Checking for a newer version
+
+The manager looks once a day, when it opens, and only says something when there
+is a newer release. Nothing appears while it looks, nothing appears when you are
+up to date, and nothing appears if it cannot reach the internet.
+
+When there is one, it offers to open the release page so you can read the notes
+and download it, or to remind you in a week. Opening the page does not count as
+dealing with it: if you read the notes and decide to update later, it asks again
+the next day.
+
+**Help ▸ Check for Updates...** asks there and then, whatever the setting says,
+and tells you either way. A development build never checks on its own, having no
+released version to compare itself with.
 
 ### A less cluttered window
 

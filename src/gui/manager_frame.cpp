@@ -203,6 +203,8 @@ ManagerFrame::ManagerFrame()
 	}
 	poll_timer_.Start(kPollIntervalMs);
 
+	/* Queued so the window is up before anything can appear over it. */
+	CallAfter([this] { CheckForUpdateInBackground(this); });
 }
 
 ManagerFrame::~ManagerFrame()

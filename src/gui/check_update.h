@@ -34,4 +34,8 @@
  */
 void CheckForUpdate(wxWindow *parent);
 
+/* Silent unless there is a newer release: somebody who did not ask is not owed
+   a dialogue about a check that failed. At most once a day. */
+void CheckForUpdateInBackground(wxWindow *parent);
+
 #endif /* CHECK_UPDATE_H */
