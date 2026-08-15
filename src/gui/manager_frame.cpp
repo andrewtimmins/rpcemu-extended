@@ -2387,6 +2387,8 @@ void ManagerFrame::ApplyStateReport(const wxString &machine, const wxString &rep
 		   item or the toolbar shows the opposite of the truth. */
 		if (id == ID_MENU_MUTE && tool_bar_ != nullptr) {
 			tool_bar_->ToggleTool(ID_MENU_MUTE, value != 0);
+			tool_bar_->SetToolNormalBitmap(ID_MENU_MUTE,
+			    ToolbarIconMute(value != 0));
 		}
 	}
 }
