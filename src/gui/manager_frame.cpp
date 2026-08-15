@@ -761,12 +761,15 @@ void ManagerFrame::BuildToolBar()
 	tool_bar_ = CreateToolBar(wxTB_HORIZONTAL | wxTB_NODIVIDER);
 	tool_bar_->SetToolBitmapSize(icon_size);
 
-	/* Manager's own: starting and stopping a machine is this window's job,
-	   and has no equivalent in a machine that is already running. */
+	/* Manager's own: a machine's power state is this window's job, and has no
+	   equivalent in a machine that is already running. Reset joins them, being
+	   the same kind of thing. */
 	tool_bar_->AddTool(ID_START, "Start", ToolbarIconPower(icon_size, true),
 	    "Start the selected machine");
 	tool_bar_->AddTool(ID_STOP, "Stop", ToolbarIconPower(icon_size, false),
 	    "Stop the selected machine");
+	tool_bar_->AddTool(ID_MENU_RESET, wxEmptyString, ToolbarIconReset(icon_size),
+	    "Reset machine");
 	tool_bar_->AddSeparator();
 
 	/* The machine window's toolbar, in its order. */
@@ -777,9 +780,6 @@ void ManagerFrame::BuildToolBar()
 	    "Load floppy disc into drive :0");
 	tool_bar_->AddTool(ID_MENU_CDROM_ISO, wxEmptyString, ToolbarIconCdrom(icon_size),
 	    "Load CD-ROM ISO image");
-	tool_bar_->AddSeparator();
-	tool_bar_->AddTool(ID_MENU_RESET, wxEmptyString, ToolbarIconReset(icon_size),
-	    "Reset machine");
 	tool_bar_->AddSeparator();
 	tool_bar_->AddCheckTool(ID_MENU_MUTE, wxEmptyString,
 	    ToolbarIconMute(false, icon_size), wxNullBitmap, "Toggle sound mute");
