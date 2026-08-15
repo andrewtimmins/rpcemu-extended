@@ -80,6 +80,7 @@ private:
 	wxPanel *BuildPlaceholderPage();
 	void RefreshMachineList();
 	void UpdateStatusText();
+	void RefreshUiState();
 	wxString SelectedMachineName() const;
 	void UpdateButtons();
 	wxString MachineDirFor(const wxString &name) const;
@@ -94,6 +95,7 @@ private:
 	   toolbar and shutting a machine down by accident costs unsaved work.
 	   Answers true when there is nothing running to lose. */
 	bool ConfirmStop(const wxString &name);
+	bool WillAskBeforeStopping(const wxString &name) const;
 	void ShowMachinePanel(const wxString &name);
 	void RemoveRunningEntry(const wxString &name);
 	void AttachPanelFor(const wxString &name, const wxString &shared_fb_name,
