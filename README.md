@@ -784,8 +784,8 @@ controls) are available from the menus and the toolbar instead.
 | --- | --- |
 | **Alt+Enter** | Release the captured mouse, or exit full-screen |
 
-The toolbar provides one-click access to screenshot, floppy load, CD-ROM ISO load,
-reset, mute, full-screen, machine settings, and debugger controls.
+The toolbar provides one-click access to reset, screenshot, floppy load, CD-ROM
+ISO load, mute, full-screen, machine settings, and debugger controls.
 
 ### Resetting from outside (Linux and macOS)
 
