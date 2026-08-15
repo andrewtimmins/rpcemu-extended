@@ -20,6 +20,8 @@
 
 #include "gui_resources.h"
 
+#include <wx/bitmap.h>
+#include <wx/filefn.h>
 #include <wx/filename.h>
 #include <wx/frame.h>
 #include <wx/icon.h>
