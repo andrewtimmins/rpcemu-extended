@@ -128,6 +128,12 @@ enum MainFrameMenuId {
 constexpr int kForwardableFirst = ID_MENU_SCREENSHOT;
 constexpr int kForwardableLast = ID_MENU_CHECK_UPDATE;
 
+/* This window's own, and deliberately outside the range above: it is about the
+   window rather than the machine, so there is nothing to forward. */
+enum LocalMenuId {
+	ID_MENU_MINIMAL_UI = ID_MENU_CHECK_UPDATE + 1,
+};
+
 enum TimerId {
 	ID_TIMER_MIPS = wxID_HIGHEST + 100,
 	ID_TIMER_VIDEO,
@@ -233,6 +239,8 @@ private:
 	void OnNatList(wxCommandEvent &event);
 	void OnMute(wxCommandEvent &event);
 	void OnFullscreen(wxCommandEvent &event);
+	void OnMinimalUi(wxCommandEvent &event);
+	void ApplyMinimalUi(bool minimal);
 	void OnIntegerScaling(wxCommandEvent &event);
 	void OnFitToWindow(wxCommandEvent &event);
 	void OnFollowHostDisplay(wxCommandEvent &event);
@@ -362,6 +370,7 @@ private:
 	wxMenu *recent_cdroms_menu_ = nullptr;
 	wxMenuItem *mute_menu_item_ = nullptr;
 	wxMenuItem *fullscreen_menu_item_ = nullptr;
+	wxMenuItem *minimal_ui_item_ = nullptr;
 	wxMenuItem *integer_scaling_menu_item_ = nullptr;
 	wxMenuItem *fit_to_window_menu_item_ = nullptr;
 	wxMenuItem *follow_host_display_menu_item_ = nullptr;
@@ -398,6 +407,7 @@ private:
 	bool menu_open_ = false;
 	bool window_active_ = false;
 	bool full_screen_ = false;
+	bool minimal_ui_ = false;
 	bool reenable_mousehack_ = false;
 	/* Keyed by physical key, not by scancode - see held_keys.h and issue #70. */
 	HeldKeys held_keys_ = {};

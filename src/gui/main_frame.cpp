@@ -278,6 +278,12 @@ MainFrame::MainFrame()
 	BuildToolBar();
 	BuildStatusBar();
 
+	/* The Manager's setting, which is about RPCEmu rather than about either
+	   window. The tick above only lasts the session and writes nothing back. */
+	if (GetMinimalUi()) {
+		ApplyMinimalUi(true);
+	}
+
 	mips_timer_.Start(1000);
 	/* Watch the host clipboard. wxWidgets has no "it changed" notification, so
 	   it has to be looked at now and then; twice a second is well below noticing
@@ -1146,6 +1152,56 @@ void MainFrame::OnMute(wxCommandEvent &event)
 	ReportMenuState();
 }
 
+/*
+ * Hide the furniture and leave the window to the machine.
+ *
+ * The status bar is destroyed rather than hidden, for the reason EnterFullScreen
+ * gives: hiding it leaves its space reserved, which shows as an empty strip
+ * along the bottom. BuildStatusBar() puts it back.
+ *
+ * Does nothing while full screen, which has already taken all three away and
+ * restores them from minimal_ui_ on the way out.
+ */
+void MainFrame::ApplyMinimalUi(bool minimal)
+{
+	minimal_ui_ = minimal;
+
+	if (minimal_ui_item_ != nullptr) {
+		minimal_ui_item_->Check(minimal);
+	}
+	if (full_screen_) {
+		return;
+	}
+
+	if (tool_bar_ != nullptr) {
+		tool_bar_->Show(!minimal);
+	}
+	if (minimal) {
+		if (wxStatusBar *bar = GetStatusBar()) {
+			SetStatusBar(nullptr);
+			bar->Destroy();
+		}
+	} else if (GetStatusBar() == nullptr) {
+		BuildStatusBar();
+	}
+
+	Layout();
+	SendSizeEvent();
+
+	if (panel_ != nullptr) {
+		panel_->CallAfter([this] {
+			if (panel_ != nullptr) {
+				panel_->ForceRedraw();
+			}
+		});
+	}
+}
+
+void MainFrame::OnMinimalUi(wxCommandEvent &event)
+{
+	ApplyMinimalUi(event.IsChecked());
+}
+
 void MainFrame::EnterFullScreen()
 {
 	if (full_screen_) {
@@ -1253,10 +1309,11 @@ void MainFrame::ExitFullScreen()
 	if (GetMenuBar() != nullptr) {
 		GetMenuBar()->Show(true);
 	}
+	/* Back to what it was, which in a minimal window is still hidden. */
 	if (tool_bar_ != nullptr) {
-		tool_bar_->Show(true);
+		tool_bar_->Show(!minimal_ui_);
 	}
-	if (GetStatusBar() == nullptr) {
+	if (!minimal_ui_ && GetStatusBar() == nullptr) {
 		BuildStatusBar();
 	}
 	/* No Fit(): ShowFullScreen(false) has already restored the size, and
