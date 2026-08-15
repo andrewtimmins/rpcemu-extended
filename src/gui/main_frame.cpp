@@ -1134,6 +1134,7 @@ void MainFrame::OnMute(wxCommandEvent &event)
 		tool_bar_->ToggleTool(ID_MENU_MUTE, muted);
 		tool_bar_->SetToolNormalBitmap(ID_MENU_MUTE, ToolbarIconMute(muted));
 	}
+	ReportMenuState();
 }
 
 void MainFrame::EnterFullScreen()

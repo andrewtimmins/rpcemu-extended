@@ -71,6 +71,9 @@ private:
 		/* Also from the state report. Starts false, so a machine that has not
 		   said yet is asked about rather than stopped without warning. */
 		bool suspend_on_exit = false;
+		/* Kept per machine so the toolbar can be set from it when this one is
+		   shown, rather than keeping whatever the last one to report said. */
+		bool muted = false;
 	};
 
 	void BuildUi();
@@ -81,6 +84,7 @@ private:
 	void RefreshMachineList();
 	void UpdateStatusText();
 	void RefreshUiState();
+	void SetMuteToolState(bool muted);
 	wxString SelectedMachineName() const;
 	void UpdateButtons();
 	wxString MachineDirFor(const wxString &name) const;
@@ -206,6 +210,7 @@ private:
 	wxButton *delete_button_ = nullptr;
 	wxToolBar *tool_bar_ = nullptr;
 	bool mute_tool_muted_ = false;	/* which bitmap the mute tool is showing */
+	bool rebuilding_machine_list_ = false;
 	wxMenuItem *reset_item_ = nullptr;
 	wxMenuItem *restart_item_ = nullptr;
 	wxMenuItem *resume_item_ = nullptr;
