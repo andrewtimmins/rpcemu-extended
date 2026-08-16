@@ -1,14 +1,15 @@
 {
   "//": "Copy to .mcp.json in your project and edit the paths for your machine.",
+  "//command": "The venv's interpreter, absolute, as setup-mcp-env.sh or .ps1 prints it. The client does not run this from your shell, so a bare python3 will not have the dependencies. Windows: C:\\Users\\YOU\\.rpcemu-mcp\\Scripts\\python.exe, with the backslashes doubled as JSON requires.",
+  "//script-path": "Absolute, and it depends on the install: <tree>/tools/mcp/rpcemu_mcp.py from a source or .tar.gz tree, /usr/share/rpcemu/mcp/rpcemu_mcp.py from the .deb.",
   "//data-dir": "Under a portable build, the data dir is the release folder; under an installed build it is ~/RPCEmu.",
-  "//script-path": "From a source/release tree use tools/mcp/rpcemu_mcp.py; from a .deb install use /usr/share/rpcemu/mcp/rpcemu_mcp.py.",
   "mcpServers": {
     "rpcemu": {
-      "command": "python3",
-      "args": ["tools/mcp/rpcemu_mcp.py"],
+      "command": "/ABSOLUTE/PATH/TO/HOME/.rpcemu-mcp/bin/python",
+      "args": ["/ABSOLUTE/PATH/TO/rpcemu_mcp.py"],
       "env": {
         "RPCEMU_HOSTCMD_SOCKET": "/ABSOLUTE/PATH/TO/DATA-DIR/hostcmd.sock",
-        "RPCEMU_HOSTFS_DIR": "/ABSOLUTE/PATH/TO/DATA-DIR/machines/Default/hostfs",
+        "RPCEMU_HOSTFS_DIR": "/ABSOLUTE/PATH/TO/DATA-DIR/machines/MACHINE-NAME-HERE/hostfs",
         "RPCEMU_VNC_HOST": "127.0.0.1",
         "RPCEMU_VNC_PORT": "5900",
         "RPCEMU_VNC_PASSWORD": "",
