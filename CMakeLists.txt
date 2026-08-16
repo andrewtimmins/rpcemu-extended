@@ -138,7 +138,8 @@ endif()
 # MCP server (Python): drive a RISC OS machine from an MCP client, including
 # the debugger control socket. See tools/mcp/README.md.
 install(DIRECTORY tools/mcp/ DESTINATION share/rpcemu/mcp
-        PATTERN "__pycache__" EXCLUDE)
+        PATTERN "__pycache__" EXCLUDE
+        PATTERN "setup-mcp-env.ps1" EXCLUDE)
 install(FILES README.md COPYING COMPILE.md DESTINATION share/doc/rpcemu)
 install(DIRECTORY docs/ DESTINATION share/doc/rpcemu)
 # The .desktop launcher's Exec must match the actual binary (rpcemu-recompiler
