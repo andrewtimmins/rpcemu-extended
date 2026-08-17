@@ -603,23 +603,30 @@ fill_proginfo:
 @ Load the Messages file, whole, and terminate it. If it is not there the
 @ templates' own text stays as it is.
 load_messages:
-	stmfd	sp!, {r4, r5, lr}
-	adrl	r5, msg_buf
+	stmfd	sp!, {r4, r5, r6, lr}
+
+	@ The buffer is kept in R6, not R5: OS_File 16 answers with the length in
+	@ R4 and the file's ATTRIBUTES in R5, so a pointer left in R5 across the
+	@ call comes back as 3 (read/write) and the terminator below is written to
+	@ address 3 + length. That aborted the task the moment the Messages file
+	@ existed to be loaded - before it was carried in this ROM the load failed
+	@ and the branch below skipped the store, which is why this went unseen.
+	adrl	r6, msg_buf
 	mov	r0, #0
-	strb	r0, [r5]
+	strb	r0, [r6]
 
 	mov	r0, #OSFILE_LOAD
 	adrl	r1, path_messages
-	mov	r2, r5
+	mov	r2, r6
 	mov	r3, #0			@ here, not at the file's own load address
 	swi	XOS_File
 	bvs	1f
 	cmp	r4, #MSG_SIZE		@ what came back is the length loaded
 	movhi	r4, #MSG_SIZE
 	mov	r0, #0
-	strb	r0, [r5, r4]		@ the spare word after it holds this
+	strb	r0, [r6, r4]		@ the spare word after it holds this
 1:
-	ldmfd	sp!, {r4, r5, pc}
+	ldmfd	sp!, {r4, r5, r6, pc}
 
 @ Put the value of message token r0 into icon r1 of the information window.
 msg_icon:
