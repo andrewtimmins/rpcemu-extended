@@ -34,7 +34,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **Full FPA10 emulation** — floating-point coprocessor with cycle-accurate timing; works with interpreter and dynarec.
 - **MMU access permissions — ADFFS works** — RPCEmu did not enforce page access permissions when an address translation was already cached, so a User-mode write to a Supervisor-only page succeeded instead of faulting. That is why [ADFFS](https://www.jaspp.org.uk/) told people to avoid RPCEmu from 2013 onwards: its JIT uses page protection to detect self-modifying code, and without working faults very few games ran. Fixed, with a 19-check regression test, so ADFFS and the preserved games that need it run here. See [docs/mmu-permissions.md](docs/mmu-permissions.md).
 - **Graphics card — display modes VRAM cannot reach** — an optional emulated expansion card with 15MB of its own display memory, so **2560 x 1440 in full colour** is available on a machine whose 2MB of VRAM otherwise stops at 800 x 600. An ordinary card in an ordinary EASI slot with its own GraphicsV driver in its ROM; off by default, and RISC OS keeps using VIDC20 until you run `*GfxCardOn`. See [docs/gfxcard.md](docs/gfxcard.md).
-- **USB — real devices from the host, in RISC OS** — an emulated **OHCI** host controller on its own expansion card with four ports, carrying RISC OS Open's own USB stack in its ROM, so nothing needs installing in the guest. Plug a device on the host into a port from *Settings → USB…* and RISC OS enumerates it and names it as the real hardware, reading its descriptors, strings and serial number over the emulated bus. Keyboards and mice work immediately, since HID is compiled into USBDriver. Streaming devices work: isochronous transfers are implemented, so a camera's packets reach the guest a frame at a time, although nothing in RISC OS will display a webcam for you. **USB drives work too**, through the SCSI modules the card's ROM also carries, with one caveat worth knowing before you plug one in: RISC OS only mounts a FileCore disc, so a FAT-formatted stick needs a FAT filing system such as Fat32FS on top, which is not bundled. Verified on Linux, and untested on Windows and macOS. See [USB devices](#usb-devices) and [docs/usb.md](docs/usb.md).
+- **USB — real devices from the host, in RISC OS** — an emulated **OHCI** host controller on its own expansion card with four ports, carrying RISC OS Open's own USB stack in its ROM, so nothing needs installing in the guest. Plug a device on the host into a port from *Settings → USB…* and RISC OS enumerates it and names it as the real hardware, reading its descriptors, strings and serial number over the emulated bus. Keyboards and mice work immediately, since HID is compiled into USBDriver. Streaming devices work: isochronous transfers are implemented, so a camera's packets reach the guest a frame at a time, although nothing in RISC OS will display a webcam for you. **USB drives work too, and mount**: the card's ROM carries the SCSI modules and our own **MultiFS**, which reads what is actually on the stick, so a drive appears on the icon bar under its volume name and opens with the Filer. **FAT12/16/32 and exFAT are read and written**; files can be saved, renamed and deleted, directories made and removed, all keeping their long names in both directions, so a file written in RISC OS is the same file when the stick goes back into a PC. **NTFS is read only** - reading it is a large job and writing it safely is a far larger one, so MultiFS refuses rather than risk a volume chkdsk cannot repair. RISC OS file types survive on FAT, kept by the convention noted in the credits. Verified on Linux, and untested on Windows and macOS. See [USB devices](#usb-devices) and [docs/usb.md](docs/usb.md).
 - **Pixel Perfect scaling** — optional integer scaling for sharp pixels (*Settings → Pixel Perfect*).
 - **Built-in VNC server** — remote desktop access from any VNC client. Port and password belong to the machine, so several machines can each have their own and run at the same time; `rpcemu.cfg` supplies them before any machine is chosen and as the default for a machine that does not say. **A VNC client is not limited to typing at the guest:** `Ctrl+Alt+Shift+M` brings up a control menu over the running machine, to reset it or shut the emulator down. It is drawn into the VNC display only, so a local user never sees it, and it works whether the session is headless or an ordinary desktop one you have reconnected to. See [docs/vnc.md](docs/vnc.md).
 - **Command-line control** — launch straight into a named machine (`--machine <name>`), and resume its saved state (`--resume`) or load a specific one (`--state <file>`), in either the GUI or headless. Options, messages and exit statuses are the same on all three platforms. Contributed by David Ramsden. See [Command-line reference](#command-line-reference).
@@ -56,10 +56,10 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 
 The codebase splits into two layers:
 
-| Layer | Path | Language | Role |
-| --- | --- | --- | --- |
-| **Core** | `src/` | C11 | Guest ARM CPU (interpreter or dynarec), devices, SLiRP, debugger |
-| **GUI** | `src/gui/` | C++17 | wxWidgets front-end, threading bridge, dialogs, VNC server |
+| Layer    | Path       | Language | Role                                                             |
+| -------- | ---------- | -------- | ---------------------------------------------------------------- |
+| **Core** | `src/`     | C11      | Guest ARM CPU (interpreter or dynarec), devices, SLiRP, debugger |
+| **GUI**  | `src/gui/` | C++17    | wxWidgets front-end, threading bridge, dialogs, VNC server       |
 
 The GUI runs emulation on a **worker thread** (`EmulatorHost`). UI events are posted
 as commands; video updates and debugger notifications come back through a `GuiBridge`
@@ -72,56 +72,56 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 
 ## Project layout
 
-| Path | Purpose |
-| --- | --- |
-| `src/` | Emulator core (CPU, VIDC, IOMD, IDE, FDC, FPA, HostFS, SLiRP, …) |
-| `src/gui/` | wxWidgets front-end, machine inspector, configuration dialogs |
-| `configs/` | Machine configuration files (`.cfg`, INI format) |
-| `machines/<name>/` | Per-machine runtime data: `cmos.ram`, `hostfs/`, `hd4.hdf`, `hd5.hdf` |
-| `shared/` | Common folder exposed as `HostFS::Shared.$` (created at startup if missing) |
-| `roms/` | RISC OS ROM images — see [the project repository](https://github.com/andrewtimmins/rpcemu-extended) |
-| `resources/` | Blank floppy/disc templates for *Disc → Floppy → Create Blank* |
-| `poduleroms/` | Compiled extension ROM images (HostFS, ScrollWheel — the built-in Support podule) |
-| `podules/` | Expansion-card (podule) ROMs — shipped system components, selectable per machine |
-| `gfxroms/` | The graphics card's display driver, carried in that card's own ROM |
-| `netroms/` | The network card's DCI4 driver (EtherRPCEm), carried in that card's own ROM |
-| `usbroms/` | RISC OS Open's USB stack (USBDriver, OHCIDriver) and the modules a USB drive needs (RTSupport, SCSISwitch, SCSISoftUSB, SCSIFS), carried in the USB card's own ROM — not ours and not GPL, see `usbroms/LICENCES.txt` |
-| `riscos-progs/` | RISC OS module source (HostFS, HostFSFiler, ScrollWheel, EtherRPCEm, RPCEmuSupport, RPCEmuGfx, SyncClock, RPCEmuUSBSupport, RPCEmuPCIEmulator) |
-| `riscos-patches/` | Our changes to RISC OS components that are not ours, as patches against a named upstream revision (currently OHCIDriver) |
-| `packaging/` | Desktop entry and other packaging files |
-| `tests/` | Unit tests, the boot and command-line smoke tests, and the scripts CI and the pre-push hook both call |
-| `.githooks/` | The pre-push hook that builds and tests before anything leaves your machine |
-| `docs/release-notes/` | One file per release, published as that release's notes |
-| `build.sh` | Unified build and release script |
-| [`MANUAL.md`](MANUAL.md) | The manual: what everything does, written for people new to RISC OS as well as to this emulator |
-| [`QUICKSTART.md`](QUICKSTART.md) | RISC OS running in about five minutes, with nothing to find first |
-| `docs/dynarec.md` | ARM dynamic recompiler (build, behaviour, limitations) |
-| `docs/arm64-dynarec.md` | AArch64 (arm64) dynarec backend |
-| `docs/peripherals.md` | Serial and parallel ports: file logging, TCP modem, a real host serial port, the virtual printer, and printing on a host printer |
-| `docs/packages.md` | Package manager: installing RISC OS software, where it comes from, and the per-machine database |
-| `docs/podules.md` | Expansion cards (podules): bundled devices, configuration, plugin ABI |
-| `docs/gfxcard.md` | Graphics card: display modes beyond what VRAM allows, and its GraphicsV driver |
-| `docs/kinetic.md` | Kinetic StrongARM: how the card is detected, its 512MB memory map, and the three paths a new memory region needs |
-| `docs/usb.md` | USB: the emulated OHCI host controller, passing real devices through to the guest, streaming from a camera, USB drives, and why it is OHCI |
-| `docs/mmu-permissions.md` | MMU access permissions: the defect that made ADFFS unusable, how it was fixed, and the regression test that holds it |
-| `docs/openbus.md` | OPEN Bus: the Risc PC second processor interface, what a card must bring itself, and the stub card used to test it |
-| `docs/hostfs.md` | HostFS: where a machine's drive lives, pointing several machines at one folder, and the sharing hazard |
-| `docs/paths.md` | Where RPCEmu keeps machines, ROMs and settings: the first-run question, the precedence rules, and who is never asked |
-| `docs/keyboard.md` | Keyboard: how a host key reaches RISC OS, why it is mapped by physical position rather than by character, non-UK layouts, and diagnosing it with `RPCEMU_KEYBOARD_DEBUG` |
-| `docs/clipboard.md` | Shared clipboard: copying text and images between the host and RISC OS |
-| `docs/vnc.md` | VNC: using a machine remotely, choosing one over VNC in headless mode, and the control menu for a running machine |
-| `docs/multi-machine.md` | Running several machines at once: how it works today, the virtual switch planned, and why the core is one machine per process |
-| `docs/pyromaniac-networking.md` | Sharing a virtual network with RISC OS Pyromaniac and other emulators, through a JSON tun/tap server |
-| `docs/hostcmd.md` | HostCmd: drive the RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`) |
-| `docs/prminxml/` | **The host interfaces manual**, in PRM-in-XML: HostFS, HostCmd, the clipboard and the network SWI — every operation, its registers, and how each reports failure. Written for someone implementing the host half rather than for someone using the emulator. Rendered to HTML by CI and published with each release; `make` in that directory builds it locally |
-| `tools/mcp/README.md` | MCP server: drive a RISC OS machine from Claude / an agent (commands, files, screen, debugger). Setup + tool reference. |
-| `docs/debugcmd.md` | DebugCmd: control the emulated CPU over a socket (`rpcemu-debug`) — registers, memory, disassembly, conditional breakpoints, stepping over and out, backtraces, symbols |
-| `docs/disassembly.md` | The ARM disassembler: what it covers, the FPA and RISC OS SWI names, and why it is not a library |
-| `docs/debugger-tracing.md` | Debugger: exception trapping, SWI tracing, logging watchpoints |
-| `docs/testing.md` | Testing: running the suite, the pre-push hook, writing a test, the sanitiser build, and the known gaps |
-| `docs/windows-build.md` | Building for Windows (MinGW-w64) |
-| `docs/macos-build.md` | Building for macOS (universal binary) |
-| `setup-build-env.sh` | Install build dependencies (Debian/Ubuntu) |
+| Path                             | Purpose                                                                                                                                                                                                                                                                                                                                                         |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/`                           | Emulator core (CPU, VIDC, IOMD, IDE, FDC, FPA, HostFS, SLiRP, …)                                                                                                                                                                                                                                                                                                |
+| `src/gui/`                       | wxWidgets front-end, machine inspector, configuration dialogs                                                                                                                                                                                                                                                                                                   |
+| `configs/`                       | Machine configuration files (`.cfg`, INI format)                                                                                                                                                                                                                                                                                                                |
+| `machines/<name>/`               | Per-machine runtime data: `cmos.ram`, `hostfs/`, `hd4.hdf`, `hd5.hdf`                                                                                                                                                                                                                                                                                           |
+| `shared/`                        | Common folder exposed as `HostFS::Shared.$` (created at startup if missing)                                                                                                                                                                                                                                                                                     |
+| `roms/`                          | RISC OS ROM images — see [the project repository](https://github.com/andrewtimmins/rpcemu-extended)                                                                                                                                                                                                                                                             |
+| `resources/`                     | Blank floppy/disc templates for *Disc → Floppy → Create Blank*                                                                                                                                                                                                                                                                                                  |
+| `poduleroms/`                    | Compiled extension ROM images (HostFS, ScrollWheel — the built-in Support podule)                                                                                                                                                                                                                                                                               |
+| `podules/`                       | Expansion-card (podule) ROMs — shipped system components, selectable per machine                                                                                                                                                                                                                                                                                |
+| `gfxroms/`                       | The graphics card's display driver, carried in that card's own ROM                                                                                                                                                                                                                                                                                              |
+| `netroms/`                       | The network card's DCI4 driver (EtherRPCEm), carried in that card's own ROM                                                                                                                                                                                                                                                                                     |
+| `usbroms/`                       | RISC OS Open's USB stack (USBDriver, OHCIDriver) and the modules a USB drive needs (RTSupport, SCSISwitch, SCSISoftUSB, SCSIFS), carried in the USB card's own ROM — not ours and not GPL, see `usbroms/LICENCES.txt`                                                                                                                                           |
+| `riscos-progs/`                  | RISC OS module source (HostFS, HostFSFiler, ScrollWheel, EtherRPCEm, RPCEmuSupport, RPCEmuGfx, SyncClock, RPCEmuUSBSupport, RPCEmuPCIEmulator)                                                                                                                                                                                                                  |
+| `riscos-patches/`                | Our changes to RISC OS components that are not ours, as patches against a named upstream revision (currently OHCIDriver)                                                                                                                                                                                                                                        |
+| `packaging/`                     | Desktop entry and other packaging files                                                                                                                                                                                                                                                                                                                         |
+| `tests/`                         | Unit tests, the boot and command-line smoke tests, and the scripts CI and the pre-push hook both call                                                                                                                                                                                                                                                           |
+| `.githooks/`                     | The pre-push hook that builds and tests before anything leaves your machine                                                                                                                                                                                                                                                                                     |
+| `docs/release-notes/`            | One file per release, published as that release's notes                                                                                                                                                                                                                                                                                                         |
+| `build.sh`                       | Unified build and release script                                                                                                                                                                                                                                                                                                                                |
+| [`MANUAL.md`](MANUAL.md)         | The manual: what everything does, written for people new to RISC OS as well as to this emulator                                                                                                                                                                                                                                                                 |
+| [`QUICKSTART.md`](QUICKSTART.md) | RISC OS running in about five minutes, with nothing to find first                                                                                                                                                                                                                                                                                               |
+| `docs/dynarec.md`                | ARM dynamic recompiler (build, behaviour, limitations)                                                                                                                                                                                                                                                                                                          |
+| `docs/arm64-dynarec.md`          | AArch64 (arm64) dynarec backend                                                                                                                                                                                                                                                                                                                                 |
+| `docs/peripherals.md`            | Serial and parallel ports: file logging, TCP modem, a real host serial port, the virtual printer, and printing on a host printer                                                                                                                                                                                                                                |
+| `docs/packages.md`               | Package manager: installing RISC OS software, where it comes from, and the per-machine database                                                                                                                                                                                                                                                                 |
+| `docs/podules.md`                | Expansion cards (podules): bundled devices, configuration, plugin ABI                                                                                                                                                                                                                                                                                           |
+| `docs/gfxcard.md`                | Graphics card: display modes beyond what VRAM allows, and its GraphicsV driver                                                                                                                                                                                                                                                                                  |
+| `docs/kinetic.md`                | Kinetic StrongARM: how the card is detected, its 512MB memory map, and the three paths a new memory region needs                                                                                                                                                                                                                                                |
+| `docs/usb.md`                    | USB: the emulated OHCI host controller, passing real devices through to the guest, streaming from a camera, USB drives, and why it is OHCI                                                                                                                                                                                                                      |
+| `docs/mmu-permissions.md`        | MMU access permissions: the defect that made ADFFS unusable, how it was fixed, and the regression test that holds it                                                                                                                                                                                                                                            |
+| `docs/openbus.md`                | OPEN Bus: the Risc PC second processor interface, what a card must bring itself, and the stub card used to test it                                                                                                                                                                                                                                              |
+| `docs/hostfs.md`                 | HostFS: where a machine's drive lives, pointing several machines at one folder, and the sharing hazard                                                                                                                                                                                                                                                          |
+| `docs/paths.md`                  | Where RPCEmu keeps machines, ROMs and settings: the first-run question, the precedence rules, and who is never asked                                                                                                                                                                                                                                            |
+| `docs/keyboard.md`               | Keyboard: how a host key reaches RISC OS, why it is mapped by physical position rather than by character, non-UK layouts, and diagnosing it with `RPCEMU_KEYBOARD_DEBUG`                                                                                                                                                                                        |
+| `docs/clipboard.md`              | Shared clipboard: copying text and images between the host and RISC OS                                                                                                                                                                                                                                                                                          |
+| `docs/vnc.md`                    | VNC: using a machine remotely, choosing one over VNC in headless mode, and the control menu for a running machine                                                                                                                                                                                                                                               |
+| `docs/multi-machine.md`          | Running several machines at once: how it works today, the virtual switch planned, and why the core is one machine per process                                                                                                                                                                                                                                   |
+| `docs/pyromaniac-networking.md`  | Sharing a virtual network with RISC OS Pyromaniac and other emulators, through a JSON tun/tap server                                                                                                                                                                                                                                                            |
+| `docs/hostcmd.md`                | HostCmd: drive the RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`)                                                                                                                                                                                                                                                                             |
+| `docs/prminxml/`                 | **The host interfaces manual**, in PRM-in-XML: HostFS, HostCmd, the clipboard and the network SWI — every operation, its registers, and how each reports failure. Written for someone implementing the host half rather than for someone using the emulator. Rendered to HTML by CI and published with each release; `make` in that directory builds it locally |
+| `tools/mcp/README.md`            | MCP server: drive a RISC OS machine from Claude / an agent (commands, files, screen, debugger). Setup + tool reference.                                                                                                                                                                                                                                         |
+| `docs/debugcmd.md`               | DebugCmd: control the emulated CPU over a socket (`rpcemu-debug`) — registers, memory, disassembly, conditional breakpoints, stepping over and out, backtraces, symbols                                                                                                                                                                                         |
+| `docs/disassembly.md`            | The ARM disassembler: what it covers, the FPA and RISC OS SWI names, and why it is not a library                                                                                                                                                                                                                                                                |
+| `docs/debugger-tracing.md`       | Debugger: exception trapping, SWI tracing, logging watchpoints                                                                                                                                                                                                                                                                                                  |
+| `docs/testing.md`                | Testing: running the suite, the pre-push hook, writing a test, the sanitiser build, and the known gaps                                                                                                                                                                                                                                                          |
+| `docs/windows-build.md`          | Building for Windows (MinGW-w64)                                                                                                                                                                                                                                                                                                                                |
+| `docs/macos-build.md`            | Building for macOS (universal binary)                                                                                                                                                                                                                                                                                                                           |
+| `setup-build-env.sh`             | Install build dependencies (Debian/Ubuntu)                                                                                                                                                                                                                                                                                                                      |
 
 ### Where your data lives
 
@@ -145,10 +145,10 @@ situations do and do not ask, is in [docs/paths.md](docs/paths.md).
 These environment variables override the defaults, and both outrank the folder
 chosen on first run so that scripts and CI stay predictable:
 
-| Variable | Meaning |
-| --- | --- |
-| `RPCEMU_DATADIR` | Writable data directory (machines, configs, logs). Otherwise the folder chosen on first run, then the executable's directory or the current directory if it contains `configs/`, else the install prefix. |
-| `RPCEMU_RESOURCE_DIR` | Read-only support files (ROM/config/podule templates). |
+| Variable                 | Meaning                                                                                                                                                                                                          |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RPCEMU_DATADIR`         | Writable data directory (machines, configs, logs). Otherwise the folder chosen on first run, then the executable's directory or the current directory if it contains `configs/`, else the install prefix.        |
+| `RPCEMU_RESOURCE_DIR`    | Read-only support files (ROM/config/podule templates).                                                                                                                                                           |
 | `RPCEMU_NO_GUI_MESSAGES` | **Windows only.** Set to `1` to send `--help`, `--list-machines` and startup errors to stdout/stderr instead of a message box. See [Windows: messages appear in a dialog](#windows-messages-appear-in-a-dialog). |
 
 ---
@@ -159,24 +159,24 @@ chosen on first run so that scripts and CI stay predictable:
 
 Each GitHub release ships prebuilt packages for four targets:
 
-| Package | Platform | CPU core |
-| --- | --- | --- |
-| `rpcemu_*_amd64.deb` / `_linux_amd64.tar.gz` | Linux x86-64 | Recompiler (full speed) |
-| `rpcemu_*_arm64.deb` / `_linux_arm64.tar.gz` | Linux arm64 (e.g. Raspberry Pi) | Interpreter (native arm64 recompiler implemented, not yet enabled in releases) |
-| `rpcemu_*_windows_amd64.zip` | Windows x64 (10/11) | Recompiler (full speed) |
-| *(CI artifact, not a release asset yet)* | Windows on ARM (ARM64) | Interpreter — native build; the amd64 release also runs there under emulation, with the recompiler |
-| `rpcemu_*_macos_universal.dmg` | macOS (Intel + Apple Silicon) | Universal app bundle — recompiler on Intel, interpreter on Apple Silicon |
+| Package                                      | Platform                        | CPU core                                                                                           |
+| -------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `rpcemu_*_amd64.deb` / `_linux_amd64.tar.gz` | Linux x86-64                    | Recompiler (full speed)                                                                            |
+| `rpcemu_*_arm64.deb` / `_linux_arm64.tar.gz` | Linux arm64 (e.g. Raspberry Pi) | Interpreter (native arm64 recompiler implemented, not yet enabled in releases)                     |
+| `rpcemu_*_windows_amd64.zip`                 | Windows x64 (10/11)             | Recompiler (full speed)                                                                            |
+| *(CI artifact, not a release asset yet)*     | Windows on ARM (ARM64)          | Interpreter — native build; the amd64 release also runs there under emulation, with the recompiler |
+| `rpcemu_*_macos_universal.dmg`               | macOS (Intel + Apple Silicon)   | Universal app bundle — recompiler on Intel, interpreter on Apple Silicon                           |
 
 **Linux** packages are built on **Ubuntu 24.04 LTS**; being dynamically linked, they run
 on distributions whose system libraries are that version or newer:
 
-| Distribution | Runs the prebuilt release? |
-| --- | --- |
-| Ubuntu 24.04 LTS (Noble) and newer (24.10, 25.04, …) | ✅ Yes — primary target |
-| Linux Mint 22 / 22.x, Pop!_OS 24.04, Zorin 18, elementary 8, KDE neon (24.04 base) | ✅ Yes |
-| Debian 13 (Trixie) and newer | ✅ Yes |
-| arm64 / Raspberry Pi (Ubuntu 24.04+ base) | ✅ Yes — `arm64` package (interpreter; slower than x86) |
-| Ubuntu 22.04 LTS, Debian 12 (Bookworm) and older | ❌ No — system libraries too old |
+| Distribution                                                                       | Runs the prebuilt release?                             |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Ubuntu 24.04 LTS (Noble) and newer (24.10, 25.04, …)                               | ✅ Yes — primary target                                 |
+| Linux Mint 22 / 22.x, Pop!_OS 24.04, Zorin 18, elementary 8, KDE neon (24.04 base) | ✅ Yes                                                  |
+| Debian 13 (Trixie) and newer                                                       | ✅ Yes                                                  |
+| arm64 / Raspberry Pi (Ubuntu 24.04+ base)                                          | ✅ Yes — `arm64` package (interpreter; slower than x86) |
+| Ubuntu 22.04 LTS, Debian 12 (Bookworm) and older                                   | ❌ No — system libraries too old                        |
 
 Linux minimum requirements: **glibc ≥ 2.34**, **libstdc++ from GCC 13.2+**
 (`GLIBCXX_3.4.32`), and **wxWidgets 3.2** — standard on Ubuntu 24.04-era distributions.
@@ -436,31 +436,31 @@ setups); `--list-machines` prints the names as spelled.
 The same options work on Linux, macOS and Windows, so a command line or a script is
 portable between them.
 
-| Option | Effect |
-| --- | --- |
-| `--machine <name>` | Run this machine, skipping the selector. Also accepts `--machine=<name>`. |
-| `--resume` | Resume the machine's own snapshot, consuming it to `.bak`. Requires `--machine`. |
-| `--state <file>` | Load an explicit state file, leaving it in place. Requires `--machine`. |
-| `--vnc-port <n>` | VNC port for this instance, overriding the settings file. Needed when running more than one emulator on a host, since the setting is per installation. |
-| `--no-vnc` | Do not start the VNC server, whatever the settings say. Ignored with `--headless`, which has no other way in. |
-| `--hostcmd-socket <spec>` | HostCmd socket for this instance: a path, or a bare port for TCP on localhost. |
-| `--debug-socket <spec>` | DebugCmd socket for this instance, same forms. |
+| Option                           | Effect                                                                                                                                                                                                                                                                                                                                                              |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--machine <name>`               | Run this machine, skipping the selector. Also accepts `--machine=<name>`.                                                                                                                                                                                                                                                                                           |
+| `--resume`                       | Resume the machine's own snapshot, consuming it to `.bak`. Requires `--machine`.                                                                                                                                                                                                                                                                                    |
+| `--state <file>`                 | Load an explicit state file, leaving it in place. Requires `--machine`.                                                                                                                                                                                                                                                                                             |
+| `--vnc-port <n>`                 | VNC port for this instance, overriding the settings file. Needed when running more than one emulator on a host, since the setting is per installation.                                                                                                                                                                                                              |
+| `--no-vnc`                       | Do not start the VNC server, whatever the settings say. Ignored with `--headless`, which has no other way in.                                                                                                                                                                                                                                                       |
+| `--hostcmd-socket <spec>`        | HostCmd socket for this instance: a path, or a bare port for TCP on localhost.                                                                                                                                                                                                                                                                                      |
+| `--debug-socket <spec>`          | DebugCmd socket for this instance, same forms.                                                                                                                                                                                                                                                                                                                      |
 | `--pyromaniac-net <host[:port]>` | Join a JSON tun/tap server, so this machine shares a virtual network with the other emulators on it, RISC OS Pyromaniac included. The port defaults to 33445. `off` leaves a machine whose settings have it on out of that network for this run. Applies to `--headless` as well as the window. See [docs/pyromaniac-networking.md](docs/pyromaniac-networking.md). |
-| `--no-relay` | Do not relay Access broadcasts. Only one emulator per host can, and the others decline automatically; this says so deliberately. |
-| `--headless` | Run with no GUI window, over VNC. Without `--machine`, the machine list is offered over VNC and you choose one from a client. VNC is started for the run whether or not the settings enable it, since it is the only way in; the setting itself is left alone. |
-| `--list-machines` | List the available machine configs and exit. |
-| `--openbus-stub` | Fit the OPEN Bus test card to the second processor slot, so the plumbing a real card needs can be exercised on a running machine. A development aid rather than a model of real hardware, and nothing is fitted without it. See [docs/openbus.md](docs/openbus.md). |
-| `--datadir <dir>` | Where machines, ROMs and settings live, for this run only. Also accepts `--datadir=<dir>`. Outranks `RPCEMU_DATADIR` and the folder chosen on first run, and is deliberately not remembered, so a scripted run cannot become the default for later interactive ones. |
-| `--fetch-riscos[=which]` | Download RISC OS from RISC OS Open, unpack it, create a machine and exit. `which` is `stable` (default) or `nightly`. |
-| `--no-disc` | With `--fetch-riscos`, fetch the ROM only. |
-| `--accept-licence` | Required by `--fetch-riscos`: agrees to the licensing terms of what is downloaded, which are printed first. |
-| `--pkg-sources` | List the package repositories and the file they are configured in, and exit. Touches no network. |
-| `--pkg-list[=text]` | List the available RISC OS packages, optionally only those matching `text`, and exit. |
-| `--pkg-info=<name>` | Show everything the catalogue holds about one package, and exit. |
-| `--pkg-install=<name>` | Install a package. Needs `--pkg-machine`. |
-| `--pkg-remove=<name>` | Remove a package. Needs `--pkg-machine`. |
-| `--pkg-machine=<name>` | Which machine's disc `--pkg-install` and `--pkg-remove` act on. |
-| `-h`, `--help` | Show usage and exit. |
+| `--no-relay`                     | Do not relay Access broadcasts. Only one emulator per host can, and the others decline automatically; this says so deliberately.                                                                                                                                                                                                                                    |
+| `--headless`                     | Run with no GUI window, over VNC. Without `--machine`, the machine list is offered over VNC and you choose one from a client. VNC is started for the run whether or not the settings enable it, since it is the only way in; the setting itself is left alone.                                                                                                      |
+| `--list-machines`                | List the available machine configs and exit.                                                                                                                                                                                                                                                                                                                        |
+| `--openbus-stub`                 | Fit the OPEN Bus test card to the second processor slot, so the plumbing a real card needs can be exercised on a running machine. A development aid rather than a model of real hardware, and nothing is fitted without it. See [docs/openbus.md](docs/openbus.md).                                                                                                 |
+| `--datadir <dir>`                | Where machines, ROMs and settings live, for this run only. Also accepts `--datadir=<dir>`. Outranks `RPCEMU_DATADIR` and the folder chosen on first run, and is deliberately not remembered, so a scripted run cannot become the default for later interactive ones.                                                                                                |
+| `--fetch-riscos[=which]`         | Download RISC OS from RISC OS Open, unpack it, create a machine and exit. `which` is `stable` (default) or `nightly`.                                                                                                                                                                                                                                               |
+| `--no-disc`                      | With `--fetch-riscos`, fetch the ROM only.                                                                                                                                                                                                                                                                                                                          |
+| `--accept-licence`               | Required by `--fetch-riscos`: agrees to the licensing terms of what is downloaded, which are printed first.                                                                                                                                                                                                                                                         |
+| `--pkg-sources`                  | List the package repositories and the file they are configured in, and exit. Touches no network.                                                                                                                                                                                                                                                                    |
+| `--pkg-list[=text]`              | List the available RISC OS packages, optionally only those matching `text`, and exit.                                                                                                                                                                                                                                                                               |
+| `--pkg-info=<name>`              | Show everything the catalogue holds about one package, and exit.                                                                                                                                                                                                                                                                                                    |
+| `--pkg-install=<name>`           | Install a package. Needs `--pkg-machine`.                                                                                                                                                                                                                                                                                                                           |
+| `--pkg-remove=<name>`            | Remove a package. Needs `--pkg-machine`.                                                                                                                                                                                                                                                                                                                            |
+| `--pkg-machine=<name>`           | Which machine's disc `--pkg-install` and `--pkg-remove` act on.                                                                                                                                                                                                                                                                                                     |
+| `-h`, `--help`                   | Show usage and exit.                                                                                                                                                                                                                                                                                                                                                |
 
 Exit status is **0** on success and **2** for a usage error — an unknown option, a
 stray argument, an unknown machine, a missing state file, or `--resume`/`--state`
@@ -555,16 +555,16 @@ contains a `configs/` folder, else the install prefix.
 Each machine is defined by a `.cfg` file in `configs/` and a data directory under
 `machines/<name>/`.
 
-| Setting | Options |
-| --- | --- |
-| **Model** | RiscPC ARM610/710/810/StrongARM, Kinetic StrongARM (512MB), A7000, A7000+ (experimental), Phoebe (experimental) |
-| **RAM** | 4, 8, 16, 32, 64, 128, 256 MB, or 512 MB (Kinetic) |
-| **VRAM** | None or 2 MB |
-| **ROM** | Subdirectory under `roms/` containing ROM components |
-| **Refresh rate** | 20–100 Hz |
-| **Network** | Off, NAT, Ethernet Bridging, IP Tunnelling |
-| **Hard discs** | HardDisc 4 and 5 — create 256 MB, 512 MB, 1 GB, or 2 GB images |
-| **VNC server** | On/off, port (default 5900) and password — see [Settings > VNC Server](#headless-mode). Give each machine its own port if you run more than one at a time |
+| Setting          | Options                                                                                                                                                   |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Model**        | RiscPC ARM610/710/810/StrongARM, Kinetic StrongARM (512MB), A7000, A7000+ (experimental), Phoebe (experimental)                                           |
+| **RAM**          | 4, 8, 16, 32, 64, 128, 256 MB, or 512 MB (Kinetic)                                                                                                        |
+| **VRAM**         | None or 2 MB                                                                                                                                              |
+| **ROM**          | Subdirectory under `roms/` containing ROM components                                                                                                      |
+| **Refresh rate** | 20–100 Hz                                                                                                                                                 |
+| **Network**      | Off, NAT, Ethernet Bridging, IP Tunnelling                                                                                                                |
+| **Hard discs**   | HardDisc 4 and 5 — create 256 MB, 512 MB, 1 GB, or 2 GB images                                                                                            |
+| **VNC server**   | On/off, port (default 5900) and password — see [Settings > VNC Server](#headless-mode). Give each machine its own port if you run more than one at a time |
 
 Configuration keys are stored under a `[General]` group (wxFileConfig INI format).
 NAT port-forward rules are stored in a separate `[nat_port_forward_rules]` group.
@@ -575,10 +575,10 @@ NAT port-forward rules are stored in a separate `[nat_port_forward_rules]` group
 
 Two filing system icons appear on the RISC OS icon bar:
 
-| Icon | RISC OS path | Host path | Scope |
-| --- | --- | --- | --- |
+| Icon       | RISC OS path       | Host path                                          | Scope                                                      |
+| ---------- | ------------------ | -------------------------------------------------- | ---------------------------------------------------------- |
 | **HostFS** | `HostFS::HostFS.$` | `machines/<name>/hostfs/` by default, configurable | Per-machine, or shared if you point machines at one folder |
-| **Shared** | `HostFS::Shared.$` | `shared/` | All machines, always |
+| **Shared** | `HostFS::Shared.$` | `shared/`                                          | All machines, always                                       |
 
 Use HostFS for machine-specific files and Shared for utilities or files you want
 available across configurations.
@@ -588,11 +588,11 @@ available across configurations.
 *Settings → Machine → System → **HostFS folder***, or the `hostfs_path` key in the
 machine's `.cfg`. Three forms, the same convention `hd4_path` and `rom_dir` use:
 
-| Setting | Means |
-| --- | --- |
-| *empty* | `machines/<name>/hostfs`, as it has always been. **Nothing is stored**, so there is nothing to go stale if you move your data folder. |
-| `discs/work` | Relative, under the machine's own folder, so it moves with the machine. |
-| `/srv/riscos/shared` | Absolute, used as given. This is how several machines share one folder. |
+| Setting              | Means                                                                                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| *empty*              | `machines/<name>/hostfs`, as it has always been. **Nothing is stored**, so there is nothing to go stale if you move your data folder. |
+| `discs/work`         | Relative, under the machine's own folder, so it moves with the machine.                                                               |
+| `/srv/riscos/shared` | Absolute, used as given. This is how several machines share one folder.                                                               |
 
 Sharing one folder between machines is supported and is what the setting is for,
 but **do not run two machines on one folder at the same time**: HostFS holds open
@@ -606,14 +606,14 @@ already uses a folder. See [docs/hostfs.md](docs/hostfs.md).
 
 Open **Debug → Machine Inspector…** (or use the toolbar button).
 
-| Tab | Contents |
-| --- | --- |
-| **CPU** | Registers R0–R15, CPSR, mode, MMU state, dynarec/interpreter, performance |
-| **Disassembly** | ARM disassembly at a chosen address, optional follow-PC |
-| **Memory** | Hex dump of emulated memory at a chosen address |
-| **Debugger** | Run/Pause/Step, breakpoint and watchpoint lists, last halt reason |
-| **Trace** | Exception traps, SWI tracing, and logging watchpoints — see [docs/debugger-tracing.md](docs/debugger-tracing.md) |
-| **Peripherals** | VIDC, IOMD IRQ/timers, floppy, IDE, podule slot summary |
+| Tab             | Contents                                                                                                         |
+| --------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **CPU**         | Registers R0–R15, CPSR, mode, MMU state, dynarec/interpreter, performance                                        |
+| **Disassembly** | ARM disassembly at a chosen address, optional follow-PC                                                          |
+| **Memory**      | Hex dump of emulated memory at a chosen address                                                                  |
+| **Debugger**    | Run/Pause/Step, breakpoint and watchpoint lists, last halt reason                                                |
+| **Trace**       | Exception traps, SWI tracing, and logging watchpoints — see [docs/debugger-tracing.md](docs/debugger-tracing.md) |
+| **Peripherals** | VIDC, IOMD IRQ/timers, floppy, IDE, podule slot summary                                                          |
 
 Auto-refresh runs every 500 ms by default. Breakpoints and watchpoints work while
 the dynarec is active — `arm_dynarec.c` checks `debugger_requires_instruction_hook()`
@@ -627,17 +627,19 @@ Configure via **Settings → Serial…** and **Settings → Parallel…**. The R
 single hardware serial port (the 16550 UART at `0x3F8`), so only one **Serial** port
 is exposed.
 
-| Port | Modes |
-| --- | --- |
+| Port               | Modes                                                              |
+| ------------------ | ------------------------------------------------------------------ |
 | **Serial (0x3F8)** | Disabled, log to file, TCP modem (telnet), a real port on the host |
-| **Parallel (LPT)** | Disabled, log to file, virtual printer, print on this computer |
+| **Parallel (LPT)** | Disabled, log to file, virtual printer, print on this computer     |
 
 - **Log to file** captures the raw byte stream the guest sends — handy for debugging
   or capturing print/serial output.
+
 - **TCP modem** answers the Hayes AT command set and `ATDT host:port` opens a real TCP
   connection. It speaks telnet and negotiates binary mode, so telnet BBSes work and
   X/Y/ZMODEM transfers stay 8-bit clean. `+++` (guard-timed) returns to command mode;
   `ATH` hangs up.
+
 - **Virtual printer** writes `.prn` files to a chosen folder
   (default: `machines/<name>/printjobs/`); with Ghostscript support, enable **Also
   create PDF files** for automatic conversion.
@@ -651,6 +653,7 @@ is exposed.
   own UART does the signalling. A device that cannot report its modem lines, which
   includes every pseudo terminal, is treated as asserting CTS, DSR and DCD, because
   RISC OS waits for CTS before transmitting and would otherwise hang.
+
 - **Print on this computer** sends a finished job to a printer the host already knows
   about. Give it the name of a print queue and the job is spooled as raw data through
   the host print system, or give it a device path such as `/dev/usb/lp0` and it is
@@ -703,12 +706,19 @@ time, and a few lines of BASIC reading the endpoint through DeviceFS get the rea
 Nothing in RISC OS will display a webcam for you, so this is a foundation rather than a
 feature, and [docs/usb.md](docs/usb.md) shows how to read one.
 
-**USB drives work as well.** The card's ROM carries RISC OS Open's SCSI modules, so a
-drive appears in `*SCSIDevices` with its real capacity and its sectors read and write
-correctly. One caveat, and it is not a small one: RISC OS itself will only mount a
-FileCore disc, so a FAT-formatted stick - which is to say almost any stick - needs a FAT
-filing system such as Fat32FS on top. That is not bundled, being somebody else's LGPL
-work to distribute; [docs/usb.md](docs/usb.md) explains the arrangement.
+**USB drives work as well, and mount.** The card's ROM carries RISC OS Open's SCSI
+modules, so a drive appears in `*SCSIDevices` with its real capacity and its sectors
+read and write correctly. RISC OS itself will only mount a FileCore disc, and almost
+every stick in the world is FAT or exFAT, so the card's ROM also carries **MultiFS** -
+ours - to read them, and **MultiFSFiler** to put the disc on the icon bar under its volume
+name. Plug a stick in, click the icon, and a Filer window opens on it. Files can be
+read off a stick and saved, renamed and deleted on one, and directories made and
+removed, with long file names in both directions, so a file keeps the name the host
+gave it and a file written in RISC OS keeps the name it was given when the stick goes
+back into a PC. That covers **FAT12/16/32 and exFAT**. **NTFS is read only**: its
+files and directories are listed and read, and every attempt to change one is refused.
+RISC OS file types are kept on FAT, following the convention recorded in the credits
+below so that two machines agree about a stick; [docs/usb.md](docs/usb.md) says exactly where the edges are.
 
 Hubs still cannot be passed through.
 
@@ -755,12 +765,12 @@ The emulated controller and the card are always built. Passthrough needs **libus
 at build time, and a release build now **fails** rather than quietly producing a binary
 that cannot reach a device.
 
-| Platform | How |
-| --- | --- |
-| Linux | `./setup-build-env.sh` (installs `libusb-1.0-0-dev`) |
-| Windows, native MSYS2 | `pacman -S mingw-w64-x86_64-libusb` (or `mingw-w64-clang-aarch64-libusb` on ARM64) |
-| Windows, cross from Linux | `./setup-cross-build-env.sh` (builds libusb for the MinGW target) |
-| macOS | `brew install libusb` |
+| Platform                  | How                                                                                |
+| ------------------------- | ---------------------------------------------------------------------------------- |
+| Linux                     | `./setup-build-env.sh` (installs `libusb-1.0-0-dev`)                               |
+| Windows, native MSYS2     | `pacman -S mingw-w64-x86_64-libusb` (or `mingw-w64-clang-aarch64-libusb` on ARM64) |
+| Windows, cross from Linux | `./setup-cross-build-env.sh` (builds libusb for the MinGW target)                  |
+| macOS                     | `brew install libusb`                                                              |
 
 Set `RPCEMU_REQUIRE_LIBUSB=OFF` in the environment to build without it deliberately.
 `BUILDINFO.txt` in a Linux release records whether the binary has it, and the USB
@@ -780,8 +790,8 @@ passes straight through to RISC OS. All emulator actions (screenshot, reset, flo
 load/eject, full-screen, mute, machine settings, and the debugger Run/Pause/Step
 controls) are available from the menus and the toolbar instead.
 
-| Key | Action |
-| --- | --- |
+| Key           | Action                                          |
+| ------------- | ----------------------------------------------- |
 | **Alt+Enter** | Release the captured mouse, or exit full-screen |
 
 The toolbar provides one-click access to reset, screenshot, floppy load, CD-ROM
@@ -850,17 +860,17 @@ how the JIT is built and when it falls back to interpretation.
 
 ## Troubleshooting
 
-| Symptom | Remedy |
-| --- | --- |
+| Symptom                                             | Remedy                                                                                                     |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `error while loading shared libraries: …` (tarball) | Run `./setup-runtime-env.sh` to install the runtime libraries (wxWidgets, SDL2, libvncserver, Ghostscript) |
-| Window does not appear / configs not found | Run from the project root or a staged release directory |
-| No audio | Ensure PulseAudio or PipeWire is running (SDL2) |
-| No network | Select NAT in machine settings; SLiRP/NAT is always compiled in (Linux and Windows) |
-| ROM not found | Place ROM files in `roms/<subdir>/` and select the folder in machine settings |
-| Machine data not persisting | Check that `machines/<name>/` exists and is writable |
-| VNC option missing | Rebuild with `libvncserver-dev` installed |
-| PDF conversion unavailable | Install `libgs-dev` and rebuild; runtime needs Ghostscript resource files |
-| Diagnostic log | See `rpclog.txt` in the data directory |
+| Window does not appear / configs not found          | Run from the project root or a staged release directory                                                    |
+| No audio                                            | Ensure PulseAudio or PipeWire is running (SDL2)                                                            |
+| No network                                          | Select NAT in machine settings; SLiRP/NAT is always compiled in (Linux and Windows)                        |
+| ROM not found                                       | Place ROM files in `roms/<subdir>/` and select the folder in machine settings                              |
+| Machine data not persisting                         | Check that `machines/<name>/` exists and is writable                                                       |
+| VNC option missing                                  | Rebuild with `libvncserver-dev` installed                                                                  |
+| PDF conversion unavailable                          | Install `libgs-dev` and rebuild; runtime needs Ghostscript resource files                                  |
+| Diagnostic log                                      | See `rpclog.txt` in the data directory                                                                     |
 
 ---
 
