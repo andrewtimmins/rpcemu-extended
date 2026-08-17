@@ -44,6 +44,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef __linux__
+#include <dirent.h>
+#include <limits.h>
+#endif
+
 #include "rpcemu.h"
 #include "usb_device.h"
 #include "usb_host.h"
@@ -1650,6 +1655,214 @@ usb_host_find(uint16_t vendor, uint16_t product, libusb_device ***list_out)
 	return NULL;
 }
 
+/*
+ * Give back any filesystem the host has mounted off this device.
+ *
+ * Detaching the kernel driver is enough for a keyboard or a camera, and is not
+ * enough for a drive: the host will not let go of usb-storage while a
+ * filesystem on it is mounted, so the claim fails with "could not claim
+ * interface 0" and the guest is handed a device that enumerates and then
+ * refuses every request. The desktop makes this the normal case rather than the
+ * exception - it mounts a stick the moment the guest gives it back, so the next
+ * attach finds it busy again. Telling the user to unmount it by hand before
+ * every boot is not a fix.
+ *
+ * So: find the block devices that belong to this USB device, and unmount
+ * whatever of them is mounted. udisksctl is used rather than umount(2) because
+ * it goes through the session's own permissions - the same route the file
+ * manager used to mount it - and so needs no privilege we would not otherwise
+ * have. The user has already agreed to hand the device over by this point; the
+ * dialogue says in as many words that it is taken away from this computer.
+ *
+ * Linux only. Nothing else here needs it: Windows and macOS hand a device over
+ * without the filesystem standing in the way.
+ */
+#ifdef __linux__
+static int
+usb_host_path_is_mounted(const char *dev)
+{
+	FILE *f;
+	char line[512];
+	int found = 0;
+
+	f = fopen("/proc/mounts", "r");
+	if (f == NULL) {
+		return 0;
+	}
+	while (fgets(line, sizeof(line), f) != NULL) {
+		char *space = strchr(line, ' ');
+
+		if (space == NULL) {
+			continue;
+		}
+		*space = '\0';
+		if (strcmp(line, dev) == 0) {
+			found = 1;
+			break;
+		}
+	}
+	fclose(f);
+	return found;
+}
+
+static void
+usb_host_unmount_one(const char *dev)
+{
+	char cmd[256];
+	int rc;
+
+	if (!usb_host_path_is_mounted(dev)) {
+		return;
+	}
+
+	/* The name comes from readdir on sysfs, so it is a kernel block device
+	   name and cannot carry anything a shell would act on - but it is still
+	   checked, because building a command line out of a string that came
+	   from outside is exactly how that stops being true. */
+	if (strspn(dev, "/devsdhcbnvme0123456789p") != strlen(dev)) {
+		rpclog("USB: refusing to unmount '%s': not a plain device name\n", dev);
+		return;
+	}
+
+	snprintf(cmd, sizeof(cmd), "udisksctl unmount -b %s >/dev/null 2>&1", dev);
+	rc = system(cmd);
+	if (rc == 0) {
+		rpclog("USB: unmounted %s so the guest can have the drive\n", dev);
+	} else {
+		rpclog("USB: could not unmount %s (udisksctl gave %d); the guest will "
+		       "get a device the host is still holding\n", dev, rc);
+	}
+}
+
+/*
+ * Which sysfs directory is this device? The names under /sys/bus/usb/devices
+ * are bus-port paths such as "1-1", and a block device's real path runs through
+ * the same directory, which is how the two are tied together.
+ */
+static int
+usb_host_sysfs_name(uint16_t vendor, uint16_t product, char *out, size_t len)
+{
+	DIR *d;
+	const struct dirent *e;
+	int found = 0;
+
+	d = opendir("/sys/bus/usb/devices");
+	if (d == NULL) {
+		return 0;
+	}
+	while (!found && (e = readdir(d)) != NULL) {
+		char path[512];
+		FILE *f;
+		unsigned v = 0, p = 0;
+
+		if (e->d_name[0] == '.' || strchr(e->d_name, ':') != NULL) {
+			continue;	/* ":" marks an interface, not a device */
+		}
+		snprintf(path, sizeof(path), "/sys/bus/usb/devices/%s/idVendor",
+		    e->d_name);
+		f = fopen(path, "r");
+		if (f == NULL) {
+			continue;
+		}
+		if (fscanf(f, "%x", &v) != 1) {
+			v = 0;
+		}
+		fclose(f);
+
+		snprintf(path, sizeof(path), "/sys/bus/usb/devices/%s/idProduct",
+		    e->d_name);
+		f = fopen(path, "r");
+		if (f == NULL) {
+			continue;
+		}
+		if (fscanf(f, "%x", &p) != 1) {
+			p = 0;
+		}
+		fclose(f);
+
+		if (v == vendor && p == product) {
+			snprintf(out, len, "%s", e->d_name);
+			found = 1;
+		}
+	}
+	closedir(d);
+	return found;
+}
+
+static void
+usb_host_release_mounts(uint16_t vendor, uint16_t product)
+{
+	char usbname[64];
+	char match[80];
+	DIR *d;
+	const struct dirent *e;
+
+	if (!usb_host_sysfs_name(vendor, product, usbname, sizeof(usbname))) {
+		return;
+	}
+	snprintf(match, sizeof(match), "/%s/", usbname);
+
+	d = opendir("/sys/block");
+	if (d == NULL) {
+		return;
+	}
+	while ((e = readdir(d)) != NULL) {
+		char link[512];
+		char *real;
+		int ours;
+		DIR *parts;
+		const struct dirent *pe;
+
+		if (e->d_name[0] == '.') {
+			continue;
+		}
+		snprintf(link, sizeof(link), "/sys/block/%s", e->d_name);
+
+		/* realpath() writes up to PATH_MAX whatever the path turned out to
+		   be, so it is given a buffer of its own rather than one of ours:
+		   a 1KB array here was a buffer overflow that glibc caught and
+		   turned into an abort on the first attach. */
+		real = realpath(link, NULL);
+		if (real == NULL) {
+			continue;
+		}
+		ours = (strstr(real, match) != NULL);
+		free(real);
+		if (!ours) {
+			continue;	/* some other disc */
+		}
+
+		/* The whole device, and then each partition of it: a stick is
+		   normally mounted by its partition rather than whole. */
+		snprintf(link, sizeof(link), "/dev/%s", e->d_name);
+		usb_host_unmount_one(link);
+
+		snprintf(link, sizeof(link), "/sys/block/%s", e->d_name);
+		parts = opendir(link);
+		if (parts == NULL) {
+			continue;
+		}
+		while ((pe = readdir(parts)) != NULL) {
+			if (strncmp(pe->d_name, e->d_name, strlen(e->d_name)) != 0) {
+				continue;
+			}
+			snprintf(link, sizeof(link), "/dev/%s", pe->d_name);
+			usb_host_unmount_one(link);
+		}
+		closedir(parts);
+	}
+	closedir(d);
+}
+#else
+static void
+usb_host_release_mounts(uint16_t vendor, uint16_t product)
+{
+	(void) vendor;
+	(void) product;
+}
+#endif
+
+
 UsbDevice *
 usb_host_create(uint16_t vendor, uint16_t product, const char **why)
 {
@@ -1737,6 +1950,11 @@ usb_host_create(uint16_t vendor, uint16_t product, const char **why)
 	 * gives it back. libusb will do both around a claim if asked.
 	 */
 	libusb_set_auto_detach_kernel_driver(handle, 1);
+
+	/* A mounted filesystem keeps the host's driver attached whatever libusb
+	   is told, so anything mounted off this device is handed back first. */
+	usb_host_release_mounts(vendor, product);
+
 	usb_host_adopt_configuration(hd);
 
 	for (i = 0; i < HOST_SLOTS; i++) {
