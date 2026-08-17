@@ -75,7 +75,7 @@ static void test_shared_framebuffer()
 	for (size_t i = 0; i < frame.size(); i++) {
 		frame[i] = 0xFF000000u | (uint32_t) (i & 0xFFFFFFu);
 	}
-	writer.Publish(frame.data(), 64, 48);
+	writer.Publish(frame.data(), 64, 48, 0, 48);
 
 	CHECK(reader.ReadInto(&out, &w, &h));
 	CHECK(w == 64);
@@ -85,12 +85,108 @@ static void test_shared_framebuffer()
 	/* A second, differently-sized frame: the reader must pick up both the
 	   new pixels and the new dimensions together, never a mix of the two. */
 	std::vector<uint32_t> frame2(32u * 16u, 0x11223344u);
-	writer.Publish(frame2.data(), 32, 16);
+	writer.Publish(frame2.data(), 32, 16, 0, 16);
 
 	CHECK(reader.ReadInto(&out, &w, &h));
 	CHECK(w == 32);
 	CHECK(h == 16);
 	CHECK(out == frame2);
+
+	writer.Close();
+}
+
+/*
+ * Publishing only the rows that changed must still hand the reader a whole
+ * frame.
+ *
+ * Publish() copies [dirty_top, dirty_bottom) into whichever slot is free, so a
+ * slot that has sat out a few frames is behind by the rows those frames changed
+ * and has to catch up on them - it carries the union of the ranges it missed. A
+ * mistake there does not fail loudly: it leaves a band of rows holding a frame
+ * two or three old, which on a real screen looks like a patch that will not
+ * repaint. So this drives a long sequence of arbitrary ranges against a model of
+ * what the frame should be, and compares every published frame in full.
+ */
+static void test_shared_framebuffer_dirty_rows()
+{
+	char name[64];
+	std::snprintf(name, sizeof(name), "/rpcemu-test-fbd-%ld", (long) getpid());
+
+	SharedFramebuffer writer;
+	CHECK(writer.CreateNew(name));
+	SharedFramebuffer reader;
+	CHECK(reader.OpenExisting(name));
+
+	const int w = 40, h = 30;
+	std::vector<uint32_t> source((size_t) w * (size_t) h, 0u);
+	std::vector<uint32_t> out;
+	int gw = 0, gh = 0;
+	uint32_t tick = 1;
+
+	/* A deliberately fixed sequence rather than a random one, so a failure is
+	   the same failure every time it is run. */
+	static const int ranges[][2] = {
+		{ 0, 30 }, { 0, 1 }, { 29, 30 }, { 10, 11 }, { 10, 12 },
+		{ 0, 5 }, { 25, 30 }, { 12, 13 }, { 3, 4 }, { 15, 16 },
+		{ 0, 30 }, { 7, 8 }, { 8, 9 }, { 9, 10 }, { 1, 2 },
+		{ 20, 21 }, { 20, 22 }, { 4, 6 }, { 0, 2 }, { 28, 29 },
+	};
+
+	for (size_t i = 0; i < sizeof(ranges) / sizeof(ranges[0]); i++) {
+		const int top = ranges[i][0];
+		const int bottom = ranges[i][1];
+
+		/* Change the source exactly where we are about to say it changed. */
+		for (int y = top; y < bottom; y++) {
+			for (int x = 0; x < w; x++) {
+				source[(size_t) y * (size_t) w + (size_t) x] =
+				    (tick << 8) | (uint32_t) y;
+			}
+		}
+		tick++;
+
+		writer.Publish(source.data(), w, h, top, bottom);
+
+		CHECK(reader.ReadInto(&out, &gw, &gh));
+		CHECK(gw == w);
+		CHECK(gh == h);
+		/* The whole frame, not just the rows just published. */
+		CHECK(out == source);
+	}
+
+	/* An empty range means the whole frame, as it did before the range
+	   existed. Change everything and say nothing changed. */
+	for (size_t i = 0; i < source.size(); i++) {
+		source[i] = 0xDEADBEEFu;
+	}
+	writer.Publish(source.data(), w, h, 0, 0);
+	CHECK(reader.ReadInto(&out, &gw, &gh));
+	CHECK(out == source);
+
+	/* So does a range the wrong way round, or one off the end. */
+	for (size_t i = 0; i < source.size(); i++) {
+		source[i] = 0x5A5A5A5Au;
+	}
+	writer.Publish(source.data(), w, h, 20, 5);
+	CHECK(reader.ReadInto(&out, &gw, &gh));
+	CHECK(out == source);
+
+	for (size_t i = 0; i < source.size(); i++) {
+		source[i] = 0x0BADF00Du;
+	}
+	writer.Publish(source.data(), w, h, 0, h + 10);
+	CHECK(reader.ReadInto(&out, &gw, &gh));
+	CHECK(out == source);
+
+	/* A geometry change leaves every slot holding nothing usable, so the next
+	   frame at the new size must be copied whole however small its range. */
+	const int w2 = 24, h2 = 18;
+	std::vector<uint32_t> small((size_t) w2 * (size_t) h2, 0x12345678u);
+	writer.Publish(small.data(), w2, h2, 4, 5);
+	CHECK(reader.ReadInto(&out, &gw, &gh));
+	CHECK(gw == w2);
+	CHECK(gh == h2);
+	CHECK(out == small);
 
 	writer.Close();
 }
@@ -345,6 +441,7 @@ int main()
 #endif
 
 	test_shared_framebuffer();
+	test_shared_framebuffer_dirty_rows();
 	test_ipc_name_for();
 	test_ipc_roundtrip();
 	test_menu_command_roundtrip();

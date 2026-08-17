@@ -90,7 +90,21 @@ public:
 	   clamps/ignores a frame larger than kMaxWidth x kMaxHeight, which
 	   should not happen given the host display bound rpcemu already
 	   negotiates. */
-	void Publish(const uint32_t *pixels, int width, int height);
+	/*
+	 * Copies the rows [dirty_top, dirty_bottom) of the frame into the next free
+	 * slot and publishes it. An empty or impossible range means the whole
+	 * frame, which is what every caller meant before the range existed.
+	 *
+	 * Only the changed rows are copied, but every published slot still holds a
+	 * COMPLETE frame, because ReadInto()/AcquireFront() hand the reader a whole
+	 * one. A slot that was not the target of recent frames is behind by the rows
+	 * those frames changed, so it carries the union of them and catches up when
+	 * it comes round again - see slot_stale_top_ below. Whole-frame copies were
+	 * 14.7MB sixty times a second at 2560x1440, on the VIDC thread and inside
+	 * video_mutex, for a screen that mostly does not change.
+	 */
+	void Publish(const uint32_t *pixels, int width, int height,
+	             int dirty_top, int dirty_bottom);
 
 	/* Reader side. Copies the most recently published frame into `out` and
 	   reports its dimensions. Returns false if nothing has been published
@@ -138,6 +152,15 @@ private:
 	Header *header_ = nullptr;
 	uint32_t *slots_[kBufferCount] = {};
 	uint32_t next_write_slot_ = 0;	/* writer-only, no synchronisation needed */
+
+	/* Writer-only, and deliberately not in the shared header: the reader has no
+	   use for them and they must not be something another process can alter.
+	   Rows a slot has not been given yet, as [top, bottom). */
+	int slot_stale_top_[kBufferCount] = {};
+	int slot_stale_bottom_[kBufferCount] = {};
+	bool slot_stale_all_[kBufferCount] = { true, true, true };
+	int write_width_ = 0;
+	int write_height_ = 0;
 };
 
 /*

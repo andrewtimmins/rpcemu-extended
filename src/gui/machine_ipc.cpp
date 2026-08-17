@@ -182,16 +182,41 @@ SharedFramebuffer::~SharedFramebuffer()
 	Close();
 }
 
-void SharedFramebuffer::Publish(const uint32_t *pixels, int width, int height)
+void SharedFramebuffer::Publish(const uint32_t *pixels, int width, int height,
+                                int dirty_top, int dirty_bottom)
 {
+	bool clamped = false;
+
 	if (header_ == nullptr || pixels == nullptr || width <= 0 || height <= 0) {
 		return;
 	}
 	if (width > kMaxWidth) {
 		width = kMaxWidth;
+		clamped = true;
 	}
 	if (height > kMaxHeight) {
 		height = kMaxHeight;
+		clamped = true;
+	}
+
+	/*
+	 * An empty or impossible range is the whole frame. So is a clamped one: the
+	 * source rows are then a different length from ours and only a whole-frame
+	 * copy behaves as it did before, imperfectly but identically.
+	 */
+	if (clamped || dirty_top < 0 || dirty_bottom > height ||
+	    dirty_bottom <= dirty_top) {
+		dirty_top = 0;
+		dirty_bottom = height;
+	}
+
+	/* New geometry: nothing any slot holds is usable. */
+	if (width != write_width_ || height != write_height_) {
+		write_width_ = width;
+		write_height_ = height;
+		for (uint32_t i = 0; i < kBufferCount; i++) {
+			slot_stale_all_[i] = true;
+		}
 	}
 
 	const uint32_t front = header_->front_slot.load(std::memory_order_relaxed);
@@ -209,8 +234,52 @@ void SharedFramebuffer::Publish(const uint32_t *pixels, int width, int height)
 		}
 	}
 
-	const size_t count = (size_t) width * (size_t) height;
-	std::memcpy(slots_[target], pixels, count * sizeof(uint32_t));
+	/* What this slot owes, on top of what this frame changed. */
+	int copy_top = dirty_top;
+	int copy_bottom = dirty_bottom;
+
+	if (slot_stale_all_[target]) {
+		copy_top = 0;
+		copy_bottom = height;
+	} else if (slot_stale_bottom_[target] > slot_stale_top_[target]) {
+		if (slot_stale_top_[target] < copy_top) {
+			copy_top = slot_stale_top_[target];
+		}
+		if (slot_stale_bottom_[target] > copy_bottom) {
+			copy_bottom = slot_stale_bottom_[target];
+		}
+	}
+	slot_stale_all_[target] = false;
+	slot_stale_top_[target] = 0;
+	slot_stale_bottom_[target] = 0;
+
+	{
+		const size_t offset = (size_t) copy_top * (size_t) width;
+		const size_t count = (size_t) (copy_bottom - copy_top) * (size_t) width;
+
+		if (count != 0) {
+			std::memcpy(slots_[target] + offset, pixels + offset,
+			    count * sizeof(uint32_t));
+		}
+	}
+
+	/* Every other slot is now behind by the rows this frame changed. */
+	for (uint32_t i = 0; i < kBufferCount; i++) {
+		if (i == target) {
+			continue;
+		}
+		if (slot_stale_bottom_[i] > slot_stale_top_[i]) {
+			if (dirty_top < slot_stale_top_[i]) {
+				slot_stale_top_[i] = dirty_top;
+			}
+			if (dirty_bottom > slot_stale_bottom_[i]) {
+				slot_stale_bottom_[i] = dirty_bottom;
+			}
+		} else {
+			slot_stale_top_[i] = dirty_top;
+			slot_stale_bottom_[i] = dirty_bottom;
+		}
+	}
 
 	header_->slot_width[target].store((uint32_t) width, std::memory_order_relaxed);
 	header_->slot_height[target].store((uint32_t) height, std::memory_order_relaxed);

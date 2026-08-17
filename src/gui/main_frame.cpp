@@ -369,7 +369,8 @@ void MainFrame::MirrorToSharedFramebuffer(const VideoUpdate &update)
 	   no heap copy or CallAfter hop: update.buffer is only valid until this
 	   call returns, and by the time it does, the frame is already in shared
 	   memory. */
-	shared_fb_->Publish(update.buffer, update.xsize, update.ysize);
+	shared_fb_->Publish(update.buffer, update.xsize, update.ysize,
+	    update.yl, update.yh);
 
 	if (ipc_server_) {
 		IpcEvent event;
@@ -2291,13 +2292,113 @@ void MainFrame::PostVideoUpdate(VideoUpdate update)
 		return;
 	}
 
-	auto pixels = std::make_shared<std::vector<uint32_t>>(
-	    update.buffer, update.buffer + npixels);
+	/*
+	 * The rows this frame changed. An empty or impossible range means the whole
+	 * screen, which is what every frame meant before the range existed, and what
+	 * RemoteEmulatorPanel already takes it for.
+	 */
+	int dirty_top = update.yl;
+	int dirty_bottom = update.yh;
+
+	if (dirty_top < 0 || dirty_bottom > update.ysize || dirty_bottom <= dirty_top) {
+		dirty_top = 0;
+		dirty_bottom = update.ysize;
+	}
+
+	/* A new geometry invalidates every slot, whether or not it is out on loan:
+	   only the VIDC thread reads these flags, and a slot still being drawn from
+	   is not resized until it comes back. */
+	if (update.xsize != frame_pool_width_ || update.ysize != frame_pool_height_) {
+		frame_pool_width_ = update.xsize;
+		frame_pool_height_ = update.ysize;
+		for (auto &slot : frame_pool_) {
+			if (slot) {
+				slot->stale_all = true;
+			}
+		}
+	}
+
+	std::shared_ptr<std::vector<uint32_t>> pixels;
+	int copy_top = dirty_top;
+	int copy_bottom = dirty_bottom;
+
+	for (auto &slot : frame_pool_) {
+		bool expected = false;
+
+		if (!slot) {
+			slot = std::make_unique<FrameSlot>();
+		}
+		if (!slot->in_use.compare_exchange_strong(expected, true,
+		    std::memory_order_acq_rel)) {
+			continue;
+		}
+
+		FrameSlot *const taken = slot.get();
+
+		if (taken->pixels.size() != npixels) {
+			taken->pixels.assign(npixels, 0);
+			taken->stale_all = true;
+		}
+
+		/* Catch up on what this slot missed while it was out, so that what is
+		   handed over is a whole frame however little of it changed. */
+		if (taken->stale_all) {
+			copy_top = 0;
+			copy_bottom = update.ysize;
+		} else if (taken->stale_bottom > taken->stale_top) {
+			copy_top = std::min(copy_top, taken->stale_top);
+			copy_bottom = std::max(copy_bottom, taken->stale_bottom);
+		}
+		taken->stale_all = false;
+		taken->stale_top = taken->stale_bottom = 0;
+
+		pixels = std::shared_ptr<std::vector<uint32_t>>(&taken->pixels,
+		    [taken](std::vector<uint32_t> *) {
+			taken->in_use.store(false, std::memory_order_release);
+		});
+		break;
+	}
+
+	if (!pixels) {
+		/* Every slot still being drawn from. Rather than wait on the GUI
+		   thread, take the old path for this one frame. */
+		pixels = std::make_shared<std::vector<uint32_t>>(
+		    update.buffer, update.buffer + npixels);
+	} else {
+		const size_t offset = (size_t) copy_top * (size_t) update.xsize;
+		const size_t count = (size_t) (copy_bottom - copy_top) * (size_t) update.xsize;
+
+		if (count != 0) {
+			memcpy(pixels->data() + offset, update.buffer + offset,
+			    count * sizeof(uint32_t));
+		}
+	}
+
+	/*
+	 * Every other slot is now behind by the rows this frame changed - the free
+	 * ones as much as the ones out on loan, since a free slot holds an older
+	 * frame and has to catch up on everything since when it is next taken. The
+	 * slot just filled is skipped by identity; on the fallback path no slot
+	 * matches, which is right, because none of them was filled.
+	 */
+	for (auto &slot : frame_pool_) {
+		if (!slot || slot->pixels.data() == pixels->data()) {
+			continue;
+		}
+		if (slot->stale_bottom > slot->stale_top) {
+			slot->stale_top = std::min(slot->stale_top, dirty_top);
+			slot->stale_bottom = std::max(slot->stale_bottom, dirty_bottom);
+		} else {
+			slot->stale_top = dirty_top;
+			slot->stale_bottom = dirty_bottom;
+		}
+	}
+
 	VideoUpdate copy = update;
 	copy.buffer = pixels->data();
 
 	CallAfter([this, copy, pixels]() {
-		(void) pixels; // keeps copy.buffer alive until the frame is applied
+		(void) pixels; // returns the slot to the pool once the frame is applied
 		if (panel_ != nullptr) {
 			panel_->ApplyVideoUpdate(copy);
 		}

@@ -362,6 +362,41 @@ private:
 	   Create Disc needs it: the disc type comes from the dialogue's filter
 	   rather than from the file name. */
 	int pending_menu_filter_ = 0;
+	/*
+	 * Frame buffers handed to the GUI thread, reused rather than allocated.
+	 *
+	 * A frame used to be a fresh std::vector every time, which at 1600x1200 is
+	 * 7.3MB and at 2560x1440 is 14.7MB - above glibc's mmap threshold, so each
+	 * frame took a new mapping, faulted in its pages and gave them back again,
+	 * sixty times a second, on the VIDC thread and inside video_mutex. That was
+	 * 439MB/s measured on a screen that was not changing, and drawscr() drops a
+	 * frame outright when its trylock fails, so the cost is paid in lost frames
+	 * on a host that cannot keep up.
+	 *
+	 * A slot is only refilled with the rows that changed, but every slot handed
+	 * out still holds a COMPLETE frame, because EmulatorPanel reads all of it
+	 * when the geometry changes. That is what stale_top/stale_bottom are for: a
+	 * slot out on loan misses the rows other frames dirtied meanwhile, so it
+	 * carries the union of those ranges and catches up on them when it is next
+	 * filled.
+	 *
+	 * Three slots because the GUI thread consumes frames promptly; if all three
+	 * are still out, the frame falls back to an allocation of its own rather
+	 * than stalling the VIDC thread.
+	 */
+	struct FrameSlot {
+		std::vector<uint32_t> pixels;
+		std::atomic<bool> in_use{false};
+		/* Rows this slot has not been given yet, as [top, bottom). */
+		int stale_top = 0;
+		int stale_bottom = 0;
+		bool stale_all = true;
+	};
+	static constexpr size_t kFramePoolSize = 3;
+	std::unique_ptr<FrameSlot> frame_pool_[kFramePoolSize];
+	int frame_pool_width_ = 0;
+	int frame_pool_height_ = 0;
+
 	std::unique_ptr<SharedFramebuffer> shared_fb_;
 	std::unique_ptr<MachineIpcServer> ipc_server_;
 
