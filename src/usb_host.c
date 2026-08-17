@@ -1781,7 +1781,16 @@ usb_host_sysfs_name(uint16_t vendor, uint16_t product, char *out, size_t len)
 		fclose(f);
 
 		if (v == vendor && p == product) {
-			snprintf(out, len, "%s", e->d_name);
+			const size_t n = strlen(e->d_name);
+
+			/* A sysfs bus-port name is short ("1-1.2"), so this does
+			   not happen; refuse one that does not fit rather than
+			   truncating it into a name that would match nothing
+			   afterwards. */
+			if (n >= len) {
+				continue;
+			}
+			memcpy(out, e->d_name, n + 1);
 			found = 1;
 		}
 	}
