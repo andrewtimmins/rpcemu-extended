@@ -24,6 +24,7 @@
 #include <cstdint>
 
 #include <wx/wx.h>
+#include <wx/splitter.h>
 #include <wx/notebook.h>
 #include <wx/spinctrl.h>
 
@@ -56,6 +57,10 @@ private:
 	};
 
 	void BuildUi();
+
+	/* The left-hand column of the debugger view: the registers, the decoded
+	   PSR flags and the machine's state. */
+	wxWindow *BuildStatePanel(wxWindow *parent);
 	void ApplyMonoFont(wxWindow *window);
 
 	void OnTimer(wxTimerEvent &event);
@@ -82,7 +87,7 @@ private:
 	void RefreshDisassembly(uint32_t address);
 	void RefreshMemoryView(uint32_t address);
 
-	wxString FormatRegisters(const MachineSnapshot &snapshot) const;
+	void ApplyProcessorState(const MachineSnapshot &snapshot);
 	wxString FormatPeripheralSummary(const MachineSnapshot &snapshot) const;
 	wxString MakeSummary(const MachineSnapshot &snapshot) const;
 	void UpdateDebuggerUi(const MachineSnapshot &snapshot);
@@ -99,7 +104,21 @@ private:
 	wxStaticText *summary_label_ = nullptr;
 	wxCheckBox *auto_refresh_checkbox_ = nullptr;
 
-	wxTextCtrl *cpu_view_ = nullptr;
+	/*
+	 * The registers, one control per value, so that a value which has changed
+	 * since the last refresh can be coloured on its own. A single text control
+	 * cannot do that, which is why the old CPU page was a flat dump: everything
+	 * looked alike and nothing said what had just moved.
+	 */
+	wxStaticText *reg_value_[16] = {};
+	wxStaticText *reg_name_[16] = {};
+	wxStaticText *flag_label_[7] = {};
+	wxStaticText *mode_label_ = nullptr;
+	wxStaticText *cpsr_label_ = nullptr;
+	wxStaticText *mmu_label_ = nullptr;
+	wxStaticText *core_label_ = nullptr;
+	uint32_t previous_regs_[16] = {};
+	bool have_previous_regs_ = false;
 	wxTextCtrl *disasm_view_ = nullptr;
 	wxTextCtrl *memory_view_ = nullptr;
 	wxTextCtrl *peripheral_view_ = nullptr;

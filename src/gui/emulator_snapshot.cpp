@@ -93,7 +93,9 @@ emulator_fill_snapshot(MachineSnapshot *snapshot)
 	}
 
 	snapshot->mmu_enabled = mmu;
-	snapshot->privileged_mode = ((arm.mode & 0x1f) != USER) ? 1 : 0;
+	/* The mode is the bottom four bits; bit 4 only says 32-bit. Masking 0x1f
+	   made every 32-bit User-mode machine report itself as privileged. */
+	snapshot->privileged_mode = ((arm.mode & 0xf) != USER) ? 1 : 0;
 
 	snapshot->iomd_irqa_status = iomd.irqa.status;
 	snapshot->iomd_irqa_mask   = iomd.irqa.mask;

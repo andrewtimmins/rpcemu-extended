@@ -606,12 +606,21 @@ already uses a folder. See [docs/hostfs.md](docs/hostfs.md).
 
 Open **Debug → Machine Inspector…** (or use the toolbar button).
 
+The processor's state, the code it is running and the memory around it are all on
+screen together, on three draggable sashes:
+
+| Pane                | Contents                                                                                                    |
+| ------------------- | ----------------------------------------------------------------------------------------------------------- |
+| **Registers**       | R0–R15 in two columns, SP/LR/PC named as such, and a value that changed since the last refresh shown in amber |
+| **Status**          | `N Z C V I F T` with the set flags lit, CPSR, processor mode, MMU state, and dynarec/interpreter with MIPS   |
+| **Disassembly**     | ARM disassembly at a chosen address, optional follow-PC                                                     |
+| **Memory**          | Hex dump of emulated memory, opening on the stack pointer                                                   |
+
+Below those, three tabs:
+
 | Tab             | Contents                                                                                                         |
 | --------------- | ---------------------------------------------------------------------------------------------------------------- |
-| **CPU**         | Registers R0–R15, CPSR, mode, MMU state, dynarec/interpreter, performance                                        |
-| **Disassembly** | ARM disassembly at a chosen address, optional follow-PC                                                          |
-| **Memory**      | Hex dump of emulated memory at a chosen address                                                                  |
-| **Debugger**    | Run/Pause/Step, breakpoint and watchpoint lists, last halt reason                                                |
+| **Debugger**    | Run/Pause/Step, the breakpoint and watchpoint lists side by side, last halt reason                               |
 | **Trace**       | Exception traps, SWI tracing, and logging watchpoints — see [docs/debugger-tracing.md](docs/debugger-tracing.md) |
 | **Peripherals** | VIDC, IOMD IRQ/timers, floppy, IDE, podule slot summary                                                          |
 
