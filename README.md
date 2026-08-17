@@ -909,13 +909,28 @@ covered.
   code remains with **Sarah Walker** and the Arculator contributors.
 - The bundled **SLiRP** user-mode networking stack under `src/slirp/` originates
   with **Danny Gasparovski** and carries 4.4BSD-derived code from **The Regents
-  of the University of California**. Fixes to its IP fragment reassembly have
+  of the University of California**. Four of its files - `bootp.c`, `slirp.c` and
+  `cutils.c`/`.h` - are **Fabrice Bellard's** (Copyright 2004-2017), under the MIT
+  licence each carries. Fixes to its IP fragment reassembly have
   been backported from **[libslirp](https://gitlab.freedesktop.org/slirp/libslirp)**,
   which maintains the descendant of that code: commit `c5927943` by **Samuel
   Thibault** (CVE-2019-15890) and commit `9bd6c591` by **Marc-André Lureau**
   (CVE-2020-1983). Copyright for those changes remains with their authors and the
   libslirp contributors; see the provenance note at the top of
   `src/slirp/ip_input.c`.
+- **HostFS**'s conversion between RISC OS and Unix timestamps, in
+  `src/hostfs-unix.c`, is adapted from `fs/adfs/inode.c` in the **Linux** kernel,
+  Copyright 1997-1999 **Russell King**, under the GNU GPL v2. The two functions
+  that use it are marked as such where they are defined.
+- The network card's guest driver, **EtherRPCEm** (`riscos-progs/EtherRPCEm/`,
+  shipped as `netroms/EtherRPCEm,ffa`), is **Castle Technology's EtherY** driver
+  with the hardware half removed, by **J Ballance** (Copyright 2003), adapted for
+  RPCEmu by **Alex Waugh** (Copyright 2007), and transcribed into GNU as syntax
+  for this fork by Andy Timmins. It stays under the GNU GPL v2, the terms EtherY
+  was released under, and the DCI4 structure layouts it hardcodes are **Acorn
+  Computers Ltd's**, from their published DCI4 headers. All three names are in the
+  module's own help string, so the credit is visible inside the machine as well as
+  in the source; `riscos-progs/EtherRPCEm/README.md` sets out the chain in full.
 - The **graphics card** follows the precedent set by
   **[ViewFinder](https://www.zeridajh.org/hardware/viewfinder/)**, **John
   Kortink's** graphics expansion card for the Acorn Risc PC, which showed that a
@@ -924,6 +939,26 @@ covered.
   interface is used: the register interface here is our own and the driver is
   written from the GraphicsV documentation in the RISC OS sources. The
   acknowledgement is to the idea, gratefully.
+- **MultiFS**, the filing system that reads USB media, implements FAT12/16/32,
+  exFAT and NTFS from the published specifications for those formats, in ARM
+  assembler. No **Fat32Fs** or **efsl** code is used. What it does share with
+  **Fat32Fs**, **Jeff Doggett's** FAT filing system for RISC OS, is the way a
+  RISC OS file type is recorded on FAT media, and that is shared of necessity:
+  FAT has no field for one, so every RISC OS FAT filing system has had to borrow
+  a field from somewhere, and a stick written on one machine has to keep its file
+  types when it is read on the next. The convention MultiFS writes is the one
+  Fat32Fs established - an impossible creation date marking the entry, the type
+  carried in the creation time - and the older convention it replaced is still
+  read, so that media written years ago are not misread. Fat32Fs's source was
+  read while MultiFS was being written, to establish what those two conventions
+  are and as a reference for how a RISC OS filing system presents itself to
+  FileSwitch. The acknowledgement is to the convention, and our thanks to Jeff
+  for Fat32Fs, which has long been how RISC OS users get at FAT32 media. Fat32Fs is
+  itself a RISC OS front end around **efsl**, the general-purpose embedded
+  filesystem library by **Lennart Yseboodt** and **Michael De Nil** (Copyright
+  2004, GNU LGPL v2.1), with long filename support added on top, which is why it
+  is not simply bundled here: it is somebody else's work to redistribute, under a
+  different licence to ours.
 - The **shared clipboard** is **RiscOS Cloverleaf's** design, from the
   RpcemuHelper module in their RPCEmu fork at
   <https://github.com/riscoscloverleaf/rpcemu>. Their SWI interface and reason
