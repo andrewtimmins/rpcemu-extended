@@ -89,6 +89,7 @@ private:
 
 	void ApplyProcessorState(const MachineSnapshot &snapshot);
 	wxString FormatPeripheralSummary(const MachineSnapshot &snapshot) const;
+	wxString FormatAcceleratorSummary(const MachineSnapshot &snapshot) const;
 	wxString MakeSummary(const MachineSnapshot &snapshot) const;
 	void UpdateDebuggerUi(const MachineSnapshot &snapshot);
 	void PopulateBreakpointList(const MachineSnapshot &snapshot);
@@ -122,6 +123,7 @@ private:
 	wxTextCtrl *disasm_view_ = nullptr;
 	wxTextCtrl *memory_view_ = nullptr;
 	wxTextCtrl *peripheral_view_ = nullptr;
+	wxTextCtrl *accel_view_ = nullptr;
 
 	wxTextCtrl *disasm_address_input_ = nullptr;
 	wxCheckBox *disasm_follow_pc_checkbox_ = nullptr;

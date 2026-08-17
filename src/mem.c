@@ -851,6 +851,120 @@ mem_phys_read8_debug(uint32_t addr)
 }
 
 /**
+ * A host pointer to guest memory at a virtual address, for bulk reading.
+ *
+ * mem_debug_read() translates and switches once per byte, which is right for a
+ * debugger reading a word and hopeless for anything reading a megapixel: the
+ * accelerators need to walk rows of a sprite. This answers where the bytes
+ * actually are, and how many of them can be read before the next page has to be
+ * asked about, so a caller can memcpy a run and then ask again.
+ *
+ * Read-only, RAM and VRAM and ROM only, so no I/O side effect is possible and
+ * nothing here can fault the guest. NULL on a big-endian host, where the byte
+ * order in the backing store is not the guest's and a raw pointer would hand
+ * back swapped bytes; callers fall back to mem_debug_read().
+ *
+ * @param vaddr Virtual address
+ * @param avail Set to the bytes readable from the pointer, within this page
+ * @return Host pointer, or NULL if the address is unmapped or not memory
+ */
+const void *
+mem_debug_host_ptr(uint32_t vaddr, uint32_t *avail)
+{
+#ifdef _RPCEMU_BIG_ENDIAN
+	NOT_USED(vaddr);
+	if (avail != NULL) {
+		*avail = 0;
+	}
+	return NULL;
+#else
+	uint32_t phys;
+	const uint8_t *base = NULL;
+	uint32_t offset = 0;
+
+	if (avail != NULL) {
+		*avail = 0;
+	}
+	if (!mem_debug_translate(vaddr, &phys)) {
+		return NULL;
+	}
+
+	/* The graphics card's framestore is memory too, and a sprite could in
+	   principle be read out of it. */
+	if (gfxcard_fb != NULL && phys - gfxcard_fb_phys < GFXCARD_FB_SIZE) {
+		base = gfxcard_fb;
+		offset = phys - gfxcard_fb_phys;
+	} else {
+		const uint32_t masked = phys & phys_space_mask;
+
+		switch (masked & (phys_space_mask & 0xff000000)) {
+		case 0x00000000:
+			base = romb;
+			offset = masked & 0x7fffff;
+			break;
+
+		case 0x02000000:
+			if (mem_vrammask != 0) {
+				base = vramb;
+				offset = masked & mem_vrammask;
+			}
+			break;
+
+		case 0x10000000: case 0x11000000: case 0x12000000: case 0x13000000:
+			base = ramb00;
+			offset = masked & mem_rammask;
+			break;
+
+		case 0x14000000: case 0x15000000: case 0x16000000: case 0x17000000:
+			base = ramb01;
+			offset = masked & mem_rammask;
+			break;
+
+		case 0x18000000: case 0x19000000: case 0x1a000000: case 0x1b000000:
+		case 0x1c000000: case 0x1d000000: case 0x1e000000: case 0x1f000000:
+			base = ramb1;
+			offset = masked & 0x7ffffff;
+			break;
+
+		case 0x20000000: case 0x21000000: case 0x22000000: case 0x23000000:
+		case 0x24000000: case 0x25000000: case 0x26000000: case 0x27000000:
+		case 0x28000000: case 0x29000000: case 0x2a000000: case 0x2b000000:
+		case 0x2c000000: case 0x2d000000: case 0x2e000000: case 0x2f000000:
+			base = sdramb0;
+			offset = masked & SDRAM_BANK_MASK;
+			break;
+
+		case 0x30000000: case 0x31000000: case 0x32000000: case 0x33000000:
+		case 0x34000000: case 0x35000000: case 0x36000000: case 0x37000000:
+		case 0x38000000: case 0x39000000: case 0x3a000000: case 0x3b000000:
+		case 0x3c000000: case 0x3d000000: case 0x3e000000: case 0x3f000000:
+			base = sdramb1;
+			offset = masked & SDRAM_BANK_MASK;
+			break;
+
+		default:
+			/* I/O space or unmapped: not memory, and not ours to read. */
+			break;
+		}
+	}
+
+	if (base == NULL) {
+		return NULL;
+	}
+
+	/*
+	 * One page at a time, whatever the backing store could offer. Consecutive
+	 * virtual pages are not consecutive physical ones, so a run that crossed a
+	 * page boundary here would silently read the wrong memory.
+	 */
+	if (avail != NULL) {
+		*avail = 0x1000u - (vaddr & 0xfffu);
+	}
+	return base + offset;
+#endif
+}
+
+/**
  * Write a byte to a physical address for debugging.
  *
  * The counterpart of mem_phys_read8_debug(), and deliberately narrower: it

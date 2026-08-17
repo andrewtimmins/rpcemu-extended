@@ -690,6 +690,10 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	cfg->gfxcard_enabled = static_cast<int>(value);
 	settings.Read("gfxcard_boot_display", &value, 0L);
 	cfg->gfxcard_boot_display = static_cast<int>(value);
+	/* Defaults on, including for a machine whose configuration predates it:
+	   what it does is invisible except in how long it takes. */
+	settings.Read("accelerators_enabled", &value, 1L);
+	cfg->accelerators_enabled = static_cast<int>(value);
 	/* USB ports. Nothing is plugged in unless the machine says so, since a
 	   device appearing on its own would be a surprise to the guest. */
 	for (int port = 0; port < USB_PORTS; port++) {

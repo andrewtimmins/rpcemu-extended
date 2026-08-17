@@ -55,6 +55,7 @@
 #include "cp15.h"
 #include "cdrom-iso.h"
 #include "podulerom.h"
+#include "accelerators.h"
 #include "gfxcard.h"
 #include "hostclipboard.h"
 #include "usb_ohci.h"
@@ -235,6 +236,8 @@ Config config = {
 	  UsbAttachment_None },
 	{ "", "", "", "" },	/* usb_host: no host device named for any port */
 	0,			/* gfxcard_boot_display (OFF: the card is taken up on request) */
+	1,			/* accelerators_enabled (ON: identical output, and it declines
+				   anything it cannot do exactly) */
 	NULL,			/* network_capture */
 	0,			/* vnc_enabled */
 	5900,			/* vnc_port */
@@ -1390,6 +1393,11 @@ resetrpc(void)
            clears every slot, so a card registered before this point would be
            overwritten by whatever claimed a slot afterwards. */
         gfxcard_init();
+
+	/* Counted per machine: the sprite plotting a session did says nothing
+	   about the one before it, and the VDU workspace offsets are a property of
+	   the ROM that has just been reloaded. */
+	accel_reset();
 
 	/* The guest module's pollword address goes with the machine that
 	   registered it. Without this the host keeps writing "the clipboard

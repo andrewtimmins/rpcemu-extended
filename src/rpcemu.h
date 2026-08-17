@@ -338,6 +338,7 @@ typedef struct {
 	int usb_port[USB_PORTS];	/**< What is plugged into each emulated USB port (UsbAttachment) */
 	char usb_host[USB_PORTS][16];	/**< For a UsbAttachment_Host port, the device's "vvvv:pppp" */
 	int gfxcard_boot_display;	/**< Let the card take the display as the machine boots */
+	int accelerators_enabled;	/**< Let the host do guest work it can do identically (see accelerators.h) */
 
 	char *network_capture;		///< Path to capture network traffic file, or NULL to disable
 	int vnc_enabled;	/**< Enable the built-in VNC server */

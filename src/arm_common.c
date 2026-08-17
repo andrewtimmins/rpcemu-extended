@@ -25,6 +25,7 @@
 
 #include "rpcemu.h"
 
+#include "accelerators.h"
 #include "arm.h"
 #include "arm_common.h"
 #include "mem.h"
@@ -587,6 +588,13 @@ opSWI(uint32_t opcode)
 	/* Debugger: trace/halt on SWI (gated to stay free when tracing is off) */
 	if (debugger_swi_trace_active) {
 		debugger_swi_hook(swinum, opcode);
+	}
+
+	/* Anything the host can do in full instead of the guest. Returns 0 for
+	   everything it has only counted, which is currently everything. */
+	if (accel_swi(swinum)) {
+		arm.reg[cpsr] &= ~VFLAG;
+		return 0;
 	}
 
 	/* Software power-off. With the Switcher patched to advertise power

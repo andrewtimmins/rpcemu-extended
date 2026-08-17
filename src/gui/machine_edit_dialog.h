@@ -180,6 +180,7 @@ private:
 	wxComboBox *mem_combo_ = nullptr;
 	wxComboBox *vram_combo_ = nullptr;
 	wxCheckBox *gfxcard_check_ = nullptr;
+	wxCheckBox *accelerators_check_ = nullptr;
 	wxCheckBox *gfxcard_boot_check_ = nullptr;
 	wxCheckBox *fullscreen_check_ = nullptr;
 	wxSlider *refresh_slider_ = nullptr;

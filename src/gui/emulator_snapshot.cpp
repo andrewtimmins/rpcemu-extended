@@ -32,6 +32,7 @@ extern "C" {
 #include "mem.h"
 #include "podules.h"
 #include "rpcemu.h"
+#include "accelerators.h"
 #include "superio.h"
 #include "vidc20.h"
 }
@@ -176,6 +177,7 @@ emulator_fill_snapshot(MachineSnapshot *snapshot)
 	superio_get_snapshot(&snapshot->superio);
 	ide_get_snapshot(&snapshot->ide);
 	podules_get_snapshot(&snapshot->podules);
+	accel_get_stats(&snapshot->accel);
 }
 
 } // namespace

@@ -99,6 +99,14 @@ endif()
 add_executable(boot_trace EXCLUDE_FROM_ALL boot_trace.c test_stubs.c)
 target_link_libraries(boot_trace PRIVATE rpcemu_core m)
 
+# Where a host-side sprite plot lands: the coordinate flip between RISC OS, which
+# counts y up from the bottom, and a framebuffer, which counts rows down from the
+# top, plus inclusive graphics-window edges and a movable origin. Links the core
+# because the geometry lives with the accelerators; needs no machine.
+add_executable(test_accel_plot test_accel_plot.c test_stubs.c)
+target_link_libraries(test_accel_plot PRIVATE rpcemu_core m)
+rpcemu_add_test(test_accel_plot)
+
 # The VDU-stream filter rpcemu-run uses to turn guest output into host text.
 # Compiles the unit directly rather than linking anything: it has no dependencies,
 # which is why it is a separate file. Covers the cases that make a naive filter
@@ -768,7 +776,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 45)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 46)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 10")	# JIT differential
 endif()

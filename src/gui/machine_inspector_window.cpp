@@ -493,6 +493,12 @@ void MachineInspectorWindow::BuildUi()
 	trace_panel->SetSizer(trace_sizer);
 	notebook->AddPage(trace_panel, "Trace");
 
+	accel_view_ = new wxTextCtrl(notebook, wxID_ANY, wxEmptyString,
+	                             wxDefaultPosition, wxSize(-1, 120),
+	                             wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP);
+	ApplyMonoFont(accel_view_);
+	notebook->AddPage(accel_view_, "Accelerators");
+
 	peripheral_view_ = new wxTextCtrl(notebook, wxID_ANY, wxEmptyString,
 	                                  wxDefaultPosition, wxDefaultSize,
 	                                  wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP);
@@ -578,6 +584,7 @@ void MachineInspectorWindow::ApplySnapshot(const MachineSnapshot &snapshot)
 
 	summary_label_->SetLabel(MakeSummary(snapshot));
 	ApplyProcessorState(snapshot);
+	SetTextIfChanged(accel_view_, FormatAcceleratorSummary(snapshot));
 	SetTextIfChanged(peripheral_view_, FormatPeripheralSummary(snapshot));
 	PopulateBreakpointList(snapshot);
 	PopulateWatchpointList(snapshot);
@@ -717,6 +724,150 @@ wxString MachineInspectorWindow::FormatPeripheralSummary(const MachineSnapshot &
 			attrs += ", FIQ";
 		}
 		text += wxString::Format("Podule slot %d: %s\n", slot, attrs);
+	}
+
+	return text;
+}
+
+/*
+ * What the guest has asked for that the host could have done instead.
+ *
+ * Nothing is accelerated yet, so every line here is evidence rather than a
+ * result: how often the candidate operations happen, and for the ones we would
+ * have to refuse, which refusal is in the way. See src/accelerators.c.
+ */
+wxString MachineInspectorWindow::FormatAcceleratorSummary(const MachineSnapshot &snapshot) const
+{
+	const AcceleratorSpriteStats &sp = snapshot.accel.sprite;
+	const AcceleratorOtherStats &other = snapshot.accel.other;
+	wxString text;
+
+	if (sp.done != 0) {
+		text += wxString::Format("Done on the host: %u plots, %u thousand "
+		    "pixels (%u drew nothing, being outside the window).\n\n",
+		    sp.done, sp.done_pixels, sp.done_clipped_away);
+	} else if (config.accelerators_enabled) {
+		text += "Nothing has qualified yet.\n\n";
+	} else {
+		text += "Turned off for this machine (Settings > Machine, System tab): "
+		    "these are counts of what it could have done.\n\n";
+	}
+
+	const uint32_t plots = sp.scaled + sp.unscaled;
+
+	if (snapshot.accel.screen_bpp != 0) {
+		text += wxString::Format("Screen: %ux%u, %ubpp   "
+		    "(plots seen at 8bpp %u, 16bpp %u, 32bpp %u)\n\n",
+		    snapshot.accel.screen_width, snapshot.accel.screen_height,
+		    snapshot.accel.screen_bpp, snapshot.accel.depth_8bpp,
+		    snapshot.accel.depth_16bpp, snapshot.accel.depth_32bpp);
+	}
+
+	text += wxString::Format("OS_SpriteOp calls        %u\n", sp.calls);
+	text += wxString::Format("  plots, scaled          %u  (%u at 1:1)\n",
+	                         sp.scaled, sp.scaled_1to1);
+	text += wxString::Format("  plots, own size        %u\n", sp.unscaled);
+	text += wxString::Format("  destination pixels     %u thousand "
+	                         "(%u after clipping)\n\n",
+	                         sp.pixels, sp.pixels_visible);
+
+	if (plots != 0) {
+		text += wxString::Format("Could be done on the host as things stand:  "
+		    "%u of %u  (%.1f%%)\n",
+		    sp.verdict[ACCEL_TAKEN], plots,
+		    100.0 * sp.verdict[ACCEL_TAKEN] / plots);
+		text += wxString::Format("The same with the screen at 32bpp:          "
+		    "%u of %u  (%.1f%%)\n",
+		    sp.takeable_at_32bpp, plots,
+		    100.0 * sp.takeable_at_32bpp / plots);
+		text += wxString::Format("Their share of the pixels actually drawn:   "
+		    "%u of %u thousand  (%.1f%%)\n\n",
+		    sp.pixels_visible_takeable, sp.pixels_visible,
+		    sp.pixels_visible != 0 ?
+		        100.0 * sp.pixels_visible_takeable / sp.pixels_visible : 0.0);
+
+		text += "Plots, by what would have happened:\n";
+		for (int i = 0; i < ACCEL_REASON_COUNT; i++) {
+			const uint32_t n = sp.verdict[i];
+
+			if (n == 0) {
+				continue;
+			}
+			text += wxString::Format("  %6u  %5.1f%%  %s\n", n,
+			    100.0 * n / plots,
+			    accel_reason_name(static_cast<AcceleratorReason>(i)));
+		}
+		text += "\n";
+
+		text += "Source sprites, by transparency:\n";
+		for (int i = 0; i < ACCEL_SPRITE_TRANSPARENCY_COUNT; i++) {
+			if (sp.transparency[i] == 0) {
+				continue;
+			}
+			text += wxString::Format("  %6u  %s\n", sp.transparency[i],
+			    accel_transparency_name(
+			        static_cast<AcceleratorSpriteTransparency>(i)));
+		}
+		text += "\n";
+
+		text += "Source sprites, by pixel type:\n";
+		for (int i = 0; i < ACCEL_SPRITE_TYPES; i++) {
+			if (sp.type[i] == 0) {
+				continue;
+			}
+			text += wxString::Format("  %6u  type %d%s\n", sp.type[i], i,
+			    i == 4 ? " (8bpp)" : i == 5 ? " (16bpp)" :
+			    i == 6 ? " (32bpp)" : "");
+		}
+		if (sp.type_other != 0) {
+			text += wxString::Format("  %6u  old-format, or a type past the "
+			    "table\n", sp.type_other);
+		}
+		text += "\n";
+
+		text += "Where the output was going:\n";
+		for (int i = 0; i < ACCEL_DEST_COUNT; i++) {
+			if (sp.dest[i] == 0) {
+				continue;
+			}
+			text += wxString::Format("  %6u  %s\n", sp.dest[i],
+			    accel_dest_name(static_cast<AcceleratorDest>(i)));
+		}
+		text += "\n";
+	}
+
+	text += "Other SWI reasons, by count:\n";
+	for (int reason = 0; reason < ACCEL_SPRITE_REASONS; reason++) {
+		if (sp.reason[reason] == 0 || reason == 0x34) {
+			continue;
+		}
+		text += wxString::Format("  %6u  OS_SpriteOp reason &%02X\n",
+		                         sp.reason[reason], reason);
+	}
+	if (sp.reason_other != 0) {
+		text += wxString::Format("  %6u  OS_SpriteOp, other reasons\n",
+		                         sp.reason_other);
+	}
+	text += "\n";
+
+	text += "For scale, other drawing the guest does itself:\n";
+	text += wxString::Format("  %6u  Font_Paint\n", other.font_paint);
+	text += wxString::Format("  %6u  Wimp_PlotIcon\n", other.wimp_ploticon);
+	text += wxString::Format("  %6u  Draw_Fill\n", other.draw_fill);
+	text += wxString::Format("  %6u  OS_Plot\n", other.os_plot);
+	text += "\n";
+
+	if (snapshot.accel.vdu_ws_probed != 0) {
+		text += wxString::Format("VDU workspace resolved %u time(s): "
+		    "xwindlimit +&%03X, ywindlimit +&%03X, linelength +&%03X, "
+		    "screenstart +&%03X\n",
+		    snapshot.accel.vdu_ws_probed,
+		    snapshot.accel.vdu_off_xwindlimit,
+		    snapshot.accel.vdu_off_ywindlimit,
+		    snapshot.accel.vdu_off_linelength,
+		    snapshot.accel.vdu_off_screenstart);
+	} else {
+		text += "VDU workspace not resolved yet.\n";
 	}
 
 	return text;

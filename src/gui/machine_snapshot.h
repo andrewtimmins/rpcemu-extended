@@ -24,6 +24,7 @@
 #include <stdint.h>
 
 #include "rpcemu.h"
+#include "accelerators.h"
 #include "peripheral_snapshot.h"
 
 /**
@@ -102,6 +103,7 @@ typedef struct MachineSnapshot {
 	SuperIOStateSnapshot superio;
 	IDEStateSnapshot ide;
 	PodulesStateSnapshot podules;
+	AcceleratorStats accel;
 	uint8_t vidc_double_x;
 	uint8_t vidc_double_y;
 	uint8_t reserved_peripherals[2];

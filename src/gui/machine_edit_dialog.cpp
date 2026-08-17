@@ -390,6 +390,18 @@ wxWindow *MachineEditDialog::BuildSystemPage(wxWindow *parent)
 	   the VRAM limit rather than another size of it - hence its place here. */
 	gfxcard_check_ = new wxCheckBox(page, wxID_ANY, "High-Resolution Graphics Card");
 	gfxcard_boot_check_ = new wxCheckBox(page, wxID_ANY, "Make High-Resolution Graphics Card the default display");
+	/* Not a graphics setting as such, but this is where what the machine's
+	   display costs is decided, and it is the only place a user would look. */
+	accelerators_check_ = new wxCheckBox(page, wxID_ANY,
+	    "Let the host do drawing it can do identically");
+	accelerators_check_->SetToolTip(
+	    "Some of what RISC OS draws a pixel at a time can be done by this "
+	    "computer instead, in one operation, with the same result. On a "
+	    "1920 x 1080 desktop that is most of the pixels a redraw copies.\n\n"
+	    "Only operations that can be reproduced exactly are taken; everything "
+	    "else is left to RISC OS. Debug > Machine Inspector > Accelerators "
+	    "reports what was done.");
+
 	fullscreen_check_ = new wxCheckBox(page, wxID_ANY, "Start this machine full screen");
 	fullscreen_check_->SetToolTip(
 	    "Go full screen as soon as this machine starts, rather than opening a "
@@ -470,6 +482,8 @@ wxWindow *MachineEditDialog::BuildSystemPage(wxWindow *parent)
 	form->Add(gfxcard_row, 1, wxEXPAND);
 	form->Add(new wxStaticText(page, wxID_ANY, ""), 0);
 	form->Add(compat_label_, 1, wxEXPAND);
+	form->Add(new wxStaticText(page, wxID_ANY, ""), 0);
+	form->Add(accelerators_check_, 1, wxEXPAND);
 
 	/* How this machine starts: both are statements about this machine rather
 	   than preferences about how to display it, so they sit here beside the
@@ -1585,8 +1599,13 @@ void MachineEditDialog::LoadSettings()
 	vram_combo_->SetSelection(vram_index);
 
 	long gfxcard = 0;
+	long accelerators = 1;
 	settings.Read("gfxcard_enabled", &gfxcard, 0L);
 	gfxcard_check_->SetValue(gfxcard != 0);
+	/* On unless this machine has said otherwise, which is also what a machine
+	   configured before the setting existed gets. */
+	settings.Read("accelerators_enabled", &accelerators, 1L);
+	accelerators_check_->SetValue(accelerators != 0);
 	long gfxcard_boot = 0;
 	settings.Read("gfxcard_boot_display", &gfxcard_boot, 0L);
 	gfxcard_boot_check_->SetValue(gfxcard_boot != 0);
@@ -1807,6 +1826,8 @@ void MachineEditDialog::SaveSettings()
 	settings.Write("model", wxString::FromUTF8(models[model_sel].name_config));
 	settings.Write("mem_size", wxString::Format("%d", mem_values[mem_sel]));
 	settings.Write("vram_size", wxString::Format("%d", vram_mb));
+	settings.Write("accelerators_enabled",
+	               static_cast<long>(accelerators_check_->GetValue() ? 1 : 0));
 	settings.Write("gfxcard_enabled",
 	               static_cast<long>(gfxcard_check_->GetValue() ? 1 : 0));
 	settings.Write("gfxcard_boot_display",
@@ -1897,6 +1918,7 @@ void MachineEditDialog::ApplySavedSettingsToGlobalConfig(const wxString &rom_dir
 	/* Whether the graphics card is fitted is read when the machine resets, so
 	   applying it here means a reset is enough - no need to restart. */
 	config.gfxcard_enabled = gfxcard_check_->GetValue() ? 1 : 0;
+	config.accelerators_enabled = accelerators_check_->GetValue() ? 1 : 0;
 	config.gfxcard_boot_display = gfxcard_boot_check_->GetValue() ? 1 : 0;
 	/* Only read when a machine starts, so this one takes effect next time. */
 	config.start_fullscreen = fullscreen_check_->GetValue() ? 1 : 0;

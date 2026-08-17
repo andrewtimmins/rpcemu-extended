@@ -38,6 +38,7 @@ extern int mem_phys_write8_debug(uint32_t addr, uint8_t val);
    watchpoint hits, and no data-abort event left pending on the CPU. */
 extern int mem_debug_translate(uint32_t vaddr, uint32_t *phys);
 extern int mem_debug_read(uint32_t vaddr, uint32_t size, uint32_t *out);
+extern const void *mem_debug_host_ptr(uint32_t vaddr, uint32_t *avail);
 
 extern uint32_t readmemfl(uint32_t addr);
 extern uint32_t readmemfb(uint32_t addr);

@@ -45,6 +45,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **MCP server — drive RISC OS from Claude / an agent** — a [Model Context Protocol](https://modelcontextprotocol.io) server exposing tools to run guest commands, read/write/list files (via HostFS), capture and click the screen, and inspect/control the emulated ARM CPU (registers, memory, disassembly, conditional breakpoints, watchpoints, stepping over and out, backtraces, symbols). Point Claude Code / Desktop at it for agent-driven RISC OS development. Setup and tool reference in [tools/mcp/README.md](tools/mcp/README.md).
 - **Parallel port** — log raw output to a file, a virtual printer that captures jobs to `.prn` files with optional in-process PDF conversion via Ghostscript, or print on a real printer the host already has.
 - **Serial port** — log to file, a TCP "modem" that dials real telnet BBSes (`ATDT host:port`) with a telnet client layer and 8-bit-clean X/Y/ZMODEM transfers, or a real serial port on the host (USB adapter, built-in port, or a pseudo terminal), with the speed and framing following whatever the guest programs. See [docs/peripherals.md](docs/peripherals.md).
+- **Accelerators**: some of what RISC OS draws a pixel at a time is done by the host instead, in one operation, with the identical result: on a 1920x1080 desktop that is most of the pixels a redraw copies. Only operations that can be reproduced exactly are taken. On by default, per machine. See [docs/accelerators.md](docs/accelerators.md).
 - **Machine Inspector** — live CPU, disassembly, memory, peripheral, and debugger views with auto-refresh.
 - **Integrated debugger** — pause/resume, single-step, breakpoints, and watchpoints; dynarec-aware via shared hooks.
 - **Toolbar and status bar** — quick access to common actions; activity indicators for floppy, IDE, HostFS, and network.
@@ -111,6 +112,7 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `docs/clipboard.md`              | Shared clipboard: copying text and images between the host and RISC OS                                                                                                                                                                                                                                                                                          |
 | `docs/vnc.md`                    | VNC: using a machine remotely, choosing one over VNC in headless mode, and the control menu for a running machine                                                                                                                                                                                                                                               |
 | `docs/multi-machine.md`          | Running several machines at once: how it works today, the virtual switch planned, and why the core is one machine per process                                                                                                                                                                                                                                   |
+| `docs/accelerators.md`          | Drawing the host does instead of the emulated ARM: what is taken, what it is worth, and how it knows the plot is going to the screen                                                                                                                                                                                                                              |
 | `docs/pyromaniac-networking.md`  | Sharing a virtual network with RISC OS Pyromaniac and other emulators, through a JSON tun/tap server                                                                                                                                                                                                                                                            |
 | `docs/hostcmd.md`                | HostCmd: drive the RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`)                                                                                                                                                                                                                                                                             |
 | `docs/prminxml/`                 | **The host interfaces manual**, in PRM-in-XML: HostFS, HostCmd, the clipboard and the network SWI — every operation, its registers, and how each reports failure. Written for someone implementing the host half rather than for someone using the emulator. Rendered to HTML by CI and published with each release; `make` in that directory builds it locally |
@@ -622,6 +624,7 @@ Below those, three tabs:
 | --------------- | ---------------------------------------------------------------------------------------------------------------- |
 | **Debugger**    | Run/Pause/Step, the breakpoint and watchpoint lists side by side, last halt reason                               |
 | **Trace**       | Exception traps, SWI tracing, and logging watchpoints — see [docs/debugger-tracing.md](docs/debugger-tracing.md) |
+| **Accelerators** | What the host drew instead of the emulated ARM, and for the plots it left alone, the reason for each. See [docs/accelerators.md](docs/accelerators.md) |
 | **Peripherals** | VIDC, IOMD IRQ/timers, floppy, IDE, podule slot summary                                                          |
 
 Auto-refresh runs every 500 ms by default. Breakpoints and watchpoints work while
@@ -858,6 +861,7 @@ how the JIT is built and when it falls back to interpretation.
 - MCP server for agent-driven RISC OS development: run commands, edit/build, screenshot, and inspect/control the emulated CPU (see `tools/mcp/`)
 - Virtual printer with optional Ghostscript PDF conversion
 - Serial log-to-file and a real telnet TCP modem (dial BBSes, 8-bit-clean transfers)
+- Accelerators: sprite plotting done on the host where the result is identical, with the refusals counted by reason
 - Machine Inspector with disassembly and memory browser
 - Dynarec debugger hooks for consistent breakpoint/watchpoint behaviour
 - Debugger exception trapping, SWI tracing, and logging watchpoints (see [docs/debugger-tracing.md](docs/debugger-tracing.md))

@@ -1,4 +1,5 @@
 set(RPCEMU_CORE_SOURCES
+    accelerators.c
     app_settings.c
     machine_lock.c
     net_slot.c
