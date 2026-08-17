@@ -21,6 +21,7 @@
 #ifndef REMOTE_EMULATOR_PANEL_H
 #define REMOTE_EMULATOR_PANEL_H
 
+#include <atomic>
 #include <chrono>
 #include <functional>
 #include <vector>
@@ -135,6 +136,23 @@ public:
 	   behaving and what to press. */
 	bool PointerCaptured() const { return pointer_captured_; }
 	bool FollowHostMouse() const { return follow_host_mouse_; }
+
+	/*
+	 * How fast the machine is running, for a window that wants to show it.
+	 *
+	 * MIPS comes from the machine itself, once a second
+	 * (IpcEventType::PerfReport). Frames per second is counted here instead,
+	 * from the FrameReady events the machine sends anyway - one per frame it
+	 * draws - over the second between two reports.
+	 *
+	 * HasPerf() is false until the first report arrives - which is up to a
+	 * second after a machine starts, and never at all from one built before the
+	 * event existed - so a caller can show nothing rather than a confident zero.
+	 */
+	bool HasPerf() const { return has_perf_.load(std::memory_order_relaxed); }
+	float Mips() const { return mips_.load(std::memory_order_relaxed); }
+	float Fps() const { return fps_.load(std::memory_order_relaxed); }
+	bool GuestIdle() const { return guest_idle_.load(std::memory_order_relaxed); }
 
 	using LeaveFullScreenCallback = std::function<bool()>;
 	void SetLeaveFullScreenCallback(LeaveFullScreenCallback callback)
@@ -275,6 +293,25 @@ private:
 	bool live_ = false;
 	wxString attach_error_;
 	bool active_ = false;
+
+	/*
+	 * The speed figures behind HasPerf()/Mips()/Fps().
+	 *
+	 * Atomic because they are written on the IPC reader thread, where frames
+	 * and perf reports arrive, and read on the GUI thread when a status bar is
+	 * being filled in. They are four independent numbers shown together and
+	 * never compared with each other, so a torn set is not worth a lock: the
+	 * worst case is one of them being a second out of date.
+	 *
+	 * frames_since_report_ counts frames between two reports and perf_at_ms_
+	 * is when the last one came, both touched only on the reader thread.
+	 */
+	std::atomic<bool> has_perf_{false};
+	std::atomic<float> mips_{0.0f};
+	std::atomic<float> fps_{0.0f};
+	std::atomic<bool> guest_idle_{false};
+	std::atomic<unsigned> frames_since_report_{0};
+	wxLongLong perf_at_ms_ = 0;
 	std::vector<uint32_t> frame_pixels_;
 	int frame_width_ = 640;
 	int frame_height_ = 480;

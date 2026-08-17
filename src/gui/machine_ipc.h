@@ -268,6 +268,25 @@ enum class IpcEventType : uint32_t {
 	 * simply keeps its previous value.
 	 */
 	StateReport,
+
+	/*
+	 * How fast the machine is going, sent once a second off its own MIPS
+	 * timer rather than asked for: the Manager wants a number that keeps
+	 * moving, and polling for one would mean a round trip per second per
+	 * machine to learn something the machine has already worked out.
+	 *
+	 * Carried in path as "mips=12.3 idle=0", in the same
+	 * space-separated key=value shape as StateReport and read the same
+	 * forgiving way: a key the Manager does not know is ignored, and one it
+	 * expects but does not get keeps its previous value. A machine built
+	 * before this event existed simply never sends one.
+	 *
+	 * Frames per second is deliberately not in here. It needs no message:
+	 * the machine already announces every frame it draws with a FrameReady,
+	 * so the Manager has only to count the ones it receives over the second
+	 * between two of these reports.
+	 */
+	PerfReport,
 };
 
 struct IpcEvent {

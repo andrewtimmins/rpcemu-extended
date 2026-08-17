@@ -24,6 +24,7 @@
 
 #include <wx/dcbuffer.h>
 #include <wx/graphics.h>
+#include <wx/tokenzr.h>
 
 #include <chrono>
 
@@ -320,6 +321,12 @@ void RemoteEmulatorPanel::HandleIpcEvent(const IpcEvent &event)
 {
 	switch (event.type) {
 	case IpcEventType::FrameReady:
+		/* Counted before the active_ test, not inside it: a machine that is
+		   running while another is being shown is still producing frames at
+		   whatever rate it manages, and that is the rate to report when the
+		   user switches to it. */
+		frames_since_report_.fetch_add(1, std::memory_order_relaxed);
+
 		if (active_) {
 			/*
 			 * Union of the rows every frame since the last paint reported.
@@ -408,6 +415,68 @@ void RemoteEmulatorPanel::HandleIpcEvent(const IpcEvent &event)
 			});
 		}
 		break;
+	case IpcEventType::PerfReport: {
+		/*
+		 * Stored, not forwarded: nothing has to happen when it arrives, and
+		 * the window showing it repaints its status bar on its own timer. So
+		 * this stays on the reader thread rather than waking the GUI one once
+		 * a second per running machine.
+		 */
+		/* By key rather than by position, so the machine can add a figure or
+		   change their order without this having to agree. */
+		wxStringTokenizer pairs(wxString::FromUTF8(event.path), " ");
+
+		while (pairs.HasMoreTokens()) {
+			const wxString pair = pairs.GetNextToken();
+			const int equals = pair.Find('=');
+			double value = 0.0;
+
+			if (equals == wxNOT_FOUND) {
+				continue;
+			}
+
+			/* ToCDouble, to match the FromCDouble the machine wrote them
+			   with: the wire format has a full stop in it whatever locale
+			   either process is running in. */
+			if (!pair.Mid(equals + 1).ToCDouble(&value)) {
+				continue;
+			}
+
+			const wxString key = pair.Left(equals);
+
+			if (key == "mips") {
+				mips_.store((float) value, std::memory_order_relaxed);
+			} else if (key == "idle") {
+				guest_idle_.store(value != 0.0, std::memory_order_relaxed);
+			}
+		}
+
+		/*
+		 * The frames counted since the last report, over how long that
+		 * actually was: the machine's timer is nominally a second, but a
+		 * busy host stretches it, and dividing by an assumed 1000ms would
+		 * report a frame rate lower than the real one for that reason alone.
+		 */
+		const wxLongLong now = wxGetUTCTimeMillis();
+		const unsigned frames = frames_since_report_.exchange(0,
+		    std::memory_order_relaxed);
+
+		if (perf_at_ms_ != 0) {
+			const wxLongLong elapsed = now - perf_at_ms_;
+
+			if (elapsed >= 100) {
+				fps_.store((float) (frames * 1000.0 / elapsed.ToDouble()),
+				    std::memory_order_relaxed);
+				/* Not before here. The very first report has no interval
+				   behind it - its frames were counted over however long
+				   attaching happened to take - so the figures only go on
+				   show from the second one, a second later. */
+				has_perf_.store(true, std::memory_order_relaxed);
+			}
+		}
+		perf_at_ms_ = now;
+		break;
+	}
 	case IpcEventType::Error:
 		if (on_error_) {
 			const wxString text = wxString::FromUTF8(event.path);

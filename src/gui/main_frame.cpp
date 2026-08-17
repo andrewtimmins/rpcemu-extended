@@ -1995,6 +1995,23 @@ void MainFrame::OnMipsTimer(wxTimerEvent &)
 		SetStatusText(idling
 		    ? wxString::Format("MIPS: %.1f (idle)", mips)
 		    : wxString::Format("MIPS: %.1f", mips), STATUS_MIPS);
+
+		/* A managed machine's own status bar is never seen, so the same
+		   figures go to the Manager to put in its. */
+		if (managed_mode_ && ipc_server_) {
+			IpcEvent event;
+			/* FromCDouble, not %f: on a host whose locale writes 12,3 the
+			   decimal point would otherwise depend on where the user lives,
+			   and the Manager reads these back with ToCDouble. */
+			const wxString report = wxString::Format("mips=%s idle=%d",
+			    wxString::FromCDouble(mips, 1), idling ? 1 : 0);
+			const wxScopedCharBuffer utf8 = report.utf8_str();
+
+			event.type = IpcEventType::PerfReport;
+			strncpy(event.path, utf8.data(), sizeof(event.path) - 1);
+			event.path[sizeof(event.path) - 1] = '\0';
+			ipc_server_->SendEvent(event);
+		}
 	}
 	SetStatusText(wxString::Format("Avg: %.1f", average), STATUS_AVG_MIPS);
 

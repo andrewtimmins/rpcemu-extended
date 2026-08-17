@@ -66,6 +66,10 @@ namespace {
 const int kMachinesPanelCollapsed = 12;
 const int kCollapseButtonField = 28;
 
+/* The status bar's right-hand field, wide enough for the longest thing that
+   goes in it: "MIPS: 123.4 (idle)   FPS: 60.0". */
+const int kSpeedField = 230;
+
 /* Status holds "Suspended" and no more; Machine takes the rest of the width. */
 const int kStatusColumnWidth = 90;
 
@@ -305,15 +309,15 @@ void ManagerFrame::BuildUi()
 	SetSizer(root);
 
 	/*
-	 * Two fields: a narrow one the collapse button sits over, and the machine
-	 * count. A status bar does not lay out children itself, so the button is
-	 * placed by hand over the first field and moved again whenever the bar is
-	 * resized.
+	 * Three fields: a narrow one the collapse button sits over, the machine
+	 * count, and how fast the machine being shown is going. A status bar does
+	 * not lay out children itself, so the button is placed by hand over the
+	 * first field and moved again whenever the bar is resized.
 	 */
-	wxStatusBar *status = CreateStatusBar(2);
-	const int widths[] = { kCollapseButtonField, -1 };
+	wxStatusBar *status = CreateStatusBar(3);
+	const int widths[] = { kCollapseButtonField, -1, kSpeedField };
 
-	status->SetStatusWidths(2, widths);
+	status->SetStatusWidths(3, widths);
 	SetStatusBarPane(1);
 
 	collapse_button_ = new wxBitmapButton(status, wxID_ANY,
@@ -922,6 +926,48 @@ void ManagerFrame::UpdateStatusText()
 	}
 
 	SetStatusText(status, 1);
+	UpdateSpeedStatus();
+}
+
+/*
+ * The speed of the machine being shown, in the right-hand status bar field:
+ * MIPS as the machine itself measures it, and the rate its frames are arriving
+ * at. The machine window has its own status bar saying the same thing, but a
+ * managed machine's window is never shown, so this is the only place the
+ * figures appear.
+ *
+ * Only the machine being displayed, deliberately. Every running machine
+ * reports, and all of them could be listed, but a status bar is one line and
+ * the question being answered is "how is the one I am watching doing?". A
+ * column in the machine list would be the way to show them all.
+ *
+ * Called from the poll timer, five times a second, against figures that change
+ * once a second - so it compares before it sets, and an unchanged status bar is
+ * left alone rather than repainted for nothing.
+ */
+void ManagerFrame::UpdateSpeedStatus()
+{
+	auto it = running_.find(active_machine_);
+	wxString text;
+
+	if (it != running_.end() && it->second.panel != nullptr &&
+	    it->second.panel->IsLive() && it->second.panel->HasPerf()) {
+		const RemoteEmulatorPanel *panel = it->second.panel;
+
+		/*
+		 * "(idle)" for the same reason the machine's own status bar says it:
+		 * a machine sitting at the desktop under "Reduce CPU usage" hands its
+		 * time back and really is executing almost nothing, and a MIPS figure
+		 * near zero without that word reads as something being wrong.
+		 */
+		text = wxString::Format("MIPS: %.1f%s   FPS: %.1f",
+		    panel->Mips(), panel->GuestIdle() ? " (idle)" : "", panel->Fps());
+	}
+
+	if (text != speed_text_) {
+		speed_text_ = text;
+		SetStatusText(text, 2);
+	}
 }
 
 wxString ManagerFrame::SelectedMachineName() const
@@ -1252,6 +1298,10 @@ void ManagerFrame::StartMachine(const wxString &name, bool resume)
 
 void ManagerFrame::OnPollTimer(wxTimerEvent & /*event*/)
 {
+	/* Before the early return: with nothing running there is no speed to show
+	   and the field has to be cleared of the last machine's. */
+	UpdateSpeedStatus();
+
 	if (running_.empty()) {
 		return;
 	}

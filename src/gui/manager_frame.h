@@ -95,6 +95,10 @@ private:
 	void SetDebugToolState(bool paused, bool pausing);
 	void SetCdromMenuState(int source);
 	void SetNatMenuState(bool is_nat);
+
+	/* MIPS and frames per second for the machine on show, in the right-hand
+	   status bar field. See the definition for why only that one. */
+	void UpdateSpeedStatus();
 	wxString SelectedMachineName() const;
 	void UpdateButtons();
 	wxString MachineDirFor(const wxString &name) const;
@@ -242,6 +246,8 @@ private:
 	std::map<wxString, RunningMachine> running_;
 	std::vector<wxString> machine_names_;	/* same order as machine_list_'s rows */
 	wxString active_machine_;
+	/* What the speed field last said, so it is only set when it changes. */
+	wxString speed_text_;
 	size_t running_count_ = 0;
 	wxTimer poll_timer_;
 

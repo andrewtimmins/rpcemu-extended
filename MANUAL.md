@@ -622,6 +622,11 @@ The recompiler translates ARM code to your processor's, so a machine runs many
 times faster than the hardware ever did. The MIPS figure in the status bar is
 what the guest is achieving.
 
+The Manager shows the same figure at the right of its own status bar, for
+whichever machine is on screen, along with the rate that machine is drawing
+frames at. Frames per second is normally the machine's refresh rate and stays
+there; MIPS moves with whatever RISC OS is doing.
+
 **Reduce CPU Usage** lets the emulator sleep when RISC OS is idle rather than
 spinning. It costs a little speed and saves a great deal of battery and fan
 noise. Turn it off if you are chasing maximum performance or if audio stutters.
