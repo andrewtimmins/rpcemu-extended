@@ -38,6 +38,12 @@ void HeadlessBridge::PostMoveHostMouse(const MouseMoveUpdate & /*update*/)
 {
 }
 
+/* Nothing draws a cursor here, and a VNC client is sent the frame with the
+   pointer already in it - see PointerShape::host_side. */
+void HeadlessBridge::PostPointerShape(const PointerShape & /*shape*/)
+{
+}
+
 void HeadlessBridge::PostDebuggerStateChanged()
 {
 }

@@ -310,6 +310,18 @@ enum class IpcEventType : uint32_t {
 	 * between two of these reports.
 	 */
 	PerfReport,
+
+	/*
+	 * The guest's pointer shape, so the Manager can draw it as its panel's own
+	 * cursor instead of the machine compositing it into the frame - which is
+	 * what takes it off the frame pipeline and lets it track the hand.
+	 *
+	 * Carried in path as the packed form guest_cursor.h defines: two bits per
+	 * pixel plus palette and hotspot, a few hundred bytes for a real pointer, so
+	 * it fits the field with room to spare and needs no segment of its own. Sent
+	 * only when the shape changes, which is rarely.
+	 */
+	PointerShapeChanged,
 };
 
 struct IpcEvent {

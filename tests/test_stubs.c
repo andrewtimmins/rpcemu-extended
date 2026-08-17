@@ -56,6 +56,18 @@ void rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize, int yl,
 	(void) double_size; (void) host_xsize; (void) host_ysize;
 }
 void rpcemu_move_host_mouse(uint16_t x, uint16_t y) { (void) x; (void) y; }
+/* The guest's pointer shape, which only a front end with a cursor to set can do
+   anything with. rpcemu_host_cursor_available stays zero in a test, so the
+   emulator composites the pointer as it always did and this is never called
+   with anything a test would want to look at. */
+void rpcemu_pointer_shape(const uint8_t *bits, int row_bytes,
+    const uint32_t *palette, int width, int height, int hotspot_x,
+    int hotspot_y, int visible, int host_side)
+{
+	(void) bits; (void) row_bytes; (void) palette; (void) width; (void) height;
+	(void) hotspot_x; (void) hotspot_y; (void) visible; (void) host_side;
+}
+int rpcemu_vnc_active(void) { return 0; }
 void rpcemu_idle_process_events(void) {}
 void rpcemu_request_poweroff(void) {}
 /* Emulated time. Most tests never run a timer and are happy with zero, but a

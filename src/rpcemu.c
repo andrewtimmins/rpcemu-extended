@@ -304,6 +304,7 @@ static const openbus_host_ops openbus_ops = {
 
 
 int drawscre = 0;
+int rpcemu_host_cursor_available = 0;
 
 unsigned long idle_ticks = 0;
 int quited = 0;

@@ -625,6 +625,108 @@ gfx_shape_byte(uint32_t addr)
 #endif
 }
 
+/*
+ * The guest's pointer, for the host to draw as its own cursor.
+ *
+ * Whichever display is live - VIDC's own cursor or the graphics card's - the
+ * shape is two bits per pixel with colour 0 transparent, so one routine can turn
+ * either into the RGBA the front end wants. Published only when it changes,
+ * which is rarely: RISC OS swaps shape when the pointer crosses into a window
+ * that wants a different one, and otherwise leaves it alone for minutes.
+ *
+ * ★ This is what takes the pointer off the frame pipeline. Composited into the
+ * frame it could only move once per emulated frame and it carried every hop's
+ * latency to the screen; drawn by the host it tracks the hand at the host's own
+ * rate. It is not a graphics-card feature: every machine's pointer comes through
+ * here, VIDC's included.
+ *
+ * thread: video
+ */
+#define PTR_SHAPE_MAX_H	64
+
+static int
+pointer_host_side_wanted(void)
+{
+	/*
+	 * Only when the pointer is where the host thinks it is, and only when
+	 * nothing else needs it in the frame.
+	 *
+	 * rpcemu_host_cursor_available is the front end saying it will draw one at
+	 * all. Without that test a managed machine had its pointer taken out of the
+	 * frame with nothing to replace it - the Manager draws that machine, and its
+	 * panel has no host cursor - so no pointer appeared anywhere.
+	 *
+	 * Captured mouse mode is excluded by mousehack being off: there the guest
+	 * places the pointer itself and the host cursor is nowhere near it. An
+	 * unlinked cursor (OS_Word 21, 2) is excluded because RISC OS has parked it
+	 * somewhere of its own choosing. VNC is excluded because a remote viewer
+	 * only ever sees what is in the frame.
+	 */
+	/*
+	 * ★ Not while a button is held, which is to say not while dragging.
+	 *
+	 * A host-drawn pointer moves at the host's rate; the window it is dragging
+	 * moves at the guest's, a frame or two later. Free-running that looks worse
+	 * than the lag it fixes: the pointer visibly pulls away from the thing it is
+	 * carrying, and the eye reads that as the emulator falling behind. Putting it
+	 * back in the frame for the duration of a drag makes the two move together
+	 * again, which is what a drag needs, and pointing - where nothing has to keep
+	 * up with it - keeps the snappy one.
+	 */
+	if (mouse_buttons_get() != 0) {
+		return 0;
+	}
+
+	return rpcemu_host_cursor_available && mousehack &&
+	       mouse_hack_cursor_linked() && !rpcemu_vnc_active();
+}
+
+static void
+pointer_publish(const uint8_t *shape, unsigned row_bytes, unsigned width_px,
+                unsigned height, const uint32_t *palette, int visible)
+{
+	static uint8_t last_bits[16 * 64];
+	static uint32_t last_palette[4];
+	static int last_rb, last_w, last_h, last_hx, last_hy, last_visible;
+	static int last_host_side, ever;
+	const int host_side = pointer_host_side_wanted();
+	int hotspot_x = 0, hotspot_y = 0;
+
+	if (shape == NULL || row_bytes == 0 || row_bytes > 16 || height == 0 ||
+	    height > 64) {
+		return;
+	}
+	if (mousehack) {
+		mouse_hack_active_point(&hotspot_x, &hotspot_y);
+	}
+
+	/* Only on a change. RISC OS swaps shape when the pointer crosses into a
+	   window that wants a different one, and otherwise leaves it alone for
+	   minutes, so this sends nothing on almost every frame. */
+	if (ever && (int) row_bytes == last_rb && (int) width_px == last_w &&
+	    (int) height == last_h && hotspot_x == last_hx && hotspot_y == last_hy &&
+	    visible == last_visible && host_side == last_host_side &&
+	    memcmp(palette, last_palette, sizeof(last_palette)) == 0 &&
+	    memcmp(shape, last_bits, (size_t) row_bytes * height) == 0) {
+		return;
+	}
+
+	memcpy(last_bits, shape, (size_t) row_bytes * height);
+	memcpy(last_palette, palette, sizeof(last_palette));
+	last_rb = (int) row_bytes;
+	last_w = (int) width_px;
+	last_h = (int) height;
+	last_hx = hotspot_x;
+	last_hy = hotspot_y;
+	last_visible = visible;
+	last_host_side = host_side;
+	ever = 1;
+
+	rpcemu_pointer_shape(shape, (int) row_bytes, palette, (int) width_px,
+	    (int) height, hotspot_x, hotspot_y, visible, host_side);
+}
+
+
 /**
  * Draw the card's pointer over the frame just rendered.
  *
@@ -640,7 +742,47 @@ gfxcard_draw_pointer(void)
 {
 	unsigned row;
 
+	/*
+	 * Hand the shape over whether or not it is drawn below, so the front end
+	 * has it the moment the host takes over the drawing. Gathered into a flat
+	 * buffer first because the card's shape lives in its framestore and comes
+	 * back a byte at a time; it is 8 bytes a row and at most a few dozen rows.
+	 */
+	{
+		uint8_t flat[PTR_SHAPE_MAX_H * GFXCARD_PTR_ROW_BYTES];
+		unsigned h = thr.gfx_ptr_height;
+		unsigned i;
+
+		if (h > PTR_SHAPE_MAX_H) {
+			h = PTR_SHAPE_MAX_H;
+		}
+		for (i = 0; i < h * GFXCARD_PTR_ROW_BYTES; i++) {
+			flat[i] = gfx_shape_byte(thr.gfx_ptr_phys + i);
+		}
+		/*
+		 * The card's palette is in its own order - red at bits 8, green at 16,
+		 * blue at 24 - not the host pixels VIDC's cursor palette holds. The
+		 * compositing loop below converts as it draws; the shape is handed over
+		 * once, so convert here. Getting this wrong showed the pointer in red
+		 * and black instead of blue.
+		 */
+		uint32_t pal[4];
+
+		for (i = 0; i < 4; i++) {
+			pal[i] = makecol((thr.gfx_ptr_palette[i] >> 8) & 0xff,
+			                 (thr.gfx_ptr_palette[i] >> 16) & 0xff,
+			                 (thr.gfx_ptr_palette[i] >> 24) & 0xff);
+		}
+		pointer_publish(flat, GFXCARD_PTR_ROW_BYTES, thr.gfx_ptr_width * 4, h,
+		    pal, thr.gfx_ptr_visible && !thr.gfx_blanked);
+	}
+
 	if (!thr.gfx_ptr_visible || thr.gfx_blanked) {
+		return;
+	}
+
+	/* The host is drawing it; putting it in the frame as well would show two. */
+	if (pointer_host_side_wanted()) {
 		return;
 	}
 
@@ -1220,6 +1362,30 @@ vidcthread(void)
 		}
 		ramp = (const uint8_t *) region;
 		addr = thr.iomd_cinit & rammask;
+
+		/*
+		 * VIDC's cursor is 32 pixels wide, so 8 bytes to a row. Same shape
+		 * format as the card's, so the same routine hands it over - this is how
+		 * every machine without a graphics card gets a host-drawn pointer.
+		 *
+		 * VIDC's palette holds colours 1 to 3 at indices 0 to 2, where the
+		 * card's is indexed by the colour itself; line them up rather than
+		 * teaching the shared routine about both.
+		 */
+		{
+			const uint32_t pal[4] = {
+				0, thr.cursor_palette[0], thr.cursor_palette[1],
+				thr.cursor_palette[2]
+			};
+
+			pointer_publish(ramp + addr, 8, 32,
+			    (unsigned) thr.cursorheight, pal, 1);
+		}
+
+		/* Drawn by the host, so not drawn into the frame as well. */
+		if (pointer_host_side_wanted()) {
+			goto cursor_done;
+		}
 		// printf("Mouse now at %i,%i\n", thr.cursorx, thr.cursory);
 		for (y = 0; y < thr.cursorheight; y++) {
 			if ((y + thr.cursory) >= thr.vidc_ysize) {

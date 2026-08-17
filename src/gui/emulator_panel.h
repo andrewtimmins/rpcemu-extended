@@ -27,6 +27,7 @@
 
 #include "captured_pointer.h"
 #include "emulator_host.h"
+#include "guest_cursor.h"
 #include "host_types.h"
 
 class EmulatorPanel : public wxPanel {
@@ -35,6 +36,16 @@ public:
 
 	void ApplyVideoUpdate(const VideoUpdate &update);
 	void HandleMoveHostMouse(const MouseMoveUpdate &update);
+
+	/*
+	 * The guest's pointer shape, to be drawn as this panel's own cursor.
+	 *
+	 * Turning it into a real host cursor rather than compositing it into the
+	 * frame is what lets it track the hand: the host draws it at its own refresh
+	 * rate and with its own latency, while the guest's screen carries on at
+	 * sixty frames a second. See PointerShape.
+	 */
+	void ApplyPointerShape(const PointerShape &shape);
 	void ReleaseMouseCapture();
 	void UpdateMouseCursor();
 	void FocusPanel();
@@ -88,6 +99,30 @@ private:
 	int offset_y_ = 0;
 	int last_mouse_x_ = -1;
 	int last_mouse_y_ = -1;
+
+	/*
+	 * The guest's pointer as a host cursor, and whether the host is drawing it.
+	 * guest_cursor_ is kept so an unchanged shape does not rebuild the cursor,
+	 * and cursor_host_side_ is what UpdateMouseCursor() obeys - when it is false
+	 * the emulator is still putting the pointer in the frame and the arrow must
+	 * stay blank instead.
+	 */
+	wxCursor guest_cursor_;
+	bool cursor_host_side_ = false;
+	bool guest_cursor_ok_ = false;
+
+	/*
+	 * The shape as the guest sent it, kept because the cursor has to be rebuilt
+	 * when the display scaling changes as well as when the shape does: the host
+	 * draws a cursor at its native size, so in a doubled or zoomed mode an
+	 * unscaled pointer would be half the size of everything around it.
+	 */
+	GuestCursor guest_shape_;
+	int guest_cursor_scale_num_ = 0;
+	int guest_cursor_scale_den_ = 0;
+
+	void RebuildGuestCursor();
+
 	int last_press_button_ = 0;
 	int held_buttons_ = 0;		/**< Bitmask of buttons currently forwarded as pressed */
 	bool pointer_captured_ = false;	/**< True while we hold the wx mouse capture for a drag */

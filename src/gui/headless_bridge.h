@@ -41,6 +41,7 @@ public:
 	void PostError(const std::string &message) override;
 	void PostFatal(const std::string &message) override;
 	void PostMoveHostMouse(const MouseMoveUpdate &update) override;
+	void PostPointerShape(const PointerShape &shape) override;
 
 	void ShowError(const std::string &message) override;
 	void ShowFatal(const std::string &message) override;

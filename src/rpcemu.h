@@ -551,6 +551,23 @@ extern int debugger_swi_hook(uint32_t swinum, uint32_t opcode);
 /* host GUI bridge */
 extern void rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize, int yl, int yh, int double_size, int host_xsize, int host_ysize);
 extern void rpcemu_move_host_mouse(uint16_t x, uint16_t y);
+extern void rpcemu_pointer_shape(const uint8_t *bits, int row_bytes,
+                                 const uint32_t *palette, int width, int height,
+                                 int hotspot_x, int hotspot_y, int visible,
+                                 int host_side);
+extern int rpcemu_vnc_active(void);
+
+/*
+ * Whether the front end can draw the guest's pointer as its own cursor.
+ *
+ * Zero by default, and zero is the safe answer: the emulator then composites the
+ * pointer into the frame as it always did. A front end that sets this is
+ * promising to draw one, and gets frames without a pointer in them - so nothing
+ * may set it on a path where nobody is listening. A managed machine is exactly
+ * that case: its frames go to the Manager, whose panel draws them, and its own
+ * window is never shown.
+ */
+extern int rpcemu_host_cursor_available;
 extern void rpcemu_idle_process_events(void);
 extern uint64_t rpcemu_nsec_timer_ticks(void);
 

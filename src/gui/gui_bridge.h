@@ -39,6 +39,10 @@ public:
 	virtual void PostFatal(const std::string &message) = 0;
 	virtual void PostMoveHostMouse(const MouseMoveUpdate &update) = 0;
 
+	/* The guest's pointer shape has changed, or whether the host should be
+	   drawing it has. Sent only on a change, not per frame. */
+	virtual void PostPointerShape(const PointerShape &shape) = 0;
+
 	virtual void ShowError(const std::string &message) = 0;
 	virtual void ShowFatal(const std::string &message) = 0;
 

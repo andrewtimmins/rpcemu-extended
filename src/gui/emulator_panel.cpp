@@ -94,6 +94,57 @@ bool EmulatorPanel::ShouldSuppressHostMouseWarp() const
 	return std::chrono::steady_clock::now() < user_pointer_until_;
 }
 
+/*
+ * Turn the guest's pointer into this panel's cursor.
+ *
+ * The shape arrives as RGBA with a stride of its own; wxCursor is built from a
+ * wxImage, which keeps colour and alpha separately, so the alpha becomes a mask.
+ * Only rebuilt when the shape actually changes - RISC OS leaves it alone for
+ * minutes at a time and building a cursor is not free.
+ */
+void EmulatorPanel::ApplyPointerShape(const PointerShape &shape)
+{
+	const bool was_host_side = cursor_host_side_;
+
+	cursor_host_side_ = shape.host_side;
+
+	if (!shape.host_side || !shape.visible || !guest_shape_.Set(shape)) {
+		guest_shape_.valid = false;
+		guest_cursor_ok_ = false;
+		if (was_host_side != cursor_host_side_) {
+			UpdateMouseCursor();
+		}
+		return;
+	}
+
+	/* Force the rebuild: the shape changed even if the scaling did not. */
+	guest_cursor_scale_num_ = 0;
+	guest_cursor_scale_den_ = 0;
+	RebuildGuestCursor();
+}
+
+/* Build the cursor at the size one guest pixel now occupies on screen. Returns
+   at once unless that has actually moved, so calling it per frame is free. */
+void EmulatorPanel::RebuildGuestCursor()
+{
+	if (!guest_shape_.valid) {
+		return;
+	}
+
+	const int num = (scaled_x_ > 0) ? scaled_x_ : 1;
+	const int den = (image_width_ > 0) ? image_width_ : 1;
+
+	if (num == guest_cursor_scale_num_ && den == guest_cursor_scale_den_) {
+		return;
+	}
+	guest_cursor_scale_num_ = num;
+	guest_cursor_scale_den_ = den;
+
+	guest_cursor_ = guest_cursor_build(guest_shape_, num, den);
+	guest_cursor_ok_ = guest_cursor_.IsOk();
+	UpdateMouseCursor();
+}
+
 void EmulatorPanel::UpdateMouseCursor()
 {
 	if (mouse_captured) {
@@ -102,7 +153,26 @@ void EmulatorPanel::UpdateMouseCursor()
 	}
 
 	if (pconfig_copy != nullptr && pconfig_copy->mousehackon && IsMouseOverPanel()) {
-		SetCursor(wxCursor(wxCURSOR_BLANK));
+		/*
+		 * The guest's own pointer, drawn by the host, when the emulator has
+		 * stopped putting it in the frame. Blank otherwise: the frame already
+		 * carries one and a second cursor on top of it looks like a fault.
+		 */
+		if (cursor_host_side_ && guest_cursor_ok_) {
+			SetCursor(guest_cursor_);
+		} else if (cursor_host_side_) {
+			/*
+			 * ★ The host would not build the cursor, and the emulator has
+			 * already stopped putting the pointer in the frame - so blanking
+			 * here would leave no pointer at all, anywhere. An arrow is the
+			 * wrong shape but it is in the right place and it can be seen.
+			 */
+			SetCursor(wxCursor(wxCURSOR_ARROW));
+		} else {
+			/* The frame carries the pointer, so a host one on top of it would
+			   be a second cursor. */
+			SetCursor(wxCursor(wxCURSOR_BLANK));
+		}
 	} else {
 		SetCursor(wxCursor(wxCURSOR_ARROW));
 	}
@@ -513,6 +583,11 @@ void EmulatorPanel::CalculateScaling()
 		offset_x_ = 0;
 		offset_y_ = 0;
 	}
+
+	/* One guest pixel is a different size on screen now, so the pointer has
+	   to be rebuilt at the new size. Cheap: it returns at once unless the
+	   scaling actually moved. */
+	RebuildGuestCursor();
 }
 
 void EmulatorPanel::OnPaint(wxPaintEvent &event)

@@ -144,7 +144,16 @@ void RemoteEmulatorPanel::UpdateCursor()
 	 * user with no pointer at all and no clue that a click is what starts it.
 	 */
 	const bool hide = live_ && (follow_host_mouse_ || pointer_captured_);
-	const wxCursor cursor(hide ? wxCURSOR_BLANK : wxCURSOR_ARROW);
+	/*
+	 * The machine's own pointer, drawn here, when it has stopped putting it in
+	 * the frame. If the host would not build the cursor an arrow stands in:
+	 * blanking would leave no pointer at all, since the frame has none either.
+	 */
+	wxCursor cursor(hide ? wxCURSOR_BLANK : wxCURSOR_ARROW);
+
+	if (hide && cursor_host_side_) {
+		cursor = guest_cursor_ok_ ? guest_cursor_ : wxCursor(wxCURSOR_ARROW);
+	}
 
 	SetCursor(cursor);
 #if wxUSE_GLCANVAS
@@ -153,6 +162,29 @@ void RemoteEmulatorPanel::UpdateCursor()
 		gl_canvas_->SetCursor(cursor);
 	}
 #endif
+}
+
+/* Build the cursor at the size one guest pixel occupies in this panel. Returns
+   at once unless that has moved, so calling it per frame or per resize is free. */
+void RemoteEmulatorPanel::RebuildGuestCursor()
+{
+	if (!guest_shape_.valid) {
+		return;
+	}
+
+	const wxRect rect = DisplayRect();
+	const int num = (rect.width > 0) ? rect.width : 1;
+	const int den = (frame_width_ > 0) ? frame_width_ : 1;
+
+	if (num == guest_cursor_scale_num_ && den == guest_cursor_scale_den_) {
+		return;
+	}
+	guest_cursor_scale_num_ = num;
+	guest_cursor_scale_den_ = den;
+
+	guest_cursor_ = guest_cursor_build(guest_shape_, num, den);
+	guest_cursor_ok_ = guest_cursor_.IsOk();
+	UpdateCursor();
 }
 
 void RemoteEmulatorPanel::SetFollowHostMouse(bool follow)
@@ -475,6 +507,30 @@ void RemoteEmulatorPanel::HandleIpcEvent(const IpcEvent &event)
 			}
 		}
 		perf_at_ms_ = now;
+		break;
+	}
+	case IpcEventType::PointerShapeChanged: {
+		/* Runs on the reader thread; wx state is the GUI thread's. */
+		GuestCursor shape;
+		bool visible = false, host_side = false;
+		const bool ok = guest_cursor_unpack(event.path, sizeof(event.path),
+		    &shape, &visible, &host_side);
+
+		CallAfter([this, shape, visible, host_side, ok]() {
+			cursor_host_side_ = host_side;
+			if (!host_side || !visible || !ok) {
+				guest_shape_.valid = false;
+				guest_cursor_ok_ = false;
+			} else {
+				guest_shape_ = shape;
+				/* Force the rebuild: the shape changed even if the scale did not. */
+				guest_cursor_scale_num_ = 0;
+				guest_cursor_scale_den_ = 0;
+				RebuildGuestCursor();
+				return;
+			}
+			UpdateCursor();
+		});
 		break;
 	}
 	case IpcEventType::Error:
@@ -1049,6 +1105,10 @@ void RemoteEmulatorPanel::OnSize(wxSizeEvent &event)
 	}
 #endif
 	event.Skip();
+
+	/* One guest pixel is a different size now, so the pointer is rebuilt to
+	   match. Free unless the scaling actually moved. */
+	RebuildGuestCursor();
 }
 
 int RemoteEmulatorPanel::MapClickButton(const wxMouseEvent &event) const

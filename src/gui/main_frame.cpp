@@ -24,6 +24,8 @@
 #include "gui_resources.h"
 #include "main_frame.h"
 
+#include "guest_cursor.h"
+
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
@@ -264,6 +266,14 @@ MainFrame::MainFrame()
 #endif
 
 	panel_ = new EmulatorPanel(this, *emulator_);
+
+	/*
+	 * There is a panel now, so the guest's pointer can be this window's cursor
+	 * and the emulator need not put it in the frame. Set here rather than at
+	 * construction because it is the panel that draws it, and cleared again by
+	 * EnableManagedMode() if this machine turns out to be one the Manager shows.
+	 */
+	rpcemu_host_cursor_available = 1;
 	panel_->Bind(wxEVT_KEY_DOWN, &MainFrame::OnKeyDown, this);
 	panel_->Bind(wxEVT_KEY_UP, &MainFrame::OnKeyUp, this);
 	auto *sizer = new wxBoxSizer(wxVERTICAL);
@@ -333,6 +343,10 @@ void MainFrame::UpdateMachineStatus()
 void MainFrame::EnableManagedMode()
 {
 	managed_mode_ = true;
+
+	/* Left set: the Manager's panel draws this machine's pointer as its own
+	   cursor, from the shape PostPointerShape sends it, so the pointer comes out
+	   of the frame here just as it does for a machine's own window. */
 
 	shared_fb_ = std::make_unique<SharedFramebuffer>();
 	if (!shared_fb_->CreateNew(MachineIpcNameFor(rpcemu_get_datadir(), config.name))) {
@@ -2401,6 +2415,44 @@ void MainFrame::PostVideoUpdate(VideoUpdate update)
 		(void) pixels; // returns the slot to the pool once the frame is applied
 		if (panel_ != nullptr) {
 			panel_->ApplyVideoUpdate(copy);
+		}
+	});
+}
+
+void MainFrame::PostPointerShape(const PointerShape &shape)
+{
+	/*
+	 * A managed machine has no window of its own to put a cursor on, so the
+	 * shape goes to the Manager, whose panel draws the machine and owns the
+	 * pointer over it. Sent from whichever thread noticed the change; SendEvent
+	 * is safe from any of them.
+	 */
+	if (managed_mode_) {
+		if (ipc_server_) {
+			IpcEvent event;
+
+			event.type = IpcEventType::PointerShapeChanged;
+			if (guest_cursor_pack(shape, event.path, sizeof(event.path)) > 0) {
+				ipc_server_->SendEvent(event);
+			}
+		}
+		return;
+	}
+
+	/* The bits belong to the caller only for the duration of the call and this
+	   hops threads, so the shape is copied into the message. */
+	auto held = std::make_shared<GuestCursor>();
+
+	held->Set(shape);
+
+	PointerShape copy = shape;
+
+	copy.bits = held->valid ? held->bits : nullptr;
+
+	CallAfter([this, copy, held]() {
+		(void) held;
+		if (panel_ != nullptr) {
+			panel_->ApplyPointerShape(copy);
 		}
 	});
 }

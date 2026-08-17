@@ -57,6 +57,15 @@ extern void mouse_hack_osbyte_106(uint32_t a);
 extern void mouse_hack_osmouse(void);
 extern void mouse_hack_get_pos(int *x, int *y);
 
+/* Whether the cursor is still following the mouse. RISC OS can detach it
+   (OS_Word 21, 2), and a pointer drawn by the host would then be in the wrong
+   place - see PointerShape::host_side. */
+extern int mouse_hack_cursor_linked(void);
+
+/* The active point of the pointer shape in use: where in the shape the guest
+   considers the pointer to be. Each of the shapes has its own. */
+extern void mouse_hack_active_point(int *x, int *y);
+
 extern int kcallback;
 extern int mcallback;
 extern int mouse_b;

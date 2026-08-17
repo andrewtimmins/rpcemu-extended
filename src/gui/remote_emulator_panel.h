@@ -31,6 +31,7 @@
 
 #include "captured_pointer.h"
 #include "gl_display_canvas.h"
+#include "guest_cursor.h"
 #include "machine_ipc.h"
 
 extern "C" {
@@ -311,6 +312,24 @@ private:
 	std::atomic<float> fps_{0.0f};
 	std::atomic<bool> guest_idle_{false};
 	std::atomic<unsigned> frames_since_report_{0};
+
+	/*
+	 * The machine's pointer as this panel's cursor.
+	 *
+	 * The machine sends the shape when it changes and stops putting the pointer
+	 * in the frame; drawn by the host it tracks the hand at the host's own rate
+	 * rather than moving once per emulated frame. cursor_host_side_ is the
+	 * machine's instruction: false means the pointer is still in the frame and
+	 * this panel must not draw one, or there would be two.
+	 */
+	GuestCursor guest_shape_;
+	wxCursor guest_cursor_;
+	bool cursor_host_side_ = false;
+	bool guest_cursor_ok_ = false;
+	int guest_cursor_scale_num_ = 0;
+	int guest_cursor_scale_den_ = 0;
+
+	void RebuildGuestCursor();
 	wxLongLong perf_at_ms_ = 0;
 	std::vector<uint32_t> frame_pixels_;
 	int frame_width_ = 640;

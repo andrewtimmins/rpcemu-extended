@@ -289,6 +289,57 @@ extern "C" void rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize
 #endif
 }
 
+extern "C" void rpcemu_pointer_shape(const uint8_t *bits, int row_bytes,
+                                     const uint32_t *palette, int width,
+                                     int height, int hotspot_x, int hotspot_y,
+                                     int visible, int host_side)
+{
+	if (g_gui_bridge == nullptr) {
+		return;
+	}
+
+	PointerShape shape;
+
+	shape.bits = bits;
+	shape.row_bytes = row_bytes;
+	if (palette != nullptr) {
+		memcpy(shape.palette, palette, sizeof(shape.palette));
+	}
+	shape.width = width;
+	shape.height = height;
+	shape.hotspot_x = hotspot_x;
+	shape.hotspot_y = hotspot_y;
+	shape.visible = visible != 0;
+	shape.host_side = host_side != 0;
+	g_gui_bridge->PostPointerShape(shape);
+}
+
+/*
+ * Whether anyone is actually watching over VNC.
+ *
+ * A remote viewer can only be sent what is in the frame, so while one is
+ * connected the pointer has to stay composited and the host must not draw its
+ * own. Deliberately the CLIENT COUNT and not isRunning(): the server is left
+ * enabled in a machine's configuration far more often than it is used, and
+ * gating on the server would have quietly switched the host-drawn pointer off
+ * for everybody who has VNC turned on and nobody connected - which is most
+ * people who have it turned on at all.
+ *
+ * A client arriving mid-session turns this true, the pointer goes back into the
+ * frame on the next one, and the front end is told to stop drawing its own; a
+ * client leaving reverses it. updateFramebuffer() already skips its work on the
+ * same test, so the two agree about when a viewer matters.
+ */
+extern "C" int rpcemu_vnc_active(void)
+{
+#ifdef RPCEMU_VNC
+	return (g_vnc_server && g_vnc_server->isRunning() &&
+	        g_vnc_server->getClientCount() > 0) ? 1 : 0;
+#else
+	return 0;
+#endif
+}
+
 extern "C" void rpcemu_move_host_mouse(uint16_t x, uint16_t y)
 {
 	if (g_gui_bridge == nullptr) {

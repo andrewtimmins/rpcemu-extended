@@ -1089,6 +1089,19 @@ mouse_hack_get_pos(int *x, int *y)
 	}
 }
 
+int
+mouse_hack_cursor_linked(void)
+{
+	return mouse_hack.cursor_linked;
+}
+
+void
+mouse_hack_active_point(int *x, int *y)
+{
+	*x = mouse_hack.activex[mouse_hack.pointer];
+	*y = mouse_hack.activey[mouse_hack.pointer];
+}
+
 /**
  * OS_Word 21, 0 Define pointer size, shape and active point
  *
