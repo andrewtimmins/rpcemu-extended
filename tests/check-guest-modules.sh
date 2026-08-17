@@ -63,6 +63,7 @@ MODULES=(
 	"riscos-progs/RPCEmuPCIEmulator:rpcemupciemulator,ffa:poduleroms"
 	"riscos-progs/RPCEmuGfx:RPCEmuGfx,ffa:gfxroms"
 	"riscos-progs/EtherRPCEm:EtherRPCEm,ffa:netroms"
+	"riscos-progs/MultiFS:70-multifs,ffa 80-multifsfiler,ffa:usbroms"
 )
 
 # ScrollWheel is deliberately absent: its makefile wants clang, which is not part

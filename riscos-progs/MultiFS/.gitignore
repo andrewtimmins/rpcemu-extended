@@ -1,3 +1,4 @@
 *.o
 *.elf
 multifs-version.inc
+multifsfiler-version.inc

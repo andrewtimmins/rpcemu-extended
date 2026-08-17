@@ -394,6 +394,24 @@ build_podules() {
 	fi
 	echo "✓ Podule ROMs copied to poduleroms/"
 
+	# MultiFS reads FAT media, which is what a USB stick is and what FileCore
+	# will not mount; MultiFSFiler puts the disc on the icon bar. These go in
+	# usbroms/, not poduleroms/: MultiFS talks to SCSIFS and so has to start
+	# after it, and the filer has to be resident before the desktop starts or
+	# the Filer's Service_StartFiler goes unanswered. The numbers in the names
+	# are the load order - see usbroms/README.txt.
+	local multifs_dir="riscos-progs/MultiFS"
+	if [ -d "$multifs_dir" ]; then
+		echo "Building MultiFS card ROMs..."
+		(
+			cd "$multifs_dir"
+			make clean
+			make AS=arm-linux-gnueabi-as LD=arm-linux-gnueabi-ld OBJCOPY=arm-linux-gnueabi-objcopy
+			cp -f "70-multifs,ffa" "80-multifsfiler,ffa" "$SCRIPT_DIR/usbroms/"
+		)
+		echo "✓ MultiFS ROMs copied to usbroms/"
+	fi
+
 	# EtherRPCEm is the guest half of the emulated network card. It goes in
 	# netroms/, not poduleroms/: the emulator builds that card's ROM around it
 	# at run time (src/network.c) and loads it by name, while poduleroms/ is

@@ -16,12 +16,18 @@ the same way poduleroms/ works for the support card.
   50-scsisoftusb,ffa  SCSI over USB: the mass storage transport, so a USB drive
                       answers SCSI commands.
   60-scsifs,ffa       The filing system that presents a SCSI disc, as SCSI::0.
+  70-multifs,ffa      Ours. Reads and writes FAT and exFAT media through SCSIFS,
+                      which is what a USB stick is and what FileCore will not
+                      mount, and reads NTFS. Source in riscos-progs/MultiFS/.
+  80-multifsfiler,ffa Ours. Puts the disc on the icon bar and opens it with the
+                      Filer. Source alongside MultiFS.
 
-None of these is ours and none is GPL, so RPCEmu's COPYING does not cover them.
-They are a mixture of Apache 2.0 and BSD, some of it the original four clause
-BSD with its advertising acknowledgement. See LICENCES.txt here for the notices
-these binaries oblige us to carry, and for the record of what we changed in
-OHCIDriver - which is the only one of the six we changed at all.
+The first six are not ours and none is GPL, so RPCEmu's COPYING does not cover
+them. They are a mixture of Apache 2.0 and BSD, some of it the original four
+clause BSD with its advertising acknowledgement. See LICENCES.txt here for the
+notices these binaries oblige us to carry, and for the record of what we changed
+in OHCIDriver - which is the only one of the six we changed at all. The two
+MultiFS modules are ours and are GPL like the rest of RPCEmu.
 
 ★ The numbers matter. Files load in name order, and USBDriver has to be first.
 
@@ -41,6 +47,12 @@ The mass storage four have an order of their own, for a duller reason: each need
 the one before it to exist when it initialises. RTSupport before SCSISoftUSB,
 which runs its transfers on it; SCSISwitch before SCSISoftUSB, which registers
 with it; and SCSIFS last, since it is looking for a SCSI driver to sit on.
+
+MultiFS follows SCSIFS because it reads its sectors through it, and MultiFSFiler
+follows MultiFS because it asks FileSwitch whether there is a MultiFS disc. The
+filer in particular has to be resident before the desktop starts: the Filer asks
+the filers to start themselves with Service_StartFiler once, on its way up, and
+a filer that was not there to answer never gets a second invitation.
 
 ★ They must be in this ROM, not loaded afterwards. Loading them by hand once the
 machine is up leaves *SCSIDevices empty even with a drive plugged in, because
