@@ -21,6 +21,8 @@
 #include "gui_resources.h"
 #include "machine_inspector_window.h"
 
+#include "window_owner.h"
+
 #include <algorithm>
 #include <vector>
 
@@ -144,10 +146,10 @@ MachineInspectorWindow::MachineInspectorWindow(wxWindow *parent, EmulatorHost &e
 
 void MachineInspectorWindow::ShowAndRaise()
 {
-	if (!IsShown()) {
-		Show();
-	}
-	Raise();
+	/* Raise() on its own is frequently ignored for a window whose parent is not
+	   visible, which is every window a managed machine opens - see
+	   window_owner.h. */
+	window_show_in_front(this);
 	SetFocus();
 	RefreshSnapshot();
 }

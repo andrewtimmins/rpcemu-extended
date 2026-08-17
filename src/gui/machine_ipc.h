@@ -246,6 +246,17 @@ enum class IpcRequestType : uint32_t {
 	 * safely can while it is running.
 	 */
 	FullscreenMessageOff,
+
+	/*
+	 * The Manager's own native window id, so that windows this machine opens can
+	 * name it as their owner and be kept in front of it rather than opening
+	 * behind it unnoticed. arg1/arg2 are the low and high halves, because a
+	 * Windows HWND does not fit in one. Zero means the Manager has none to give
+	 * (Wayland, macOS) and the machine falls back to raising its windows.
+	 *
+	 * See window_owner.h for what is and is not possible per platform.
+	 */
+	SetOwnerWindow,
 };
 
 /*

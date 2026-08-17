@@ -35,6 +35,7 @@ set(GUI_SOURCES
     support_bundle.cpp
     podule_config_dialog.cpp
     machine_inspector_window.cpp
+    window_owner.cpp
     about_dialog.cpp
     check_update.cpp
     nat_edit_dialog.cpp
@@ -151,13 +152,24 @@ pkg_check_modules(SDL2 REQUIRED sdl2)
 target_include_directories(${RPCEMU_GUI_TARGET} PRIVATE ${SDL2_INCLUDE_DIRS})
 target_link_libraries(${RPCEMU_GUI_TARGET} PRIVATE ${SDL2_LIBRARIES})
 
-# GTK3 is only used for the wxGTK relative-mouse capture path in
-# emulator_panel.cpp (guarded by __WXGTK__). wxMSW (Windows) and wxOSX (macOS)
-# do not use it, so require it on Linux only.
+# GTK3 is used for the wxGTK relative-mouse capture path in emulator_panel.cpp
+# and for reaching the X window behind a wx one in window_owner.cpp, both guarded
+# by __WXGTK__. wxMSW (Windows) and wxOSX (macOS) do not use it, so require it on
+# Linux only.
 if(NOT WIN32 AND NOT APPLE)
     pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
     target_include_directories(${RPCEMU_GUI_TARGET} PRIVATE ${GTK3_INCLUDE_DIRS})
     target_link_libraries(${RPCEMU_GUI_TARGET} PRIVATE ${GTK3_LIBRARIES})
+
+    # window_owner.cpp calls XSetTransientForHint directly: GTK cannot express a
+    # window belonging to another process, which is exactly what is wanted here.
+    # Optional, because a Wayland-only GTK has no X11 to link against and that
+    # file compiles to nothing there.
+    pkg_check_modules(X11 x11)
+    if(X11_FOUND)
+        target_include_directories(${RPCEMU_GUI_TARGET} PRIVATE ${X11_INCLUDE_DIRS})
+        target_link_libraries(${RPCEMU_GUI_TARGET} PRIVATE ${X11_LIBRARIES})
+    endif()
 endif()
 
 if(RPCEMU_ENABLE_VNC)

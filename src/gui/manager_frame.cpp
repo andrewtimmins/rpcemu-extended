@@ -21,6 +21,8 @@
 #include "gui_resources.h"
 #include "manager_frame.h"
 
+#include "window_owner.h"
+
 #include "manager_settings_dialog.h"
 
 #include <wx/artprov.h>
@@ -1207,6 +1209,23 @@ void ManagerFrame::AttachPanelFor(const wxString &name, const wxString &shared_f
 	}
 	it->second.starting = false;
 	it->second.panel = panel;
+
+	/*
+	 * Tell the machine which window its own dialogues should sit above. Without
+	 * this they are parented to a frame that is never shown, in another process,
+	 * so the window manager opens them behind this one and nothing says they
+	 * opened - see window_owner.h. Zero on the platforms with no cross-process
+	 * equivalent, which the machine treats as "raise instead".
+	 */
+	{
+		IpcRequest request;
+		const uint64_t id = window_native_id(this);
+
+		request.type = IpcRequestType::SetOwnerWindow;
+		request.arg1 = (int32_t) (uint32_t) (id & 0xffffffffu);
+		request.arg2 = (int32_t) (uint32_t) (id >> 32);
+		panel->SendRequest(request);
+	}
 	it->second.book_page = display_book_->GetPageCount();
 	display_book_->AddPage(panel, name, false);
 

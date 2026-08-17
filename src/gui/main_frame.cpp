@@ -25,6 +25,7 @@
 #include "main_frame.h"
 
 #include "guest_cursor.h"
+#include "window_owner.h"
 
 #include <algorithm>
 #include <chrono>
@@ -490,6 +491,13 @@ void MainFrame::HandleIpcRequest(const IpcRequest &request)
 		CallAfter([this] { ReportMenuState(); });
 		break;
 
+	case IpcRequestType::SetOwnerWindow: {
+		const uint64_t id = (uint64_t) (uint32_t) request.arg1 |
+		    ((uint64_t) (uint32_t) request.arg2 << 32);
+
+		CallAfter([this, id] { owner_window_id_ = id; });
+		break;
+	}
 	case IpcRequestType::FullscreenMessageOff:
 		CallAfter([this] {
 			config_copy_.show_fullscreen_message = 0;
@@ -1166,6 +1174,8 @@ void MainFrame::OnNatList(wxCommandEvent &)
 #ifdef RPCEMU_NETWORKING
 	NatListDialog dlg(this, emulator_.get());
 
+	PrepareMachineWindow(&dlg, "NAT Port Forwarding");
+
 	dlg.ShowRules();
 #else
 	/* Networking (and the NAT list) is not compiled in - nothing to do.
@@ -1741,6 +1751,7 @@ void MainFrame::OnMachineInspector(wxCommandEvent &)
 {
 	if (machine_inspector_window_ == nullptr) {
 		machine_inspector_window_ = new MachineInspectorWindow(this, *emulator_);
+		PrepareMachineWindow(machine_inspector_window_, "Machine Inspector");
 		machine_inspector_window_->Bind(wxEVT_DESTROY, [this](wxWindowDestroyEvent &) {
 			machine_inspector_window_ = nullptr;
 		});
@@ -1881,6 +1892,8 @@ void MainFrame::OnPackages(wxCommandEvent &)
 
 	PackageDialog dialog(this);
 
+	PrepareMachineWindow(&dialog, "Package Manager");
+
 	dialog.ShowModal();
 }
 
@@ -1900,6 +1913,8 @@ void MainFrame::OnSerial(wxCommandEvent &)
 void MainFrame::OnParallel(wxCommandEvent &)
 {
 	ParallelDialog dlg(this);
+
+	PrepareMachineWindow(&dlg, "Parallel Port");
 	dlg.ShowModal();
 }
 
@@ -1917,6 +1932,8 @@ void MainFrame::EditMachineConfiguration()
 	MachineEditDialog dlg(this, old_config_path,
 	                      emulator_ == nullptr || !emulator_->IsRunning(),
 	                      emulator_ != nullptr && emulator_->IsRunning());
+
+	PrepareMachineWindow(&dlg, "Machine Settings");
 	if (dlg.ShowModal() != wxID_OK) {
 		FreeConfigCopy(&old_config);
 		return;
@@ -2417,6 +2434,37 @@ void MainFrame::PostVideoUpdate(VideoUpdate update)
 			panel_->ApplyVideoUpdate(copy);
 		}
 	});
+}
+
+/*
+ * Give a window this machine is opening an owner and a name.
+ *
+ * Only for a managed machine: one running in its own window has that window as a
+ * visible parent, and its title already says which machine it is.
+ */
+void MainFrame::PrepareMachineWindow(wxWindow *window, const wxString &what)
+{
+	if (!managed_mode_ || window == nullptr) {
+		return;
+	}
+
+	/* Which machine, since two of these can be on screen at once and "Machine
+	   Inspector" twice over says nothing. An em rule would be prettier and is
+	   not worth the encoding trouble in a window title. */
+	if (auto *top = wxDynamicCast(window, wxTopLevelWindow)) {
+		const wxString name = wxString::FromUTF8(config.name);
+
+		if (!name.empty()) {
+			top->SetTitle(what.empty()
+			    ? name
+			    : wxString::Format("%s - %s", name, what));
+		}
+	}
+
+	/* Before it is shown: X11 keeps the hint across a map, and Windows wants the
+	   owner set while the window is still unmapped to place it correctly first
+	   time. */
+	window_set_owner(window, owner_window_id_);
 }
 
 void MainFrame::PostPointerShape(const PointerShape &shape)

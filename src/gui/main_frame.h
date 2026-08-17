@@ -201,6 +201,15 @@ public:
 	void PostFatal(const std::string &message) override;
 	void PostMoveHostMouse(const MouseMoveUpdate &update) override;
 	void PostPointerShape(const PointerShape &shape) override;
+
+	/*
+	 * Prepare a window this machine is about to show: name the Manager's window
+	 * as its owner so it opens in front, and say which machine it belongs to.
+	 * Both matter only for a managed machine - one in its own window is already
+	 * identified by that window, and its dialogues are parented to something
+	 * visible.
+	 */
+	void PrepareMachineWindow(wxWindow *window, const wxString &what);
 	void ShowError(const std::string &message) override;
 	void ShowFatal(const std::string &message) override;
 	void PostDebuggerStateChanged() override;
@@ -352,6 +361,9 @@ private:
 	/* Managed-mode plumbing (see EnableManagedMode()). Null/false for an
 	   ordinary single-window launch. */
 	bool managed_mode_ = false;
+	/* The Manager's window, for windows this machine opens to sit above. Zero
+	   until it says, and on the platforms where there is no such thing. */
+	uint64_t owner_window_id_ = 0;
 
 	/* A string argument sent with a forwarded menu command - a file the
 	   Manager's own dialogue chose, for instance. Set for the duration of the
