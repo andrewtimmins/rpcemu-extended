@@ -114,7 +114,19 @@
  */
 #define SPRMODE_TYPE_SHIFT	27
 #define SPRMODE_RISCOS5		0xfu
+
+/*
+ * Sprite pixel types, from the kernel's own list (Programmer/HdrSrc/hdr/Sprite).
+ *
+ * There are two 16bpp types and they are not adjacent, which is worth stating
+ * because a check written for "16bpp" naturally reaches for one number: type 5
+ * is 1:5:5:5 and type 10 is 5:6:5. Type 16 is 4:4:4:4.
+ */
+#define SPRTYPE_8BPP		4
+#define SPRTYPE_16BPP_1555	5
 #define SPRTYPE_32BPP		6
+#define SPRTYPE_16BPP_565	10
+#define SPRTYPE_16BPP_4444	16
 #define SPRMODE_WIDE_MASK	(1u << 31)	/* mask is 8 bits per pixel */
 #define SPRMODE_FAMILY		(3u << 12)	/* 0 = RGB */
 #define SPRMODE_ORDER_RGB	(1u << 14)	/* set = &xRGB, clear = &xBGR */
@@ -202,6 +214,64 @@ static int
 guest_read32(uint32_t addr, uint32_t *out)
 {
 	return mem_debug_read(addr, 4, out);
+}
+
+/**
+ * Bits per pixel of a sprite type, or 0 for one whose depth is not fixed.
+ *
+ * The types with no entry are the ones the kernel's own header marks "no
+ * support in OS" (CMYK, packed 24bpp, JPEG) and the YCbCr pair, whose row
+ * length is not a width times a depth at all.
+ */
+static unsigned
+sprite_type_bpp(int type)
+{
+	switch (type) {
+	case 1:				return 1;
+	case 2:				return 2;
+	case 3:				return 4;
+	case SPRTYPE_8BPP:		return 8;
+	case SPRTYPE_16BPP_1555:	return 16;
+	case SPRTYPE_32BPP:		return 32;
+	case SPRTYPE_16BPP_565:		return 16;
+	case SPRTYPE_16BPP_4444:	return 16;
+	default:			return 0;
+	}
+}
+
+/**
+ * How many pixels a sprite row really holds.
+ *
+ * ★ The width field counts WORDS less one, not pixels.
+ *
+ * `width + 1` is the pixel count at 32bpp and at no other depth: a 16bpp sprite
+ * measured that way comes out half its real width and an 8bpp one a quarter.
+ * The general form is the kernel's own, from `readspritevars` in SprOp: the
+ * bits from the left-hand wastage to the right-hand one inclusive, over the
+ * bits per pixel.
+ *
+ * Nothing shallower than 32bpp is plotted here yet, so this corrects the
+ * COUNTS rather than any drawing: the share of the drawn pixels a host-side
+ * plot can take was being reported against a denominator that was too small.
+ *
+ * @return pixels per row, or 0 if the header does not describe a sensible one
+ */
+int
+accel_sprite_row_pixels(uint32_t width_words_less_one, uint32_t lbit,
+                        uint32_t rbit, unsigned bpp)
+{
+	int64_t bits;
+
+	if (bpp == 0 || lbit > 31 || rbit > 31 || rbit < lbit ||
+	    width_words_less_one > 0xffffu)
+	{
+		return 0;
+	}
+	bits = (int64_t) (rbit - lbit) + 1 + ((int64_t) width_words_less_one << 5);
+	if (bits % (int64_t) bpp != 0) {
+		return 0;	/* a part pixel: not a header this understands */
+	}
+	return (int) (bits / (int64_t) bpp);
 }
 
 /**
@@ -473,10 +543,9 @@ accel_blit_row_plan(const AccelPlotRect *rect, int32_t row, uint32_t src_stride,
  */
 static int
 blit_sprite_32bpp(const ScreenTarget *target, const VduWorkspace *ws,
-                  uint32_t src_base, int src_w, int src_h,
+                  uint32_t src_base, uint32_t src_stride, int src_w, int src_h,
                   int32_t x_os, int32_t y_os, uint32_t *pixels_done)
 {
-	const uint32_t src_stride = (uint32_t) src_w * 4u;
 	AccelPlotRect rect;
 	uint32_t fb_off, phys;
 	int row;
@@ -578,6 +647,7 @@ classify_plot(int scaled, int *handled)
 	VduWorkspace ws;
 	uint32_t header = 0;
 	uint32_t mode = 0, image = 0, mask = 0;
+	uint32_t src_stride = 0;
 	int type;
 	int src_w, src_h;
 	int64_t dest_w, dest_h;
@@ -662,19 +732,35 @@ classify_plot(int scaled, int *handled)
 		return ACCEL_NO_SPRITE;
 	}
 
+	type = sprite_pixel_type(mode);
+
 	{
-		uint32_t w = 0, h = 0;
+		uint32_t w = 0, h = 0, lbit = 0, rbit = 0;
+		const unsigned bpp = sprite_type_bpp(type);
 
 		if (!guest_read32(header + SPR_WIDTH, &w) ||
-		    !guest_read32(header + SPR_HEIGHT, &h))
+		    !guest_read32(header + SPR_HEIGHT, &h) ||
+		    !guest_read32(header + SPR_LEFTBIT, &lbit) ||
+		    !guest_read32(header + SPR_RIGHTBIT, &rbit))
 		{
 			return ACCEL_NO_SPRITE;
 		}
-		src_w = (int) w + 1;
 		src_h = (int) h + 1;
+		src_stride = (w + 1u) * 4u;
+
+		src_w = accel_sprite_row_pixels(w, lbit, rbit, bpp);
+		if (src_w <= 0) {
+			/*
+			 * A depth this cannot reason about - a JPEG, a YCbCr sprite, an
+			 * old-format one - or a header whose bits do not divide into
+			 * pixels. The width is filled in as words so the size and pixel
+			 * counts still have a number beside them, and it is an
+			 * undercount for anything shallower than 32bpp.
+			 */
+			src_w = (int) w + 1;
+		}
 	}
 
-	type = sprite_pixel_type(mode);
 	if (type >= 0 && type < ACCEL_SPRITE_TYPES) {
 		stats.sprite.type[type]++;
 	} else {
@@ -867,8 +953,9 @@ classify_plot(int scaled, int *handled)
 	if (config.accelerators_enabled && scaled) {
 		uint32_t painted = 0;
 
-		if (blit_sprite_32bpp(&target, &ws, header + image, src_w, src_h,
-		    (int32_t) arm.reg[3], (int32_t) arm.reg[4], &painted))
+		if (blit_sprite_32bpp(&target, &ws, header + image, src_stride,
+		    src_w, src_h, (int32_t) arm.reg[3], (int32_t) arm.reg[4],
+		    &painted))
 		{
 			stats.sprite.done++;
 			stats.sprite.done_pixels += painted / 1000u;

@@ -32,6 +32,7 @@
  * the code about being upside down.
  */
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -284,6 +285,42 @@ main(void)
 			}
 		}
 	}
+
+	/*
+	 * How wide a sprite row really is.
+	 *
+	 * The header counts WORDS less one, so `width + 1` is the pixel count only
+	 * at 32bpp. Each case below is the bits from lbit to rbit inclusive, plus
+	 * whole words for the rest, divided by the depth - worked out here, not
+	 * taken from the code.
+	 */
+	printf("row width in pixels\n");
+	/* 4 pixels at 32bpp: 3 whole words + bits 0-31 = 96 + 32 = 128, / 32. */
+	CHECK("32bpp 4px", accel_sprite_row_pixels(3, 0, 31, 32), 4);
+	/* 5 pixels at 16bpp = 80 bits = 2.5 words, so 3 words with the last one
+	   half used: 2 whole words + bits 0-15 = 64 + 16 = 80, / 16. */
+	CHECK("16bpp 5px", accel_sprite_row_pixels(2, 0, 15, 16), 5);
+	/* 6 pixels at 16bpp fills its last word: 64 + 32 = 96, / 16. */
+	CHECK("16bpp 6px", accel_sprite_row_pixels(2, 0, 31, 16), 6);
+	/* The trap this exists for: read as words, that same sprite is 3 wide. */
+	CHECK("16bpp not 3", accel_sprite_row_pixels(2, 0, 31, 16) != 3, 1);
+	/* 5 pixels at 8bpp: 1 whole word + bits 0-7 = 32 + 8 = 40, / 8. */
+	CHECK("8bpp 5px", accel_sprite_row_pixels(1, 0, 7, 8), 5);
+	/* 33 pixels at 1bpp: 1 whole word + bit 0 = 32 + 1. */
+	CHECK("1bpp 33px", accel_sprite_row_pixels(1, 0, 0, 1), 33);
+	/*
+	 * Nonsense headers answer 0 rather than a plausible number. Each case
+	 * here is chosen so that ONE guard is the thing rejecting it: a header
+	 * that two guards both catch proves neither of them works.
+	 */
+	CHECK("no depth", accel_sprite_row_pixels(3, 0, 31, 0), 0);
+	/* One whole word plus bits 0-15 is 48 bits, which is a pixel and a half
+	   at 32bpp. Truncating would answer 1 and draw half a row. */
+	CHECK("part pixel", accel_sprite_row_pixels(1, 0, 15, 32), 0);
+	/* rbit below lbit: at 1bpp every bit count divides, so the part-pixel
+	   guard cannot save this one and the wrapped subtraction would answer
+	   with most of four billion. */
+	CHECK("rbit < lbit", accel_sprite_row_pixels(0, 8, 0, 1), 0);
 
 	if (failures != 0) {
 		printf("FAILED: %d check(s)\n", failures);

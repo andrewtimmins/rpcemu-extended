@@ -233,6 +233,23 @@ extern void accel_blit_row_plan(const AccelPlotRect *rect, int32_t row,
     uint32_t src_stride, uint32_t *src_offset, uint32_t *bytes);
 
 /**
+ * How many pixels a sprite row holds, from its header fields.
+ *
+ * Exposed because `width + 1` is the pixel count at 32bpp and at no other
+ * depth, and getting it wrong draws the picture too narrow while taking the
+ * rest of each row from the row below - a failure that looks like a corrupt
+ * sprite rather than like arithmetic.
+ *
+ * @param width_words_less_one The header's width field, verbatim
+ * @param lbit  Wasted bits at the left of the first word
+ * @param rbit  Last bit used in the last word
+ * @param bpp   Bits per pixel of the sprite's type
+ * @return pixels per row, or 0 if those fields do not describe a whole number
+ */
+extern int accel_sprite_row_pixels(uint32_t width_words_less_one, uint32_t lbit,
+    uint32_t rbit, unsigned bpp);
+
+/**
  * Offer a SWI to the accelerators.
  *
  * @param swinum SWI number as opSWI() has it, X bit included
