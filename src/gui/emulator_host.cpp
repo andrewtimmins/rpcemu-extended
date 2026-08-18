@@ -1622,6 +1622,8 @@ void EmulatorHost::MainEmuLoop()
 				network_nat_rate++;
 				if ((network_nat_rate & 0x3u) == 0u) {
 					network_nat_poll();
+				} else {
+					network_nat_poll_wires();
 				}
 			}
 		}

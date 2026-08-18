@@ -327,6 +327,44 @@ network_nat_reset(void)
 	nat.pkt_queue_count = 0;
 }
 
+/**
+ * Whichever wire this machine is on: a JSON server if it names one, the
+ * loopback hub otherwise. Never both - see network_nat_init().
+ */
+static void
+poll_local_wire(void)
+{
+	if (net_json_is_connected()) {
+		net_json_poll();
+	} else {
+		net_switch_poll();
+	}
+}
+
+/**
+ * The cheap half of the poll: the machine-to-machine wire and the Access relay.
+ *
+ * Both are bare non-blocking reads on sockets this process owns, with none of
+ * SLiRP's select() behind them, so they can be run far more often than the full
+ * poll for very little.
+ *
+ * Worth it because Access is a lock-step protocol: ShareFS acknowledges each
+ * block of a file before the sender sends the next, so the time taken to notice
+ * an arriving datagram is not merely latency, it is the transfer rate. It is
+ * also what decides whether the acknowledgement gets back inside the sender's
+ * retransmission timer. Reached only every fourth turn of the emulator loop,
+ * that timer expired first for most blocks of a large file: measured over a real
+ * ShareFS copy, 37% of the frames on the wire were a block being sent a second
+ * time. Polling this half on every turn, together with not sending to switch
+ * ports that have no receiver, takes that to about 2%.
+ */
+void
+network_nat_poll_wires(void)
+{
+	poll_local_wire();
+	broadcast_relay_poll();
+}
+
 void
 network_nat_poll(void)
 {
@@ -347,11 +385,8 @@ network_nat_poll(void)
 	 * Whichever wire this machine is on: a JSON server if it names one, the
 	 * loopback hub otherwise. Never both - see network_nat_init().
 	 */
-	if (net_json_is_connected()) {
-		net_json_poll();
-	} else {
-		net_switch_poll();
-	}
+	poll_local_wire();
+
 	struct timeval tv;
 
 	/* Networking can be switched on while the emulator thread is running, so

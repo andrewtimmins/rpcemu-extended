@@ -58,6 +58,10 @@ static int switch_slot = -1;
  * Reported at most every ten seconds, and only when something has moved, so an
  * idle machine writes nothing.
  */
+/* Which slots hold an emulator, and when that was last established. */
+static uint32_t switch_peers;
+static time_t switch_peers_checked;
+
 static unsigned long switch_tx_frames;
 static unsigned long switch_rx_frames;      /* seen on the wire */
 static unsigned long switch_rx_for_us;      /* and addressed to this machine */
@@ -169,6 +173,52 @@ net_switch_close(void)
 	switch_slot = -1;
 }
 
+/*
+ * Which switch ports have a receiver, refreshed at most once a second.
+ *
+ * A machine appearing is not something an individual frame has to notice, and
+ * the probe costs a socket, a bind and a close per empty slot.
+ */
+static void
+switch_refresh_peers(void)
+{
+	const time_t now = time(NULL);
+	int slot;
+
+	if (now == switch_peers_checked) {
+		return;
+	}
+	switch_peers_checked = now;
+	switch_peers = 0;
+
+	for (slot = 0; slot < NET_SLOT_MAX; slot++) {
+		struct sockaddr_in addr;
+		int probe;
+
+		if (slot == switch_slot) {
+			continue; /* never sent to, so its state does not matter */
+		}
+
+		probe = (int) socket(AF_INET, SOCK_DGRAM, 0);
+		if (probe < 0) {
+			/* Cannot tell, so assume a receiver rather than go silent. */
+			switch_peers |= 1u << slot;
+			continue;
+		}
+
+		memset(&addr, 0, sizeof(addr));
+		addr.sin_family = AF_INET;
+		addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+		addr.sin_port = htons((unsigned short) (NET_SWITCH_PORT_BASE + slot));
+
+		/* Deliberately without SO_REUSEADDR: the bind failing is the signal. */
+		if (bind(probe, (struct sockaddr *) &addr, sizeof(addr)) != 0) {
+			switch_peers |= 1u << slot;
+		}
+		closesocket(probe);
+	}
+}
+
 void
 net_switch_tx(const uint8_t *frame, int frame_len)
 {
@@ -179,12 +229,33 @@ net_switch_tx(const uint8_t *frame, int frame_len)
 		return;
 	}
 
+	/*
+	 * Only to ports something is actually listening on.
+	 *
+	 * This used to send to all ten slots unconditionally, so a single machine
+	 * with no siblings still paid nine sendto() calls for every frame it sent
+	 * and every frame the relay brought in from the network - on the path whose
+	 * latency decides ShareFS throughput, because Access acknowledges each
+	 * block before the next one is sent.
+	 *
+	 * The test is a bind of the very port the frame would be sent to, so it
+	 * cannot disagree with reality: a port that can be bound has nobody
+	 * receiving on it. Anything indirect - asking which slots are claimed, or
+	 * keeping a table of who has been heard from - can be wrong in the
+	 * direction that makes a running machine silently unreachable.
+	 */
+	switch_refresh_peers();
+
 	for (slot = 0; slot < NET_SLOT_MAX; slot++) {
 		struct sockaddr_in addr;
 
 		/* Not to ourselves: a card does not receive what it transmits, and
 		   the guest would see every frame it sent come back at it. */
 		if (slot == switch_slot) {
+			continue;
+		}
+
+		if ((switch_peers & (1u << slot)) == 0) {
 			continue;
 		}
 
