@@ -14,6 +14,20 @@ if(WIN32)
 endif()
 install(TARGETS rpcemu-debug RUNTIME DESTINATION bin)
 
+# Standalone host-side client for the NetCapCmd channel: the network the
+# machine is on, rather than its command line or its processor. Carries
+# machine_lock.c for the same reason rpcemu-debug does - a running machine
+# records the socket it bound, and that is the only way to find one whose
+# configuration named a path of its own.
+add_executable(rpcemu-netcap rpcemu_netcap.c ${CMAKE_CURRENT_SOURCE_DIR}/../machine_lock.c)
+target_include_directories(rpcemu-netcap PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set_target_properties(rpcemu-netcap PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+if(WIN32)
+    target_link_libraries(rpcemu-netcap PRIVATE ws2_32)
+endif()
+install(TARGETS rpcemu-netcap RUNTIME DESTINATION bin)
+
 # Standalone host-side client for the HostCmd channel. Does not link the
 # emulator core - it is just a small socket client.
 

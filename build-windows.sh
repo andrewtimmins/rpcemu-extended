@@ -213,7 +213,7 @@ cp -f COPYING README.md COMPILE.md "$WIN_RELEASE/" 2>/dev/null || true
 
 # Emulator + host-side tools (.exe copies; Windows has no symlinks).
 cp -f "$BUILD_DIR/bin/$BIN" "$WIN_RELEASE/"
-for t in rpcemu-run.exe rpcemu-shell.exe rpcemu-debug.exe; do
+for t in rpcemu-run.exe rpcemu-shell.exe rpcemu-debug.exe rpcemu-netcap.exe; do
 	[ -f "$BUILD_DIR/bin/$t" ] && cp -f "$BUILD_DIR/bin/$t" "$WIN_RELEASE/"
 done
 

@@ -429,6 +429,9 @@ stage_slice() {
 	if [ -f "$build_dir/bin/rpcemu-debug" ]; then
 		cp -f "$build_dir/bin/rpcemu-debug" "$stage/bin/rpcemu-debug"
 	fi
+	if [ -f "$build_dir/bin/rpcemu-netcap" ]; then
+		cp -f "$build_dir/bin/rpcemu-netcap" "$stage/bin/rpcemu-netcap"
+	fi
 	chmod u+w "$stage/bin/"*
 
 	if [ -z "$OTOOL" ] || [ -z "$INSTALL_NAME_TOOL" ]; then
@@ -647,6 +650,11 @@ if [ "$DO_FUSE" = true ]; then
 	fi
 
 	# And the DebugCmd host client, the same way.
+	if [ -f "$X86_STAGE/bin/rpcemu-netcap" ] && [ -f "$ARM_STAGE/bin/rpcemu-netcap" ]; then
+		"$LIPO" -create "$X86_STAGE/bin/rpcemu-netcap" "$ARM_STAGE/bin/rpcemu-netcap" \
+			-output "$MACOSD/rpcemu-netcap"
+		chmod +x "$MACOSD/rpcemu-netcap"
+	fi
 	if [ -f "$X86_STAGE/bin/rpcemu-debug" ] && [ -f "$ARM_STAGE/bin/rpcemu-debug" ]; then
 		"$LIPO" -create "$X86_STAGE/bin/rpcemu-debug" "$ARM_STAGE/bin/rpcemu-debug" \
 			-output "$MACOSD/rpcemu-debug"

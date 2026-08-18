@@ -265,6 +265,14 @@ stage_linux_release() {
 		chmod +x "$LINUX_RELEASE/rpcemu-debug"
 	fi
 
+	# NetCapCmd host-side client. The third of the sockets: this one watches
+	# the network the machine is on, and can hand a live pcap stream to
+	# Wireshark. See docs/netcapture.md.
+	if [ -f build/bin/rpcemu-netcap ]; then
+		cp -f build/bin/rpcemu-netcap "$LINUX_RELEASE/rpcemu-netcap"
+		chmod +x "$LINUX_RELEASE/rpcemu-netcap"
+	fi
+
 	# MCP server: drive a RISC OS machine (HostCmd + HostFS + VNC + the debugger
 	# control socket) from an MCP client. Python; ships with requirements.txt +
 	# README + config example. See tools/mcp/README.md and docs/debugcmd.md.
