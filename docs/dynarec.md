@@ -175,6 +175,6 @@ architecture-generic and validate the amd64 and arm64 backends alike.
 
 ## Origin
 
-The dynarec was written by Sarah Walker for upstream RPCEmu. Extended Edition builds
+The dynarec was written by Sarah Walker for upstream RPCEmu. RPCEmu Extended builds
 it via CMake, ties it to the integrated Machine Inspector debugger as described above,
 and adds the AArch64 backend ([arm64-dynarec.md](arm64-dynarec.md)).

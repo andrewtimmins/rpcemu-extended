@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Set up a Linux host to cross-compile RPCEmu (Extended Edition) for Windows
+# Set up a Linux host to cross-compile RPCEmu Extended for Windows
 # (x86-64) with MinGW-w64.
 #
 # The native Windows build (see CI) uses MSYS2, which ships wxWidgets/SDL2/

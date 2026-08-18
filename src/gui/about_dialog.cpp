@@ -221,7 +221,7 @@ void AboutDialog::BuildUi()
 	auto *title = new wxStaticText(this, wxID_ANY, "RPCEmu");
 	title->SetFont(title_font);
 
-	auto *edition = new wxStaticText(this, wxID_ANY, "Extended Edition");
+	auto *edition = new wxStaticText(this, wxID_ANY, "Extended");
 	edition->SetFont(edition_font);
 	edition->SetForegroundColour(muted);
 

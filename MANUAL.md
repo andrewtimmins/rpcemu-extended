@@ -1,4 +1,4 @@
-# RPCEmu Extended Edition — Manual
+# RPCEmu Extended — Manual
 
 This is the manual: what everything does, in the order you are likely to need
 it. It assumes nothing about RISC OS, and explains the operating system where
@@ -68,7 +68,7 @@ that operating system runs on your computer at a speed no real Risc PC ever
 managed. RPCEmu is Sarah Walker's work, maintained since by Peter Howkins and
 Matthew Howkins.
 
-**Extended Edition** is a fork that adds a good deal: an emulated graphics card
+**RPCEmu Extended** is a fork that adds a good deal: an emulated graphics card
 with modern resolutions, USB passthrough from your computer, a package manager,
 a proper debugger, remote access over VNC, shared networking between machines,
 and a long list of fixes. Nothing from the original has been taken away.
@@ -725,7 +725,7 @@ kill -USR1 $(pgrep rpcemu-recompiler)
 
 ## For developers
 
-Extended Edition carries a good deal aimed at people writing software for
+RPCEmu Extended carries a good deal aimed at people writing software for
 RISC OS.
 
 **HostCmd** runs commands inside the guest from your own shell and streams the
@@ -784,7 +784,7 @@ those three answer most of what we would otherwise have to ask.
 ## Credits and licence
 
 RPCEmu was written by Sarah Walker and is maintained by Peter Howkins and
-Matthew Howkins. Extended Edition is a fork by Andy Timmins, with contributions
+Matthew Howkins. RPCEmu Extended is a fork by Andy Timmins, with contributions
 from David Ramsden, Nick Brown and others; the About box lists them, and each
 release credits that release's contributors and the people whose reports became
 fixes.

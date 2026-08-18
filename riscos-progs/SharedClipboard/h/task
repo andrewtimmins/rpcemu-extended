@@ -1,5 +1,5 @@
 /*
- * Modified for RPCEmu (Extended Edition), 2026, by Andy Timmins:
+ * Modified for RPCEmu Extended, 2026, by Andy Timmins:
  *   - mouse wheel scrolling removed (this emulator does that itself, and the
  *     module claimed Alt+PageUp/PageDown, which stopped applications seeing it)
  *   - renamed: module SharedClipboard, task "Shared Clipboard", commands

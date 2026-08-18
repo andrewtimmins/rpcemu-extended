@@ -1,6 +1,6 @@
 # How to Compile RPCEmu
 
-RPCEmu (Extended Edition) builds with **CMake**. This guide covers the **Linux** build
+RPCEmu Extended builds with **CMake**. This guide covers the **Linux** build
 via the `build.sh` script at the project root; for the other platforms see
 [docs/windows-build.md](docs/windows-build.md) and
 [docs/macos-build.md](docs/macos-build.md).

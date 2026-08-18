@@ -1,4 +1,4 @@
-# Building RPCEmu (Extended Edition) for Windows
+# Building RPCEmu Extended for Windows
 
 Windows builds are produced with **MinGW-w64** (not MSVC). The x86-64 build ships
 the full-speed recompiler (`rpcemu-recompiler.exe`); there is also a native

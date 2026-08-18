@@ -1,6 +1,6 @@
 # Serial and parallel ports
 
-RPCEmu (Extended Edition) emulates the Risc PC's serial and parallel hardware and lets
+RPCEmu Extended emulates the Risc PC's serial and parallel hardware and lets
 you redirect each port to the host: a log file, a virtual printer, a real serial port
 the host has, a printer the host can already print to, or a TCP "modem" that dials real
 telnet BBSes.

@@ -249,7 +249,7 @@ for key in "${!DLL_SEEN[@]}"; do
 done
 
 cat > "$WIN_RELEASE/BUILDINFO.txt" <<EOF
-RPCEmu (Extended Edition) $VERSION
+RPCEmu Extended $VERSION
 Built: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 Host:  $(uname -s) $(uname -m) (cross to $TARGET)
 Binary: $BIN

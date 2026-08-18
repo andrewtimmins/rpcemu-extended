@@ -1,7 +1,7 @@
 | !Run for !Packages - the RISC OS package database.
 |
 | Copyright (C) 2026 Andy Timmins
-| Part of RPCEmu Extended Edition. GPL v2 or later; see COPYING.
+| Part of RPCEmu Extended. GPL v2 or later; see COPYING.
 |
 | Reached by double-clicking rather than by the boot sequence, so unlike !Boot
 | this does claim Packages$Dir: the user has pointed at this copy deliberately.

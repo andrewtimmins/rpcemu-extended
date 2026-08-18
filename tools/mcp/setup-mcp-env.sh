@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RPCEmu (Extended Edition) - MCP server dependency setup
+# RPCEmu Extended - MCP server dependency setup
 #
 # Run this ONCE to install what the MCP server needs, then point your MCP client
 # at the interpreter it prints. See README.md for what the server does.

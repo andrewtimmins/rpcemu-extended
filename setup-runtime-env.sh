@@ -1,5 +1,5 @@
 #!/bin/bash
-# RPCEmu (Extended Edition) - runtime dependency setup
+# RPCEmu Extended - runtime dependency setup
 #
 # Run this ONCE if you downloaded the portable .tar.gz release and get an error
 # like "error while loading shared libraries: libwx_gtk3u_core-3.2.so.0" when

@@ -6,7 +6,7 @@ needed, and nothing to find or buy first.
 If you want to know what any of it means afterwards, [MANUAL.md](MANUAL.md)
 explains it properly.
 
-## 1. Get RPCEmu Extended Edition
+## 1. Get RPCEmu Extended
 
 Download the build for your computer from the
 [releases page](https://github.com/andrewtimmins/rpcemu-extended/releases/latest).
