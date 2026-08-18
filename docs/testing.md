@@ -84,7 +84,7 @@ pointed at the Windows binary, and how the RISC OS 5.31 empty-HostFS screen in
 
 ## What the suite covers
 
-Fifty-one tests: forty-two that build anywhere, eight that need a native
+Sixty tests: forty-nine that build anywhere, ten that need a native
 recompiler backend, and one that needs a Python 3 interpreter. (The count in
 `tests/CMakeLists.txt` is the one that is enforced; this sentence is prose and
 had fallen behind it, which is worth knowing before trusting it.)
@@ -111,6 +111,7 @@ had fallen behind it, which is worth knowing before trusting it.)
 | `test_savestate` | snapshot serialisation, the run-length codec and the CRC-32 |
 | `test_machine_lock` | the lock that stops one machine being run twice |
 | `test_net_slot` | the per-instance slot that gives each guest its own address |
+| `test_relay_datagram` | the Access relay reads a whole datagram and answers from the sender's address |
 | `test_md5` | MD5 against RFC 1321, for package checksums |
 | `test_unzip` | the zip reader used for downloaded archives |
 | `test_ip_reass` | SLiRP IP fragment reassembly, including two backported fixes |
