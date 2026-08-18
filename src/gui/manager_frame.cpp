@@ -1520,7 +1520,7 @@ void ManagerFrame::OnMachineActivated(wxListEvent & /*event*/)
 	StartMachine(name);
 }
 
-/* The machine that was clicked: start it, stop it, or make a shortcut to it. */
+/* The machine that was clicked: start it, stop it, edit it, or make a shortcut. */
 void ManagerFrame::OnMachineRightClick(wxListEvent &event)
 {
 	/* Right-clicking does not move the selection by itself, so without this the
@@ -1544,6 +1544,12 @@ void ManagerFrame::OnMachineRightClick(wxListEvent &event)
 	menu.Enable(ID_START, !is_running);
 	menu.Enable(ID_STOP, is_running);
 	menu.AppendSeparator();
+	menu.Append(ID_EDIT, "Edit...");
+	/* Greyed while the machine runs, to match the Edit button and the Machine
+	   menu: a menu that offers what the button beside it refuses is two
+	   answers to one question. OnEdit turns a running machine away in any
+	   case, but silently, which reads as the item having done nothing. */
+	menu.Enable(ID_EDIT, !is_running);
 	menu.Append(ID_SHORTCUT, "Create Shortcut...");
 
 	PopupMenu(&menu);
