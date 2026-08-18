@@ -104,6 +104,25 @@
 #define PLOT_USE_MASK		8u
 
 /*
+ * ★ The bits above the action change what the plot MEANS, and must not be
+ *   ignored.
+ *
+ * SpriteExtend shifts R5 right by four and reads its own flags out of the
+ * result (`SprOp`, at the store to `trns_flags2`), so:
+ *
+ *   bit 4       ignore the translation table - harmless, we require none
+ *   bit 5       wide translation table
+ *   bit 6       dither when reducing a depth
+ *   bit 7       colour mapping
+ *   bits 8-15   translucency, 0 being opaque
+ *
+ * Translucency is the dangerous one: a plot asking for it and drawn opaque
+ * here would be plainly wrong and would look like a fault in the application.
+ */
+#define PLOT_WIDE_TRANS		(1u << 5)
+#define PLOT_UNSUPPORTED	0x0000ffc0u	/* bits 6-15 */
+
+/*
  * Sprite mode word.
  *
  * Bits 27-30 identify the format: 0 means the word is an old mode number, 15
@@ -874,7 +893,14 @@ classify_plot(int scaled, int *handled)
 		without_depth = ACCEL_NO_ORDER;
 	} else if (transparency == ACCEL_SPRITE_MASK_1BPP) {
 		without_depth = ACCEL_NO_MASK;
-	} else if ((action & PLOT_ACTION) != 0) {
+	} else if ((action & PLOT_ACTION) != 0 ||
+	    (action & (PLOT_UNSUPPORTED | PLOT_WIDE_TRANS)) != 0)
+	{
+		/* Not just the GCOL action: the bits above it ask for dithering,
+		   colour mapping, a wide table or translucency, any of which makes
+		   the result something other than a copy of the sprite. Bit 4
+		   (ignore the translation table) is harmless here because we
+		   require there to be none. */
 		without_depth = ACCEL_NO_ACTION;
 	} else {
 		without_depth = ACCEL_TAKEN;
