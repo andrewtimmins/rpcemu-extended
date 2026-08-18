@@ -125,6 +125,11 @@ apply(Config *cfg, const char *key, const char *value)
 		set_str(cfg->vnc_password, sizeof(cfg->vnc_password), value);
 		return 1;
 	}
+	if (strcmp(key, "vnc_password_readonly") == 0) {
+		set_str(cfg->vnc_password_readonly,
+		    sizeof(cfg->vnc_password_readonly), value);
+		return 1;
+	}
 	if (strcmp(key, "hostcmd_enabled") == 0) {
 		cfg->hostcmd_enabled = (atoi(value) != 0);
 		return 1;
@@ -216,7 +221,7 @@ app_settings_save(const char *datadir, const Config *cfg)
 	    "#\n"
 	    "# Started headless with no machine named, RPCEmu offers the machine list\n"
 	    "# over VNC, and that has to be reachable before there is a machine whose\n"
-	    "# settings could be read. This is where it gets its port and password.\n"
+	    "# settings could be read. This is where it gets its port and passwords.\n"
 	    "#\n"
 	    "# These are also the defaults for a machine that does not say. A machine\n"
 	    "# that does say wins: its own .cfg in configs/ is the setting, which is\n"
@@ -228,11 +233,13 @@ app_settings_save(const char *datadir, const Config *cfg)
 	    "vnc_enabled=%d\n"
 	    "vnc_port=%d\n"
 	    "vnc_password=%s\n"
+	    "vnc_password_readonly=%s\n"
 	    "hostcmd_enabled=%d\n"
 	    "hostcmd_socket=%s\n",
 	    cfg->vnc_enabled ? 1 : 0,
 	    cfg->vnc_port,
 	    cfg->vnc_password,
+	    cfg->vnc_password_readonly,
 	    cfg->hostcmd_enabled ? 1 : 0,
 	    cfg->hostcmd_socket);
 

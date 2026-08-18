@@ -59,6 +59,7 @@ namespace {
  */
 const char *const kSecretKeys[] = {
 	"vnc_password",
+	"vnc_password_readonly",
 	"username",
 };
 

@@ -272,6 +272,7 @@ stage_linux_release() {
 		mkdir -p "$LINUX_RELEASE/tools/mcp"
 		cp -f tools/mcp/rpcemu_mcp.py tools/mcp/requirements.txt \
 		      tools/mcp/README.md tools/mcp/mcp.json.example \
+		      tools/mcp/setup-mcp-env.sh \
 		      "$LINUX_RELEASE/tools/mcp/" 2>/dev/null || true
 	fi
 

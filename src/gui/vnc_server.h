@@ -41,7 +41,8 @@ public:
 	explicit VncServer(EmulatorHost *emulator_host);
 	~VncServer();
 
-	bool start(int port, const std::string &password);
+	bool start(int port, const std::string &password,
+	           const std::string &password_readonly);
 
 	/*
 	 * Divert keysyms away from the guest.
@@ -64,7 +65,8 @@ public:
 	int getPort() const { return running_ ? listen_port_ : 0; }
 
 	/* Bind one specific port. start() calls this for each candidate. */
-	bool startOnPort(int port, const std::string &password);
+	bool startOnPort(int port, const std::string &password,
+	    const std::string &password_readonly);
 	int getClientCount() const { return client_count_.load(); }
 
 	void updateFramebuffer(const uint32_t *buffer, int width, int height, int yl, int yh);
@@ -161,8 +163,9 @@ private:
 	   server's event thread. */
 	std::set<uint32_t> keys_down_;
 	bool running_ = false;
-	char *password_list_[2] = {nullptr, nullptr};
+	char *password_list_[3] = {nullptr, nullptr, nullptr};
 	std::string current_password_;
+	std::string current_password_readonly_;
 	std::string desktop_name_;
 };
 

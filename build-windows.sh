@@ -222,6 +222,7 @@ if [ -d tools/mcp ]; then
 	mkdir -p "$WIN_RELEASE/tools/mcp"
 	cp -f tools/mcp/rpcemu_mcp.py tools/mcp/requirements.txt \
 	      tools/mcp/README.md tools/mcp/mcp.json.example \
+	      tools/mcp/setup-mcp-env.ps1 \
 	      "$WIN_RELEASE/tools/mcp/" 2>/dev/null || true
 fi
 [ -d docs ] && cp -a docs "$WIN_RELEASE/" 2>/dev/null || true

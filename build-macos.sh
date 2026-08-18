@@ -627,6 +627,7 @@ if [ "$DO_FUSE" = true ]; then
 		mkdir -p "$RESD/tools/mcp"
 		cp -f tools/mcp/rpcemu_mcp.py tools/mcp/requirements.txt \
 		      tools/mcp/README.md tools/mcp/mcp.json.example \
+		      tools/mcp/setup-mcp-env.sh \
 		      "$RESD/tools/mcp/" 2>/dev/null || true
 	fi
 

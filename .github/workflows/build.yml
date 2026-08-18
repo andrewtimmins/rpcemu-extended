@@ -313,12 +313,67 @@ jobs:
   #
   # Not in notify's needs: it reports which job failed, and would say build-gate
   # where it currently names the check that actually broke.
+  # Does what the README tells a user to run still work, and does the server
+  # start afterwards. Its own job because it needs nothing the builds produce,
+  # and because a Python packaging change turning a platform build red would
+  # name the wrong culprit.
+  #
+  # fail-fast is off because the three legs answer different questions - bash
+  # against PowerShell, three Pythons, two venv layouts. Letting them all report
+  # separates "a package changed under us" from "one script broke".
+  mcp-server:
+    needs: release-preflight
+    if: always() && needs.release-preflight.result != 'failure'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v7
+
+      # The runner's own Python, not a pinned one: what a user has is what this
+      # should be testing.
+      - name: Which Python
+        shell: bash
+        run: python3 --version || python --version
+
+      # Windows drives the PowerShell script, because that is what a Windows
+      # user runs: a python.org install and PowerShell, not the MSYS2 shell the
+      # Windows *build* job uses.
+      - name: Set up and start (Linux and macOS)
+        if: runner.os != 'Windows'
+        run: bash tests/mcp_smoke.sh
+
+      - name: Set up and start (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:RPCEMU_MCP_VENV = Join-Path $env:RUNNER_TEMP 'mcp-smoke-venv'
+
+          & .\tools\mcp\setup-mcp-env.ps1
+          if ($LASTEXITCODE -ne 0) { throw "the setup script failed" }
+
+          $py = Join-Path $env:RPCEMU_MCP_VENV 'Scripts\python.exe'
+          if (-not (Test-Path $py)) { throw "no interpreter at $py" }
+
+          # The same probe the shell script runs, from a file rather than -c:
+          # quoting Python through YAML and PowerShell both is a way to break
+          # this without touching it.
+          & $py tests/mcp_probe.py tools/mcp/rpcemu_mcp.py
+          if ($LASTEXITCODE -ne 0) { throw "the server did not load" }
+
+  # The MCP server is in here because the releases ship it (build.sh and the
+  # other two stage tools/mcp into every package): a broken one is a broken
+  # release, and this is the gate that stops one going out.
   build-gate:
-    needs: [sanitisers, interface-docs]
-    if: always() && needs.sanitisers.result == 'success' && needs['interface-docs'].result == 'success'
+    needs: [sanitisers, interface-docs, mcp-server]
+    if: always() && needs.sanitisers.result == 'success' && needs['interface-docs'].result == 'success' && needs['mcp-server'].result == 'success'
     runs-on: ubuntu-slim
     steps:
-      - run: echo "The sanitisers and the interface documentation are clear."
+      - run: echo "The sanitisers, the interface documentation and the MCP server are clear."
 
   # The two Linux builds are written out as two jobs rather than folded into one
   # matrix. They are nearly the same job and a matrix does remove the
@@ -761,7 +816,6 @@ jobs:
           # a new platform.
           bash tests/cli_smoke.sh "$exe"
 
-
       # The ROM the boot test needs, fetched with the emulator's own downloader -
       # which on Windows means WinHTTP, and this is the first time that has run on
       # ARM64. Cached so RISC OS Open are not asked for the same file every push;
@@ -1168,6 +1222,7 @@ jobs:
       - release-preflight
       - sanitisers
       - interface-docs
+      - mcp-server
       - linux-amd64
       - linux-arm64
       - windows-amd64

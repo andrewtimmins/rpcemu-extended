@@ -100,17 +100,72 @@ the CPU registers — pass `physical=True` for raw physical addresses. Pausing t
 CPU (directly, or via a breakpoint/watchpoint hit) freezes the whole machine
 (guest OS, HostCmd, screen) until you resume.
 
+## Installing
+
+The server is Python, and it needs two packages that are not in the standard
+library. Where RPCEmu put it depends on how it was installed:
+
+| Installed from | Server directory |
+| --- | --- |
+| a source or `.tar.gz` tree | `tools/mcp/` |
+| the `.deb` | `/usr/share/rpcemu/mcp/` |
+
+Install into a virtual environment rather than the system Python. Not
+fastidiousness: most current distributions mark the system Python as externally
+managed and refuse a plain `pip install` outright (PEP 668), some ship no `pip`
+at all, and the `.deb`'s copy is root-owned and not somewhere to be writing
+anyway.
+
+There is a script for it. Linux and macOS:
+
+```bash
+cd tools/mcp                       # or /usr/share/rpcemu/mcp from the .deb
+./setup-mcp-env.sh
+```
+
+Windows, in PowerShell:
+
+```powershell
+cd tools\mcp
+powershell -ExecutionPolicy Bypass -File setup-mcp-env.ps1
+```
+
+(Windows refuses unsigned scripts by default, hence the argument; the script is
+not signed.)
+
+Either one makes a virtual environment in `~/.rpcemu-mcp`
+(`%USERPROFILE%\.rpcemu-mcp` on Windows), installs into it, and checks the
+server can actually import what it needs rather than assuming it did. Set
+`RPCEMU_MCP_VENV` first to put the environment somewhere else.
+
+It then prints an `.mcp.json` block to paste into your project, with the
+interpreter and the server filled in — the two that have to be right and are
+easiest to get wrong. The rest of the block says which machine to talk to: the
+script suggests your data directory and the first machine it finds there, which
+is worth a glance rather than trust.
+
+By hand, if you would rather:
+
+```bash
+python3 -m venv ~/.rpcemu-mcp
+~/.rpcemu-mcp/bin/pip install -r requirements.txt
+```
+
+**Whichever way, the server runs under that venv's interpreter** —
+`~/.rpcemu-mcp/bin/python`, or `%USERPROFILE%\.rpcemu-mcp\Scripts\python.exe`
+on Windows — and not under a bare `python3`, which will not have the
+dependencies in it.
+
 ## Requirements
 
-- The MCP Python SDK: `pip install -r requirements.txt` (installs `mcp[cli]`).
 - A running RPCEmu machine with **HostCmd enabled** (on by default) and, for the
   screen/input tools, the **VNC server enabled** (`vnc_enabled=1` in the
   machine's `.cfg`). A `--headless` machine works out of the box: headless
   implies VNC and starts the server whatever that setting says.
-- The screen/input tools only speak **passwordless VNC**, so leave `vnc_password`
-  empty on a machine you drive from here. Set `RPCEMU_VNC_PORT` to match the
-  machine's `vnc_port` when it is not the 5900 default — each machine needs its
-  own port, so this matters as soon as you run more than one.
+- Set `RPCEMU_VNC_PASSWORD` to the machine's VNC control password when it has
+  one. Set `RPCEMU_VNC_PORT` to match the machine's `vnc_port` when it is not the
+  5900 default — each machine needs its own port, so this matters as soon as you
+  run more than one.
 
 ## Configuration (environment variables)
 
@@ -120,30 +175,37 @@ CPU (directly, or via a breakpoint/watchpoint hit) freezes the whole machine
 | `RPCEMU_HOSTFS_DIR` | Host directory backing the machine's HostFS drive (the guest sees it as `HostFS::HostFS.$`). Usually `<data-dir>/machines/<name>/hostfs`. |
 | `RPCEMU_VNC_HOST` | VNC host (default `127.0.0.1`). |
 | `RPCEMU_VNC_PORT` | VNC port (default `5900`; matches the machine's `vnc_port`). |
+| `RPCEMU_VNC_PASSWORD` | VNC control password (empty by default). Use the control password, not the read-only one, because the MCP tools send keyboard and mouse input. |
 | `RPCEMU_DEBUG_SOCKET` | The machine's DebugCmd socket (AF_UNIX path e.g. `<data-dir>/rpcemu-debug.sock`, or `host:port` for TCP). Needed only for the `riscos_debug_*` tools; on by default (`debug_enabled=1`). |
 
 ## Wiring into Claude Code
 
-Copy `mcp.json.example` to `.mcp.json` in your project (or merge it into an
-existing one) and fill in the paths for your machine. Claude Code discovers
-project-scoped servers from `.mcp.json`. Alternatively:
+Claude Code discovers project-scoped servers from `.mcp.json`. The setup script
+prints one ready to paste; `mcp.json.example` is the same thing to fill in by
+hand, and is what to look at if you would rather not run the script or are
+merging into an existing file.
+
+Note `"command"` either way: it is the venv's interpreter, with an absolute
+path, because the client does not run this from your shell and has no reason to
+find the environment on its own.
+
+Alternatively, without a config file at all:
 
 ```bash
-claude mcp add rpcemu -- python3 /path/to/tools/mcp/rpcemu_mcp.py
+claude mcp add rpcemu -- ~/.rpcemu-mcp/bin/python /path/to/rpcemu_mcp.py
 # then set the RPCEMU_* env vars in your shell or the .mcp.json "env" block
 ```
 
-The script path depends on how RPCEmu was installed: `tools/mcp/rpcemu_mcp.py` in
-a source or `.tar.gz` release tree, or `/usr/share/rpcemu/mcp/rpcemu_mcp.py` from
-the `.deb`.
-
-Run standalone (stdio transport) for testing:
+Run standalone (stdio transport) for testing. It waits on stdin and says
+nothing, which is what a working server looks like; Ctrl-D ends it. A missing
+dependency or an unreachable socket shows here rather than inside the client:
 
 ```bash
 RPCEMU_HOSTCMD_SOCKET=/path/hostcmd.sock \
 RPCEMU_HOSTFS_DIR=/path/machines/Default/hostfs \
 RPCEMU_VNC_PORT=5900 \
-python3 rpcemu_mcp.py
+RPCEMU_VNC_PASSWORD=control-password \
+~/.rpcemu-mcp/bin/python /path/to/rpcemu_mcp.py
 ```
 
 ## Limitations & tips

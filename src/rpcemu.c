@@ -242,6 +242,7 @@ Config config = {
 	0,			/* vnc_enabled */
 	5900,			/* vnc_port */
 	"",			/* vnc_password */
+	"",			/* vnc_password_readonly */
 	1,			/* hostcmd_enabled (ON by default) */
 	"",			/* hostcmd_socket (empty => <datadir>hostcmd.sock) */
 	1,			/* debug_enabled (ON by default) */

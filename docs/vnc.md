@@ -16,15 +16,15 @@ Three things are worth knowing beyond "it shows the screen":
 ## Turning it on
 
 *Settings → VNC Server* while a machine is running, or the **Host access** group on
-the machine editor's Options page, which has the port and password beside the tick.
-Both write to that machine's own configuration, so each machine has its own server,
-its own port and its own password, and several can run at once without being told
-on the command line every time.
+the machine editor's Options page, which has the port, control password and
+read-only password beside the tick. Both write to that machine's own configuration,
+so each machine has its own server, port and passwords, and several can run at once
+without being told on the command line every time.
 
 There is a second file for what applies before any machine is chosen: `rpcemu.cfg`
 in the data directory, alongside `configs/` and `machines/`. Headless with no
 machine named has to be reachable before there is a machine to ask, so this is
-where that server gets its port and password. It also supplies the default for a
+where that server gets its port and passwords. It also supplies the default for a
 machine whose own configuration does not mention these keys. Plain `key=value`
 text, editable by hand, which matters when the only way in is ssh:
 
@@ -32,19 +32,38 @@ text, editable by hand, which matters when the only way in is ssh:
 vnc_enabled=1
 vnc_port=5900
 vnc_password=
+vnc_password_readonly=
 hostcmd_enabled=1
 hostcmd_socket=
 ```
 
-An empty password means no authentication. Anyone who can reach the port can use
-the machine and, with the control menu, reset it or shut the emulator down, so set
-one on anything reachable from a network you do not control.
+`vnc_password` is the control password. A client authenticated with it can use the
+keyboard and mouse and, through the control menu, reset the machine or shut the
+emulator down. An empty control password means no authentication, so anyone who
+can reach the port has that control; set one on anything reachable from a network
+you do not control.
+
+`vnc_password_readonly` is optional. A client authenticated with this second
+password can watch the framebuffer but cannot send keyboard or mouse input, choose
+a machine in the headless selector, or open and operate the VNC control menu. It
+therefore cannot reset or shut down the emulator through VNC. Leaving it empty
+disables the read-only tier and preserves the previous single-password behaviour.
+A read-only password requires a non-empty control password; the server refuses to
+start rather than silently expose passwordless control if only the read-only value
+is set. Traditional VNC authentication uses only the first eight bytes of a
+password, so the server also refuses values whose first eight bytes are identical.
+
+For the bundled MCP server, set `RPCEMU_VNC_PASSWORD` to the control password. An
+AI agent can then use the MCP screen and input tools while a human connects a VNC
+viewer with the read-only password to watch the same live session without sending
+input.
 
 ### Which file wins
 
 Three layers, weakest first:
 
-1. The built-in defaults: VNC off, port 5900, no password, HostCmd on.
+1. The built-in defaults: VNC off, port 5900, no control or read-only password,
+   HostCmd on.
 2. `rpcemu.cfg`, for anything it mentions. This is what the machine selector uses,
    since no machine has been chosen yet, and the default for a machine that says
    nothing about these keys.
@@ -68,8 +87,9 @@ machine list to any client that connects:
 ```
 
 Arrow keys to move, or type the number beside an entry, then Enter to start it.
-Escape gives up and exits. The port and password come from `rpcemu.cfg`, since no
-machine has been chosen to ask.
+Escape gives up and exits. The port and passwords come from `rpcemu.cfg`, since no
+machine has been chosen to ask. A read-only client can see this list but cannot
+choose from it.
 
 The connection carries straight through into the machine you pick: it is the same
 server, so there is no reconnecting.
@@ -84,6 +104,7 @@ which is the next section.
 
 **`Ctrl`+`Alt`+`Shift`+`M`** over a running machine, in any session, headless or
 not. A desktop session you walked away from and reconnected to gets the same menu.
+Only a client authenticated with the control password can open or use it.
 
 - **Reset the machine** — as the Reset item on the File menu.
 - **Return to the machine** — close the menu. Escape does the same.
