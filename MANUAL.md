@@ -415,6 +415,7 @@ Both keep a list of what you have used recently.
 | --- | --- |
 | **Machine...** | The full settings for this machine |
 | **NAT Port Forwarding Rules...** | Let your network reach a server inside the guest |
+| **Network Capture...** | Record every frame to a `.pcap` file for Wireshark |
 | **VNC Server...** | Serve this machine's screen over the network |
 | **Serial... / Parallel... / USB...** | The ports, described below |
 | **Mute Sound** | Silence without changing the machine |
@@ -516,10 +517,9 @@ guest gets a private address, can reach the internet, and can be reached from
 your network through port forwarding. Sharing files with other RISC OS machines
 over Access and ShareFS works through it too.
 
-**Ethernet Bridging** and **IP Tunnelling** put the guest directly onto your real
-network. They need the host set up to match — a TAP interface on Linux — and are
-worth it only when you specifically need the guest to be a first-class machine on
-your LAN.
+NAT is the only mode. Ethernet bridging and IP tunnelling were removed: only
+Linux ever implemented them, and on Windows and macOS choosing one left the
+machine with no networking at all.
 
 **NAT Port Forwarding Rules** lets something outside reach a server inside the
 guest: give it a host port and the guest port to send it to. The dialogue names
@@ -528,6 +528,29 @@ using NAT, there being nothing to forward otherwise.
 
 Machines running on one computer see each other automatically, each with its own
 address. See [docs/multi-machine.md](docs/multi-machine.md).
+
+### Watching the network
+
+Every frame a machine sends or receives can be recorded and read.
+
+*Settings ▸ Network Capture…* writes a `.pcap` file, which Wireshark and tcpdump
+open. Set the size limit unless you want a machine on a busy network to fill a
+disc. Tick "start capturing when this machine starts" to catch the boot, which
+you cannot get by pressing Start afterwards.
+
+*Debug ▸ Network Analyser…* shows the frames as they happen, decoded, with the
+selected one broken into its fields and shown as bytes. It names the RISC OS
+protocols — Freeway and ShareFS are unregistered ports that other tools show as
+anonymous numbers.
+
+From a command line, `rpcemu-netcap` does the same and finds the running machine
+by itself. It can also hand a live capture to Wireshark:
+
+```
+rpcemu-netcap --pcap - | wireshark -k -i -
+```
+
+See [docs/netcapture.md](docs/netcapture.md).
 
 ## Printing
 
@@ -715,12 +738,17 @@ breakpoints, step over and out, backtraces, symbol names and disassembly — fro
 the Debug menu or from `rpcemu-debug` at a terminal.
 [docs/debugcmd.md](docs/debugcmd.md)
 
+**Network capture** records every frame the machine sends or receives, to a
+file, to a window that decodes them, or down a socket — `rpcemu-netcap --pcap -
+| wireshark -k -i -` gives real Wireshark, live.
+[docs/netcapture.md](docs/netcapture.md)
+
 **VNC and headless** expose a machine over the network or run one with no window
 at all, for a build server or a machine on another computer.
 [docs/vnc.md](docs/vnc.md)
 
 **The MCP server** lets an AI assistant drive a machine: run commands, build,
-screenshot, inspect the CPU. `tools/mcp/`
+screenshot, inspect the CPU, and watch its network. `tools/mcp/`
 
 ## Troubleshooting
 
