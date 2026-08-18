@@ -145,23 +145,40 @@ const CreditGroup kCredits[] = {
 	  "Sarah Walker\n"
 	  "Peter Howkins\n"
 	  "Matthew Howkins" },
-	{ "Extended Edition fork",
-	  "Andy Timmins" },
-	{ "Contributed to this fork",
+	{ "RPCEmu Extended",
+	  "Andy Timmins\n"
+	  "David Ramsden" },
+	{ "Contributed to RPCEmu Extended",
 	  "Nick Brown: saving and restoring machine state, and the idea of "
 	  "putting the clock right afterwards\n"
-	  "David Ramsden: command-line options, macOS application bundle" },
+	  "Charles Ferguson: the host interfaces manual, building the guest "
+	  "network driver on the RISC OS build service, and read-only VNC "
+	  "access" },
 	{ "Code this build carries, with thanks",
 	  "Arculator, Sarah Walker: the expansion card subsystem\n"
+	  "EtherRPCEm, J Ballance and Alex Waugh: the guest network driver, "
+	  "from Castle Technology's EtherY\n"
+	  "Acorn Computers Ltd: the DCI4 structure layouts that driver "
+	  "hardcodes\n"
+	  "RISC OS Open Ltd: USBDriver and OHCIDriver, the USB stack the "
+	  "emulated card runs\n"
 	  "SLiRP, Danny Gasparovski and the Regents of the University of "
-	  "California\n"
+	  "California, with four files by Fabrice Bellard\n"
 	  "libslirp, Samuel Thibault and Marc-Andre Lureau: fragment "
 	  "reassembly fixes\n"
+	  "Linux, Russell King: the RISC OS timestamp conversion HostFS uses\n"
 	  "RiscOS Cloverleaf: the shared clipboard, its design and guest module\n"
 	  "SyncClock, DEEJ Technology PLC: the clock synchronisation module\n"
-	  "NetSurf, John M Bell: the Latin-1 conversion table" },
+	  "NetSurf, John M Bell: the Latin-1 conversion table\n"
+	  "Lucide and Feather: the toolbar icons" },
 	{ "With acknowledgement to",
 	  "ViewFinder, John Kortink: the idea behind the graphics card\n"
+	  "Fat32Fs, Jeff Doggett, itself built on efsl by Lennart Yseboodt and "
+	  "Michael De Nil: the convention for recording a RISC OS file type on "
+	  "FAT media, which MultiFS keeps so that media move between machines\n"
+	  "Charles Ferguson: the JSON tun/tap protocol and server this shares a "
+	  "virtual network through, and RISC OS Pyromaniac at the other end of "
+	  "it\n"
 	  "The RISC OS Packaging Project: the package and database format the "
 	  "package manager implements, designed by Graham Shaw, its policy "
 	  "manual maintained by Alan Buckley\n"
@@ -240,9 +257,33 @@ void AboutDialog::BuildUi()
 	/*
 	 * The credits scroll. They do not fit in a dialogue anybody would want to
 	 * look at, and shortening them would defeat the point of having them.
+	 *
+	 * Sized from the font rather than written down in pixels. It was
+	 * wxSize(440, 270) with the entries wrapped at 380: three numbers that had
+	 * to agree with each other and with whatever font the system happens to be
+	 * using, so a larger font or a HiDPI screen got a pane that did not fit its
+	 * own contents.
+	 *
+	 * The width is measured from a line of the text itself, and the height from
+	 * how tall a row actually is - the character height plus the padding each
+	 * row is added with, which is what makes it a row pitch rather than a line
+	 * height. A part-shown row at the bottom is left deliberately: it is what
+	 * tells the reader there is more below, and the list is far longer than any
+	 * dialogue should be.
 	 */
+	const int line_height = GetCharHeight();
+	const int row_padding = FromDIP(10);
+	const int row_pitch = line_height + row_padding;
+	const int indent = FromDIP(16);
+	const int scrollbar = wxSystemSettings::GetMetric(wxSYS_VSCROLL_X, this);
+	const int credits_width =
+	    GetTextExtent("Fat32Fs, Jeff Doggett, itself built on efsl by Lennart")
+	        .GetWidth() + indent + scrollbar + FromDIP(24);
+	const int credits_height = row_pitch * 11 + row_padding;
+	const int wrap_width = credits_width - indent - scrollbar - FromDIP(20);
+
 	auto *credits = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition,
-	                                     wxSize(440, 270),
+	                                     wxSize(credits_width, credits_height),
 	                                     wxVSCROLL | wxBORDER_THEME);
 	credits->SetBackgroundColour(
 	    wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW));
@@ -266,17 +307,18 @@ void AboutDialog::BuildUi()
 
 			auto *row = new wxBoxSizer(wxHORIZONTAL);
 
-			text->Wrap(380);
-			row->AddSpacer(16);
+			text->Wrap(wrap_width);
+			row->AddSpacer(indent);
 			row->Add(text, 1);
-			credits_sizer->Add(row, 0, wxRIGHT | wxTOP, 10);
+			credits_sizer->Add(row, 0, wxRIGHT | wxTOP, row_padding);
 		}
 		first = false;
 	}
 	credits_sizer->AddSpacer(10);
 
 	credits->SetSizer(credits_sizer);
-	credits->SetScrollRate(0, 10);
+	/* A line at a time, so scrolling lands on whole lines too. */
+	credits->SetScrollRate(0, line_height);
 	/* Work the virtual size out from the contents, or the scrollbar never
 	   appears and the entries past the bottom simply cannot be reached. */
 	credits->FitInside();

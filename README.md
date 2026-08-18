@@ -37,7 +37,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **USB — real devices from the host, in RISC OS** — an emulated **OHCI** host controller on its own expansion card with four ports, carrying RISC OS Open's own USB stack in its ROM, so nothing needs installing in the guest. Plug a device on the host into a port from *Settings → USB…* and RISC OS enumerates it and names it as the real hardware, reading its descriptors, strings and serial number over the emulated bus. Keyboards and mice work immediately, since HID is compiled into USBDriver. Streaming devices work: isochronous transfers are implemented, so a camera's packets reach the guest a frame at a time, although nothing in RISC OS will display a webcam for you. **USB drives work too, and mount**: the card's ROM carries the SCSI modules and our own **MultiFS**, which reads what is actually on the stick, so a drive appears on the icon bar under its volume name and opens with the Filer. **FAT12/16/32 and exFAT are read and written**; files can be saved, renamed and deleted, directories made and removed, all keeping their long names in both directions, so a file written in RISC OS is the same file when the stick goes back into a PC. **NTFS is read only** - reading it is a large job and writing it safely is a far larger one, so MultiFS refuses rather than risk a volume chkdsk cannot repair. RISC OS file types survive on FAT, kept by the convention noted in the credits. Verified on Linux, and untested on Windows and macOS. See [USB devices](#usb-devices) and [docs/usb.md](docs/usb.md).
 - **Pixel Perfect scaling** — optional integer scaling for sharp pixels (*Settings → Pixel Perfect*).
 - **Built-in VNC server** — remote desktop access from any VNC client. Port and password belong to the machine, so several machines can each have their own and run at the same time; `rpcemu.cfg` supplies them before any machine is chosen and as the default for a machine that does not say. **A VNC client is not limited to typing at the guest:** `Ctrl+Alt+Shift+M` brings up a control menu over the running machine, to reset it or shut the emulator down. It is drawn into the VNC display only, so a local user never sees it, and it works whether the session is headless or an ordinary desktop one you have reconnected to. See [docs/vnc.md](docs/vnc.md).
-- **Command-line control** — launch straight into a named machine (`--machine <name>`), and resume its saved state (`--resume`) or load a specific one (`--state <file>`), in either the GUI or headless. Options, messages and exit statuses are the same on all three platforms. Contributed by David Ramsden. See [Command-line reference](#command-line-reference).
+- **Command-line control** — launch straight into a named machine (`--machine <name>`), and resume its saved state (`--resume`) or load a specific one (`--state <file>`), in either the GUI or headless. Options, messages and exit statuses are the same on all three platforms. By David Ramsden. See [Command-line reference](#command-line-reference).
 - **Headless mode** — run a machine with no GUI window, accessed entirely over VNC (`--headless --machine <name>`). Genuinely display-less: no GUI toolkit is initialised at all, so it runs on a headless server (on Linux, with no X11/Wayland session). **Without `--machine` it offers the machine list over VNC**, so a remote emulator no longer has to be told which machine to run on the command line. See [Headless mode](#headless-mode) and [docs/vnc.md](docs/vnc.md).
 - **Pyromaniac Networking — share a virtual network with other emulators** — join a JSON tun/tap server and every emulator connected to it is on one network, RISC OS Pyromaniac included. The server can run on another computer, so a Windows or macOS machine can join a network hosted on Linux without a TAP of its own. See [docs/pyromaniac-networking.md](docs/pyromaniac-networking.md).
 - **HostCmd — drive the RISC OS command line from the host** — run guest commands from the host over a local socket and stream their output back, with the return code. Edit on the host (via HostFS), compile on the guest (`rpcemu-run -- cc -c hello`), or open an interactive RISC OS shell (`rpcemu-shell`). Ideal for IDE/LLM-driven development. See [docs/hostcmd.md](docs/hostcmd.md).
@@ -1028,16 +1028,20 @@ covered.
   implementation of a published specification, and it keeps to that specification so a
   machine it installs onto stays usable by the project's own tools, PackMan and RiscPkg.
   See `docs/packages.md`.
-- Extended Edition enhancements by Andy Timmins and contributors.
+- **RPCEmu Extended** is by **Andy Timmins** and **David Ramsden**.
 - Machine save/load state (suspend & resume) contributed by **Nick Brown**, whose
   outstanding item on that work, putting the clock right on resume, is why
   SyncClock is here.
-- Command-line options (`--machine` for the GUI as well as headless, `--resume`
-  and `--state`), with consistent messages and exit statuses across Linux,
-  Windows and macOS; the macOS application bundle fixes that made the shipped
-  `.app` runnable on a Mac other than the one that built it, along with the
-  bundling and verification work behind them; and the cross-platform
-  command-line and boot smoke tests (`tests/cli_smoke.sh`, `tests/boot_smoke.py`).
-  Network capture is his idea, as is dropping bridging and tunnelling so that
-  NAT is the only networking mode.
-  Contributed by **David Ramsden**.
+- The **host interfaces manual** under `docs/prminxml/` — HostFS, HostCmd, the
+  clipboard and the network SWI written up in PRM-in-XML, every operation with its
+  registers and how it reports failure — along with the Makefile and CI that render
+  and publish it; building the guest network driver on the **RISC OS build
+  service**, so `netroms/EtherRPCEm,ffa` is produced by a RISC OS toolchain rather
+  than only cross-assembled; and read-only VNC access, a second password that
+  connects a viewer who cannot type. Contributed by **Charles Ferguson**.
+- **Pyromaniac Networking** talks the JSON tun/tap protocol to
+  **[Charles Ferguson's](https://github.com/gerph/tuntap-json-server)** server, and
+  it is his **RISC OS Pyromaniac** at the other end of that network when a
+  Pyromaniac joins it. The protocol and the server are his; our end of it is an
+  implementation of what he published. See
+  [docs/pyromaniac-networking.md](docs/pyromaniac-networking.md).
