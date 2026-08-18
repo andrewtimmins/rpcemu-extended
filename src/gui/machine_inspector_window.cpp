@@ -730,11 +730,37 @@ wxString MachineInspectorWindow::FormatPeripheralSummary(const MachineSnapshot &
 }
 
 /*
- * What the guest has asked for that the host could have done instead.
+ * Names for the sprite pixel types worth naming. From the kernel's own list
+ * (Programmer/HdrSrc/hdr/Sprite); note there are TWO 16bpp types and they are
+ * not adjacent, which is easy to miss when reading a column of numbers.
+ */
+static const char *
+AccelTypeName(int type)
+{
+	switch (type) {
+	case 1:		return " (1bpp)";
+	case 2:		return " (2bpp)";
+	case 3:		return " (4bpp)";
+	case 4:		return " (8bpp)";
+	case 5:		return " (16bpp 1:5:5:5)";
+	case 6:		return " (32bpp)";
+	case 7:		return " (CMYK)";
+	case 8:		return " (24bpp)";
+	case 9:		return " (JPEG)";
+	case 10:	return " (16bpp 5:6:5)";
+	case 16:	return " (16bpp 4:4:4:4)";
+	case 17:	return " (YCbCr 4:2:2)";
+	case 18:	return " (YCbCr 4:2:0)";
+	default:	return "";
+	}
+}
+
+/*
+ * What the host did instead of the guest, and what it had to leave alone.
  *
- * Nothing is accelerated yet, so every line here is evidence rather than a
- * result: how often the candidate operations happen, and for the ones we would
- * have to refuse, which refusal is in the way. See src/accelerators.c.
+ * Both halves matter. The refusals are counted by reason and by source pixel
+ * type so the next format worth reading is chosen on evidence rather than
+ * guessed at - which is how 16bpp came to be second. See src/accelerators.c.
  */
 wxString MachineInspectorWindow::FormatAcceleratorSummary(const MachineSnapshot &snapshot) const
 {
@@ -756,11 +782,13 @@ wxString MachineInspectorWindow::FormatAcceleratorSummary(const MachineSnapshot 
 	const uint32_t plots = sp.scaled + sp.unscaled;
 
 	if (snapshot.accel.screen_bpp != 0) {
-		text += wxString::Format("Screen: %ux%u, %ubpp   "
+		text += wxString::Format("Screen: %ux%u, %s   "
 		    "(plots seen at 8bpp %u, 16bpp %u, 32bpp %u)\n\n",
 		    snapshot.accel.screen_width, snapshot.accel.screen_height,
-		    snapshot.accel.screen_bpp, snapshot.accel.depth_8bpp,
-		    snapshot.accel.depth_16bpp, snapshot.accel.depth_32bpp);
+		    accel_format_name(static_cast<AccelPixelFormat>(
+		        snapshot.accel.screen_format)),
+		    snapshot.accel.depth_8bpp, snapshot.accel.depth_16bpp,
+		    snapshot.accel.depth_32bpp);
 	}
 
 	text += wxString::Format("OS_SpriteOp calls        %u\n", sp.calls);
@@ -776,7 +804,7 @@ wxString MachineInspectorWindow::FormatAcceleratorSummary(const MachineSnapshot 
 		    "%u of %u  (%.1f%%)\n",
 		    sp.verdict[ACCEL_TAKEN], plots,
 		    100.0 * sp.verdict[ACCEL_TAKEN] / plots);
-		text += wxString::Format("The same with the screen at 32bpp:          "
+		text += wxString::Format("Ignoring what the screen can hold:          "
 		    "%u of %u  (%.1f%%)\n",
 		    sp.takeable_at_32bpp, plots,
 		    100.0 * sp.takeable_at_32bpp / plots);
@@ -799,6 +827,27 @@ wxString MachineInspectorWindow::FormatAcceleratorSummary(const MachineSnapshot 
 		}
 		text += "\n";
 
+		/*
+		 * The same, with the screen's own layout left out of it. On a screen
+		 * this cannot write, the list above collapses to one line and hides
+		 * everything else about the plots; this one does not.
+		 */
+		if (sp.verdict[ACCEL_NO_SCREEN] != 0 ||
+		    sp.verdict[ACCEL_NO_CONVERSION] != 0) {
+			text += "The same, ignoring what the screen can hold:\n";
+			for (int i = 0; i < ACCEL_REASON_COUNT; i++) {
+				const uint32_t n = sp.verdict_without_depth[i];
+
+				if (n == 0) {
+					continue;
+				}
+				text += wxString::Format("  %6u  %5.1f%%  %s\n", n,
+				    100.0 * n / plots,
+				    accel_reason_name(static_cast<AcceleratorReason>(i)));
+			}
+			text += "\n";
+		}
+
 		text += "Source sprites, by transparency:\n";
 		for (int i = 0; i < ACCEL_SPRITE_TRANSPARENCY_COUNT; i++) {
 			if (sp.transparency[i] == 0) {
@@ -816,14 +865,55 @@ wxString MachineInspectorWindow::FormatAcceleratorSummary(const MachineSnapshot 
 				continue;
 			}
 			text += wxString::Format("  %6u  type %d%s\n", sp.type[i], i,
-			    i == 4 ? " (8bpp)" : i == 5 ? " (16bpp)" :
-			    i == 6 ? " (32bpp)" : "");
+			    AccelTypeName(i));
 		}
 		if (sp.type_other != 0) {
 			text += wxString::Format("  %6u  old-format, or a type past the "
 			    "table\n", sp.type_other);
 		}
 		text += "\n";
+
+		/*
+		 * What supporting another source format would be worth, in pixels.
+		 * Counts alone would point at the wrong one: the numerous plots are
+		 * small icons and the expensive ones are backdrops and photographs.
+		 */
+		{
+			bool any = false;
+
+			for (int i = 0; i < ACCEL_SPRITE_TYPES; i++) {
+				if (sp.type_blocked[i] == 0) {
+					continue;
+				}
+				if (!any) {
+					text += "Refused on the source's pixel type, and what "
+					        "reading it would be worth:\n";
+					any = true;
+				}
+				text += wxString::Format(
+				    "  %6u  type %d%s  -  %u thousand pixels%s\n",
+				    sp.type_blocked[i], i, AccelTypeName(i),
+				    sp.type_blocked_pixels[i],
+				    sp.type_blocked_palette[i] != 0
+				        ? wxString::Format(", %u with their own palette",
+				              sp.type_blocked_palette[i])
+				        : wxString());
+			}
+			if (sp.type_blocked_other != 0) {
+				if (!any) {
+					text += "Refused on the source's pixel type, and what "
+					        "reading it would be worth:\n";
+					any = true;
+				}
+				text += wxString::Format(
+				    "  %6u  old-format, or a type past the table  -  "
+				    "%u thousand pixels\n",
+				    sp.type_blocked_other, sp.type_blocked_other_pixels);
+			}
+			if (any) {
+				text += "\n";
+			}
+		}
 
 		text += "Where the output was going:\n";
 		for (int i = 0; i < ACCEL_DEST_COUNT; i++) {

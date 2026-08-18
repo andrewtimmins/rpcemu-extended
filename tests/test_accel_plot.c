@@ -252,12 +252,12 @@ main(void)
 		CHECK("origin_top", r.origin_top, 1);
 
 		for (row = r.top; row <= r.bottom; row++) {
-			uint32_t off = 0, bytes = 0;
+			uint32_t off = 0, pixels = 0;
 
-			accel_blit_row_plan(&r, row, 4 * 4, &off, &bytes);
-			CHECK("bytes", bytes, 3 * 4);
+			accel_blit_row_plan(&r, row, 4 * 4, 4, &off, &pixels);
+			CHECK("pixels", pixels, 3);
 			memcpy(&screen[row * 6 + r.left],
-			       (const uint8_t *) sprite + off, bytes);
+			       (const uint8_t *) sprite + off, pixels * 4);
 		}
 
 		/*
@@ -321,6 +321,351 @@ main(void)
 	   guard cannot save this one and the wrapped subtraction would answer
 	   with most of four billion. */
 	CHECK("rbit < lbit", accel_sprite_row_pixels(0, 8, 0, 1), 0);
+
+	/*
+	 * Widening a 16bpp pixel to the screen's 32bpp.
+	 *
+	 * RISC OS replicates each channel's top bits into the bits it gains, so
+	 * both endpoints stay exact. Every value below is worked out by hand from
+	 * that rule; a test that called the same helper the code calls would agree
+	 * with it about being wrong.
+	 *
+	 * Layout is red in the LOW bits: 565 is r@0-4 g@5-10 b@11-15, and 1:5:5:5
+	 * is r@0-4 g@5-9 b@10-14 with bit 15 the T bit. The result is &xBGR, so
+	 * red is the low byte and the top byte is zero.
+	 */
+	printf("16bpp 5:6:5 to 32bpp\n");
+	CHECK("565 black", accel_convert_pixel(ACCEL_FMT_565, ACCEL_FMT_32BPP, 0x0000), 0x00000000);
+	/* All ones: 31 -> (31<<3)|(31>>2) = 248|7 = 255, and 63 -> 252|3 = 255. */
+	CHECK("565 white", accel_convert_pixel(ACCEL_FMT_565, ACCEL_FMT_32BPP, 0xffff), 0x00ffffff);
+	/* Red alone: r = 31 -> 0xff in the low byte. */
+	CHECK("565 red", accel_convert_pixel(ACCEL_FMT_565, ACCEL_FMT_32BPP, 0x001f), 0x000000ff);
+	/* Green alone: bits 5-10 all set = 63 -> 0xff in the second byte. */
+	CHECK("565 green", accel_convert_pixel(ACCEL_FMT_565, ACCEL_FMT_32BPP, 0x07e0), 0x0000ff00);
+	/* Blue alone: bits 11-15 all set = 31 -> 0xff in the third byte. */
+	CHECK("565 blue", accel_convert_pixel(ACCEL_FMT_565, ACCEL_FMT_32BPP, 0xf800), 0x00ff0000);
+	/* One step of red: 1 -> (1<<3)|(1>>2) = 8. Not 0, which a bare shift and a
+	   divide would both also give; the point is what happens at the top. */
+	CHECK("565 red 1", accel_convert_pixel(ACCEL_FMT_565, ACCEL_FMT_32BPP, 0x0001), 0x00000008);
+	/* One step of green: 1 -> (1<<2)|(1>>4) = 4. */
+	CHECK("565 green 1", accel_convert_pixel(ACCEL_FMT_565, ACCEL_FMT_32BPP, 0x0020), 0x00000400);
+	/* Mid grey, r=16 g=32 b=16 = 16 | 32<<5 | 16<<11 = &8410.
+	   16 -> (16<<3)|(16>>2) = 128|4 = 132 = &84
+	   32 -> (32<<2)|(32>>4) = 128|2 = 130 = &82 */
+	CHECK("565 mid", accel_convert_pixel(ACCEL_FMT_565, ACCEL_FMT_32BPP, 0x8410), 0x00848284);
+
+	printf("16bpp 1:5:5:5 to 32bpp\n");
+	CHECK("1555 black", accel_convert_pixel(ACCEL_FMT_1555, ACCEL_FMT_32BPP, 0x0000), 0x00000000);
+	CHECK("1555 white", accel_convert_pixel(ACCEL_FMT_1555, ACCEL_FMT_32BPP, 0x7fff), 0x00ffffff);
+	CHECK("1555 red", accel_convert_pixel(ACCEL_FMT_1555, ACCEL_FMT_32BPP, 0x001f), 0x000000ff);
+	/* Green is bits 5-9 here, not 5-10. */
+	CHECK("1555 green", accel_convert_pixel(ACCEL_FMT_1555, ACCEL_FMT_32BPP, 0x03e0), 0x0000ff00);
+	CHECK("1555 blue", accel_convert_pixel(ACCEL_FMT_1555, ACCEL_FMT_32BPP, 0x7c00), 0x00ff0000);
+	/* The T bit is not alpha and not colour: the screen has no channel for it,
+	   so it changes nothing, and white with it set is still white. */
+	CHECK("1555 T alone", accel_convert_pixel(ACCEL_FMT_1555, ACCEL_FMT_32BPP, 0x8000), 0x00000000);
+	CHECK("1555 T white", accel_convert_pixel(ACCEL_FMT_1555, ACCEL_FMT_32BPP, 0xffff), 0x00ffffff);
+	/* r=g=b=16 = 16 | 16<<5 | 16<<10 = &4210, each -> &84. */
+	CHECK("1555 mid", accel_convert_pixel(ACCEL_FMT_1555, ACCEL_FMT_32BPP, 0x4210), 0x00848484);
+
+	/* A 32bpp source is passed straight through, top byte and all: RISC OS
+	   copies the word when the formats match, so we must not tidy it. */
+	printf("32bpp passes through\n");
+	CHECK("32bpp kept", accel_convert_pixel(ACCEL_FMT_32BPP, ACCEL_FMT_32BPP, 0xdeadbeef),
+	    0xdeadbeef);
+	/*
+	 * Which pairs may be done here at all.
+	 *
+	 * The same layout at both ends is always allowed and is a plain copy - on
+	 * a 16bpp desktop that is the common case and the reason any of this fires
+	 * there. Widening 16bpp to 32bpp is allowed. Narrowing is NOT: RISC OS may
+	 * dither when it reduces a depth, so an undithered version would differ on
+	 * exactly the pictures anyone would notice. Nor is one 16bpp layout to the
+	 * other, which throws a bit of green away.
+	 */
+	/*
+	 * What layout a screen mode is in.
+	 *
+	 * The awkward one is 16bpp, where ModeFlag_64k (bit 7) is the only thing
+	 * separating 5:6:5 from 1:5:5:5 - and that same bit means FullPalette at
+	 * every other depth, so it cannot simply be tested on its own.
+	 */
+	printf("screen mode layouts\n");
+	CHECK("32bpp", accel_mode_format(5, 0xffffffff, 0), ACCEL_FMT_32BPP);
+	/* 16bpp with the 64k flag clear and 65536 colours is 1:5:5:5. */
+	CHECK("16bpp 1555", accel_mode_format(4, 65535, 0), ACCEL_FMT_1555);
+	/* The same depth with bit 7 set is 5:6:5, and nothing else distinguishes
+	   them. */
+	CHECK("16bpp 565", accel_mode_format(4, 65535, 1u << 7), ACCEL_FMT_565);
+	/* Under 4096 colours at that depth is 4:4:4:4, whose fourth channel is
+	   alpha, so it is not written here. */
+	CHECK("16bpp 4444", accel_mode_format(4, 4095, 0), ACCEL_FMT_NONE);
+	/* Bit 7 at 32bpp is FullPalette and must not be read as 5:6:5. */
+	CHECK("32bpp b7 set", accel_mode_format(5, 0xffffffff, 1u << 7),
+	    ACCEL_FMT_32BPP);
+	/* An &xRGB screen is refused at either depth: our pixels are &xBGR. */
+	CHECK("32bpp RGB", accel_mode_format(5, 0xffffffff, 1u << 14),
+	    ACCEL_FMT_NONE);
+	CHECK("16bpp RGB", accel_mode_format(4, 65535, (1u << 14) | (1u << 7)),
+	    ACCEL_FMT_NONE);
+	/* Palette depths are not written here. */
+	CHECK("24bpp", accel_mode_format(6, 0xffffff, 0), ACCEL_FMT_NONE);
+
+	printf("which conversions are allowed\n");
+	CHECK("565->565", accel_can_convert(ACCEL_FMT_565, ACCEL_FMT_565), 1);
+	CHECK("1555->1555", accel_can_convert(ACCEL_FMT_1555, ACCEL_FMT_1555), 1);
+	CHECK("32->32", accel_can_convert(ACCEL_FMT_32BPP, ACCEL_FMT_32BPP), 1);
+	CHECK("565->32", accel_can_convert(ACCEL_FMT_565, ACCEL_FMT_32BPP), 1);
+	CHECK("1555->32", accel_can_convert(ACCEL_FMT_1555, ACCEL_FMT_32BPP), 1);
+	CHECK("4444->32", accel_can_convert(ACCEL_FMT_4444, ACCEL_FMT_32BPP), 1);
+	CHECK("4444->1555", accel_can_convert(ACCEL_FMT_4444, ACCEL_FMT_1555), 1);
+	/* Narrowing is allowed because dithering is off unless R5 bit 6 asks for
+	   it, and a plot that asks is refused on the action instead. */
+	CHECK("32->565", accel_can_convert(ACCEL_FMT_32BPP, ACCEL_FMT_565), 1);
+	CHECK("32->1555", accel_can_convert(ACCEL_FMT_32BPP, ACCEL_FMT_1555), 1);
+	CHECK("565->1555", accel_can_convert(ACCEL_FMT_565, ACCEL_FMT_1555), 1);
+	CHECK("1555->565", accel_can_convert(ACCEL_FMT_1555, ACCEL_FMT_565), 1);
+	/* 4:4:4:4 is a source only: as a screen it has a fourth channel to fill. */
+	CHECK("32->4444", accel_can_convert(ACCEL_FMT_32BPP, ACCEL_FMT_4444), 0);
+	CHECK("none->32", accel_can_convert(ACCEL_FMT_NONE, ACCEL_FMT_32BPP), 0);
+	CHECK("32->none", accel_can_convert(ACCEL_FMT_32BPP, ACCEL_FMT_NONE), 0);
+
+	/*
+	 * A palette depth may be copied to itself and converted to nothing.
+	 *
+	 * An 8bpp pixel is an index; with no translation table asked for, RISC OS
+	 * puts the same index on an 8bpp screen and needs no palette to do it, so
+	 * neither do we. But an index cannot be turned INTO a colour without the
+	 * palette, nor a colour into an index without searching one, so every
+	 * other pair involving it is refused.
+	 */
+	CHECK("8->8", accel_can_convert(ACCEL_FMT_8BPP, ACCEL_FMT_8BPP), 1);
+	CHECK("8->32", accel_can_convert(ACCEL_FMT_8BPP, ACCEL_FMT_32BPP), 0);
+	CHECK("8->1555", accel_can_convert(ACCEL_FMT_8BPP, ACCEL_FMT_1555), 0);
+	CHECK("32->8", accel_can_convert(ACCEL_FMT_32BPP, ACCEL_FMT_8BPP), 0);
+	CHECK("1555->8", accel_can_convert(ACCEL_FMT_1555, ACCEL_FMT_8BPP), 0);
+	CHECK("8bpp index kept", accel_convert_pixel(ACCEL_FMT_8BPP,
+	    ACCEL_FMT_8BPP, 0xa7), 0xa7);
+	CHECK("bytes 8bpp", accel_format_bytes(ACCEL_FMT_8BPP), 1);
+	/* An 8bpp screen is writable, from an 8bpp sprite and nothing else. */
+	CHECK("8bpp screen", accel_mode_format(3, 255, 0), ACCEL_FMT_8BPP);
+	/* 4bpp and below are not: a clipped row would start part-way into a byte. */
+	CHECK("4bpp screen", accel_mode_format(2, 15, 0), ACCEL_FMT_NONE);
+	CHECK("1bpp screen", accel_mode_format(0, 1, 0), ACCEL_FMT_NONE);
+
+	/*
+	 * 4:4:4:4 to the screen. Channels are r@0-3 g@4-7 b@8-11, alpha above
+	 * them and dropped: no screen mode here has a channel to put it in.
+	 * Widening 4 bits to 8 is (v<<4)|v, so &F becomes &FF and &1 becomes &11.
+	 */
+	printf("16bpp 4:4:4:4 to 32bpp\n");
+	CHECK("4444 black", accel_convert_pixel(ACCEL_FMT_4444, ACCEL_FMT_32BPP,
+	    0x0000), 0x00000000);
+	/* Alpha all ones, colour all zero: the alpha must not reach the pixel. */
+	CHECK("4444 alpha only", accel_convert_pixel(ACCEL_FMT_4444,
+	    ACCEL_FMT_32BPP, 0xf000), 0x00000000);
+	CHECK("4444 white", accel_convert_pixel(ACCEL_FMT_4444, ACCEL_FMT_32BPP,
+	    0x0fff), 0x00ffffff);
+	CHECK("4444 red", accel_convert_pixel(ACCEL_FMT_4444, ACCEL_FMT_32BPP,
+	    0x000f), 0x000000ff);
+	CHECK("4444 green", accel_convert_pixel(ACCEL_FMT_4444, ACCEL_FMT_32BPP,
+	    0x00f0), 0x0000ff00);
+	CHECK("4444 blue", accel_convert_pixel(ACCEL_FMT_4444, ACCEL_FMT_32BPP,
+	    0x0f00), 0x00ff0000);
+	/* One step of red: 1 -> (1<<4)|1 = &11. */
+	CHECK("4444 red 1", accel_convert_pixel(ACCEL_FMT_4444, ACCEL_FMT_32BPP,
+	    0x0001), 0x00000011);
+	/* r=g=b=8 -> (8<<4)|8 = &88 each. */
+	CHECK("4444 mid", accel_convert_pixel(ACCEL_FMT_4444, ACCEL_FMT_32BPP,
+	    0x0888), 0x00888888);
+
+	/*
+	 * 4:4:4:4 to 1:5:5:5, which is the pair that matters on a 16bpp desktop.
+	 * Widening 4 bits to 5 is (v<<1)|(v>>3): &F -> &1F, &8 -> &10|&1 = &11.
+	 */
+	printf("16bpp 4:4:4:4 to 1:5:5:5\n");
+	CHECK("4444->1555 white", accel_convert_pixel(ACCEL_FMT_4444,
+	    ACCEL_FMT_1555, 0xffff), 0x7fff);
+	CHECK("4444->1555 red", accel_convert_pixel(ACCEL_FMT_4444,
+	    ACCEL_FMT_1555, 0x000f), 0x001f);
+	CHECK("4444->1555 blue", accel_convert_pixel(ACCEL_FMT_4444,
+	    ACCEL_FMT_1555, 0x0f00), 0x7c00);
+	/* r=8 -> &11 = 17, at bits 0-4. */
+	CHECK("4444->1555 r8", accel_convert_pixel(ACCEL_FMT_4444,
+	    ACCEL_FMT_1555, 0x0008), 17);
+
+	/*
+	 * Narrowing keeps the TOP bits and throws the rest away - a plain UBFX in
+	 * RISC OS's generated code, no rounding. So &FF -> &1F and &FF -> &3F,
+	 * and a value just under a step boundary rounds DOWN, not to nearest.
+	 */
+	printf("narrowing to 16bpp\n");
+	CHECK("32->1555 white", accel_convert_pixel(ACCEL_FMT_32BPP,
+	    ACCEL_FMT_1555, 0x00ffffff), 0x7fff);
+	CHECK("32->1555 black", accel_convert_pixel(ACCEL_FMT_32BPP,
+	    ACCEL_FMT_1555, 0x00000000), 0x0000);
+	/* Red &FF -> top 5 bits = &1F. Green and blue zero. */
+	CHECK("32->1555 red", accel_convert_pixel(ACCEL_FMT_32BPP,
+	    ACCEL_FMT_1555, 0x000000ff), 0x001f);
+	/* Red &F8 is exactly &1F<<3, so it truncates to &1F with nothing lost. */
+	CHECK("32->1555 r F8", accel_convert_pixel(ACCEL_FMT_32BPP,
+	    ACCEL_FMT_1555, 0x000000f8), 0x001f);
+	/* Red &F7 is one below that and truncates DOWN to &1E, not up. */
+	CHECK("32->1555 r F7", accel_convert_pixel(ACCEL_FMT_32BPP,
+	    ACCEL_FMT_1555, 0x000000f7), 0x001e);
+	/* 5:6:5 green has six bits; to 1:5:5:5 it loses its lowest one. */
+	CHECK("565->1555 green", accel_convert_pixel(ACCEL_FMT_565,
+	    ACCEL_FMT_1555, 0x07e0), 0x03e0);
+	/* Green &3E is 62, whose top five bits are 31: still full green. */
+	CHECK("565->1555 g 3e", accel_convert_pixel(ACCEL_FMT_565,
+	    ACCEL_FMT_1555, 0x07c0), 0x03e0);
+	/* And back the other way green gains a bit by replication. */
+	CHECK("1555->565 green", accel_convert_pixel(ACCEL_FMT_1555,
+	    ACCEL_FMT_565, 0x03e0), 0x07e0);
+	CHECK("1555->565 white", accel_convert_pixel(ACCEL_FMT_1555,
+	    ACCEL_FMT_565, 0x7fff), 0xffff);
+
+	/*
+	 * ★ Widening and narrowing must be each other's inverse where they can be.
+	 * Every 5-bit value widened to 8 and narrowed back must come home, or the
+	 * two rules disagree and a picture copied between depths drifts.
+	 */
+	printf("widen then narrow is a round trip\n");
+	{
+		int v, bad = 0;
+
+		for (v = 0; v < 32; v++) {
+			const uint32_t up = accel_convert_pixel(ACCEL_FMT_1555,
+			    ACCEL_FMT_32BPP, (uint32_t) v);
+			const uint32_t down = accel_convert_pixel(ACCEL_FMT_32BPP,
+			    ACCEL_FMT_1555, up);
+
+			if (down != (uint32_t) v) {
+				bad++;
+			}
+		}
+		CHECK("1555 round trip", bad, 0);
+		for (v = 0; v < 16; v++) {
+			const uint32_t up = accel_convert_pixel(ACCEL_FMT_4444,
+			    ACCEL_FMT_32BPP, (uint32_t) v);
+			const uint32_t down = accel_convert_pixel(ACCEL_FMT_32BPP,
+			    ACCEL_FMT_1555, up);
+			const uint32_t direct = accel_convert_pixel(ACCEL_FMT_4444,
+			    ACCEL_FMT_1555, (uint32_t) v);
+
+			if (down != direct) {
+				bad++;
+			}
+		}
+		CHECK("4444 via 32 == direct", bad, 0);
+	}
+
+	/* Same layout both ends leaves the pixel entirely alone, T bit included -
+	   the screen wants those exact bytes. */
+	CHECK("565 copied", accel_convert_pixel(ACCEL_FMT_565, ACCEL_FMT_565,
+	    0x8410), 0x8410);
+	CHECK("1555 copied", accel_convert_pixel(ACCEL_FMT_1555, ACCEL_FMT_1555,
+	    0xc210), 0xc210);
+
+	CHECK("bytes 32", accel_format_bytes(ACCEL_FMT_32BPP), 4);
+	CHECK("bytes 565", accel_format_bytes(ACCEL_FMT_565), 2);
+	CHECK("bytes 1555", accel_format_bytes(ACCEL_FMT_1555), 2);
+	CHECK("bytes none", accel_format_bytes(ACCEL_FMT_NONE), 0);
+
+	/*
+	 * A clipped 16bpp plot, end to end, against an image written out by hand.
+	 *
+	 * The sprite is three pixels wide, which at 16bpp is 48 bits and pads to
+	 * two whole words - so its rows are 8 bytes apart while its pixels take 6.
+	 * That gap is the point of the case: a plan that took the stride to be the
+	 * width times the depth would start each row two bytes early and lean the
+	 * picture further left the further down it went.
+	 */
+	printf("copying a clipped 16bpp sprite\n");
+	{
+		/* Six 565 values, one per pixel, distinct in all three channels so a
+		   shear, a flip or a swapped channel all show up. Row 0 then row 1. */
+		static const uint16_t src[2][4] = {
+			{ 0x001f, 0x07e0, 0xf800, 0x0000 },	/* red, green, blue, pad */
+			{ 0xffff, 0x8410, 0x0001, 0x0000 },	/* white, mid grey, red 1 */
+		};
+		/* What each of those becomes, worked out above. */
+		static const uint32_t want[2][3] = {
+			{ 0x000000ff, 0x0000ff00, 0x00ff0000 },
+			{ 0x00ffffff, 0x00848284, 0x00000008 },
+		};
+		uint32_t screen[3 * 5];
+		uint32_t expected[3 * 5];
+		int row, col;
+
+		for (row = 0; row < 3 * 5; row++) {
+			screen[row] = 0xeeeeeeeeu;
+			expected[row] = 0xeeeeeeeeu;
+		}
+
+		/*
+		 * Screen 5x3. Graphics window columns 1-4, rows 0-1 up from the
+		 * bottom, so framebuffer rows 3-1-1 = 1 to 3-1-0 = 2.
+		 *
+		 * Plot at OS (0,0), eig 0,0: left 0, bottom 0, so the sprite's top row
+		 * is 3 - 0 - 2 = 1 and it wants columns 0-2, rows 1-2.
+		 *
+		 * Clipped to the window: columns 1-2, rows 1-2. The sprite's leftmost
+		 * column is cut off, both rows survive.
+		 */
+		visible = accel_plot_rect(5, 3, 1, 0, 4, 1, 0, 0, 0, 0,
+		    0, 0, 3, 2, &r);
+		CHECK("visible", visible, 1);
+		CHECK("left", r.left, 1);
+		CHECK("right", r.right, 2);
+		CHECK("top", r.top, 1);
+		CHECK("bottom", r.bottom, 2);
+		CHECK("origin_left", r.origin_left, 0);
+		CHECK("origin_top", r.origin_top, 1);
+
+		for (row = r.top; row <= r.bottom; row++) {
+			uint32_t off = 0, pixels = 0;
+			uint32_t i;
+
+			/* Stride 8 bytes a row, 2 bytes a pixel. */
+			accel_blit_row_plan(&r, row, 8, 2, &off, &pixels);
+			CHECK("pixels", pixels, 2);
+			/* Row 1 starts at the sprite's row 0, one pixel in: offset 2.
+			   Row 2 starts at row 1, one pixel in: 8 + 2 = 10. */
+			CHECK("offset", off, (row == 1) ? 2 : 10);
+
+			for (i = 0; i < pixels; i++) {
+				const uint8_t *p = (const uint8_t *) src + off + i * 2;
+
+				screen[row * 5 + r.left + i] =
+				    accel_convert_pixel(ACCEL_FMT_565, ACCEL_FMT_32BPP,
+				        (uint32_t) p[0] | ((uint32_t) p[1] << 8));
+			}
+		}
+
+		/*
+		 * By hand: screen row 1 takes sprite row 0 columns 1 and 2 (green then
+		 * blue) into screen columns 1 and 2; screen row 2 takes sprite row 1
+		 * columns 1 and 2 (mid grey then red 1). Row 0, column 0 and columns
+		 * 3-4 are untouched.
+		 */
+		expected[1 * 5 + 1] = want[0][1];
+		expected[1 * 5 + 2] = want[0][2];
+		expected[2 * 5 + 1] = want[1][1];
+		expected[2 * 5 + 2] = want[1][2];
+
+		for (row = 0; row < 3; row++) {
+			for (col = 0; col < 5; col++) {
+				const int i = row * 5 + col;
+
+				if (screen[i] != expected[i]) {
+					printf("  FAIL pixel (%d,%d) got &%08x, wanted &%08x\n",
+					       col, row, screen[i], expected[i]);
+					failures++;
+				}
+			}
+		}
+	}
 
 	if (failures != 0) {
 		printf("FAILED: %d check(s)\n", failures);

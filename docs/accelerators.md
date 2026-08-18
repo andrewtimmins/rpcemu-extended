@@ -22,11 +22,13 @@ guest untouched.
 A plot is done here only when every one of these holds:
 
 - reason **&34**, plot scaled, at **1:1** (which is what a desktop actually does)
-- the source is a **32bpp sprite**, `&xBGR`, with no palette of its own
+- the source is a **32bpp `&xBGR` sprite** (type 6) or a **16bpp one** in either
+  5:6:5 (type 10) or 1:5:5:5 (type 5), with no palette of its own
 - **no colour translation table** (R7 = 0)
 - **no transparency**: no mask plane, no alpha channel
 - plain **overwrite** (the plot action, R5 bits 0-2, is zero)
-- the screen is **32bpp**
+- the sprite's layout can be turned into the **screen's** layout exactly (see
+  below); a 16bpp screen is written as readily as a 32bpp one
 - VDU output is going to the framebuffer being scanned out
 
 Everything else is left to RISC OS, including every case above turned round. That
@@ -113,12 +115,131 @@ from the copying for exactly this reason, and `tests/test_accel_plot.c` checks
 them against results worked out by hand, including an end-to-end clipped copy
 compared with an image written out pixel by pixel.
 
+## Layouts, and which pairs are allowed
+
+Both the sprite and the screen have a pixel layout, and a plot is taken only
+when this can get from one to the other exactly.
+
+| | to 32bpp `&xBGR` | to 16bpp 5:6:5 | to 16bpp 1:5:5:5 | to 8bpp |
+| --- | --- | --- | --- | --- |
+| from 32bpp `&xBGR` | copy | yes | yes | no |
+| from 16bpp 5:6:5 | yes | copy | yes | no |
+| from 16bpp 1:5:5:5 | yes | yes | copy | no |
+| from 16bpp 4:4:4:4 | yes | yes | yes | no |
+| from 8bpp | no | no | no | copy |
+
+The same layout at both ends is a plain copy, exact by construction, and on a
+16bpp desktop it is the common case: a machine at 1280x720 has no room for
+32bpp in a Risc PC's video memory, so both the screen and the sprites it keeps
+tend to be 16bpp.
+
+**4:4:4:4 is a source only.** As a screen it would have a fourth channel to
+fill and nothing here knows what RISC OS would put in it.
+
+**8bpp may only be copied to itself.** A pixel is an index into a palette and
+means nothing on its own, so it cannot become a colour, nor a colour become an
+index without searching the palette for one. Copied index for index onto a
+screen of the same depth, with no translation table asked for, it needs no
+palette at all and RISC OS does exactly the same. That is worth having rather
+than dismissing: on a machine whose desktop is 8bpp - which 1920x1080 must be
+on 2MB of VRAM - it is nearly all of the drawing. 4bpp and below are left out
+because a pixel is not a whole byte, so a clipped row would begin part-way into
+one.
+
+### One rule serves every pair
+
+RISC OS **widens** a channel by replicating its top bits into the bits it
+gains, and **narrows** by keeping the top bits and discarding the rest - a
+plain `UBFX` in the generated code, with no rounding. So every conversion here
+goes through eight bits a channel, and that is exact rather than approximate:
+
+- widening `a` to `b`: replicating to 8 puts the channel at the top with copies
+  of itself below, so the top `b` bits are the channel followed by its own top
+  `b - a` bits, which is exactly replicate `a` to `b`;
+- narrowing `a` to `b`: the top `b` bits of the replicated value are the top `b`
+  bits of the channel, which is exactly the truncation.
+
+One path, no table of special cases to get wrong. The same-layout case does not
+come through it: that is a straight copy, which keeps the spare top bit that
+RISC OS also leaves alone.
+
+### Why reducing a depth is safe
+
+Narrowing would be unreproducible if RISC OS dithered, because a dithered result
+depends on where the pixel is. It does not, unless asked: `SprOp` shifts R5 right
+by four and reads its flags out of the result, so **bit 6 of R5 turns dithering
+on** and SpriteExtend initialises `dither_truecolour` to zero otherwise. A plot
+that sets it is refused on the action, along with translucency (R5 bits 8-15),
+colour mapping (bit 7) and a wide translation table (bit 5).
+
+Those upper bits matter beyond dithering: a plot asking for translucency and
+drawn opaque here would be plainly wrong and would look like a fault in the
+application.
+
+### Which 16bpp the screen is
+
+`ModeFlag_64k`, bit 7 of the mode's flags, is the only thing separating 5:6:5
+from 1:5:5:5, and it is **the same bit as `ModeFlag_FullPalette`**, which means
+something else at every other depth. Under 4096 colours at that depth is
+4:4:4:4, whose fourth channel is alpha, and that is not written here. The mode
+variables come from the VDU workspace: `NColour` at +&8C and `ModeFlags` at
++&94, beside the fields already listed above.
+
+## Where the arithmetic comes from
+
+The tempting `v << 3` for a five-bit channel is wrong at the top rather than in
+the middle: it can never produce white, because &1F would become &F8, so a
+photograph drawn that way is imperceptibly dark everywhere and plainly wrong
+where it should be pure. The replication rule above is what SpriteExtend emits:
+`get_expansion_mask()` in
+`Video/Render/SprExtend/c/asmcore` builds a mask of the bits each channel gains,
+and the generated code is
+
+```
+AND  r_temp1, r_pixel, #expansion_mask   ; the channels' top bits
+ORR  r_pixel, r_pixel, r_temp1, LSR #n   ; replicated into the new low bits
+```
+
+with a hand-written second step for 5:6:5's green, whose six bits cannot share
+the five-bit shift the other two channels use. Channel positions come from the
+table in `Sources/PutScaled`: red is in the low bits of both formats.
+
+**The top byte comes out zero.** A screen mode carries no alpha channel, so
+SpriteExtend builds the output word from the source's three channels and nothing
+else; neither 5:6:5's spare bit nor 1:5:5:5's T bit reaches it. Writing &FF there
+instead would look identical and differ from RISC OS in memory.
+
+Note that a 5:6:5 sprite cannot carry alpha whatever its mode word says, and the
+kernel clears that flag itself for this depth, so the flag is ignored here too.
+
+## A sprite's width is in words, not pixels
+
+The header's width field counts **words less one**, so `width + 1` is the pixel
+count at 32bpp and at no other depth. The general form is the kernel's own, from
+`readspritevars` in `SprOp`: the bits from the left-hand wastage to the
+right-hand one inclusive, over the bits per pixel.
+
+Two things follow. A 16bpp sprite of odd width pads its rows to a whole word, so
+its stride and its width times its depth differ by two bytes on every row - a
+plot that used the product would lean further left the further down it went. And
+the **counts** in the tab were previously taken with a word to a pixel for every
+sprite, so anything shallower than 32bpp was measured too narrow; the share of
+the drawn pixels a host-side plot can take was therefore reported against a
+denominator that was too small.
+
 ## Limits
 
-- 16bpp sources are refused, though they are the next obvious case: roughly a
-  thousand sprites a session, needing a 565-to-32bpp conversion per pixel.
 - Transparency is refused. Fewer than twenty plots a session carried any, so the
   exact blend arithmetic is not worth the risk yet.
 - Colour translation tables are refused, and probably always will be: they are
   most of the plots and few of the pixels.
 - A screen in main memory (a machine with no VRAM) is counted but not written.
+- An `&xRGB` screen is refused; every mode seen so far is `&xBGR`.
+- 24bpp, CMYK, JPEG and YCbCr sources have no fixed width in pixels here, so
+  they are counted but their sizes are not.
+- Colour translation tables and old-format sprites are refused, and the counts
+  say to leave them that way: on an 8bpp desktop they were 154 and 27 plots
+  respectively, and between them under 5% of the pixels drawn.
+
+The tab now breaks the type refusals down and gives the pixels behind each, so
+the next format worth reading is chosen the same way this one was.

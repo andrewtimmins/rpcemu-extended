@@ -99,28 +99,29 @@
  * plain overwrite, and bit 3 asks for the sprite's transparency to be honoured.
  * The Wimp passes &18, which is overwrite with the mask used, so testing the
  * whole word against zero refuses the commonest plot on the desktop.
- */
-#define PLOT_ACTION		7u
-#define PLOT_USE_MASK		8u
-
-/*
- * ★ The bits above the action change what the plot MEANS, and must not be
- *   ignored.
+ *
+ * ★ The bits above that change what the plot MEANS, and must not be ignored.
  *
  * SpriteExtend shifts R5 right by four and reads its own flags out of the
  * result (`SprOp`, at the store to `trns_flags2`), so:
  *
  *   bit 4       ignore the translation table - harmless, we require none
  *   bit 5       wide translation table
- *   bit 6       dither when reducing a depth
+ *   bit 6       DITHER when reducing a depth
  *   bit 7       colour mapping
  *   bits 8-15   translucency, 0 being opaque
  *
- * Translucency is the dangerous one: a plot asking for it and drawn opaque
- * here would be plainly wrong and would look like a fault in the application.
+ * Translucency is the dangerous one: a plot asking for it and drawn opaque here
+ * would be plainly wrong and would look like a fault in the application. Bit 6
+ * matters because it is the only thing that turns dithering on - SpriteExtend
+ * initialises `dither_truecolour` to zero and sets it solely from that bit -
+ * which is what makes reducing a depth reproducible here at all.
  */
+#define PLOT_ACTION		7u
+#define PLOT_USE_MASK		8u
+#define PLOT_IGNORE_TTR		(1u << 4)
+#define PLOT_UNSUPPORTED	0x0000ffc0u	/* bits 6-15: dither, map, translucency */
 #define PLOT_WIDE_TRANS		(1u << 5)
-#define PLOT_UNSUPPORTED	0x0000ffc0u	/* bits 6-15 */
 
 /*
  * Sprite mode word.
@@ -133,23 +134,24 @@
  */
 #define SPRMODE_TYPE_SHIFT	27
 #define SPRMODE_RISCOS5		0xfu
+#define SPRMODE_WIDE_MASK	(1u << 31)	/* mask is 8 bits per pixel */
+#define SPRMODE_FAMILY		(3u << 12)	/* 0 = RGB */
+#define SPRMODE_ORDER_RGB	(1u << 14)	/* set = &xRGB, clear = &xBGR */
+#define SPRMODE_ALPHA		(1u << 15)	/* alpha channel in the pixels */
 
 /*
  * Sprite pixel types, from the kernel's own list (Programmer/HdrSrc/hdr/Sprite).
  *
  * There are two 16bpp types and they are not adjacent, which is worth stating
  * because a check written for "16bpp" naturally reaches for one number: type 5
- * is 1:5:5:5 and type 10 is 5:6:5. Type 16 is 4:4:4:4.
+ * is 1:5:5:5 and type 10 is 5:6:5. Type 16 is 4:4:4:4, whose fourth channel is
+ * alpha, so it belongs with the transparency work rather than here.
  */
 #define SPRTYPE_8BPP		4
 #define SPRTYPE_16BPP_1555	5
 #define SPRTYPE_32BPP		6
 #define SPRTYPE_16BPP_565	10
 #define SPRTYPE_16BPP_4444	16
-#define SPRMODE_WIDE_MASK	(1u << 31)	/* mask is 8 bits per pixel */
-#define SPRMODE_FAMILY		(3u << 12)	/* 0 = RGB */
-#define SPRMODE_ORDER_RGB	(1u << 14)	/* set = &xRGB, clear = &xBGR */
-#define SPRMODE_ALPHA		(1u << 15)	/* alpha channel in the pixels */
 
 /*
  * The VDU driver workspace, where the kernel keeps what the current mode is and
@@ -175,6 +177,18 @@
  * for. Hence: the kernel's offsets, checked for consistency at run time rather
  * than guessed at.
  */
+/*
+ * Mode flags, from the kernel's own header (Kernel/hdr/VduExt).
+ *
+ * ★ At 16bpp the SAME BIT means two different things depending on the depth.
+ *
+ * `ModeFlag_64k` and `ModeFlag_FullPalette` are one bit; at log2bpp 4 it says
+ * the mode is 5:6:5 rather than 1:5:5:5. There is no other way to tell the two
+ * apart, and picking wrong swaps green for half of blue in every pixel.
+ */
+#define MODEFLAG_64K		(1u << 7)
+#define MODEFLAG_ORDER_RGB	(1u << 14)	/* set = &xRGB, clear = &xBGR */
+
 #define VDU_WORKSPACE		0x1000u
 
 #define VDWS_GWLCOL		0x050u	/* graphics window, pixels, inclusive */
@@ -184,6 +198,8 @@
 #define VDWS_XWINDLIMIT		0x080u	/* pixels across, less one */
 #define VDWS_YWINDLIMIT		0x084u	/* rows, less one */
 #define VDWS_LINELENGTH		0x088u	/* bytes per row */
+#define VDWS_NCOLOUR		0x08cu	/* colours less one */
+#define VDWS_MODEFLAGS		0x094u	/* what kind of mode this is */
 #define VDWS_XEIGFACTOR		0x098u	/* OS units to pixels, as a shift */
 #define VDWS_YEIGFACTOR		0x09cu
 #define VDWS_LOG2BPP		0x0a4u	/* 0..5 */
@@ -200,6 +216,9 @@ typedef struct {
 	uint32_t linelength;
 	uint32_t xeig, yeig;
 	uint32_t log2bpp;
+	uint32_t ncolour;
+	uint32_t modeflags;
+	AccelPixelFormat fmt;		/* how the screen stores a pixel */
 	uint32_t screenstart;		/* logical address output goes to */
 } VduWorkspace;
 
@@ -235,6 +254,232 @@ guest_read32(uint32_t addr, uint32_t *out)
 	return mem_debug_read(addr, 4, out);
 }
 
+/*
+ * ★★ Widening a colour channel: RISC OS REPLICATES, it does not shift.
+ *
+ * This is the one piece of arithmetic in the file that has to agree with RISC OS
+ * bit for bit, and a plausible-looking alternative (`v << 3`) is wrong in a way
+ * nobody would see until they compared a photograph drawn both ways: it can
+ * never produce white, because 0x1f would become 0xf8.
+ *
+ * Taken from SpriteExtend's own code generator rather than from custom. In
+ * `Video/Render/SprExtend/c/asmcore`, `get_expansion_mask()` builds a mask of
+ * the bits each channel gains and the emitted code is
+ *
+ *     AND  r_temp1, r_pixel, #expansion_mask   ; the channels' top bits
+ *     ORR  r_pixel, r_pixel, r_temp1, LSR #n   ; replicated into the new low bits
+ *
+ * with a hand-written second step for 565's green, whose six bits cannot share
+ * the five-bit shift the other two channels use. The channel positions are the
+ * table in `Sources/PutScaled`: 565 is r@0-4 g@5-10 b@11-15 and 1:5:5:5 is
+ * r@0-4 g@5-9 b@10-14, both with red in the low bits.
+ *
+ * So each channel's own top bits become its new bottom bits, which keeps both
+ * endpoints exact: 0 stays 0 and all-ones becomes 0xff.
+ */
+/*
+ * ★ The top byte comes out ZERO, and that is not an oversight.
+ *
+ * A screen mode carries no alpha (the kernel only sets that flag for a sprite),
+ * so SpriteExtend's destination format has bits[3] = 0 and it builds the output
+ * word from the source's three channels and nothing else. Neither 565's spare
+ * bit nor 1:5:5:5's T bit reaches it. Copying 0xff up there instead would look
+ * identical on screen and differ from RISC OS in memory, which is exactly the
+ * kind of difference that surfaces later as something else's bug.
+ */
+/*
+ * Where each channel sits, and how many bits it has, per layout. The same
+ * facts as SpriteExtend's own table in `Sources/PutScaled`, in the same order:
+ * red, green, blue. Red is in the low bits of every layout here.
+ */
+typedef struct {
+	uint8_t shift[3];	/* bit position of the channel's low bit */
+	uint8_t bits[3];
+} FormatChannels;
+
+static int
+format_channels(AccelPixelFormat fmt, FormatChannels *out)
+{
+	static const FormatChannels bgr32  = { { 0, 8, 16 }, { 8, 8, 8 } };
+	static const FormatChannels f565   = { { 0, 5, 11 }, { 5, 6, 5 } };
+	static const FormatChannels f1555  = { { 0, 5, 10 }, { 5, 5, 5 } };
+	static const FormatChannels f4444  = { { 0, 4,  8 }, { 4, 4, 4 } };
+
+	switch (fmt) {
+	case ACCEL_FMT_32BPP:	*out = bgr32;  return 1;
+	case ACCEL_FMT_565:	*out = f565;   return 1;
+	case ACCEL_FMT_1555:	*out = f1555;  return 1;
+	case ACCEL_FMT_4444:	*out = f4444;  return 1;
+	default:		return 0;
+	}
+}
+
+int
+accel_can_convert(AccelPixelFormat from, AccelPixelFormat to)
+{
+	FormatChannels unused;
+
+	if (from == ACCEL_FMT_NONE || to == ACCEL_FMT_NONE) {
+		return 0;
+	}
+	/*
+	 * ★ The same layout at both ends is always allowed, whatever it is.
+	 *
+	 * That is what lets a palette depth through. An 8bpp pixel is an index
+	 * into a palette and means nothing on its own, so it can never be
+	 * CONVERTED here - but copied index for index onto a screen of the same
+	 * depth, with no translation table asked for, it needs no palette at all
+	 * and RISC OS does the same thing. On a machine whose desktop is 8bpp
+	 * that is nearly all of the work.
+	 */
+	if (from == to) {
+		return 1;
+	}
+	if (!format_channels(from, &unused) || !format_channels(to, &unused)) {
+		return 0;	/* one of them is a palette depth */
+	}
+	/* 4:4:4:4 is a source only: as a destination it has a fourth channel to
+	   fill and nothing here knows what RISC OS would put in it. */
+	return to != ACCEL_FMT_4444;
+}
+
+/*
+ * ★ Every pair goes through 8 bits a channel, and that is EXACT, not an
+ *   approximation.
+ *
+ * RISC OS widens by replicating a channel's top bits into the bits it gains,
+ * and narrows by keeping the top bits and discarding the rest - a plain `UBFX`
+ * in the generated code, no rounding. Composing "replicate up to 8" with "keep
+ * the top n" reproduces both:
+ *
+ *   widening a -> b (a < b): replicating to 8 puts the channel at the top with
+ *     copies of itself below, so the top b bits are the channel followed by its
+ *     own top b-a bits, which is exactly replicate a -> b.
+ *   narrowing a -> b (b < a): the top b bits of the replicated value are the
+ *     top b bits of the channel, which is exactly the truncation.
+ *
+ * So one path serves all of them and there is no table of special cases to get
+ * wrong. The same-layout case does NOT come through here: it is a straight copy
+ * that keeps the spare top bit, which RISC OS also leaves alone.
+ *
+ * ★ Narrowing is only safe because DITHERING IS OFF unless asked for. R5 bit 6
+ * is the only thing that turns it on, and a plot that sets it is refused.
+ */
+static uint32_t
+widen_channel(uint32_t v, unsigned bits)
+{
+	/* Replicate upwards until eight bits are filled: 5 -> 10 -> truncated to
+	   8 is the same as (v << 3) | (v >> 2), and 4 -> 8 is (v << 4) | v. */
+	uint32_t r = v;
+	unsigned have = bits;
+
+	while (have < 8) {
+		r = (r << bits) | v;
+		have += bits;
+	}
+	return (r >> (have - 8)) & 0xffu;
+}
+
+uint32_t
+accel_convert_pixel(AccelPixelFormat from, AccelPixelFormat to, uint32_t pixel)
+{
+	FormatChannels in, out;
+	uint32_t result = 0;
+	int i;
+
+	if (!accel_can_convert(from, to)) {
+		return 0;
+	}
+	if (from == to) {
+		return pixel;	/* the bytes are already what the screen wants */
+	}
+	if (!format_channels(from, &in) || !format_channels(to, &out)) {
+		return 0;
+	}
+	for (i = 0; i < 3; i++) {
+		const uint32_t raw = (pixel >> in.shift[i]) & ((1u << in.bits[i]) - 1u);
+		const uint32_t eight = widen_channel(raw, in.bits[i]);
+
+		result |= (eight >> (8 - out.bits[i])) << out.shift[i];
+	}
+	return result;
+}
+
+uint32_t
+accel_format_bytes(AccelPixelFormat fmt)
+{
+	switch (fmt) {
+	case ACCEL_FMT_32BPP:	return 4;
+	case ACCEL_FMT_565:
+	case ACCEL_FMT_1555:
+	case ACCEL_FMT_4444:	return 2;
+	case ACCEL_FMT_8BPP:	return 1;
+	default:		return 0;
+	}
+}
+
+const char *
+accel_format_name(AccelPixelFormat fmt)
+{
+	switch (fmt) {
+	case ACCEL_FMT_32BPP:	return "32bpp &xBGR";
+	case ACCEL_FMT_565:	return "16bpp 5:6:5";
+	case ACCEL_FMT_1555:	return "16bpp 1:5:5:5";
+	case ACCEL_FMT_4444:	return "16bpp 4:4:4:4";
+	case ACCEL_FMT_8BPP:	return "8bpp, palette indices";
+	default:		return "one this cannot write";
+	}
+}
+
+/**
+ * How the screen stores a pixel, from the mode's own flags.
+ *
+ * Follows `compute_pixelformat()` in SpriteExtend's c/asmcore, which is the
+ * code that decides this for RISC OS itself. The 16bpp case is the awkward one:
+ * `ModeFlag_64k` picks 5:6:5, and without it the colour count separates
+ * 1:5:5:5 from 4:4:4:4.
+ */
+AccelPixelFormat
+accel_mode_format(uint32_t log2bpp, uint32_t ncolour, uint32_t modeflags)
+{
+	if ((modeflags & MODEFLAG_ORDER_RGB) != 0) {
+		return ACCEL_FMT_NONE;	/* &xRGB screen: not handled */
+	}
+	if (log2bpp == 5) {
+		return ACCEL_FMT_32BPP;
+	}
+	if (log2bpp == 4) {
+		if ((modeflags & MODEFLAG_64K) != 0) {
+			return ACCEL_FMT_565;
+		}
+		if (ncolour < 4096) {
+			return ACCEL_FMT_NONE;	/* 4:4:4:4, which carries alpha */
+		}
+		return ACCEL_FMT_1555;
+	}
+	if (log2bpp == 3) {
+		/* Writable only from an 8bpp sprite, index for index; nothing here
+		   can work out what index a colour ought to become. */
+		return ACCEL_FMT_8BPP;
+	}
+	return ACCEL_FMT_NONE;		/* 4bpp and below: a pixel is not a byte,
+					   so a clipped row would start mid-byte */
+}
+
+/** How the host will read this sprite's pixels, if it can read them at all. */
+static AccelPixelFormat
+source_format_for_type(int type)
+{
+	switch (type) {
+	case SPRTYPE_32BPP:		return ACCEL_FMT_32BPP;
+	case SPRTYPE_16BPP_4444:	return ACCEL_FMT_4444;
+	case SPRTYPE_8BPP:		return ACCEL_FMT_8BPP;
+	case SPRTYPE_16BPP_565:		return ACCEL_FMT_565;
+	case SPRTYPE_16BPP_1555:	return ACCEL_FMT_1555;
+	default:			return ACCEL_FMT_NONE;
+	}
+}
+
 /**
  * Bits per pixel of a sprite type, or 0 for one whose depth is not fixed.
  *
@@ -263,15 +508,17 @@ sprite_type_bpp(int type)
  *
  * ★ The width field counts WORDS less one, not pixels.
  *
- * `width + 1` is the pixel count at 32bpp and at no other depth: a 16bpp sprite
- * measured that way comes out half its real width and an 8bpp one a quarter.
- * The general form is the kernel's own, from `readspritevars` in SprOp: the
- * bits from the left-hand wastage to the right-hand one inclusive, over the
- * bits per pixel.
+ * `width + 1` is the pixel count at 32bpp and at no other depth, which is why
+ * this exists: a 16bpp sprite measured that way comes out half its real width -
+ * and an 8bpp one a quarter - so the plot is drawn too narrow with the rest of
+ * each row taken from the row below. The general form is the kernel's own, from
+ * `readspritevars` in SprOp: the bits from the left-hand wastage to the
+ * right-hand one inclusive, over the bits per pixel.
  *
- * Nothing shallower than 32bpp is plotted here yet, so this corrects the
- * COUNTS rather than any drawing: the share of the drawn pixels a host-side
- * plot can take was being reported against a denominator that was too small.
+ * Note this also corrects the COUNTING for every sprite shallower than 32bpp,
+ * which was previously measured as though a word held one pixel. The share of
+ * the drawn pixels a host-side plot can take was therefore reported against a
+ * denominator that was too small.
  *
  * @return pixels per row, or 0 if the header does not describe a sensible one
  */
@@ -411,6 +658,8 @@ vdu_workspace_read(const ScreenTarget *target, VduWorkspace *ws)
 	if (!guest_read32(VDU_WORKSPACE + VDWS_XWINDLIMIT, &ws->xwindlimit) ||
 	    !guest_read32(VDU_WORKSPACE + VDWS_YWINDLIMIT, &ws->ywindlimit) ||
 	    !guest_read32(VDU_WORKSPACE + VDWS_LINELENGTH, &ws->linelength) ||
+	    !guest_read32(VDU_WORKSPACE + VDWS_NCOLOUR, &ws->ncolour) ||
+	    !guest_read32(VDU_WORKSPACE + VDWS_MODEFLAGS, &ws->modeflags) ||
 	    !guest_read32(VDU_WORKSPACE + VDWS_XEIGFACTOR, &ws->xeig) ||
 	    !guest_read32(VDU_WORKSPACE + VDWS_YEIGFACTOR, &ws->yeig) ||
 	    !guest_read32(VDU_WORKSPACE + VDWS_LOG2BPP, &ws->log2bpp) ||
@@ -455,6 +704,9 @@ vdu_workspace_read(const ScreenTarget *target, VduWorkspace *ws)
 	{
 		return -1;
 	}
+
+	ws->fmt = accel_mode_format(ws->log2bpp, ws->ncolour, ws->modeflags);
+	stats.screen_format = (uint32_t) ws->fmt;
 
 	stats.vdu_ws_probed = 1;
 	stats.vdu_off_xwindlimit = VDWS_XWINDLIMIT;
@@ -537,7 +789,7 @@ accel_plot_rect(int32_t screen_w, int32_t screen_h,
 
 void
 accel_blit_row_plan(const AccelPlotRect *rect, int32_t row, uint32_t src_stride,
-                    uint32_t *src_offset, uint32_t *bytes)
+                    uint32_t src_bpp, uint32_t *src_offset, uint32_t *pixels)
 {
 	/*
 	 * Sprite pixel data is stored top row first, the same order as screen
@@ -546,30 +798,94 @@ accel_blit_row_plan(const AccelPlotRect *rect, int32_t row, uint32_t src_stride,
 	 * starts, it only narrows what is drawn, which is why origin_top and
 	 * origin_left are carried through rather than recomputed from the clipped
 	 * rectangle.
+	 *
+	 * The row's stride is a property of the sprite and not the product of its
+	 * width and its depth: a 16bpp sprite of odd width pads to the next whole
+	 * word, so the two differ by two bytes on every row and a picture built
+	 * from the product leans further left with each row down.
 	 */
 	*src_offset = (uint32_t) (row - rect->origin_top) * src_stride +
-	    (uint32_t) (rect->left - rect->origin_left) * 4u;
-	*bytes = (uint32_t) (rect->right - rect->left + 1) * 4u;
+	    (uint32_t) (rect->left - rect->origin_left) * src_bpp;
+	*pixels = (uint32_t) (rect->right - rect->left + 1);
 }
 
 /**
- * Copy a 32bpp sprite into the screen, clipped to the graphics window.
+ * One run of source pixels into the screen's own 32bpp words.
+ *
+ * The halfword is assembled from its two bytes rather than loaded as a
+ * `uint16_t`: nothing promises a sprite's pixel data is even-aligned in this
+ * process's address space, and an unaligned halfword load is undefined even
+ * where the host would have permitted it. Written this way it also says out
+ * loud which byte is the low one, which the rest of this file relies on.
+ */
+static void
+convert_run(AccelPixelFormat from, AccelPixelFormat to, const void *in,
+            void *out, uint32_t pixels)
+{
+	const uint8_t *src = (const uint8_t *) in;
+	uint8_t *dst = (uint8_t *) out;
+	const uint32_t src_bpp = accel_format_bytes(from);
+	const uint32_t dst_bpp = accel_format_bytes(to);
+	uint32_t i;
+
+	if (from == to) {
+		/* The commonest case on a 16bpp desktop, and the cheapest: the
+		   sprite already holds exactly the bytes the screen wants. */
+		memcpy(out, in, (size_t) pixels * dst_bpp);
+		return;
+	}
+
+	/*
+	 * Bytes in and out rather than typed loads: nothing promises a sprite's
+	 * pixel data is aligned in this process's address space, and this also
+	 * says out loud which byte is the low one, which the rest of the file
+	 * relies on.
+	 */
+	for (i = 0; i < pixels; i++) {
+		const uint8_t *p = src + (size_t) i * src_bpp;
+		uint8_t *q = dst + (size_t) i * dst_bpp;
+		uint32_t v = (uint32_t) p[0] | ((uint32_t) p[1] << 8);
+		uint32_t r;
+
+		if (src_bpp == 4) {
+			v |= ((uint32_t) p[2] << 16) | ((uint32_t) p[3] << 24);
+		}
+		r = accel_convert_pixel(from, to, v);
+		q[0] = (uint8_t) r;
+		q[1] = (uint8_t) (r >> 8);
+		if (dst_bpp == 4) {
+			q[2] = (uint8_t) (r >> 16);
+			q[3] = (uint8_t) (r >> 24);
+		}
+	}
+}
+
+/**
+ * Copy a sprite into the screen, converting its pixels if need be, clipped to
+ * the graphics window.
  *
  * Sprite pixel data is stored top row first, the same order as screen memory, so
  * once the destination is in framebuffer terms the rows map straight across.
  *
+ * @param src_stride Bytes per row of the source, from its own header rather
+ *                   than from its width times its depth
  * @return non-zero if the plot was done in full
  */
 static int
-blit_sprite_32bpp(const ScreenTarget *target, const VduWorkspace *ws,
-                  uint32_t src_base, uint32_t src_stride, int src_w, int src_h,
-                  int32_t x_os, int32_t y_os, uint32_t *pixels_done)
+blit_sprite(const ScreenTarget *target, const VduWorkspace *ws,
+            AccelPixelFormat fmt, uint32_t src_base, uint32_t src_stride,
+            int src_w, int src_h, int32_t x_os, int32_t y_os,
+            uint32_t *pixels_done)
 {
+	const uint32_t src_bpp = accel_format_bytes(fmt);
+	const uint32_t dst_bpp = accel_format_bytes(ws->fmt);
 	AccelPlotRect rect;
 	uint32_t fb_off, phys;
 	int row;
 
-	if (target->host == NULL) {
+	if (target->host == NULL || src_bpp == 0 || dst_bpp == 0 ||
+	    !accel_can_convert(fmt, ws->fmt))
+	{
 		return 0;
 	}
 	if (!mem_debug_translate(ws->screenstart, &phys) ||
@@ -583,6 +899,19 @@ blit_sprite_32bpp(const ScreenTarget *target, const VduWorkspace *ws,
 	   wide so a stride chosen to overflow the arithmetic cannot pass. */
 	if ((uint64_t) fb_off + (uint64_t) target->stride * target->height >
 	    (uint64_t) target->phys_size)
+	{
+		return 0;
+	}
+
+	/*
+	 * Whole pixels are written straight into the framebuffer, so refuse one
+	 * that is not aligned for them rather than making an unaligned store the
+	 * guest would never have made. Every real screen start is page-aligned and
+	 * every real stride a whole number of pixels, so this costs nothing and is
+	 * here to stay true.
+	 */
+	if ((((uintptr_t) target->host + fb_off) & (dst_bpp - 1u)) != 0 ||
+	    (target->stride & (dst_bpp - 1u)) != 0)
 	{
 		return 0;
 	}
@@ -601,29 +930,38 @@ blit_sprite_32bpp(const ScreenTarget *target, const VduWorkspace *ws,
 	for (row = rect.top; row <= rect.bottom; row++) {
 		uint32_t src_off = 0, left_to_copy = 0;
 		uint32_t src_addr;
-		uint8_t *out = target->host + fb_off + (uint32_t) row * target->stride +
-		    (uint32_t) rect.left * 4u;
+		uint8_t *out = target->host + fb_off +
+		    (uint32_t) row * target->stride + (uint32_t) rect.left * dst_bpp;
 
-		accel_blit_row_plan(&rect, row, src_stride, &src_off, &left_to_copy);
+		accel_blit_row_plan(&rect, row, src_stride, src_bpp, &src_off,
+		    &left_to_copy);
 		src_addr = src_base + src_off;
 
 		/*
 		 * A row at a time, in runs of whatever is readable before the next
 		 * page: consecutive virtual pages are not consecutive physical ones, so
 		 * a single long copy would read the wrong memory across a boundary.
+		 *
+		 * The run is rounded down to whole pixels. A 4KB page cannot split a
+		 * two- or four-byte pixel that starts aligned, but the rounding is what
+		 * makes that a property of the code rather than of the arithmetic
+		 * happening to work out.
 		 */
 		while (left_to_copy > 0) {
 			uint32_t avail = 0;
 			const void *in = mem_debug_host_ptr(src_addr, &avail);
 			uint32_t run;
 
-			if (in == NULL || avail == 0) {
+			if (in == NULL || avail < src_bpp) {
 				return 0;	/* unreadable source: leave it to the guest */
 			}
-			run = (avail < left_to_copy) ? avail : left_to_copy;
-			memcpy(out, in, run);
-			out += run;
-			src_addr += run;
+			run = avail / src_bpp;
+			if (run > left_to_copy) {
+				run = left_to_copy;
+			}
+			convert_run(fmt, ws->fmt, in, out, run);
+			out += run * dst_bpp;
+			src_addr += run * src_bpp;
 			left_to_copy -= run;
 		}
 	}
@@ -667,6 +1005,7 @@ classify_plot(int scaled, int *handled)
 	uint32_t header = 0;
 	uint32_t mode = 0, image = 0, mask = 0;
 	uint32_t src_stride = 0;
+	AccelPixelFormat src_fmt;
 	int type;
 	int src_w, src_h;
 	int64_t dest_w, dest_h;
@@ -752,6 +1091,16 @@ classify_plot(int scaled, int *handled)
 	}
 
 	type = sprite_pixel_type(mode);
+	src_fmt = source_format_for_type(type);
+
+	if (type >= 0 && type < ACCEL_SPRITE_TYPES) {
+		stats.sprite.type[type]++;
+	} else {
+		/* An old-format sprite, whose depth comes from a mode number, or a
+		   RISC OS 5 type number past the end of the table. Both are worth
+		   knowing about as a total rather than being dropped. */
+		stats.sprite.type_other++;
+	}
 
 	{
 		uint32_t w = 0, h = 0, lbit = 0, rbit = 0;
@@ -772,21 +1121,16 @@ classify_plot(int scaled, int *handled)
 			/*
 			 * A depth this cannot reason about - a JPEG, a YCbCr sprite, an
 			 * old-format one - or a header whose bits do not divide into
-			 * pixels. The width is filled in as words so the size and pixel
-			 * counts still have a number beside them, and it is an
-			 * undercount for anything shallower than 32bpp.
+			 * pixels. The plot is refused on its type regardless; the width is
+			 * filled in as words so the size and pixel counts still have a
+			 * number beside them, and it is an undercount for anything
+			 * shallower than 32bpp.
 			 */
+			if (src_fmt != ACCEL_FMT_NONE) {
+				return ACCEL_NO_SIZE;
+			}
 			src_w = (int) w + 1;
 		}
-	}
-
-	if (type >= 0 && type < ACCEL_SPRITE_TYPES) {
-		stats.sprite.type[type]++;
-	} else {
-		/* An old-format sprite, whose depth comes from a mode number, or a
-		   RISC OS 5 type number past the end of the table. Both are worth
-		   knowing about as a total rather than being dropped. */
-		stats.sprite.type_other++;
 	}
 
 	/* How the sprite carries its transparency, which is a fact about the
@@ -795,9 +1139,20 @@ classify_plot(int scaled, int *handled)
 		const int riscos5 = ((mode >> SPRMODE_TYPE_SHIFT) & 0xfu) ==
 		    SPRMODE_RISCOS5;
 
-		if (riscos5 && (mode & SPRMODE_ALPHA) != 0 &&
-		    (action & PLOT_USE_MASK) != 0)
+		/*
+		 * 5:6:5 spends every bit on colour, so it cannot carry alpha whatever
+		 * the flag says - the kernel clears that flag itself for this depth
+		 * (`compute_pixelformat` in SprExtend's c/asmcore). Believing the flag
+		 * here would refuse a perfectly ordinary plot for a transparency that
+		 * does not exist.
+		 */
+		if ((action & PLOT_USE_MASK) != 0 && type != SPRTYPE_16BPP_565 &&
+		    (type == SPRTYPE_16BPP_4444 ||
+		     (riscos5 && (mode & SPRMODE_ALPHA) != 0)))
 		{
+			/* 4:4:4:4 carries alpha by virtue of its type, so it is not
+			   trusted to the flag - a sprite that omitted it would
+			   otherwise be blended by RISC OS and drawn opaque here. */
 			transparency = ACCEL_SPRITE_ALPHA_PIXEL;
 		}
 	} else if ((mode & SPRMODE_WIDE_MASK) != 0) {
@@ -883,8 +1238,20 @@ classify_plot(int scaled, int *handled)
 	 */
 	if (trans != 0) {
 		without_depth = ACCEL_NO_TRANSTABLE;
-	} else if (type != SPRTYPE_32BPP) {
+	} else if (src_fmt == ACCEL_FMT_NONE) {
 		without_depth = ACCEL_NO_TYPE;
+		if (type >= 0 && type < ACCEL_SPRITE_TYPES) {
+			stats.sprite.type_blocked[type]++;
+			if (image != SPR_HEADER_SIZE) {
+				/* Carries its own palette, which is what a sub-16bpp
+				   source would have to be read through. Counted here
+				   because the type is refused before the palette is
+				   looked at, so it would otherwise be invisible. */
+				stats.sprite.type_blocked_palette[type]++;
+			}
+		} else {
+			stats.sprite.type_blocked_other++;
+		}
 	} else if (image != SPR_HEADER_SIZE) {
 		without_depth = ACCEL_NO_PALETTE;
 	} else if (((mode >> SPRMODE_TYPE_SHIFT) & 0xfu) == SPRMODE_RISCOS5 &&
@@ -896,11 +1263,10 @@ classify_plot(int scaled, int *handled)
 	} else if ((action & PLOT_ACTION) != 0 ||
 	    (action & (PLOT_UNSUPPORTED | PLOT_WIDE_TRANS)) != 0)
 	{
-		/* Not just the GCOL action: the bits above it ask for dithering,
-		   colour mapping, a wide table or translucency, any of which makes
-		   the result something other than a copy of the sprite. Bit 4
-		   (ignore the translation table) is harmless here because we
-		   require there to be none. */
+		/* Not just the GCOL action: bits 6-15 ask for dithering, colour
+		   mapping or translucency, any of which makes the result something
+		   other than a copy of the sprite. Bit 4 (ignore the translation
+		   table) is harmless here because we require there to be none. */
 		without_depth = ACCEL_NO_ACTION;
 	} else {
 		without_depth = ACCEL_TAKEN;
@@ -920,23 +1286,46 @@ classify_plot(int scaled, int *handled)
 			    (uint32_t) (rect.bottom - rect.top + 1) / 1000u;
 
 			stats.sprite.pixels_visible += visible;
-			if (without_depth == ACCEL_TAKEN && target.bpp == 32) {
+			if (without_depth == ACCEL_TAKEN &&
+			    accel_can_convert(src_fmt, ws.fmt))
+			{
 				stats.sprite.pixels_visible_takeable += visible;
+			}
+			if (without_depth == ACCEL_NO_TYPE) {
+				if (type >= 0 && type < ACCEL_SPRITE_TYPES) {
+					stats.sprite.type_blocked_pixels[type] += visible;
+				} else {
+					stats.sprite.type_blocked_other_pixels += visible;
+				}
 			}
 		}
 	}
 
+	stats.sprite.verdict_without_depth[without_depth]++;
 	if (without_depth == ACCEL_TAKEN) {
 		stats.sprite.takeable_at_32bpp++;
 		stats.sprite.pixels_takeable +=
 		    (uint32_t) ((dest_w * dest_h) / 1000);
 	}
 
-	if (target.bpp != 32) {
-		return ACCEL_NO_DEPTH;
-	}
+	/*
+	 * ★ The screen's layout, not merely its depth.
+	 *
+	 * This used to be "is it 32bpp", which on a 16bpp desktop refused every
+	 * plot for that one reason - and a 16bpp desktop is an ordinary thing to
+	 * be running, not least because 1280x720 at 32bpp needs more video memory
+	 * than a Risc PC has. What matters is whether the sprite's layout can be
+	 * turned into the screen's exactly, which the same layout at both ends
+	 * satisfies trivially.
+	 */
 	if (without_depth != ACCEL_TAKEN) {
-		return without_depth;
+		return (ws.fmt == ACCEL_FMT_NONE) ? ACCEL_NO_SCREEN : without_depth;
+	}
+	if (ws.fmt == ACCEL_FMT_NONE) {
+		return ACCEL_NO_SCREEN;
+	}
+	if (!accel_can_convert(src_fmt, ws.fmt)) {
+		return ACCEL_NO_CONVERSION;
 	}
 
 	/*
@@ -979,7 +1368,7 @@ classify_plot(int scaled, int *handled)
 	if (config.accelerators_enabled && scaled) {
 		uint32_t painted = 0;
 
-		if (blit_sprite_32bpp(&target, &ws, header + image, src_stride,
+		if (blit_sprite(&target, &ws, src_fmt, header + image, src_stride,
 		    src_w, src_h, (int32_t) arm.reg[3], (int32_t) arm.reg[4],
 		    &painted))
 		{
@@ -1066,7 +1455,8 @@ accel_reason_name(AcceleratorReason reason)
 	case ACCEL_TAKEN:		return "could be done on the host";
 	case ACCEL_NO_TARGET:		return "output is not the screen";
 	case ACCEL_NO_GEOMETRY:		return "VDU workspace unresolved";
-	case ACCEL_NO_DEPTH:		return "screen is not 32bpp";
+	case ACCEL_NO_SCREEN:		return "screen is a layout this cannot write";
+	case ACCEL_NO_CONVERSION:	return "no exact route to the screen's layout";
 	case ACCEL_NO_TRANSTABLE:	return "colour translation table";
 	case ACCEL_NO_SPRITE:		return "sprite not located";
 	case ACCEL_NO_TYPE:		return "source is not 32bpp";

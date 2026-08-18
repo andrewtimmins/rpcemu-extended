@@ -68,10 +68,11 @@ typedef enum {
 	ACCEL_TAKEN = 0,	/**< Could be done on the host, in full */
 	ACCEL_NO_TARGET,	/**< Output is redirected: a sprite, not the screen */
 	ACCEL_NO_GEOMETRY,	/**< The VDU workspace could not be read at all */
-	ACCEL_NO_DEPTH,		/**< Screen is not 32bpp */
+	ACCEL_NO_SCREEN,	/**< The screen's own layout is one this cannot write */
+	ACCEL_NO_CONVERSION,	/**< No exact route from the sprite's layout to it */
 	ACCEL_NO_TRANSTABLE,	/**< A colour-translation table was supplied */
 	ACCEL_NO_SPRITE,	/**< System sprite area, or the sprite was not found */
-	ACCEL_NO_TYPE,		/**< Source is not a 32bpp sprite */
+	ACCEL_NO_TYPE,		/**< Source is a pixel layout this does not read */
 	ACCEL_NO_PALETTE,	/**< Source carries its own palette */
 	ACCEL_NO_ORDER,		/**< Source is &xRGB where we handle &xBGR */
 	ACCEL_NO_MASK,		/**< A 1bpp on/off mask plane */
@@ -103,6 +104,86 @@ typedef enum {
 	ACCEL_SPRITE_TRANSPARENCY_COUNT
 } AcceleratorSpriteTransparency;
 
+/*
+ * A pixel layout, used for both the sprite and the screen.
+ *
+ * Not the same list as RISC OS's sprite types: several types share a layout.
+ * These are the layouts the host can read and write with an answer identical to
+ * RISC OS's, which is the whole condition for doing anything at all - and a
+ * plot is only taken when this file knows how to get from the one to the other
+ * exactly, which is not true of every pair.
+ */
+typedef enum {
+	ACCEL_FMT_NONE = 0,	/**< Nothing here reads or writes this */
+	ACCEL_FMT_32BPP,	/**< &xBGR, one word a pixel */
+	ACCEL_FMT_565,		/**< 16bpp 5:6:5 BGR, sprite type 10 */
+	ACCEL_FMT_1555,		/**< 16bpp 1:5:5:5 TBGR, sprite type 5 */
+	ACCEL_FMT_4444,		/**< 16bpp 4:4:4:4 ABGR, sprite type 16. Source only:
+				     as a screen it would want alpha written */
+	ACCEL_FMT_8BPP		/**< 8bpp palette indices. Only ever to ITSELF: an
+				     index means nothing without the palette, so it
+				     can be copied but never converted */
+} AccelPixelFormat;
+
+/**
+ * One pixel from one layout to another.
+ *
+ * Exposed because it is the part that has to be exactly right and needs no
+ * machine to check. See the note in accelerators.c on where the arithmetic
+ * comes from: it is RISC OS's, not a plausible-looking equivalent.
+ *
+ * Only the pairs `accel_can_convert()` allows are meaningful.
+ */
+extern uint32_t accel_convert_pixel(AccelPixelFormat from, AccelPixelFormat to,
+    uint32_t pixel);
+
+/**
+ * Whether a plot from one layout to another can be reproduced exactly here.
+ *
+ * The same layout both ends is always yes and is a plain copy. Widening 16bpp
+ * to 32bpp is yes. Narrowing, and swapping between the two 16bpp layouts, are
+ * not done: RISC OS may dither when it reduces a depth, and a plot drawn nearly
+ * right is worse than one drawn by the guest.
+ */
+extern int accel_can_convert(AccelPixelFormat from, AccelPixelFormat to);
+
+/** Bytes one pixel of this layout occupies, or 0 for one not handled. */
+extern uint32_t accel_format_bytes(AccelPixelFormat fmt);
+
+/** Name for the layout, for anything displaying the counts. */
+extern const char *accel_format_name(AccelPixelFormat fmt);
+
+/**
+ * How a screen mode stores a pixel, from the kernel's own mode variables.
+ *
+ * Exposed because the 16bpp case turns on one bit and getting it wrong is not
+ * a refusal but a wrong picture: 5:6:5 read as 1:5:5:5 puts half of green where
+ * blue belongs in every pixel.
+ *
+ * @param log2bpp   Log2BPP as the VDU workspace holds it
+ * @param ncolour   NColour, which is the number of colours LESS ONE
+ * @param modeflags ModeFlags, whose bit 7 means 5:6:5 at this depth
+ */
+extern AccelPixelFormat accel_mode_format(uint32_t log2bpp, uint32_t ncolour,
+    uint32_t modeflags);
+
+/**
+ * How many pixels a sprite row holds, from its header fields.
+ *
+ * Exposed because `width + 1` is the pixel count at 32bpp and at no other
+ * depth, and getting it wrong draws the picture too narrow while taking the
+ * rest of each row from the row below - a failure that looks like a corrupt
+ * sprite rather than like arithmetic.
+ *
+ * @param width_words_less_one The header's width field, verbatim
+ * @param lbit  Wasted bits at the left of the first word
+ * @param rbit  Last bit used in the last word
+ * @param bpp   Bits per pixel of the sprite's type
+ * @return pixels per row, or 0 if those fields do not describe a whole number
+ */
+extern int accel_sprite_row_pixels(uint32_t width_words_less_one, uint32_t lbit,
+    uint32_t rbit, unsigned bpp);
+
 #define ACCEL_SPRITE_REASONS	64	/**< OS_SpriteOp reasons we tally */
 #define ACCEL_SPRITE_TYPES	32	/**< Sprite pixel types we tally */
 
@@ -129,6 +210,34 @@ typedef struct {
 
 	uint32_t type[ACCEL_SPRITE_TYPES];	/**< Source pixel type of each */
 	uint32_t type_other;		/**< Types above the table, or old-format */
+
+	/*
+	 * Plots whose FIRST obstacle was the source's pixel type, and the pixels
+	 * they cover.
+	 *
+	 * This is what says whether reading another source format is worth
+	 * writing, and it says it in the unit that decided the last one: 16bpp
+	 * was chosen over the far more numerous translation-table plots because
+	 * of the pixels, not the counts. "First obstacle" is meant literally -
+	 * such a plot may have carried a mask or an odd plot action as well, so
+	 * these are an upper bound on what supporting the type would gain.
+	 */
+	uint32_t type_blocked[ACCEL_SPRITE_TYPES];
+	uint32_t type_blocked_pixels[ACCEL_SPRITE_TYPES];	/**< Thousands, clipped */
+	uint32_t type_blocked_palette[ACCEL_SPRITE_TYPES];	/**< Of those, carrying
+								     their own palette */
+	uint32_t type_blocked_other;		/**< Old-format, or past the table */
+	uint32_t type_blocked_other_pixels;	/**< Thousands, clipped */
+
+	/*
+	 * The verdict with the screen's depth left out, by reason.
+	 *
+	 * `verdict` above is nearly useless on a machine whose screen this cannot
+	 * write: every plot comes back "screen is not 32bpp" and nothing else is
+	 * visible. This is the same decision with that one reason removed, so the
+	 * real obstacles can be read at any screen depth.
+	 */
+	uint32_t verdict_without_depth[ACCEL_REASON_COUNT];
 	uint32_t transparency[ACCEL_SPRITE_TRANSPARENCY_COUNT];
 	uint32_t dest[ACCEL_DEST_COUNT];	/**< Where the output was going */
 	uint32_t scaled_1to1;		/**< Of those, plotted at 1:1 */
@@ -171,6 +280,7 @@ typedef struct {
 	uint32_t screen_width;
 	uint32_t screen_height;
 	uint32_t screen_bpp;
+	uint32_t screen_format;		/**< AccelPixelFormat of the screen */
 	uint32_t depth_8bpp;		/**< Plots offered at each screen depth */
 	uint32_t depth_16bpp;
 	uint32_t depth_32bpp;
@@ -223,31 +333,19 @@ extern int accel_plot_rect(int32_t screen_w, int32_t screen_h,
  * than from its first row and column, and getting it wrong shears the picture or
  * turns it over without failing in any way a test of the placement would catch.
  *
+ * The count comes back in PIXELS rather than bytes, because the source and the
+ * screen no longer agree about how big a pixel is.
+ *
  * @param rect       The plot, as accel_plot_rect() worked it out
  * @param row        Destination row, between rect->top and rect->bottom
  * @param src_stride Bytes per row of the source
+ * @param src_bpp    Bytes per pixel of the source
  * @param src_offset Set to the byte offset into the source pixel data
- * @param bytes      Set to how many bytes to copy
+ * @param pixels     Set to how many pixels to copy
  */
 extern void accel_blit_row_plan(const AccelPlotRect *rect, int32_t row,
-    uint32_t src_stride, uint32_t *src_offset, uint32_t *bytes);
-
-/**
- * How many pixels a sprite row holds, from its header fields.
- *
- * Exposed because `width + 1` is the pixel count at 32bpp and at no other
- * depth, and getting it wrong draws the picture too narrow while taking the
- * rest of each row from the row below - a failure that looks like a corrupt
- * sprite rather than like arithmetic.
- *
- * @param width_words_less_one The header's width field, verbatim
- * @param lbit  Wasted bits at the left of the first word
- * @param rbit  Last bit used in the last word
- * @param bpp   Bits per pixel of the sprite's type
- * @return pixels per row, or 0 if those fields do not describe a whole number
- */
-extern int accel_sprite_row_pixels(uint32_t width_words_less_one, uint32_t lbit,
-    uint32_t rbit, unsigned bpp);
+    uint32_t src_stride, uint32_t src_bpp, uint32_t *src_offset,
+    uint32_t *pixels);
 
 /**
  * Offer a SWI to the accelerators.
