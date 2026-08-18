@@ -744,6 +744,12 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	settings.Read("clipboard_enabled", &value, 0L);
 	cfg->clipboard_enabled = static_cast<int>(value);
 
+	settings.Read("netcap_enabled", &value, 1L);
+	cfg->netcap_enabled = static_cast<int>(value);
+	settings.Read("netcap_socket", &sText, wxEmptyString);
+	strncpy(cfg->netcap_socket, sText.utf8_str().data(), sizeof(cfg->netcap_socket) - 1);
+	cfg->netcap_socket[sizeof(cfg->netcap_socket) - 1] = '\0';
+
 	settings.Read("debug_enabled", &value, 1L);
 	cfg->debug_enabled = static_cast<int>(value);
 	settings.Read("debug_socket", &sText, wxEmptyString);
@@ -927,6 +933,9 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 		    wxString(cfg->hostcmd_socket, wxConvUTF8));
 		settings.Write("clipboard_enabled",
 		    static_cast<long>(cfg->clipboard_enabled));
+		settings.Write("netcap_enabled", static_cast<long>(cfg->netcap_enabled));
+		write_or_restore("netcap_socket",
+		    wxString(cfg->netcap_socket, wxConvUTF8));
 		settings.Write("debug_enabled", static_cast<long>(cfg->debug_enabled));
 		write_or_restore("debug_socket", wxString(cfg->debug_socket, wxConvUTF8));
 	}

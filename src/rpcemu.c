@@ -67,6 +67,7 @@
 #include "hostfs.h"
 #include "hostcmd.h"
 #include "debugcmd.h"
+#include "netcapcmd.h"
 #include "debugexpr.h"
 #include "disc.h"
 #include "disc_adf.h"
@@ -242,6 +243,8 @@ Config config = {
 	"",			/* vnc_password_readonly */
 	1,			/* hostcmd_enabled (ON by default) */
 	"",			/* hostcmd_socket (empty => <datadir>hostcmd.sock) */
+	1,			/* netcap_enabled (ON by default, like the other two sockets) */
+	"",			/* netcap_socket (empty => <datadir>rpcemu-netcap.sock) */
 	1,			/* debug_enabled (ON by default) */
 	"",			/* debug_socket (empty => <datadir>rpcemu-debug.sock) */
 	Model_RPCARM710,	/* model (configured machine model) */
@@ -1405,6 +1408,7 @@ resetrpc(void)
         hostfs_reset();
         hostcmd_reset();
         debugcmd_reset();
+        netcapcmd_reset();
 
 
 #ifdef RPCEMU_NETWORKING
@@ -1538,6 +1542,7 @@ rpcemu_start(void)
 	hostfs_init();
 	hostcmd_init();
 	debugcmd_init();
+	netcapcmd_init();
 	parallel_bus_init();
 	serial_bus_init();
 	printer_init();
@@ -1677,6 +1682,7 @@ execrpcemu(void)
 	serial_host_poll();
 	hostcmd_poll();
 	debugcmd_poll();
+	netcapcmd_poll();
 }
 
 /**
@@ -1737,6 +1743,7 @@ rpcemu_idle(void)
 		serial_host_poll();
 		hostcmd_poll();
 		debugcmd_poll();
+		netcapcmd_poll();
 		/* Sleep if no interrupts pending */
 		if (!arm.event) {
 #ifdef _WIN32
@@ -1776,6 +1783,7 @@ rpcemu_idle(void)
 			serial_host_poll();
 			hostcmd_poll();
 			debugcmd_poll();
+			netcapcmd_poll();
 		}
 	}
 
@@ -1804,6 +1812,7 @@ endrpcemu(void)
 {
         hostcmd_close();
         debugcmd_close();
+        netcapcmd_close();
         /* Before anything else: a device passed through from the host is only
            borrowed, and this is what hands it back. */
         usb_ohci_shutdown();

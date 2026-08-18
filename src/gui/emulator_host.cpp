@@ -46,6 +46,7 @@ extern "C" {
 #include "cdrom-iso.h"
 #include "cmos.h"
 #include "debugcmd.h"
+#include "netcapcmd.h"
 #include "hostcmd.h"
 #include "usb_ohci.h"
 #include "hostfs.h"
@@ -1589,6 +1590,7 @@ void EmulatorHost::MainEmuLoop()
 			// paused (execrpcemu() isn't called here, so its debugcmd_poll()
 			// doesn't run) — otherwise a client could never resume/inspect.
 			debugcmd_poll();
+			netcapcmd_poll();
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 			continue;
 		}

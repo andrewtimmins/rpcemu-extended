@@ -41,6 +41,7 @@ static int lock_vnc_port;
    except the manager's own child processes - see machine_ipc.h. */
 static char lock_ipc_endpoint[512];
 static char lock_debug_endpoint[700];
+static char lock_netcap_endpoint[700];
 
 static void
 set_str_field(char *out, size_t size, const char *value)
@@ -71,7 +72,10 @@ format_lock_text(char *out, size_t size, long pid, int vnc_port, const char *ipc
 	 * file is where it already tells everything else what it is doing.
 	 */
 	if (lock_debug_endpoint[0] != '\0' && n > 0 && (size_t) n < size) {
-		snprintf(out + n, size - (size_t) n, "dbg=%s\n", lock_debug_endpoint);
+		n += snprintf(out + n, size - (size_t) n, "dbg=%s\n", lock_debug_endpoint);
+	}
+	if (lock_netcap_endpoint[0] != '\0' && n > 0 && (size_t) n < size) {
+		snprintf(out + n, size - (size_t) n, "cap=%s\n", lock_netcap_endpoint);
 	}
 }
 
@@ -178,6 +182,14 @@ machine_lock_set_debug_endpoint(const char *debug_endpoint)
 }
 
 void
+machine_lock_set_netcap_endpoint(const char *netcap_endpoint)
+{
+	set_str_field(lock_netcap_endpoint, sizeof(lock_netcap_endpoint),
+	    netcap_endpoint);
+	rewrite_lock_file_win32();
+}
+
+void
 machine_lock_release(void)
 {
 	if (lock_handle != INVALID_HANDLE_VALUE) {
@@ -268,6 +280,14 @@ void
 machine_lock_set_debug_endpoint(const char *debug_endpoint)
 {
 	set_str_field(lock_debug_endpoint, sizeof(lock_debug_endpoint), debug_endpoint);
+	rewrite_lock_file_posix();
+}
+
+void
+machine_lock_set_netcap_endpoint(const char *netcap_endpoint)
+{
+	set_str_field(lock_netcap_endpoint, sizeof(lock_netcap_endpoint),
+	    netcap_endpoint);
 	rewrite_lock_file_posix();
 }
 
@@ -419,5 +439,13 @@ machine_lock_read_debug_endpoint(const char *machine_dir, char *endpoint_out,
     size_t endpoint_out_size)
 {
 	return machine_lock_read_field(machine_dir, "dbg=", endpoint_out,
+	    endpoint_out_size);
+}
+
+int
+machine_lock_read_netcap_endpoint(const char *machine_dir, char *endpoint_out,
+    size_t endpoint_out_size)
+{
+	return machine_lock_read_field(machine_dir, "cap=", endpoint_out,
 	    endpoint_out_size);
 }

@@ -138,12 +138,28 @@ extern int machine_lock_owner_alive(long pid);
 extern void machine_lock_set_debug_endpoint(const char *debug_endpoint);
 
 /**
+ * Record where this machine's network capture socket is listening.
+ *
+ * Same reason as the debugger's: a machine may be configured with any path, so
+ * nothing outside can work one out. This is the machine saying where it bound.
+ */
+extern void machine_lock_set_netcap_endpoint(const char *netcap_endpoint);
+
+/**
  * The running machine's debugger endpoint, if it recorded one.
  *
  * @return 1 if an endpoint was read, 0 otherwise
  */
 extern int machine_lock_read_debug_endpoint(const char *machine_dir,
                                             char *endpoint_out, size_t endpoint_out_size);
+
+/**
+ * The running machine's network capture endpoint, if it recorded one.
+ *
+ * @return 1 if an endpoint was read, 0 otherwise
+ */
+extern int machine_lock_read_netcap_endpoint(const char *machine_dir,
+                                             char *endpoint_out, size_t endpoint_out_size);
 
 #ifdef __cplusplus
 }

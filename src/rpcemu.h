@@ -350,6 +350,8 @@ typedef struct {
 	char vnc_password_readonly[64];	/**< Password for view-only VNC clients (empty = disabled) */
 	int hostcmd_enabled;	/**< Enable the HostCmd control socket (host drives the RISC OS CLI) */
 	char hostcmd_socket[512];	/**< Socket spec: empty = <datadir>hostcmd.sock (AF_UNIX); a path = AF_UNIX; a bare port = TCP 127.0.0.1:port */
+	int netcap_enabled;	/**< Enable the NetCapCmd control socket (host captures and reads network frames) */
+	char netcap_socket[512];	/**< Socket spec: empty = <datadir>rpcemu-netcap.sock (AF_UNIX); a path = AF_UNIX; a bare port = TCP 127.0.0.1:port */
 	int debug_enabled;	/**< Enable the DebugCmd control socket (host inspects/controls the emulated CPU) */
 	char debug_socket[512];	/**< Socket spec: empty = <datadir>rpcemu-debug.sock (AF_UNIX); a path = AF_UNIX; a bare port = TCP 127.0.0.1:port */
 	Model model;		/**< Configured machine model. Applied to machine.model on load; kept here so the configured model persists independently of the running machine.model (fixes model edits to a running machine being lost on save). */
