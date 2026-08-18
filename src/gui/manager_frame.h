@@ -83,7 +83,6 @@ private:
 	void BuildUi();
 	void BuildMenus();
 	void BuildToolBar();
-	void BuildStatusImages();
 	wxPanel *BuildPlaceholderPage();
 	void RefreshMachineList();
 	void UpdateStatusText();
@@ -203,7 +202,6 @@ private:
 	wxMenu *machine_help_menu_ = nullptr;
 
 	wxListCtrl *machine_list_ = nullptr;
-	wxImageList *status_images_ = nullptr;
 	wxSimplebook *display_book_ = nullptr;
 	int placeholder_page_ = -1;
 

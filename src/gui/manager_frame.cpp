@@ -104,31 +104,6 @@ enum {
    the far side of it and a machine reads as "Running" throughout them. */
 constexpr int kStartupTimeoutMs = 10000;
 constexpr int kPollIntervalMs = 200;
-
-/* A small filled circle for the machine list's status column - cheaper and
-   crisper at list-row size than trying to press one of the toolbar's 24x24
-   SVGs into service, and it keeps "what's running" glanceable the way
-   VirtualBox's own machine list uses a coloured state icon per row.
-   Drawn on plain white rather than masked: a masked bitmap picked up a
-   visible colour-keyed halo from anti-aliased edge pixels that were close to,
-   but not exactly, the mask colour. wxListCtrl rows are white outside
-   selection, so the square corners are not noticeable in practice. */
-wxBitmap MakeStatusDot(const wxColour &fill)
-{
-	const int size = 12;
-	wxBitmap bmp(size, size);
-	wxMemoryDC dc(bmp);
-
-	dc.SetBackground(*wxWHITE_BRUSH);
-	dc.Clear();
-	dc.SetBrush(wxBrush(fill));
-	dc.SetPen(wxPen(fill.ChangeLightness(65)));
-	dc.DrawEllipse(0, 0, size, size);
-	dc.SelectObject(wxNullBitmap);
-
-	return bmp;
-}
-
 } /* namespace */
 
 /*
@@ -217,14 +192,6 @@ ManagerFrame::~ManagerFrame()
 {
 }
 
-void ManagerFrame::BuildStatusImages()
-{
-	status_images_ = new wxImageList(12, 12, true);
-	status_images_->Add(MakeStatusDot(wxColour(46, 160, 67)));	/* running: green */
-	status_images_->Add(MakeStatusDot(wxColour(214, 158, 46)));	/* starting: amber */
-	status_images_->Add(MakeStatusDot(wxColour(160, 160, 160)));	/* stopped: grey */
-}
-
 wxPanel *ManagerFrame::BuildPlaceholderPage()
 {
 	auto *placeholder = new wxPanel(display_book_);
@@ -253,7 +220,6 @@ wxPanel *ManagerFrame::BuildPlaceholderPage()
 
 void ManagerFrame::BuildUi()
 {
-	BuildStatusImages();
 
 	auto *splitter = new wxSplitterWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
 	    wxSP_LIVE_UPDATE | wxSP_3DSASH);
@@ -274,7 +240,23 @@ void ManagerFrame::BuildUi()
 
 	machine_list_ = new wxListCtrl(left_panel, wxID_ANY, wxDefaultPosition, wxDefaultSize,
 	    wxLC_REPORT | wxLC_SINGLE_SEL | wxLC_HRULES);
-	machine_list_->AssignImageList(status_images_, wxIMAGE_LIST_SMALL);
+	/*
+	 * Bundles, not a wxImageList.
+	 *
+	 * Handed an image list, wxGTK draws these circles as clipped squares - at
+	 * 12 pixels, at 14, at 16, with a mask and without. SetSmallImages takes
+	 * bundles and works the size out for the display it is on, which is both
+	 * correct on a HiDPI screen and the only one of the three that draws a
+	 * round dot. The order matches the kStatusIcon* constants.
+	 */
+	{
+		wxVector<wxBitmapBundle> status_icons;
+
+		status_icons.push_back(StatusIconRunning());
+		status_icons.push_back(StatusIconStarting());
+		status_icons.push_back(StatusIconStopped());
+		machine_list_->SetSmallImages(status_icons);
+	}
 	machine_list_->InsertColumn(0, "Machine", wxLIST_FORMAT_LEFT, 170);
 	machine_list_->InsertColumn(1, "Status", wxLIST_FORMAT_LEFT, kStatusColumnWidth);
 	machine_list_->Bind(wxEVT_SIZE, &ManagerFrame::OnMachineListSize, this);
@@ -855,14 +837,18 @@ void ManagerFrame::RefreshMachineList()
 
 	for (const std::string &name_utf8 : ConfigPathsMachineNames()) {
 		const wxString name = wxString::FromUTF8(name_utf8);
+		/* Said in words as well as in colour. The column was left empty for a
+		   machine that is not running, so the commonest state was the one the
+		   list did not name - and a colour on its own is no use to somebody who
+		   cannot tell these two apart. */
 		int image = kStatusIconStopped;
-		wxString status;
+		wxString status = "Stopped";
 
 		const auto it = running_.find(name);
 		if (it != running_.end()) {
 			if (it->second.starting) {
 				image = kStatusIconStarting;
-				status = "Starting...";
+				status = "Starting Up";
 			} else {
 				image = kStatusIconRunning;
 				status = "Running";

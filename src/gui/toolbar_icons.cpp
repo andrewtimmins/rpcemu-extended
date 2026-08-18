@@ -102,3 +102,29 @@ wxBitmap ToolbarIconPower(const wxSize &size, bool on)
 {
 	return SvgIcon(on ? power_svg : stop_svg, size);
 }
+
+namespace {
+
+/* The reference size the whole pack is authored at; the bundle scales from it. */
+wxBitmapBundle SvgBundle(const unsigned char *svg)
+{
+	return wxBitmapBundle::FromSVG(reinterpret_cast<const char *>(svg),
+	                               wxSize(24, 24));
+}
+
+} // namespace
+
+wxBitmapBundle StatusIconRunning()
+{
+	return SvgBundle(running_svg);
+}
+
+wxBitmapBundle StatusIconStarting()
+{
+	return SvgBundle(starting_svg);
+}
+
+wxBitmapBundle StatusIconStopped()
+{
+	return SvgBundle(stopped_svg);
+}

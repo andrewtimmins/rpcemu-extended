@@ -22,6 +22,7 @@
 #define TOOLBAR_ICONS_H
 
 #include <wx/bitmap.h>
+#include <wx/bmpbndl.h>
 #include <wx/gdicmn.h>
 
 wxBitmap ToolbarIconScreenshot(const wxSize &size = wxSize(24, 24));
@@ -41,5 +42,21 @@ wxBitmap ToolbarIconInspector(const wxSize &size = wxSize(24, 24));
    appear on the same toolbar meaning something quite different, and the same
    picture twice over for two different actions is worse than no picture. */
 wxBitmap ToolbarIconPower(const wxSize &size = wxSize(24, 24), bool on = true);
+
+/*
+ * Whether a machine is running, in the Manager's list.
+ *
+ * Bundles rather than bitmaps, because the list wants them that way: handed a
+ * wxImageList, wxGTK draws a 16x16 circle as a clipped square whatever size the
+ * list is told and whether or not it has a mask, while wxListCtrl::SetSmallImages
+ * with a bundle draws the circle and picks its own size for the display it is on.
+ *
+ * From the same SVG pack as the toolbar, so they carry an alpha channel. Drawn
+ * with a DC onto a filled bitmap they brought their background with them, which
+ * showed as a pale square on a dark theme and against the selection highlight.
+ */
+wxBitmapBundle StatusIconRunning();
+wxBitmapBundle StatusIconStarting();
+wxBitmapBundle StatusIconStopped();
 
 #endif
