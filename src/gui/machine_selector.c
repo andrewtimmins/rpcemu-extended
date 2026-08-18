@@ -217,7 +217,10 @@ machine_selector_draw(MachineSelector *m, TextScreen *s)
 	for (i = m->first_visible;
 	     i < m->count && i < m->first_visible + visible_rows;
 	     i++, y += ROW_HEIGHT) {
-		char line[MACHINE_SELECTOR_NAME + 8];
+		/* Room for the widest prefix as well as the longest name: the loop
+		   below only ever formats a single digit, which the compiler cannot
+		   see, and the old margin was too thin to prove it either way. */
+		char line[MACHINE_SELECTOR_NAME + 16];
 		const int selected = (i == m->selected);
 
 		/* Numbered 1-9 then 0, so the digit shortcuts are discoverable rather

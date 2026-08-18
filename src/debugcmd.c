@@ -63,6 +63,16 @@
 #define DC_IN_BUF_SZ	512		/* one request line */
 #define DC_OUT_RING_SZ	(256u * 1024u)	/* MUST be a power of two */
 #define DC_RESP_SZ	(64u * 1024u)	/* max size of a single JSON response */
+/*
+ * How much escaped text one of those responses may carry.
+ *
+ * Short of the response size by more than any of the wrappers below, because a
+ * maximum-length string plus its {"ok":...,"text":"..."} did not fit: snprintf
+ * truncated it mid-string and the client was handed JSON with no closing quote.
+ * Losing the tail of an over-long message is the intended behaviour; losing the
+ * syntax is not.
+ */
+#define DC_RESP_SZ_TEXT	(DC_RESP_SZ - 128u)
 #define DC_MEM_MAX	4096u		/* cap bytes per mem read */
 #define DC_DIS_MAX	256u		/* cap instructions per disassemble */
 #define SYM_ESC_SZ	160u		/* JSON-escaped symbol name */
@@ -1043,7 +1053,7 @@ dc_cmd_state(char *r, char *args)
 		   resets the machine on any failure, which would otherwise leave a
 		   caller wondering why its machine had rebooted. */
 		if (state_check(path, err, sizeof(err)) != 0) {
-			char esc[DC_RESP_SZ];
+			char esc[DC_RESP_SZ_TEXT];
 
 			esc[0] = '\0';
 			dc_json_str(esc, sizeof(esc), err);
@@ -1092,7 +1102,7 @@ dc_cmd_clipboard(char *r, char *args)
 			snprintf(r, DC_RESP_SZ,
 			    "{\"ok\":true,\"type\":%d,\"text\":null}", type);
 		} else {
-			char esc[DC_RESP_SZ];
+			char esc[DC_RESP_SZ_TEXT];
 
 			esc[0] = '\0';
 			dc_json_str(esc, sizeof(esc), buf);
