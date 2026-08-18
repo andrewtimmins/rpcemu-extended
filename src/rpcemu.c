@@ -209,10 +209,7 @@ Config config = {
 	"",			/* rom_dir (empty = use 'roms' folder directly) */
 	0,			/* mem_size */
 	0,			/* vram_size */
-	NULL,			/* username */
-	NULL,			/* ipaddress */
 	NULL,			/* macaddress */
-	NULL,			/* bridgename */
 	0,			/* refresh */
 	1,			/* soundenabled */
 	1,			/* cdromenabled */
@@ -1953,7 +1950,7 @@ rpcemu_config_is_reset_required(const Config *new_config, Model new_model)
 		needs_reset = 1;
 	}
 
-	// TODO Various network, MAC/IP/bridgename changes will also cause reset
+	// TODO Various network and MAC address changes will also cause reset
 
 	return needs_reset;
 }

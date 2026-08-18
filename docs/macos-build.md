@@ -58,9 +58,10 @@ worth the effort for the unverified path); the native/CI build keeps them.
   when that slice is eventually shipped ([arm64-dynarec.md](arm64-dynarec.md)).
 - `src/socket-compat.h` — macOS has no `MSG_NOSIGNAL`; SIGPIPE is suppressed
   per-socket via `SO_NOSIGPIPE` instead.
-- `src/CMakeLists.txt` — macOS uses `network-null.c` + the portable ISO CD-ROM
-  backend (like Windows); the Linux `/dev/net/tun` bridge and CD-ROM ioctl
-  backends are not built. NAT networking (SLiRP) still works.
+- `src/CMakeLists.txt` — macOS uses the portable ISO CD-ROM backend (like
+  Windows); the Linux CD-ROM ioctl backend is not built. Networking is NAT on
+  every platform and needs nothing from the host, so there is no platform
+  difference there any more.
 
 ## Limitations
 

@@ -564,7 +564,7 @@ Each machine is defined by a `.cfg` file in `configs/` and a data directory unde
 | **VRAM**         | None or 2 MB                                                                                                                                              |
 | **ROM**          | Subdirectory under `roms/` containing ROM components                                                                                                      |
 | **Refresh rate** | 20–100 Hz                                                                                                                                                 |
-| **Network**      | Off, NAT, Ethernet Bridging, IP Tunnelling                                                                                                                |
+| **Network**      | Off, or NAT, which needs no configuration of the host                                                                                                     |
 | **Hard discs**   | HardDisc 4 and 5 — create 256 MB, 512 MB, 1 GB, or 2 GB images                                                                                            |
 | **VNC server**   | On/off, port (default 5900) and password — see [Settings > VNC Server](#headless-mode). Give each machine its own port if you run more than one at a time |
 

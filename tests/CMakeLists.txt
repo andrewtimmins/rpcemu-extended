@@ -589,7 +589,8 @@ rpcemu_add_test(test_relay_reasm)
 # Links network-nat.c against a stubbed emulator and a plain array standing in
 # for guest RAM, so no SLiRP is needed. See src/network-nat.c.
 add_executable(test_net_tx test_net_tx.c
-               ${CMAKE_CURRENT_SOURCE_DIR}/../src/network-nat.c)
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/network-nat.c
+)
 target_include_directories(test_net_tx PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/slirp

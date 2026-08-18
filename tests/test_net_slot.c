@@ -174,7 +174,7 @@ main(void)
 
 	printf("\nthe addresses a slot produces stay inside their ranges\n");
 	/* The derivation lives at its two call sites (network-nat.c for the NAT's
-	   DHCP address and MAC, network-tun.c for the bridged MAC), and both are
+	   DHCP address and MAC), and both are
 	   only safe because NET_SLOT_MAX is small. Raising it without looking would
 	   take the guest address out of 10.10.10.0/24 or carry the MAC's last byte
 	   into the next one, so the bound is checked here where it is defined.

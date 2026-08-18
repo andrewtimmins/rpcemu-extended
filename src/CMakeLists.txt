@@ -110,15 +110,12 @@ else()
     list(APPEND RPCEMU_CORE_SOURCES arm.c codegen_null.c)
 endif()
 
-# Host-platform backends. Ethernet bridging / IP tunnelling (network-tun.c) go
-# through /dev/net/tun and the Linux CD-ROM ioctl backend (cdrom-ioctl.c) are
-# Linux-only. On Windows and macOS use the null network platform layer (NAT
-# still works via SLiRP) and the portable ISO-file CD-ROM backend (cdrom-iso.c,
-# listed above).
-if(WIN32 OR APPLE)
-    list(APPEND RPCEMU_CORE_SOURCES network-null.c)
-else()
-    list(APPEND RPCEMU_CORE_SOURCES network-tun.c cdrom-ioctl.c)
+# Host-platform backends. Networking is NAT on every platform and needs nothing
+# from the host, so there is no platform layer for it any more. The CD-ROM ioctl
+# backend (cdrom-ioctl.c) is still Linux-only; elsewhere the portable ISO-file
+# backend (cdrom-iso.c, listed above) is the only one.
+if(NOT WIN32 AND NOT APPLE)
+    list(APPEND RPCEMU_CORE_SOURCES cdrom-ioctl.c)
 endif()
 
 add_library(rpcemu_core STATIC ${RPCEMU_CORE_SOURCES})

@@ -20,7 +20,7 @@
  */
 
 /*
- network.c - networking support shared with network-tun.c
+ network.c - the parts of networking that do not depend on the backend
  */
 #include <assert.h>
 #include <ctype.h>
@@ -254,71 +254,16 @@ strcpyfromhost(uint32_t dest, const char *source)
  * know if they have altered enough to require an emulated machine restart.
  *
  * @param networktype New network type value
- * @param bridgename  String of new bridgename value (zero terminated), caller owns (copy taken)
- * @param ipaddress   String of new ipaddress value (zero terminated), caller owns (copy taken)
  * @return Non-zero if these config changes require an emulator restart
  */
 int
-network_config_changed(NetworkType network_type, const char *bridgename,
-                       const char *ipaddress)
+network_config_changed(NetworkType network_type)
 {
 	int restart_required = 0;
 
 	if (network_type != config.network_type) {
 		config.network_type = network_type;
 		restart_required = 1;
-	}
-
-	if (bridgename == NULL && config.bridgename != NULL) {
-		/* Turned off */
-		free(config.bridgename);
-		config.bridgename = NULL;
-		if (config.network_type == NetworkType_EthernetBridging) {
-			restart_required = 1;
-		}
-	} else if (bridgename != NULL && config.bridgename == NULL) {
-		/* Turned on */
-		config.bridgename = strdup(bridgename);
-		if (config.network_type == NetworkType_EthernetBridging) {
-			restart_required = 1;
-		}
-	} else {
-		if (bridgename != NULL && config.bridgename != NULL &&
-		    strcmp(bridgename, config.bridgename) != 0)
-		{
-			/* Bridgename changed */
-			free(config.bridgename);
-			config.bridgename = strdup(bridgename);
-			if (config.network_type == NetworkType_EthernetBridging) {
-				restart_required = 1;
-			}
-		}
-	}
-
-	if (ipaddress == NULL && config.ipaddress != NULL) {
-		/* Turned off */
-		free(config.ipaddress);
-		config.ipaddress = NULL;
-		if (config.network_type == NetworkType_IPTunnelling) {
-			restart_required = 1;
-		}
-	} else if (ipaddress != NULL && config.ipaddress == NULL) {
-		/* Turned on */
-		config.ipaddress = strdup(ipaddress);
-		if (config.network_type == NetworkType_IPTunnelling) {
-			restart_required = 1;
-		}
-	} else {
-		if (ipaddress != NULL && config.ipaddress != NULL &&
-		    strcmp(ipaddress, config.ipaddress) != 0)
-		{
-			/* ipaddress changed */
-			free(config.ipaddress);
-			config.ipaddress = strdup(ipaddress);
-			if (config.network_type == NetworkType_IPTunnelling) {
-				restart_required = 1;
-			}
-		}
 	}
 
 	// Save the settings to the rpc.cfg file
@@ -332,9 +277,7 @@ network_init(void)
 {
 	int success;
 
-	assert(config.network_type == NetworkType_NAT ||
-	       config.network_type == NetworkType_EthernetBridging ||
-	       config.network_type == NetworkType_IPTunnelling);
+	assert(config.network_type == NetworkType_NAT);
 
 	/* Build podule header */
 	if (romdata == NULL) { // If not previously initialised
@@ -342,13 +285,7 @@ network_init(void)
 	}
 
 	// Initialise networking
-	if (config.network_type == NetworkType_NAT) {
-		// Call NAT initialisation code
-		success = network_nat_init();
-	} else {
-		// Call platform's initialisation code
-		success = network_plt_init();
-	}
+	success = network_nat_init();
 
 	if (!success) {
 		error("Networking unavailable");
@@ -371,13 +308,7 @@ network_init(void)
 void
 network_reset(void)
 {
-	if (config.network_type == NetworkType_NAT) {
-		// Call NAT reset code
-		network_nat_reset();
-	} else {
-		// Call platform's reset code
-		network_plt_reset();
-	}
+	network_nat_reset();
 }
 
 
@@ -401,25 +332,13 @@ network_swi(uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3, uint32_t r4, uin
 #endif
 	switch (r0) {
 	case 0: // Transmit
-		if (config.network_type == NetworkType_NAT) {
-			*retr0 = network_nat_tx(r1, r2, r3, r4, r5);
-		} else {
-			*retr0 = network_plt_tx(r1, r2, r3, r4, r5);
-		}
+		*retr0 = network_nat_tx(r1, r2, r3, r4, r5);
 		break;
 	case 1: // Receive
-		if (config.network_type == NetworkType_NAT) {
-			*retr0 = network_nat_rx(r1, r2, r3, retr1);
-		} else {
-			*retr0 = network_plt_rx(r1, r2, r3, retr1);
-		}
+		*retr0 = network_nat_rx(r1, r2, r3, retr1);
 		break;
 	case 2:
-		if (config.network_type == NetworkType_NAT) {
-			network_nat_setirqstatus(r2);
-		} else {
-			network_plt_setirqstatus(r2);
-		}
+		network_nat_setirqstatus(r2);
 		*retr0 = 0;
 		break;
 	case 3:
@@ -499,6 +418,15 @@ network_macaddress_parse(const char *macaddress, uint8_t hwaddr[6])
  * address the guest driver registered, which the emulator otherwise loses on
  * a fresh-launch resume, leaving the resumed guest unable to receive packets.
  */
+/*
+ * ★ The chunk is one word of type and one of state, whatever the type.
+ *
+ * Every backend that ever existed wrote exactly one word after the type - the
+ * interrupt status - so the shape does not change with bridging and tunnelling
+ * gone, and a snapshot taken with either of them still loads. The word has to
+ * be read for those types even though there is now nowhere to put it, or
+ * everything after this chunk is misaligned.
+ */
 void
 network_savestate(FILE *f)
 {
@@ -506,18 +434,18 @@ network_savestate(FILE *f)
 	if (config.network_type == NetworkType_NAT) {
 		network_nat_savestate(f);
 	} else {
-		network_plt_savestate(f);
+		savestate_write_u32(f, 0);
 	}
 }
 
 void
 network_loadstate(FILE *f)
 {
-	uint32_t type = savestate_read_u32(f);
+	const uint32_t type = savestate_read_u32(f);
 
 	if (type == (uint32_t) NetworkType_NAT) {
 		network_nat_loadstate(f);
 	} else {
-		network_plt_loadstate(f);
+		(void) savestate_read_u32(f);
 	}
 }

@@ -98,8 +98,14 @@ extern "C" {
 typedef enum {
 	NetworkType_Off,
 	NetworkType_NAT,
-	NetworkType_EthernetBridging,
-	NetworkType_IPTunnelling,
+	/*
+	 * Ethernet bridging and IP tunnelling were 2 and 3. They are gone: only
+	 * Linux ever implemented them, the other platforms silently did nothing
+	 * while the machine editor still offered the choice, and NAT with port
+	 * forwarding covers what they were for. The numbers are not reused, so a
+	 * snapshot or a configuration written by an older build still reads
+	 * unambiguously.
+	 */
 } NetworkType;
 
 #define DEBUGGER_MAX_BREAKPOINTS 64
@@ -305,10 +311,7 @@ typedef struct {
 	char rom_dir[256];	/**< ROM directory name within roms/ folder */
 	unsigned mem_size;	/**< Amount of RAM in megabytes */
 	unsigned vram_size;	/**< Amount of VRAM in megabytes */
-	char *username;
-	char *ipaddress;
 	char *macaddress;
-	char *bridgename;
 	int refresh;		/**< Video refresh rate */
 	int soundenabled;
 	int cdromenabled;
@@ -637,8 +640,7 @@ extern void config_deep_copy(Config *dest, const Config *src);
 extern void config_sync_machine_edit_to_copy(Config *dest, const Config *src);
 extern void config_apply_machine_edit(Config *cfg, const char *name, const char *rom_dir,
                                       unsigned mem_size, unsigned vram_size, int refresh,
-                                      NetworkType network_type, const char *bridgename,
-                                      const char *ipaddress);
+                                      NetworkType network_type);
 extern void config_load(Config *config);
 extern void config_load_from_path(Config *config, const char *path);
 /* Has a machine's configuration been loaded yet? The ways in to a machine are its

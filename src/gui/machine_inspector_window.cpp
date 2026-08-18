@@ -74,8 +74,6 @@ wxString NetworkTypeToString(NetworkType type)
 	switch (type) {
 	case NetworkType_Off: return "Off";
 	case NetworkType_NAT: return "NAT";
-	case NetworkType_EthernetBridging: return "Bridge";
-	case NetworkType_IPTunnelling: return "IP Tunnel";
 	default: return "Unknown";
 	}
 }

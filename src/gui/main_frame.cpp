@@ -131,15 +131,9 @@ bool SameString(const char *a, const char *b)
 /* Release the strings config_deep_copy() duplicated into a scratch Config. */
 void FreeConfigCopy(Config *cfg)
 {
-	free(cfg->username);
-	free(cfg->ipaddress);
 	free(cfg->macaddress);
-	free(cfg->bridgename);
 	free(cfg->network_capture);
-	cfg->username = nullptr;
-	cfg->ipaddress = nullptr;
 	cfg->macaddress = nullptr;
-	cfg->bridgename = nullptr;
 	cfg->network_capture = nullptr;
 }
 
@@ -191,10 +185,7 @@ bool MachineNeedsRestart(const Config *before, const Config *after)
 
 	/* Compared by value: the memcmp below only sees the pointers, which always
 	   differ between two copies. */
-	bool changed = !SameString(a.username, b.username) ||
-	               !SameString(a.ipaddress, b.ipaddress) ||
-	               !SameString(a.macaddress, b.macaddress) ||
-	               !SameString(a.bridgename, b.bridgename) ||
+	bool changed = !SameString(a.macaddress, b.macaddress) ||
 	               !SameString(a.network_capture, b.network_capture);
 
 	if (!changed) {
@@ -202,10 +193,7 @@ bool MachineNeedsRestart(const Config *before, const Config *after)
 		   keeping hold of them so they can still be freed. */
 		Config a_cmp = a;
 		Config b_cmp = b;
-		a_cmp.username = b_cmp.username = nullptr;
-		a_cmp.ipaddress = b_cmp.ipaddress = nullptr;
 		a_cmp.macaddress = b_cmp.macaddress = nullptr;
-		a_cmp.bridgename = b_cmp.bridgename = nullptr;
 		a_cmp.network_capture = b_cmp.network_capture = nullptr;
 		changed = memcmp(&a_cmp, &b_cmp, sizeof(Config)) != 0;
 	}

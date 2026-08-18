@@ -60,9 +60,9 @@ connected. Everything would arrive twice. A machine that names a server uses the
 server and nothing else; `network_nat_init()` enforces it, and the log says which
 wire a machine is on.
 
-**Its own way out to the internet is unaffected.** NAT, bridging or tunnelling
-carry on as before; this decides which other emulators the machine can see, not
-how it reaches the outside world.
+**Its own way out to the internet is unaffected.** NAT carries on as before;
+this decides which other emulators the machine can see, not how it reaches the
+outside world.
 
 ## Addresses are yours to arrange
 

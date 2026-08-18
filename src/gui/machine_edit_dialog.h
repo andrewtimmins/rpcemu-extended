@@ -187,8 +187,6 @@ private:
 	wxSlider *refresh_slider_ = nullptr;
 	wxStaticText *refresh_label_ = nullptr;
 	wxComboBox *network_combo_ = nullptr;
-	wxTextCtrl *bridge_edit_ = nullptr;
-	wxStaticText *bridge_label_ = nullptr;
 	/* Pyromaniac Networking: the JSON tun/tap server this machine joins. */
 	wxCheckBox *json_net_check_ = nullptr;
 	wxStaticText *json_net_host_label_ = nullptr;
@@ -196,8 +194,6 @@ private:
 	wxStaticText *json_net_port_label_ = nullptr;
 	wxSpinCtrl *json_net_port_edit_ = nullptr;
 
-	wxTextCtrl *tunnel_edit_ = nullptr;
-	wxStaticText *tunnel_label_ = nullptr;
 	wxStaticText *mem_note_ = nullptr;
 	wxStaticText *compat_label_ = nullptr;
 	wxStaticText *hd_reset_note_ = nullptr;

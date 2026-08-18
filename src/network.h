@@ -41,8 +41,6 @@ void network_init(void);
 void network_reset(void);
 void network_savestate(FILE *f);
 void network_loadstate(FILE *f);
-void network_plt_savestate(FILE *f);
-void network_plt_loadstate(FILE *f);
 
 /* Functions shared between each platform, in network.c */
 void network_irq_raise(void);
@@ -52,16 +50,10 @@ void memcpytohost(void *dest, uint32_t src, uint32_t len);
 void memcpyfromhost(uint32_t dest, const void *source, uint32_t len);
 void strcpyfromhost(uint32_t dest, const char *source);
 
-int network_config_changed(NetworkType networktype, const char *bridgename,
-                           const char *ipaddress);
+int network_config_changed(NetworkType networktype);
 int network_macaddress_parse(const char *macaddress, uint8_t hwaddr[6]);
 
 /* Functions provided by each host platform's network code */
-void network_plt_reset(void);
-int network_plt_init(void);
-uint32_t network_plt_tx(uint32_t errbuf, uint32_t mbufs, uint32_t dest, uint32_t src, uint32_t frametype);
-uint32_t network_plt_rx(uint32_t errbuf, uint32_t mbuf, uint32_t rxhdr, uint32_t *dataavail);
-void network_plt_setirqstatus(uint32_t address);
 
 /* Structures and variables shared between each host platform's network code */
 extern podule *network_poduleinfo;

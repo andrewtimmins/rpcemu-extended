@@ -679,30 +679,19 @@ wxWindow *MachineEditDialog::BuildNetworkPage(wxWindow *parent)
 	auto *page = new wxPanel(parent);
 
 	network_combo_ = new wxComboBox(page, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
-	bridge_label_ = new wxStaticText(page, wxID_ANY, "Bridge Name:");
-	bridge_edit_ = new wxTextCtrl(page, wxID_ANY, "rpcemu");
-	tunnel_label_ = new wxStaticText(page, wxID_ANY, "IP Address:");
-	tunnel_edit_ = new wxTextCtrl(page, wxID_ANY, "172.31.0.1");
 
 	network_combo_->Append("Off");
 	network_combo_->Append("NAT");
-	network_combo_->Append("Ethernet Bridging");
-	network_combo_->Append("IP Tunnelling");
 
 	auto *form = new wxFlexGridSizer(2, 8, 8);
 	form->AddGrowableCol(1, 1);
 	form->Add(new wxStaticText(page, wxID_ANY, "Network:"), 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(network_combo_, 1, wxEXPAND);
-	form->Add(bridge_label_, 0, wxALIGN_CENTER_VERTICAL);
-	form->Add(bridge_edit_, 1, wxEXPAND);
-	form->Add(tunnel_label_, 0, wxALIGN_CENTER_VERTICAL);
-	form->Add(tunnel_edit_, 1, wxEXPAND);
 
 	auto *note = new wxStaticText(page, wxID_ANY,
-	    "NAT needs no host configuration and suits most uses; the guest sits "
-	    "behind it on a private address. Bridging and tunnelling put the guest "
-	    "on the real network and need the host set up to match. Changes take "
-	    "effect after reset.");
+	    "NAT needs no configuration of this computer and suits every use: the "
+	    "guest sits behind it on a private address, and ports can be forwarded "
+	    "to it. Changes take effect after reset.");
 	note->Wrap(460);
 	note->SetForegroundColour(kHdColourMuted);
 	note->SetFont(note->GetFont().Smaller());
@@ -1691,20 +1680,13 @@ void MachineEditDialog::LoadSettings()
 
 	wxString network_type;
 	settings.Read("network_type", &network_type, "off");
+	/* Anything that is not "off" shows as NAT, which is what a machine
+	   configured for bridging or tunnelling is now given. */
 	const int net_index = network_combo_->FindString(
-		network_type == "off" ? "Off" :
-		network_type == "nat" ? "NAT" :
-		network_type == "ethernetbridging" ? "Ethernet Bridging" : "IP Tunnelling");
+		network_type == "off" ? "Off" : "NAT");
 	if (net_index != wxNOT_FOUND) {
 		network_combo_->SetSelection(net_index);
 	}
-
-	wxString bridge;
-	settings.Read("bridgename", &bridge, "rpcemu");
-	bridge_edit_->SetValue(bridge);
-	wxString ip;
-	settings.Read("ipaddress", &ip, "172.31.0.1");
-	tunnel_edit_->SetValue(ip);
 
 	{
 		long json_on = 0, json_port = 33445;
@@ -1800,10 +1782,6 @@ void MachineEditDialog::SaveSettings()
 	const wxString network_label = network_combo_->GetStringSelection();
 	if (network_label == "NAT") {
 		network_type = "nat";
-	} else if (network_label == "Ethernet Bridging") {
-		network_type = "ethernetbridging";
-	} else if (network_label == "IP Tunnelling") {
-		network_type = "iptunnelling";
 	}
 
 	/*
@@ -1886,8 +1864,6 @@ void MachineEditDialog::SaveSettings()
 
 	settings.Write("refresh_rate", refresh_slider_->GetValue());
 	settings.Write("network_type", network_type);
-	settings.Write("bridgename", bridge_edit_->GetValue());
-	settings.Write("ipaddress", tunnel_edit_->GetValue());
 	settings.Write("json_net_enabled",
 	    static_cast<long>(json_net_check_->GetValue() ? 1 : 0));
 	settings.Write("json_net_host", json_net_host_edit_->GetValue());
@@ -1903,33 +1879,19 @@ void MachineEditDialog::SaveSettings()
 	renamed_ = allow_rename_ && (new_name_ != original_name_);
 	ApplySavedSettingsToGlobalConfig(rom_dir, mem_values[mem_sel], vram_mb,
 	                                 refresh_slider_->GetValue(),
-	                                 network_type == "nat" ? NetworkType_NAT :
-	                                 network_type == "ethernetbridging" ? NetworkType_EthernetBridging :
-	                                 network_type == "iptunnelling" ? NetworkType_IPTunnelling :
-	                                 NetworkType_Off);
+	                                 network_type == "nat" ? NetworkType_NAT
+	                                                       : NetworkType_Off);
 }
 
 void MachineEditDialog::ApplySavedSettingsToGlobalConfig(const wxString &rom_dir, int mem_size,
                                                          int vram_internal, int refresh,
                                                          NetworkType network_type)
 {
-	/* GetValue() returns a temporary, and the buffer utf8_str() gives back
-	   points into that string rather than owning a copy of it. Taking the
-	   buffer straight from the temporary leaves it dangling at the end of the
-	   statement, so the strings are held in named locals that outlive the use
-	   below. The other two are already named, which is why only these two came
-	   out as rubbish. */
-	const wxString bridge_value = bridge_edit_->GetValue();
-	const wxString ip_value = tunnel_edit_->GetValue();
-
 	const wxScopedCharBuffer name_utf8 = new_name_.utf8_str();
 	const wxScopedCharBuffer rom_utf8 = rom_dir.utf8_str();
-	const wxScopedCharBuffer bridge_utf8 = bridge_value.utf8_str();
-	const wxScopedCharBuffer ip_utf8 = ip_value.utf8_str();
 	config_apply_machine_edit(&config, name_utf8.data(), rom_utf8.data(),
 	                          static_cast<unsigned>(mem_size),
-	                          static_cast<unsigned>(vram_internal), refresh, network_type,
-	                          bridge_utf8.data(), ip_utf8.data());
+	                          static_cast<unsigned>(vram_internal), refresh, network_type);
 	/* Whether the graphics card is fitted is read when the machine resets, so
 	   applying it here means a reset is enough - no need to restart. */
 	config.gfxcard_enabled = gfxcard_check_->GetValue() ? 1 : 0;
@@ -2202,14 +2164,6 @@ void MachineEditDialog::OpenHardDiscFolder(int drive)
 
 void MachineEditDialog::OnNetworkChanged(wxCommandEvent &)
 {
-	const wxString label = network_combo_->GetStringSelection();
-	const bool bridge = (label == "Ethernet Bridging");
-	bridge_label_->Enable(bridge);
-	bridge_edit_->Enable(bridge);
-	const bool tunnel = (label == "IP Tunnelling");
-	tunnel_label_->Enable(tunnel);
-	tunnel_edit_->Enable(tunnel);
-
 	/* Enabling/disabling networking changes whether slot 1 is the (locked)
 	   network card or a free user slot. */
 	RebuildPoduleChoices();

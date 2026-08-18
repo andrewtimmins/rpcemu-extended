@@ -400,15 +400,9 @@ static wxString FormatUsbPort(int kind, const char *host_id)
 
 static void config_free_heap_strings(Config *cfg)
 {
-	free(cfg->username);
-	free(cfg->ipaddress);
 	free(cfg->macaddress);
-	free(cfg->bridgename);
 	free(cfg->network_capture);
-	cfg->username = nullptr;
-	cfg->ipaddress = nullptr;
 	cfg->macaddress = nullptr;
-	cfg->bridgename = nullptr;
 	cfg->network_capture = nullptr;
 }
 
@@ -416,10 +410,7 @@ extern "C" void config_deep_copy(Config *dest, const Config *src)
 {
 	config_free_heap_strings(dest);
 	memcpy(dest, src, sizeof(Config));
-	dest->username = src->username ? strdup(src->username) : nullptr;
-	dest->ipaddress = src->ipaddress ? strdup(src->ipaddress) : nullptr;
 	dest->macaddress = src->macaddress ? strdup(src->macaddress) : nullptr;
-	dest->bridgename = src->bridgename ? strdup(src->bridgename) : nullptr;
 	dest->network_capture = src->network_capture ? strdup(src->network_capture) : nullptr;
 }
 
@@ -445,23 +436,11 @@ extern "C" void config_sync_machine_edit_to_copy(Config *dest, const Config *src
 	dest->json_net_port = src->json_net_port;
 	strncpy(dest->json_net_host, src->json_net_host, sizeof(dest->json_net_host) - 1);
 	dest->json_net_host[sizeof(dest->json_net_host) - 1] = '\0';
-
-	if (src->bridgename != nullptr) {
-		config_replace_strdup(&dest->bridgename, wxString::FromUTF8(src->bridgename));
-	} else {
-		config_replace_strdup(&dest->bridgename, wxEmptyString);
-	}
-	if (src->ipaddress != nullptr) {
-		config_replace_strdup(&dest->ipaddress, wxString::FromUTF8(src->ipaddress));
-	} else {
-		config_replace_strdup(&dest->ipaddress, wxEmptyString);
-	}
 }
 
 extern "C" void config_apply_machine_edit(Config *cfg, const char *name, const char *rom_dir,
                                           unsigned mem_size, unsigned vram_size, int refresh,
-                                          NetworkType network_type, const char *bridgename,
-                                          const char *ipaddress)
+                                          NetworkType network_type)
 {
 	if (name != nullptr && name[0] != '\0') {
 		strncpy(cfg->name, name, sizeof(cfg->name) - 1);
@@ -477,17 +456,6 @@ extern "C" void config_apply_machine_edit(Config *cfg, const char *name, const c
 	cfg->vram_size = vram_size;
 	cfg->refresh = refresh;
 	cfg->network_type = network_type;
-
-	if (bridgename != nullptr) {
-		config_replace_strdup(&cfg->bridgename, wxString::FromUTF8(bridgename));
-	} else {
-		config_replace_strdup(&cfg->bridgename, wxEmptyString);
-	}
-	if (ipaddress != nullptr) {
-		config_replace_strdup(&cfg->ipaddress, wxString::FromUTF8(ipaddress));
-	} else {
-		config_replace_strdup(&cfg->ipaddress, wxEmptyString);
-	}
 }
 
 /* Set once a machine's configuration has been read, so whatever starts the VNC
@@ -658,23 +626,24 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 		cfg->network_type = NetworkType_Off;
 	} else if (sText.CmpNoCase("nat") == 0) {
 		cfg->network_type = NetworkType_NAT;
-	} else if (sText.CmpNoCase("iptunnelling") == 0) {
-		cfg->network_type = NetworkType_IPTunnelling;
-	} else if (sText.CmpNoCase("ethernetbridging") == 0) {
-		cfg->network_type = NetworkType_EthernetBridging;
+	} else if (sText.CmpNoCase("iptunnelling") == 0 ||
+	           sText.CmpNoCase("ethernetbridging") == 0) {
+		/*
+		 * Bridging and tunnelling are gone. A machine set to either wanted
+		 * networking, so it gets NAT rather than nothing: NAT needs no host
+		 * configuration and, with port forwarding, covers what they were
+		 * chosen for. Said in the log because the machine's address changes.
+		 */
+		rpclog("Networking: '%s' is no longer supported, using NAT instead\n",
+		       sText.utf8_str().data());
+		cfg->network_type = NetworkType_NAT;
 	} else {
 		rpclog("Unknown network_type '%s', defaulting to off\n", sText.utf8_str().data());
 		cfg->network_type = NetworkType_Off;
 	}
 
-	settings.Read("username", &sText, wxEmptyString);
-	config_replace_strdup(&cfg->username, sText);
-	settings.Read("ipaddress", &sText, wxEmptyString);
-	config_replace_strdup(&cfg->ipaddress, sText);
 	settings.Read("macaddress", &sText, wxEmptyString);
 	config_replace_strdup(&cfg->macaddress, sText);
-	settings.Read("bridgename", &sText, wxEmptyString);
-	config_replace_strdup(&cfg->bridgename, sText);
 
 	settings.Read("cpu_idle", &value, 0L);
 	cfg->cpu_idle = static_cast<int>(value);
@@ -886,8 +855,6 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	switch (cfg->network_type) {
 	case NetworkType_Off:              snprintf(s, sizeof(s), "off"); break;
 	case NetworkType_NAT:              snprintf(s, sizeof(s), "nat"); break;
-	case NetworkType_EthernetBridging: snprintf(s, sizeof(s), "ethernetbridging"); break;
-	case NetworkType_IPTunnelling:     snprintf(s, sizeof(s), "iptunnelling"); break;
 	default:                           snprintf(s, sizeof(s), "off"); break;
 	}
 	settings.Write("network_type", wxString(s, wxConvUTF8));
@@ -895,10 +862,7 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	settings.Write("json_net_host", wxString(cfg->json_net_host, wxConvUTF8));
 	settings.Write("json_net_port", static_cast<long>(cfg->json_net_port));
 
-	settings.Write("username", cfg->username ? wxString(cfg->username, wxConvUTF8) : wxString());
-	settings.Write("ipaddress", cfg->ipaddress ? wxString(cfg->ipaddress, wxConvUTF8) : wxString());
 	settings.Write("macaddress", cfg->macaddress ? wxString(cfg->macaddress, wxConvUTF8) : wxString());
-	settings.Write("bridgename", cfg->bridgename ? wxString(cfg->bridgename, wxConvUTF8) : wxString());
 	settings.Write("cpu_idle", static_cast<long>(cfg->cpu_idle));
 	settings.Write("show_fullscreen_message", static_cast<long>(cfg->show_fullscreen_message));
 	settings.Write("integer_scaling", static_cast<long>(cfg->integer_scaling));

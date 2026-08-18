@@ -88,8 +88,8 @@ runtime DLLs to *run*; `build-windows.sh` bundles that DLL closure beside the
   DebugCmd control sockets (Windows lacks the AF_UNIX semantics used on Linux, so
   those default to ports 15590/15591). Winsock is initialised with
   `WSAStartup`/`WSACleanup`, and adapter enumeration for the ShareFS broadcast
-  relay uses `GetAdaptersInfo`. Bridged TUN/TAP networking is **not** available on
-  Windows (see below).
+  relay uses `GetAdaptersInfo`. Networking is NAT, the same as on every other
+  platform.
 - **Recompiler.** The dynarec was ported to the Windows x64 ABI: JIT→C helper
   calls are shuffled to the RCX/RDX/R8 argument registers with 32 bytes of shadow
   space, and the block prologue/epilogue preserve the callee-saved RSI/RDI. This
@@ -109,8 +109,6 @@ runtime DLLs to *run*; `build-windows.sh` bundles that DLL closure beside the
 
 ## Not supported on Windows
 
-- **Bridged (TUN/TAP) networking.** This needs a signed TAP kernel driver and
-  overlapped I/O; NAT covers the vast majority of uses. Use NAT mode.
 - **MSVC.** MinGW-w64 only — the codebase relies on GCC features (`__attribute__`,
   the codegen macros, `-std=gnu11`).
 - **Real-drive CD-ROM.** ISO-file images only.

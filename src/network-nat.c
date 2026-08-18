@@ -81,7 +81,6 @@ static struct {
 	   module called from the driver's own receive path. */
 	uint8_t		tx_buffer[PKT_MAX_SIZE];
 
-	FILE		*capture;	///< Handle for debug capture file, or NULL if not in use
 
 	struct in_addr	forward_addr;	///< Which IP address to apply NAT forward rules to
 
@@ -89,6 +88,7 @@ static struct {
 	queued_packet_t pkt_queue[PKT_QUEUE_SIZE];
 	int             pkt_queue_head;  /* Next slot to write */
 	int             pkt_queue_tail;  /* Next slot to read */
+	FILE		*capture;	///< Handle for debug capture file, or NULL if not in use
 	int             pkt_queue_count; /* Number of packets in queue */
 } nat;
 
