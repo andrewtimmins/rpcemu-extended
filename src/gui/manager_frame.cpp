@@ -695,6 +695,8 @@ void ManagerFrame::BuildMachineMenus(wxMenuBar *menu_bar)
 	machine_settings_menu_->Append(ID_MENU_MACHINE, "Machine Settings...");
 	nat_list_item_ = machine_settings_menu_->Append(ID_MENU_NAT_LIST,
 	    "NAT Port Forwarding...");
+	netcap_item_ = machine_settings_menu_->Append(ID_MENU_NETCAP,
+	    "Network Capture...");
 	machine_settings_menu_->Append(ID_MENU_VNC, "VNC Server...");
 	machine_settings_menu_->Append(ID_MENU_SERIAL, "Serial Port...");
 	machine_settings_menu_->Append(ID_MENU_PARALLEL, "Parallel Port...");
@@ -726,6 +728,7 @@ void ManagerFrame::BuildMachineMenus(wxMenuBar *menu_bar)
 	    wxString::FromUTF8("Step \xC3\x97" "5"));
 	machine_debug_menu_->AppendSeparator();
 	machine_debug_menu_->Append(ID_MENU_MACHINE_INSPECTOR, "Machine Inspector...");
+	machine_debug_menu_->Append(ID_MENU_NETWORK_ANALYSER, "Network Analyser...");
 
 	machine_help_menu_ = new wxMenu();
 	machine_help_menu_->Append(ID_MENU_ONLINE_MANUAL, "Online Manual");
@@ -1035,6 +1038,12 @@ void ManagerFrame::SetNatMenuState(bool is_nat)
 {
 	if (nat_list_item_ != nullptr) {
 		nat_list_item_->Enable(is_nat);
+	}
+	/* Capture has nothing to capture without networking, and follows the same
+	   rule as the item above it rather than offering something that would do
+	   nothing. */
+	if (netcap_item_ != nullptr) {
+		netcap_item_->Enable(is_nat);
 	}
 }
 

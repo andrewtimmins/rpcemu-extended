@@ -174,6 +174,9 @@ void MainFrame::BuildMenus()
 	settings_menu->Append(ID_MENU_MACHINE, "&Machine...");
 #ifdef RPCEMU_NETWORKING
 	nat_list_item_ = settings_menu->Append(ID_MENU_NAT_LIST, "NAT Port Forwarding Rules...");
+	netcap_item_ = settings_menu->Append(ID_MENU_NETCAP, "Network &Capture...");
+	netcap_item_->SetHelp("Write every frame the machine sends or receives to a "
+	    "pcap file, for Wireshark or tcpdump.");
 #endif
 #ifdef RPCEMU_VNC
 	settings_menu->Append(ID_MENU_VNC, "&VNC Server...");
@@ -231,6 +234,8 @@ void MainFrame::BuildMenus()
 	debug_step5_item_ = debug_menu->Append(ID_MENU_DEBUG_STEP5, wxString::FromUTF8("Step \xC3\x97" "5"));
 	debug_menu->AppendSeparator();
 	debug_menu->Append(ID_MENU_MACHINE_INSPECTOR, "Machine Inspector...");
+	debug_menu->Append(ID_MENU_NETWORK_ANALYSER, "Network &Analyser...")
+	    ->SetHelp("The frames on the machine's network as they happen, decoded.");
 
 	auto *help_menu = new wxMenu;
 	help_menu->Append(ID_MENU_ONLINE_MANUAL, "Online Manual...");
@@ -320,6 +325,7 @@ void MainFrame::BuildMenus()
 	BindMenuItem(settings_menu, ID_MENU_PARALLEL, this, &MainFrame::OnParallel);
 #ifdef RPCEMU_NETWORKING
 	BindMenuItem(settings_menu, ID_MENU_NAT_LIST, this, &MainFrame::OnNatList);
+	BindMenuItem(settings_menu, ID_MENU_NETCAP, this, &MainFrame::OnNetcap);
 #endif
 
 	BindMenuItem(debug_menu, ID_MENU_DEBUG_RUN, this, &MainFrame::OnDebugRun);
@@ -327,6 +333,7 @@ void MainFrame::BuildMenus()
 	BindMenuItem(debug_menu, ID_MENU_DEBUG_STEP, this, &MainFrame::OnDebugStep);
 	BindMenuItem(debug_menu, ID_MENU_DEBUG_STEP5, this, &MainFrame::OnDebugStep5);
 	BindMenuItem(debug_menu, ID_MENU_MACHINE_INSPECTOR, this, &MainFrame::OnMachineInspector);
+	BindMenuItem(debug_menu, ID_MENU_NETWORK_ANALYSER, this, &MainFrame::OnNetworkAnalyser);
 
 	BindMenuItem(help_menu, ID_MENU_ONLINE_MANUAL, this, &MainFrame::OnOnlineManual);
 	BindMenuItem(help_menu, ID_MENU_VISIT_WEBSITE, this, &MainFrame::OnVisitWebsite);
@@ -490,6 +497,9 @@ void MainFrame::SyncSettingsMenuChecks()
 		tool_bar_->SetToolNormalBitmap(ID_MENU_MUTE, ToolbarIconMute(muted));
 	}
 #ifdef RPCEMU_NETWORKING
+	if (netcap_item_ != nullptr) {
+		netcap_item_->Enable(config_copy_.network_type == NetworkType_NAT);
+	}
 	if (nat_list_item_ != nullptr) {
 		nat_list_item_->Enable(config_copy_.network_type == NetworkType_NAT);
 	}

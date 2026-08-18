@@ -35,6 +35,8 @@ set(GUI_SOURCES
     support_bundle.cpp
     podule_config_dialog.cpp
     machine_inspector_window.cpp
+    netcap_dialog.cpp
+    network_analyser_window.cpp
     window_owner.cpp
     about_dialog.cpp
     check_update.cpp

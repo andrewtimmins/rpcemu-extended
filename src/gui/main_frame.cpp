@@ -62,6 +62,8 @@
 #include "machine_edit_dialog.h"
 #include "support_bundle.h"
 #include "machine_inspector_window.h"
+#include "netcap_dialog.h"
+#include "network_analyser_window.h"
 #include "nat_list_dialog.h"
 #include "guest_command.h"
 #include "http_transfer.h"	/* RPCEMU_HAVE_HTTP, HttpUnavailableMessage */
@@ -1733,6 +1735,27 @@ void MainFrame::OnDebugStep5(wxCommandEvent &)
 		emulator_->DebuggerStepN(5);
 	}
 	CallAfter([this]() { UpdateDebuggerActionStates(); });
+}
+
+void MainFrame::OnNetcap(wxCommandEvent &)
+{
+	NetcapDialog dlg(this);
+
+	PrepareMachineWindow(&dlg, "Network Capture");
+	dlg.ShowModal();
+}
+
+void MainFrame::OnNetworkAnalyser(wxCommandEvent &)
+{
+	if (network_analyser_window_ == nullptr) {
+		network_analyser_window_ = new NetworkAnalyserWindow(this);
+		PrepareMachineWindow(network_analyser_window_, "Network Analyser");
+		network_analyser_window_->Bind(wxEVT_DESTROY,
+		    [this](wxWindowDestroyEvent &) {
+			network_analyser_window_ = nullptr;
+		});
+	}
+	network_analyser_window_->ShowAndRaise();
 }
 
 void MainFrame::OnMachineInspector(wxCommandEvent &)

@@ -91,6 +91,7 @@ enum MainFrameMenuId {
 	ID_MENU_CLEAR_RECENT_CDROMS,
 	ID_MENU_MACHINE,
 	ID_MENU_NAT_LIST,
+	ID_MENU_NETCAP,
 	ID_MENU_MUTE,
 	ID_MENU_FULLSCREEN,
 	ID_MENU_INTEGER_SCALING,
@@ -112,6 +113,7 @@ enum MainFrameMenuId {
 	ID_MENU_DEBUG_STEP,
 	ID_MENU_DEBUG_STEP5,
 	ID_MENU_MACHINE_INSPECTOR,
+	ID_MENU_NETWORK_ANALYSER,
 	ID_MENU_ONLINE_MANUAL,
 	ID_MENU_VISIT_WEBSITE,
 	ID_MENU_REPORT_ISSUE,
@@ -265,6 +267,8 @@ private:
 	void OnDebugStep(wxCommandEvent &event);
 	void OnDebugStep5(wxCommandEvent &event);
 	void OnMachineInspector(wxCommandEvent &event);
+	void OnNetcap(wxCommandEvent &event);
+	void OnNetworkAnalyser(wxCommandEvent &event);
 	void OnOnlineManual(wxCommandEvent &event);
 	void OnVisitWebsite(wxCommandEvent &event);
 	void OnReportIssue(wxCommandEvent &event);
@@ -349,6 +353,7 @@ private:
 	Model model_copy_ = Model_RPCARM710;
 	std::unique_ptr<EmulatorHost> emulator_;
 	MachineInspectorWindow *machine_inspector_window_ = nullptr;
+	class NetworkAnalyserWindow *network_analyser_window_ = nullptr;
 #ifdef RPCEMU_VNC
 	/* Borrowed from vnc_app: the process owns the server, this window only points
 	   a machine at it. Not owning it is what lets a client stay connected while
@@ -437,6 +442,7 @@ private:
 	wxMenuItem *debug_step_item_ = nullptr;
 	wxMenuItem *debug_step5_item_ = nullptr;
 	wxMenuItem *nat_list_item_ = nullptr;
+	wxMenuItem *netcap_item_ = nullptr;
 	wxToolBarToolBase *tb_mute_tool_ = nullptr;
 
 	bool shutting_down_ = false;
