@@ -42,6 +42,7 @@ static int lock_vnc_port;
 static char lock_ipc_endpoint[512];
 static char lock_debug_endpoint[700];
 static char lock_netcap_endpoint[700];
+static char lock_hostcmd_endpoint[700];
 
 static void
 set_str_field(char *out, size_t size, const char *value)
@@ -75,7 +76,10 @@ format_lock_text(char *out, size_t size, long pid, int vnc_port, const char *ipc
 		n += snprintf(out + n, size - (size_t) n, "dbg=%s\n", lock_debug_endpoint);
 	}
 	if (lock_netcap_endpoint[0] != '\0' && n > 0 && (size_t) n < size) {
-		snprintf(out + n, size - (size_t) n, "cap=%s\n", lock_netcap_endpoint);
+		n += snprintf(out + n, size - (size_t) n, "cap=%s\n", lock_netcap_endpoint);
+	}
+	if (lock_hostcmd_endpoint[0] != '\0' && n > 0 && (size_t) n < size) {
+		snprintf(out + n, size - (size_t) n, "cmd=%s\n", lock_hostcmd_endpoint);
 	}
 }
 
@@ -190,6 +194,14 @@ machine_lock_set_netcap_endpoint(const char *netcap_endpoint)
 }
 
 void
+machine_lock_set_hostcmd_endpoint(const char *hostcmd_endpoint)
+{
+	set_str_field(lock_hostcmd_endpoint, sizeof(lock_hostcmd_endpoint),
+	    hostcmd_endpoint);
+	rewrite_lock_file_win32();
+}
+
+void
 machine_lock_release(void)
 {
 	if (lock_handle != INVALID_HANDLE_VALUE) {
@@ -288,6 +300,14 @@ machine_lock_set_netcap_endpoint(const char *netcap_endpoint)
 {
 	set_str_field(lock_netcap_endpoint, sizeof(lock_netcap_endpoint),
 	    netcap_endpoint);
+	rewrite_lock_file_posix();
+}
+
+void
+machine_lock_set_hostcmd_endpoint(const char *hostcmd_endpoint)
+{
+	set_str_field(lock_hostcmd_endpoint, sizeof(lock_hostcmd_endpoint),
+	    hostcmd_endpoint);
 	rewrite_lock_file_posix();
 }
 
@@ -447,5 +467,19 @@ machine_lock_read_netcap_endpoint(const char *machine_dir, char *endpoint_out,
     size_t endpoint_out_size)
 {
 	return machine_lock_read_field(machine_dir, "cap=", endpoint_out,
+	    endpoint_out_size);
+}
+
+int
+machine_lock_endpoint_is_path(const char *endpoint)
+{
+	return endpoint != NULL && endpoint[0] == '/';
+}
+
+int
+machine_lock_read_hostcmd_endpoint(const char *machine_dir, char *endpoint_out,
+    size_t endpoint_out_size)
+{
+	return machine_lock_read_field(machine_dir, "cmd=", endpoint_out,
 	    endpoint_out_size);
 }

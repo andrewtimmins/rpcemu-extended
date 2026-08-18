@@ -35,6 +35,7 @@
 
 #include "hostcmd.h"
 #include "mem.h"
+#include "machine_lock.h"
 #include "rpcemu.h"
 
 #ifdef _WIN32
@@ -547,6 +548,56 @@ hc_listen_tcp(int port)
 	return fd;
 }
 
+#ifdef _WIN32
+/*
+ * Bind the first free port at or above `first`. See the note at the Windows
+ * caller for why a machine may not get the port its configuration names.
+ */
+static int
+hc_listen_tcp_from(int first)
+{
+	const int attempts = 16;
+	int i;
+
+	for (i = 0; i < attempts; i++) {
+		const int port = first + i;
+		int fd;
+
+		if (port < 1 || port > 65535) {
+			break;
+		}
+		fd = hc_listen_tcp(port);
+		if (fd >= 0) {
+			if (i > 0) {
+				rpclog("HostCmd: TCP port %d was in use, listening on %d "
+				       "instead\n", first, port);
+			}
+			return fd;
+		}
+	}
+	return -1;
+}
+#endif /* _WIN32 - only the Windows path picks a port for itself */
+
+/* Record the port actually bound, so a tool does not have to guess it. */
+static void
+hc_record_tcp_endpoint(void)
+{
+	char endpoint[64];
+	struct sockaddr_in addr;
+	socklen_t len = sizeof(addr);
+
+	if (hc.listen_fd < 0) {
+		return;
+	}
+	if (getsockname(hc.listen_fd, (struct sockaddr *) &addr, &len) != 0) {
+		return;
+	}
+	snprintf(endpoint, sizeof(endpoint), "127.0.0.1:%u",
+	    (unsigned) ntohs(addr.sin_port));
+	machine_lock_set_hostcmd_endpoint(endpoint);
+}
+
 void
 hostcmd_init(void)
 {
@@ -581,7 +632,20 @@ hostcmd_init(void)
 				port = p;
 			}
 		}
-		hc.listen_fd = hc_listen_tcp(port);
+
+		/*
+		 * ★ The next free port, rather than nothing at all - the same
+		 * reasoning as the VNC server's.
+		 *
+		 * Every machine's configuration carries the same default port, and
+		 * Windows lets a second listener bind a port that already has one
+		 * when SO_REUSEADDR is set, so two machines did not conflict loudly:
+		 * they both bound it and connections went to whichever the system
+		 * chose. The port it settles on goes into the lock file, which is how
+		 * rpcemu-run finds it.
+		 */
+		hc.listen_fd = hc_listen_tcp_from(port);
+		hc_record_tcp_endpoint();
 	}
 #else
 	/* Transport selection from config.hostcmd_socket:
@@ -609,11 +673,19 @@ hostcmd_init(void)
 			    rpcemu_get_machine_datadir());
 		}
 		hc.listen_fd = hc_listen_unix(path);
+		if (hc.listen_fd >= 0) {
+			/* Say where, so rpcemu-run can find a machine whose
+			   configuration named a path of its own, and so a socket left
+			   behind by a machine that was killed is not mistaken for a
+			   machine that is running. */
+			machine_lock_set_hostcmd_endpoint(path);
+		}
 	} else {
 		int port = atoi(config.hostcmd_socket);
 
 		if (port > 0 && port < 65536) {
 			hc.listen_fd = hc_listen_tcp(port);
+			hc_record_tcp_endpoint();
 		} else {
 			rpclog("HostCmd: invalid socket spec '%s', disabling\n",
 			    config.hostcmd_socket);

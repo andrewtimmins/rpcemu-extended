@@ -29,11 +29,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifndef _WIN32
+/* dirent is used on both platforms now: finding which machine recorded an
+   endpoint means reading the machine directories, and on Windows that is the
+   only way to find a channel at all. mingw-w64 provides both of these. */
 #include <dirent.h>
 #include <sys/stat.h>
-#endif
 
+#include "../machine_lock.h"
+
+/* machine_lock.c logs through the emulator's rpclog(); this tool has no log,
+   and nothing it does there is worth saying. Same stub as the other tools. */
+void rpclog(const char *format, ...)
+{
+	(void) format;
+}
 #include "vdu_filter.h"
 #include "../socket-compat.h"
 #ifndef _WIN32
@@ -50,6 +59,69 @@
 #else
 #define EOF_KEY "Ctrl-D"
 #endif
+
+/*
+ * The endpoint a running machine recorded in its lock file, or NULL.
+ *
+ * With no machine named, this only answers when exactly one machine is running:
+ * picking one of several would be picking wrong most of the time, and the caller
+ * reports that case for itself when it falls through to searching.
+ */
+static const char *
+find_recorded_socket(char *buf, size_t buflen, const char *machine)
+{
+	const char *datadir = getenv("RPCEMU_DATADIR");
+	char machines[512];
+	char recorded[700];
+	DIR *dir;
+	struct dirent *ent;
+	int count = 0;
+
+	if (datadir == NULL || datadir[0] == '\0') {
+		datadir = ".";
+	}
+	snprintf(machines, sizeof(machines), "%.400s/machines", datadir);
+
+	if (machine != NULL && machine[0] != '\0') {
+		char d[700];
+
+		snprintf(d, sizeof(d), "%.600s/%.64s/", machines, machine);
+		if (machine_lock_read_hostcmd_endpoint(d, recorded, sizeof(recorded)) &&
+		    recorded[0] != '\0')
+		{
+			snprintf(buf, buflen, "%s", recorded);
+			return buf;
+		}
+		return NULL;
+	}
+
+	dir = opendir(machines);
+	if (dir == NULL) {
+		return NULL;
+	}
+	while ((ent = readdir(dir)) != NULL) {
+		char d[700];
+		char one[700];
+
+		if (ent->d_name[0] == '.') {
+			continue;
+		}
+		snprintf(d, sizeof(d), "%.600s/%.64s/", machines, ent->d_name);
+		if (machine_lock_read_hostcmd_endpoint(d, one, sizeof(one)) &&
+		    one[0] != '\0')
+		{
+			count++;
+			snprintf(recorded, sizeof(recorded), "%s", one);
+		}
+	}
+	closedir(dir);
+
+	if (count == 1) {
+		snprintf(buf, buflen, "%s", recorded);
+		return buf;
+	}
+	return NULL;
+}
 
 #ifndef _WIN32
 /*
@@ -391,7 +463,9 @@ usage(const char *argv0)
 	    "  rpcemu-shell [--socket PATH | --tcp host:port]         (interactive)\n"
 	    "\n"
 	    "Drives the guest RISC OS command line over the emulator's HostCmd\n"
-	    "socket. Default socket: $RPCEMU_DATADIR/hostcmd.sock (or ./hostcmd.sock).\n"
+	    "socket. With no --socket, the running machine's own channel is used:\n"
+        "    what it recorded in $RPCEMU_DATADIR/machines/<name>/running.lock,\n"
+        "    else $RPCEMU_DATADIR/machines/<name>/hostcmd.sock.\n"
 	    "\n"
 	    "Guest output is normalised for a host shell: RISC OS ends its lines\n"
 	    "LF then CR, and VDU control codes are in-band, so the trailing carriage\n"
@@ -463,19 +537,42 @@ main(int argc, char **argv)
 		fd = connect_tcp(tcp);
 #ifdef _WIN32
 	} else {
-		/* No AF_UNIX on Windows: default to the HostCmd TCP loopback port. */
+		/*
+		 * No AF_UNIX on Windows, so the channel is a TCP port - but not
+		 * necessarily the one in the configuration, because a machine moves up
+		 * to a free port when another already holds it. What the running
+		 * machine recorded is therefore the only reliable answer, and the
+		 * fixed default is the last resort for a machine old enough not to
+		 * have recorded anything.
+		 */
+		char pathbuf[512];
+		const char *target = NULL;
+
 		if (sock_path != NULL) {
 			fprintf(stderr, "rpcemu-run: --socket is unsupported on Windows; "
-			    "use --tcp host:port (defaulting to %s)\n",
-			    RPCEMU_RUN_DEFAULT_TCP);
+			    "use --tcp host:port\n");
 		}
-		fd = connect_tcp(RPCEMU_RUN_DEFAULT_TCP);
+		target = find_recorded_socket(pathbuf, sizeof(pathbuf), machine);
+		fd = connect_tcp((target != NULL) ? target : RPCEMU_RUN_DEFAULT_TCP);
 	}
 #else
 	} else {
 		char pathbuf[512];
 		const char *path = sock_path;
 
+		if (path == NULL) {
+			/*
+			 * What the running machine recorded, before looking for a socket
+			 * file. A machine may have been configured with a path of its
+			 * own, which no amount of searching the machine directories will
+			 * find; and an AF_UNIX socket file outlives a machine that was
+			 * killed, so finding one is not evidence that anything is
+			 * listening on it. The lock the endpoint is recorded in is held
+			 * by the operating system, so it cannot say a dead machine is
+			 * alive.
+			 */
+			path = find_recorded_socket(pathbuf, sizeof(pathbuf), machine);
+		}
 		if (path == NULL) {
 			path = find_machine_socket(pathbuf, sizeof(pathbuf), machine,
 			    "hostcmd.sock");
@@ -484,7 +581,10 @@ main(int argc, char **argv)
 			}
 		}
 
-		fd = connect_unix(path);
+		/* A recorded endpoint may be either form; see
+		   machine_lock_endpoint_is_path(). */
+		fd = machine_lock_endpoint_is_path(path) ? connect_unix(path)
+		                                        : connect_tcp(path);
 	}
 #endif
 	if (fd < 0) {

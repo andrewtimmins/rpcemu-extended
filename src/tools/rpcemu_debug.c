@@ -43,10 +43,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifndef _WIN32
+/* dirent is used on both platforms now: finding which machine recorded an
+   endpoint means reading the machine directories, and on Windows that is the
+   only way to find a channel at all. mingw-w64 provides both of these. */
 #include <dirent.h>
 #include <sys/stat.h>
-#endif
 
 #include "../machine_lock.h"
 #include "../socket-compat.h"
@@ -74,6 +75,71 @@ static const char *progname = "rpcemu-debug";
 void rpclog(const char *format, ...)
 {
 	(void) format;
+}
+
+/*
+ * The endpoint a running machine recorded in its lock file, or NULL.
+ *
+ * Outside the !_WIN32 guard on purpose: this is the only way to find a machine
+ * on Windows, where the channel is a TCP port that may have moved up because
+ * another machine already held the one the configuration names. With no machine
+ * named it answers only when exactly one is running, because choosing between
+ * several would be choosing wrong most of the time.
+ */
+static const char *
+find_recorded_endpoint(char *buf, size_t buflen, const char *machine)
+{
+	const char *datadir = getenv("RPCEMU_DATADIR");
+	char machines[512];
+	char recorded[700];
+	DIR *dir;
+	struct dirent *ent;
+	int count = 0;
+
+	if (datadir == NULL || datadir[0] == '\0') {
+		datadir = ".";
+	}
+	snprintf(machines, sizeof(machines), "%.400s/machines", datadir);
+
+	if (machine != NULL && machine[0] != '\0') {
+		char d[700];
+
+		snprintf(d, sizeof(d), "%.600s/%.64s/", machines, machine);
+		if (machine_lock_read_debug_endpoint(d, recorded, sizeof(recorded)) &&
+		    recorded[0] != '\0')
+		{
+			snprintf(buf, buflen, "%.500s", recorded);
+			return buf;
+		}
+		return NULL;
+	}
+
+	dir = opendir(machines);
+	if (dir == NULL) {
+		return NULL;
+	}
+	while ((ent = readdir(dir)) != NULL) {
+		char d[700];
+		char one[700];
+
+		if (ent->d_name[0] == '.') {
+			continue;
+		}
+		snprintf(d, sizeof(d), "%.600s/%.64s/", machines, ent->d_name);
+		if (machine_lock_read_debug_endpoint(d, one, sizeof(one)) &&
+		    one[0] != '\0')
+		{
+			count++;
+			snprintf(recorded, sizeof(recorded), "%.500s", one);
+		}
+	}
+	closedir(dir);
+
+	if (count == 1) {
+		snprintf(buf, buflen, "%.500s", recorded);
+		return buf;
+	}
+	return NULL;
 }
 
 #ifndef _WIN32
@@ -188,7 +254,7 @@ find_machine_socket(char *buf, size_t buflen, const char *machine, const char *s
 
 			snprintf(dir, sizeof(dir), "%.400s/%.64s/", machines, ent->d_name);
 			if (machine_lock_read_debug_endpoint(dir, recorded,
-			        sizeof(recorded)) && recorded[0] == '/' &&
+			        sizeof(recorded)) && recorded[0] != '\0' &&
 			    stat(recorded, &st) == 0) {
 				snprintf(found[count], sizeof(found[0]), "%s", ent->d_name);
 				snprintf(found_path[count], sizeof(found_path[0]), "%.690s",
@@ -536,10 +602,23 @@ main(int argc, char *argv[])
 		fd = connect_tcp(tcp_target);
 	} else {
 #ifdef _WIN32
-		fd = connect_tcp(sock_path ? sock_path : RPCEMU_DEBUG_DEFAULT_TCP);
+		{
+			char recbuf[512];
+			const char *target = sock_path;
+
+			if (target == NULL) {
+				target = find_recorded_endpoint(recbuf, sizeof(recbuf),
+				    machine);
+			}
+			fd = connect_tcp((target != NULL) ? target
+			                                  : RPCEMU_DEBUG_DEFAULT_TCP);
+		}
 #else
 		char buf[512];
 
+		if (sock_path == NULL) {
+			sock_path = find_recorded_endpoint(buf, sizeof(buf), machine);
+		}
 		if (sock_path == NULL) {
 			sock_path = find_machine_socket(buf, sizeof(buf), machine,
 			    "rpcemu-debug.sock");
@@ -547,7 +626,10 @@ main(int argc, char *argv[])
 				return 2;
 			}
 		}
-		fd = connect_unix(sock_path);
+		/* What was discovered may be a path or a host:port - see
+		   machine_lock_endpoint_is_path(). */
+		fd = machine_lock_endpoint_is_path(sock_path) ? connect_unix(sock_path)
+		                                             : connect_tcp(sock_path);
 #endif
 	}
 

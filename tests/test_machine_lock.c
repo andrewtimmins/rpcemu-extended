@@ -154,6 +154,67 @@ main(int argc, char *argv[])
 	(void) machine_lock_read_owner(machine, NULL, &port);
 	check("a shorter port does not leave digits behind", port == 590);
 
+	/*
+	 * Where each of this machine's control channels is listening.
+	 *
+	 * A tool cannot work these out for itself: a path may be named in the
+	 * machine's configuration, and on Windows it is a TCP port that may have
+	 * moved up because another machine already held the one asked for. Looking
+	 * for a socket file instead finds one left behind by a machine that was
+	 * killed, which is a dead machine answering for a live one.
+	 *
+	 * All three are set and then all three read back, because they share one
+	 * file that is rewritten whole every time: a length mistake in any of them
+	 * loses the ones after it, and each one alone would still pass.
+	 */
+	printf("\nthe control channels a machine records\n");
+	{
+		char got[700];
+
+		machine_lock_set_hostcmd_endpoint("/tmp/rpc-a/hostcmd.sock");
+		machine_lock_set_debug_endpoint("/tmp/rpc-a/rpcemu-debug.sock");
+		machine_lock_set_netcap_endpoint("/tmp/rpc-a/rpcemu-netcap.sock");
+
+		got[0] = '\0';
+		check("the hostcmd endpoint reads back",
+		    machine_lock_read_hostcmd_endpoint(machine, got, sizeof(got)) == 1 &&
+		    strcmp(got, "/tmp/rpc-a/hostcmd.sock") == 0);
+		got[0] = '\0';
+		check("the debug endpoint reads back",
+		    machine_lock_read_debug_endpoint(machine, got, sizeof(got)) == 1 &&
+		    strcmp(got, "/tmp/rpc-a/rpcemu-debug.sock") == 0);
+		got[0] = '\0';
+		check("the netcap endpoint reads back",
+		    machine_lock_read_netcap_endpoint(machine, got, sizeof(got)) == 1 &&
+		    strcmp(got, "/tmp/rpc-a/rpcemu-netcap.sock") == 0);
+
+		/* The VNC port shares the file and must survive them all. */
+		port = 0;
+		check("...and the VNC port is still there",
+		    machine_lock_read_owner(machine, NULL, &port) == 1 && port == 590);
+
+		/* A TCP endpoint is the Windows form, and the only way to find a port
+		   that moved. It must survive the same round trip. */
+		machine_lock_set_hostcmd_endpoint("127.0.0.1:15593");
+		got[0] = '\0';
+		check("a TCP endpoint reads back as written",
+		    machine_lock_read_hostcmd_endpoint(machine, got, sizeof(got)) == 1 &&
+		    strcmp(got, "127.0.0.1:15593") == 0);
+
+		/* The rule every tool uses to decide how to dial one. */
+		check("an absolute path is recognised as a socket path",
+		    machine_lock_endpoint_is_path("/tmp/rpc-a/hostcmd.sock") == 1);
+		check("a host:port is not",
+		    machine_lock_endpoint_is_path("127.0.0.1:15593") == 0);
+		check("neither is nothing at all",
+		    machine_lock_endpoint_is_path(NULL) == 0);
+
+		got[0] = 'x';
+		check("a machine that recorded no such channel says so",
+		    machine_lock_read_hostcmd_endpoint("/tmp/no-such-machine-dir/", got,
+		        sizeof(got)) == 0);
+	}
+
 	printf("\nreleasing hands it back\n");
 	machine_lock_release();
 	check("the lock is free again", lock_is_free(machine) == 1);

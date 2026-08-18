@@ -1360,6 +1360,61 @@ dc_listen_tcp(int port)
 	return fd;
 }
 
+#ifdef _WIN32
+/*
+ * Bind the first free port at or above `first`.
+ *
+ * Every machine's configuration carries the same default port, and Windows lets
+ * a second listener bind a port that already has one when SO_REUSEADDR is set,
+ * so two machines did not conflict loudly: both bound it and a connection went
+ * to whichever the system chose. The port settled on goes into the lock file,
+ * which is how the client tools find it. Same reasoning as the VNC server's.
+ */
+static int
+dc_listen_tcp_from(int first)
+{
+	const int attempts = 16;
+	int i;
+
+	for (i = 0; i < attempts; i++) {
+		const int port = first + i;
+		int fd;
+
+		if (port < 1 || port > 65535) {
+			break;
+		}
+		fd = dc_listen_tcp(port);
+		if (fd >= 0) {
+			if (i > 0) {
+				rpclog("DebugCmd: TCP port %d was in use, listening on %d "
+				       "instead\n", first, port);
+			}
+			return fd;
+		}
+	}
+	return -1;
+}
+#endif /* _WIN32 - only the Windows path picks a port for itself */
+
+/* Record the port actually bound, so a tool does not have to guess it. */
+static void
+dc_record_tcp_endpoint(int fd)
+{
+	char endpoint[64];
+	struct sockaddr_in addr;
+	socklen_t len = sizeof(addr);
+
+	if (fd < 0) {
+		return;
+	}
+	if (getsockname(fd, (struct sockaddr *) &addr, &len) != 0) {
+		return;
+	}
+	snprintf(endpoint, sizeof(endpoint), "127.0.0.1:%u",
+	    (unsigned) ntohs(addr.sin_port));
+	machine_lock_set_debug_endpoint(endpoint);
+}
+
 void
 debugcmd_init(void)
 {
@@ -1389,7 +1444,8 @@ debugcmd_init(void)
 				port = p;
 			}
 		}
-		dc.listen_fd = dc_listen_tcp(port);
+		dc.listen_fd = dc_listen_tcp_from(port);
+		dc_record_tcp_endpoint(dc.listen_fd);
 	}
 #else
 	if (config.debug_socket[0] == '\0' || config.debug_socket[0] == '/') {
@@ -1438,6 +1494,7 @@ debugcmd_init(void)
 
 		if (port > 0 && port < 65536) {
 			dc.listen_fd = dc_listen_tcp(port);
+			dc_record_tcp_endpoint(dc.listen_fd);
 		} else {
 			rpclog("DebugCmd: invalid socket spec '%s', disabling\n",
 			    config.debug_socket);

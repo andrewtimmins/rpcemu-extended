@@ -146,6 +146,37 @@ extern void machine_lock_set_debug_endpoint(const char *debug_endpoint);
 extern void machine_lock_set_netcap_endpoint(const char *netcap_endpoint);
 
 /**
+ * Record where this machine's HostCmd channel is listening.
+ *
+ * A tool cannot work the answer out for itself: the path may be named in the
+ * machine's configuration, and on Windows it is a TCP port that may have moved
+ * because another machine already held the one asked for. Looking for a socket
+ * file instead finds one left behind by a machine that was killed, which is a
+ * machine that is not running answering for one that is.
+ */
+extern void machine_lock_set_hostcmd_endpoint(const char *hostcmd_endpoint);
+
+/**
+ * Whether a recorded endpoint names a filesystem socket rather than a TCP port.
+ *
+ * An endpoint is one of two things and every tool has to tell them apart, so the
+ * rule lives here, beside the code that writes them, rather than in three copies
+ * that drift: an absolute path means AF_UNIX, anything else is host:port. On
+ * Windows it is always the latter, because there is no AF_UNIX to record and the
+ * port may have moved from the one the configuration asked for.
+ */
+extern int machine_lock_endpoint_is_path(const char *endpoint);
+
+/**
+ * The running machine's HostCmd endpoint, if it recorded one.
+ *
+ * @return 1 if an endpoint was read, 0 otherwise
+ */
+extern int machine_lock_read_hostcmd_endpoint(const char *machine_dir,
+                                             char *endpoint_out,
+                                             size_t endpoint_out_size);
+
+/**
  * The running machine's debugger endpoint, if it recorded one.
  *
  * @return 1 if an endpoint was read, 0 otherwise

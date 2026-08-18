@@ -31,7 +31,11 @@ install(TARGETS rpcemu-netcap RUNTIME DESTINATION bin)
 # Standalone host-side client for the HostCmd channel. Does not link the
 # emulator core - it is just a small socket client.
 
-add_executable(rpcemu-run rpcemu_run.c vdu_filter.c)
+# machine_lock.c for the same reason rpcemu-debug and rpcemu-netcap need it:
+# a running machine records where its channel is, and a socket file left
+# behind by one that was killed must not be mistaken for a live machine.
+add_executable(rpcemu-run rpcemu_run.c vdu_filter.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../machine_lock.c)
 set_target_properties(rpcemu-run PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # Winsock for the socket client (Linux gets sockets from libc).

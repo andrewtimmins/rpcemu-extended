@@ -60,9 +60,18 @@ typedef int socklen_t;
 #define close_socket close
 #endif
 
-#ifndef _WIN32
+/* dirent is used on both platforms: finding which machine recorded an endpoint
+   means reading the machine directories, and on Windows that is the only way
+   to find a channel at all. mingw-w64 provides both of these. */
 #include <dirent.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+/* _setmode and _O_BINARY, for handing a pcap stream to stdout without the
+   runtime translating line endings inside it. Missing these was a hard error
+   under -Werror=implicit-function-declaration, so this tool had never been
+   compiled for Windows at all. */
+#include <fcntl.h>
+#include <io.h>
 #endif
 
 #include "machine_lock.h"
@@ -118,10 +127,17 @@ usage(void)
 static int
 find_socket(const char *machine, char *out, size_t out_len)
 {
-#ifdef _WIN32
-	(void) machine; (void) out; (void) out_len;
-	return 0;	/* Windows uses TCP; there is nothing to discover. */
-#else
+	/*
+	 * ★ On Windows too.
+	 *
+	 * This returned nothing there, with the reason "Windows uses TCP; there is
+	 * nothing to discover" - which held only while every machine used one fixed
+	 * port. A machine now moves up to a free port when another already holds the
+	 * one its configuration names, so the port is exactly what has to be
+	 * discovered, and what it recorded in its lock file is the only place to
+	 * find it. Nothing below is POSIX-only: reading the machine directories and
+	 * their lock files works the same either way.
+	 */
 	const char *datadir = getenv("RPCEMU_DATADIR");
 	char machines[600];
 	char home_dir[600];
@@ -163,8 +179,11 @@ find_socket(const char *machine, char *out, size_t out_len)
 			continue;
 		}
 		snprintf(d, sizeof(d), "%.600s/%.64s/", machines, ent->d_name);
+		/* Either form of endpoint; a TCP one has no file to stat, and a path
+		   that is gone means the machine is not really there. */
 		if (machine_lock_read_netcap_endpoint(d, recorded, sizeof(recorded)) &&
-		    recorded[0] == '/' && stat(recorded, &st) == 0)
+		    recorded[0] != '\0' &&
+		    (!machine_lock_endpoint_is_path(recorded) || stat(recorded, &st) == 0))
 		{
 			snprintf(found[count], sizeof(found[0]), "%s", recorded);
 			snprintf(names[count], sizeof(names[0]), "%.127s", ent->d_name);
@@ -188,7 +207,6 @@ find_socket(const char *machine, char *out, size_t out_len)
 		}
 	}
 	return 0;
-#endif
 }
 
 /* ---- connecting -------------------------------------------------------- */
@@ -670,7 +688,15 @@ main(int argc, char *argv[])
 		}
 	}
 
-	fd = (tcp != NULL) ? connect_tcp(tcp) : connect_unix(sock_path);
+	/* A discovered endpoint may be a path or a host:port - see
+	   machine_lock_endpoint_is_path(). */
+	if (tcp != NULL) {
+		fd = connect_tcp(tcp);
+	} else if (machine_lock_endpoint_is_path(sock_path)) {
+		fd = connect_unix(sock_path);
+	} else {
+		fd = connect_tcp(sock_path);
+	}
 	if (fd < 0) {
 		return 1;
 	}
