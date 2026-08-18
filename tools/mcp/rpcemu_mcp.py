@@ -52,6 +52,7 @@ VNC_HOST = os.environ.get("RPCEMU_VNC_HOST", "127.0.0.1")
 VNC_PORT = int(os.environ.get("RPCEMU_VNC_PORT", "5900"))
 VNC_PASSWORD = os.environ.get("RPCEMU_VNC_PASSWORD", "")
 DEBUG_SOCKET = os.environ.get("RPCEMU_DEBUG_SOCKET", "")
+NETCAP_SOCKET = os.environ.get("RPCEMU_NETCAP_SOCKET", "")
 
 mcp = FastMCP("rpcemu")
 
@@ -1005,6 +1006,112 @@ def riscos_debug_trace(max_events: int = 64) -> dict:
     appear; log-only watchpoints always feed it.
     """
     return _debug.cmd(f"trace {int(max_events)}")
+
+
+# --------------------------------------------------------------------------
+# NetCapCmd client - the network the machine is on
+# --------------------------------------------------------------------------
+
+
+class NetCapCmd(DebugCmd):
+    """The capture socket.
+
+    Speaks the same shape as the debugger's - a line in, a line of JSON out -
+    so the connect, reconnect and read logic is inherited rather than written
+    twice. Only the error message differs, because being told the wrong socket
+    is unset is worse than being told nothing.
+    """
+
+    def _connect(self) -> None:
+        if not self.spec:
+            raise HostCmdError(
+                "RPCEMU_NETCAP_SOCKET is not set - the network capture socket "
+                "is unavailable (is netcap_enabled=1 for this machine?)."
+            )
+        super()._connect()
+
+    def lines(self, line: str, terminator: str = "end", limit: int = 4096) -> list:
+        """Send a command that answers with many lines, ending in `end`."""
+        import json as _json
+
+        if self.sock is None:
+            self._connect()
+        assert self.sock is not None
+        self.sock.settimeout(5)
+        self.sock.sendall((line + "\n").encode("latin-1", "replace"))
+        out: list = []
+        deadline = time.monotonic() + 10
+        while len(out) < limit:
+            while b"\n" not in self.buf:
+                if time.monotonic() > deadline:
+                    return out
+                chunk = self.sock.recv(65536)
+                if not chunk:
+                    self._drop()
+                    return out
+                self.buf += chunk
+            raw, _, self.buf = self.buf.partition(b"\n")
+            text = raw.decode("latin-1").strip()
+            if text == terminator:
+                break
+            if not text:
+                continue
+            try:
+                out.append(_json.loads(text))
+            except ValueError:
+                pass
+        return out
+
+
+_netcap = NetCapCmd(NETCAP_SOCKET)
+
+
+@mcp.tool()
+def riscos_netcap_status() -> dict:
+    """What the machine's network capture is doing: how many frames have been
+    seen, how many sent and received, whether a pcap file is being written and
+    how big it is, and whether frames are being kept in memory for reading back.
+    """
+    return _netcap.cmd("status")
+
+
+@mcp.tool()
+def riscos_netcap_start(path: str, max_bytes: int = 0) -> dict:
+    """Have the emulator write a pcap file of every frame the machine sends or
+    receives. The path is on the HOST, not in the guest. max_bytes stops the
+    capture at that size (0 = no limit), which is worth setting: a busy machine
+    left capturing will fill a disc. Open the result with Wireshark or tcpdump.
+    """
+    return _netcap.cmd(f"start {path} {int(max_bytes)}")
+
+
+@mcp.tool()
+def riscos_netcap_stop() -> dict:
+    """Close the capture file. Frames carry on being counted."""
+    return _netcap.cmd("stop")
+
+
+@mcp.tool()
+def riscos_netcap_clear() -> dict:
+    """Forget the frames held in memory and zero the counters. Does not touch a
+    capture file that is being written."""
+    return _netcap.cmd("clear")
+
+
+@mcp.tool()
+def riscos_netcap_recent(count: int = 50) -> list:
+    """The most recent network frames, decoded.
+
+    Each is {serial, sec, usec, dir ("tx"/"rx"), len, cap, proto, src, dst,
+    info, data (hex)}. The decode names the RISC OS protocols - Freeway and
+    ShareFS are the ones a general-purpose tool shows as anonymous UDP ports.
+
+    Frames are only held once something asks for them, so the first call turns
+    that on and may come back empty; call again after the machine has done
+    something. `data` is the frame itself as hex, if you want to decode further.
+    """
+    _netcap.cmd("ring on")
+    return _netcap.lines(f"tail {int(count)}")
 
 
 if __name__ == "__main__":
