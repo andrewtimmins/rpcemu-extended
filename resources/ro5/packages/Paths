@@ -1,0 +1,17 @@
+Apps = <Boot$Dir>.^.Apps
+Apps.Admin.!PackMan = <Boot$Dir>.^.Apps.!PackMan
+Boot = <Boot$Dir>
+Bootloader = <Boot$Dir>.Loader
+Diversions = <Boot$Dir>.^.Diversions
+Documents = <Boot$Dir>.^.Documents
+Manuals = <Boot$Dir>.^.Manuals
+Printing = <Boot$Dir>.^.Printing
+Public = <Boot$Dir>.^.Public
+Resources = <BootResources$Dir>
+RiscPkg = <Packages$Dir>.Info.@
+Sprites = <Packages$Dir>.Sprites
+SysVars = <Packages$Dir>.SysVars
+System = <System$Dir>
+ToBeLoaded = <Boot$ToBeLoaded>
+ToBeTasks = <Boot$ToBeTasks>
+Utilities = <Boot$Dir>.^.Utilities
