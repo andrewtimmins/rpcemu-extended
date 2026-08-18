@@ -30,6 +30,8 @@
  * files go down rather than reconstructed afterwards.
  */
 
+#include <set>
+
 #include <wx/dir.h>
 #include <wx/ffile.h>
 #include <wx/filename.h>
@@ -38,6 +40,7 @@
 
 #include "http_transfer.h"
 #include "package_install.h"
+#include "package_layout.h"
 
 extern "C" {
 #include "md5.h"
@@ -47,8 +50,7 @@ extern "C" {
 
 namespace {
 
-/* The database, on the machine's disc. */
-const char *const kPackagesDirLeaf = "!Packages";
+/* The database's format version. Where it lives is package_layout.h's business. */
 const char *const kDatabaseVersion = "2";
 
 /* Metadata inside a package, which belongs in the database rather than on the
@@ -60,9 +62,17 @@ wxString Sep()
 	return wxString(wxFileName::GetPathSeparator());
 }
 
+/*
+ * Where this machine's database is.
+ *
+ * Not simply "$.!Packages" any more: on a disc with a !Boot the database belongs
+ * in !Boot.Resources.!Packages, which is where PackMan looks and where a machine
+ * may already have one. package_layout.h has the reasoning; PackagesPrepare()
+ * below is what creates and merges, and this only reports.
+ */
 wxString PackagesDir(const wxString &hostfs_dir)
 {
-	return hostfs_dir + Sep() + kPackagesDirLeaf;
+	return PackagesResolve(hostfs_dir).dir;
 }
 
 wxString InfoDir(const wxString &hostfs_dir, const wxString &package_name)
@@ -128,14 +138,31 @@ wxString SwapDotsAndSlashes(const wxString &path)
  *
  * Members are stored '/' separated, which is the separator HostFS uses for a
  * RISC OS '.', so the host path is the member name with the platform's separator
- * and the filetype suffix HostFS wants. The manifest records the RISC OS form,
- * dot separated, because that is what the database is read by on the guest.
+ * and the filetype suffix HostFS wants.
+ *
+ * A member's first components are a LOGICAL path, not a directory: "System" is
+ * wherever this disc keeps !System, which is !Boot.Resources.!System and not
+ * "$.System". The database's Paths file says where each one is, and
+ * PackagesApplyPaths() applies it. Installing without that is how a package's
+ * system modules ended up in a directory nothing looks in, and the package then
+ * appeared to install perfectly and not work.
+ *
+ * The manifest keeps the LOGICAL form, unresolved, because that is what the
+ * format defines and what makes it readable by PackMan on another disc whose
+ * paths differ. Where the files actually went is recorded separately, in
+ * HostFiles, which is what removal uses.
+ *
+ * Only the directory part is resolved. A member that is a file at the very root
+ * has no logical component to resolve, and resolving the whole path would let a
+ * leafname that happens to match a logical name be swallowed by it.
  */
 bool MemberPaths(const UnzipEntry *entry, const wxString &dest_dir,
+                 const PackagesPathMap &logical,
                  wxString &host_path, wxString &riscos_path)
 {
 	const wxString stored = wxString::FromUTF8(entry->name);
-	wxString dir_part = stored.BeforeLast('/');
+	const wxString stored_dir = stored.Contains("/") ? stored.BeforeLast('/')
+	                                                 : wxString();
 	const wxString leaf = stored.AfterLast('/');
 	char suffixed[UNZIP_MAX_NAME + 32];
 
@@ -144,8 +171,9 @@ bool MemberPaths(const UnzipEntry *entry, const wxString &dest_dir,
 		return false;
 	}
 
-	wxString rel = dir_part.empty() ? wxString()
-	    : dir_part + "/";
+	wxString rel = stored_dir.empty()
+	    ? wxString()
+	    : PackagesApplyPaths(logical, stored_dir) + "/";
 
 	rel += wxString::FromUTF8(suffixed);
 	rel.Replace("/", Sep());
@@ -179,8 +207,8 @@ const char *const kHostManifest = "HostFiles";
  * then the zip is long gone.
  *
  * Stored under the machine's own !Packages, which means they are on the guest's
- * disc and can be run there. The path RISC OS sees is
- * "$.!Packages.Info.<Package>.Triggers".
+ * disc and can be run there. The path RISC OS sees is the database's own Info
+ * directory, wherever that turned out to be; PackagesRiscosPath() works it out.
  */
 const char *const kTriggersDir = "Triggers";
 
@@ -373,9 +401,11 @@ bool RunTrigger(PackageTriggerRunner *triggers, const wxString &hostfs_dir,
 		return true;	/* most packages have none */
 	}
 
-	/* The same place, as RISC OS names it. */
-	const wxString riscos_dir = wxString::Format(
-	    "$.!Packages.Info.%s.%s", package_name, kTriggersDir);
+	/* The same place, as RISC OS names it. Derived from where the database
+	   actually is: written down as "$.!Packages..." it survived the database
+	   moving into !Boot.Resources and pointed every trigger at nothing. */
+	const wxString riscos_dir = PackagesRiscosPath(hostfs_dir,
+	    InfoDir(hostfs_dir, package_name) + Sep() + kTriggersDir);
 
 	/*
 	 * Set the variables the trigger reads.
@@ -455,11 +485,28 @@ bool RunTrigger(PackageTriggerRunner *triggers, const wxString &hostfs_dir,
 	return true;
 }
 
-/* Remove a directory if it is empty, and its parents likewise, stopping at the
-   machine's disc. Leaves anything that still holds a file. */
-void PruneEmptyDirs(wxString dir, const wxString &stop_at)
+/*
+ * Remove a directory if it is empty, and its parents likewise, stopping at the
+ * machine's disc. Leaves anything that still holds a file.
+ *
+ * @keep Directories the DISC owns rather than the package: "$.Apps",
+ *       "$.!Boot.Resources", the PreDesk directory and so on. The climb stops at
+ *       one of these even when it is empty.
+ *
+ * Without that floor this walks up out of the package and into the boot
+ * structure. A package with a component in ToBeLoaded installs into
+ * "!Boot.Choices.Boot.PreDesk", and removing the last such package would take
+ * PreDesk with it - a directory the OS reads at every boot and did not put there
+ * for us to tidy. It could equally have removed "$.Apps".
+ */
+void PruneEmptyDirs(wxString dir, const wxString &stop_at,
+                    const std::set<wxString> &keep)
 {
 	while (dir.length() > stop_at.length() && dir.StartsWith(stop_at)) {
+		if (keep.find(dir) != keep.end()) {
+			return;
+		}
+
 		if (!wxDirExists(dir)) {
 			dir = dir.BeforeLast(wxFileName::GetPathSeparator());
 			continue;
@@ -486,6 +533,11 @@ void PruneEmptyDirs(wxString dir, const wxString &stop_at)
 PackageInstalledMap PackageInstalledList(const wxString &hostfs_dir)
 {
 	PackageInstalledMap installed;
+
+	/* Before reading, not only before writing: until the merge has happened the
+	   list would be of the database we are leaving rather than the one RISC OS
+	   reads, and the dialogue would offer to install what is already there. */
+	PackagesPrepare(hostfs_dir);
 
 	for (const auto &entry : ReadStatusLines(hostfs_dir)) {
 		wxStringTokenizer fields(entry.second, "\t", wxTOKEN_RET_EMPTY_ALL);
@@ -514,6 +566,8 @@ PackageActionResult PackageInstall(const PackageRecord &record,
                                    PackageTriggerRunner *triggers)
 {
 	PackageActionResult result;
+	const PackagesLocation location = PackagesPrepare(hostfs_dir);
+	const PackagesPathMap logical = PackagesReadPaths(hostfs_dir, location.dir);
 	const wxString temp = wxFileName::CreateTempFileName("rpcemu-pkg");
 	UnzipArchive archive;
 	std::vector<wxString> manifest;		/* RISC OS paths, the standard form */
@@ -705,7 +759,7 @@ PackageActionResult PackageInstall(const PackageRecord &record,
 			continue;
 		}
 
-		if (!MemberPaths(entry, hostfs_dir, host_path, riscos_path)) {
+		if (!MemberPaths(entry, hostfs_dir, logical, host_path, riscos_path)) {
 			continue;
 		}
 
@@ -820,6 +874,15 @@ PackageActionResult PackageRemove(const wxString &package_name,
                                   PackageTriggerRunner *triggers)
 {
 	PackageActionResult result;
+
+	/* Removal reads the manifest to decide what to delete, so the database
+	   it reads has to be the merged one. */
+	const PackagesLocation location = PackagesPrepare(hostfs_dir);
+
+	/* The floor for the empty-directory tidy-up below. */
+	const std::set<wxString> disc_owned = PackagesDiscOwnedDirs(hostfs_dir,
+	    PackagesReadPaths(hostfs_dir, location.dir));
+
 	std::map<wxString, wxString> status = ReadStatusLines(hostfs_dir);
 	std::vector<wxString> host_files = ReadManifestFile(hostfs_dir, package_name,
 	                                                    kHostManifest);
@@ -918,7 +981,7 @@ PackageActionResult PackageRemove(const wxString &package_name,
 			}
 
 			PruneEmptyDirs(host.BeforeLast(wxFileName::GetPathSeparator()),
-			               hostfs_dir);
+			               hostfs_dir, disc_owned);
 		}
 	}
 
