@@ -588,9 +588,20 @@ rpcemu_add_test(test_relay_reasm)
 # into a fixed buffer regardless, and a circular chain was followed for ever.
 # Links network-nat.c against a stubbed emulator and a plain array standing in
 # for guest RAM, so no SLiRP is needed. See src/network-nat.c.
+# Capturing the frames a machine sends and receives: the pcap headers another
+# program has to be able to open, and the ring the analyser and the control
+# socket read from a different thread than the one filling it. Compiles
+# netcapture.c directly - it needs nothing from the rest of the emulator.
+add_executable(test_netcapture test_netcapture.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/netcapture.c
+               test_log_stub.c)
+target_include_directories(test_netcapture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+target_link_libraries(test_netcapture PRIVATE ${NET_TEST_LIBS})
+rpcemu_add_test(test_netcapture)
+
 add_executable(test_net_tx test_net_tx.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/network-nat.c
-)
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/netcapture.c)
 target_include_directories(test_net_tx PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/slirp
@@ -777,7 +788,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 46)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 47)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 10")	# JIT differential
 endif()

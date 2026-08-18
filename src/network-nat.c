@@ -32,6 +32,7 @@
 #include "rpcemu.h"
 #include "app_settings.h"
 #include "mem.h"
+#include "netcapture.h"
 #include "network.h"
 #include "network-nat.h"
 #include "net_slot.h"
@@ -88,7 +89,6 @@ static struct {
 	queued_packet_t pkt_queue[PKT_QUEUE_SIZE];
 	int             pkt_queue_head;  /* Next slot to write */
 	int             pkt_queue_tail;  /* Next slot to read */
-	FILE		*capture;	///< Handle for debug capture file, or NULL if not in use
 	int             pkt_queue_count; /* Number of packets in queue */
 } nat;
 
@@ -96,66 +96,6 @@ static struct {
 static void deliver_queued_packet(void);
 static int rx_space(void);
 static int rx_deliver(const uint8_t *pkt, size_t pkt_len);
-
-static void
-write16(FILE *f, uint16_t x)
-{
-	(void) fwrite(&x, sizeof(uint16_t), 1, f);
-}
-
-static void
-write32(FILE *f, uint32_t x)
-{
-	(void) fwrite(&x, sizeof(uint32_t), 1, f);
-}
-
-/**
- */
-static void
-write_global_header(FILE *f)
-{
-	// The magic number is adaptive-endian.
-	// It's written in the host's native order, and the reader is
-	// expected to interpret all data fields accordingly.
-	write32(f, 0xa1b2c3d4); // magic number
-
-	write16(f, 2); // version_major
-	write16(f, 4); // version_minor
-	write32(f, 0); // thiszone
-	write32(f, 0); // sigfigs
-	write32(f, 65535); // snaplen
-	write32(f, 1); // data link type - 1 for Ethernet
-	(void) fflush(f);
-}
-
-/**
- * Write a packet to the capture file.
- *
- * @param f
- * @param data
- * @param data_len
- */
-static void
-write_packet(FILE *f, const void *data, size_t data_len)
-{
-	struct timeval tv;
-
-	// Check that the File was opened successfully
-	if (f == NULL) {
-		return;
-	}
-
-	if (gettimeofday(&tv, NULL) != 0) {
-		return;
-	}
-
-	write32(f, (uint32_t) tv.tv_sec); // timestamp seconds
-	write32(f, (uint32_t) tv.tv_usec); // timestamp microseconds
-	write32(f, (uint32_t) data_len); // number of octets of packet saved in file
-	write32(f, (uint32_t) data_len); // actual length of packet
-	(void) fwrite(data, 1, data_len, f); // packet data
-	(void) fflush(f);
-}
 
 /**
  * Number of received frames the guest side can still take: the delivery slot
@@ -190,10 +130,9 @@ rx_deliver(const uint8_t *pkt, size_t pkt_len)
 		return 0;
 	}
 
-	/* Write to capture file for debug. Done on arrival rather than on
-	   delivery to the guest, so the capture keeps the order and the timing
-	   the frames actually turned up in. */
-	write_packet(nat.capture, pkt, pkt_len);
+	/* Recorded on arrival rather than on delivery to the guest, so a capture
+	   keeps the order and the timing the frames actually turned up in. */
+	netcap_frame(NETCAP_RX, pkt, pkt_len);
 
 	if (nat.irq_status == 0 || network_poduleinfo == NULL) {
 		// The guest driver has not registered, so there is nowhere to put it
@@ -341,14 +280,12 @@ network_nat_init(void)
 
 	network_nat_open();
 
-	// Open capture file if requested
-	if (config.network_capture != NULL) {
-		if ((nat.capture = fopen(config.network_capture, "wb")) != NULL) {
-			// Write header
-			write_global_header(nat.capture);
-
-			rpclog("Networking: capturing to \"%s\"\n", config.network_capture);
-		}
+	/* A machine set to capture from the moment it starts. Anything begun later
+	   comes from Settings > Network Capture or the control socket and does not
+	   pass through here. */
+	netcap_init();
+	if (config.network_capture != NULL && config.network_capture[0] != '\0') {
+		(void) netcap_file_start(config.network_capture, 0);
 	}
 
 	// Initialize broadcast relay for Access+ support
@@ -521,8 +458,7 @@ network_nat_tx(uint32_t errbuf, uint32_t mbufs, uint32_t dest, uint32_t src, uin
 		mbufs = txb.m_next;
 	}
 
-	// Write to capture file for debug
-	write_packet(nat.capture, nat.tx_buffer, packet_length);
+	netcap_frame(NETCAP_TX, nat.tx_buffer, packet_length);
 
 	// Offer the packet to the Access+/ShareFS broadcast relay. If it returns
 	// non-zero it has taken full ownership of the packet (an external unicast
@@ -719,11 +655,6 @@ network_nat_close(void)
 	net_switch_close();
 	net_json_close();
 	net_slot_release();
-
-	if (nat.capture != NULL) {
-		fclose(nat.capture);
-		nat.capture = NULL;
-	}
 
 	// Note: SLiRP cleanup would go here if needed
 }
