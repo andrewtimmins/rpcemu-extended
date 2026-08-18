@@ -1626,14 +1626,8 @@ void ManagerFrame::OnClone(wxCommandEvent & /*event*/)
 	 * same HostFS, the same hard discs, and the lock refusing to start it
 	 * because the original already held it - under the original's name.
 	 */
-	{
-		wxFileConfig settings(wxEmptyString, wxEmptyString, dest_path, wxEmptyString,
-		                      wxCONFIG_USE_RELATIVE_PATH);
-
-		ConfigFileUseGeneralGroup(settings);
-		settings.Write("name", sanitized);
-		settings.Flush();
-	}
+	ConfigPathsPrepareClonedConfig(dest_path, sanitized, MachineDirFor(name),
+	    MachineDirFor(sanitized));
 
 	/* Pulsed rather than counted: the copy walks the tree as it goes, and
 	   counting it first would mean walking the whole thing twice to tell

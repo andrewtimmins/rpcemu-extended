@@ -218,6 +218,81 @@ bool ConfigPathsCopyDirectory(const wxString &src, const wxString &dst,
 	return CopyTreeInto(src, dst, progress);
 }
 
+/*
+ * Make a copied configuration belong to the machine it has become.
+ *
+ * A clone used to have only its `name` rewritten, and everything else in the
+ * file was written for the machine it came from. Some of that names a resource
+ * only one machine may have: the same control socket, so a tool reaches
+ * whichever machine bound it last; the same capture file, so two machines write
+ * one pcap; the same HostFS or hard disc, so two guests write one filesystem. A
+ * machine whose socket fields were empty was fine only by luck, because empty
+ * already means "under my own directory".
+ *
+ * @param config_path  The copied configuration file, rewritten in place
+ * @param new_name     The clone's name
+ * @param source_dir   The machine directory the copy came from
+ * @param clone_dir    The machine directory the copy is going to
+ */
+void ConfigPathsPrepareClonedConfig(const wxString &config_path,
+                                    const wxString &new_name,
+                                    const wxString &source_dir,
+                                    const wxString &clone_dir)
+{
+	/* Cleared rather than rewritten: empty already means this machine's own
+	   directory, so there is nothing better to put here. */
+	static const char *const own_channel[] = {
+		"hostcmd_socket", "debug_socket", "netcap_socket"
+	};
+	/* Things the machine writes to. Two machines appending to one file is not a
+	   sensible default whoever chose the path. */
+	static const char *const own_output[] = {
+		"network_capture", "serial_com1_log", "serial_com2_log",
+		"parallel_log", "printer_output_path"
+	};
+	/* Paths that may point inside the machine's own directory, which the copy
+	   has just reproduced under the new name. */
+	static const char *const own_path[] = {
+		"hostfs_path", "hd4_path", "hd5_path", "cdrom_iso"
+	};
+
+	wxFileConfig settings(wxEmptyString, wxEmptyString, config_path, wxEmptyString,
+	                      wxCONFIG_USE_RELATIVE_PATH);
+
+	ConfigFileUseGeneralGroup(settings);
+	settings.Write("name", new_name);
+
+	for (const char *key : own_channel) {
+		if (settings.HasEntry(key)) {
+			settings.Write(key, wxEmptyString);
+		}
+	}
+	for (const char *key : own_output) {
+		if (settings.HasEntry(key)) {
+			settings.Write(key, wxEmptyString);
+		}
+	}
+
+	/*
+	 * A path inside the source machine's directory is re-pointed at the same
+	 * place inside the clone's, since the files are being copied there. A path
+	 * anywhere else is deliberate and left alone: somebody who pointed two
+	 * machines at one disc image meant it.
+	 */
+	for (const char *key : own_path) {
+		wxString value;
+
+		if (!settings.Read(key, &value) || value.empty()) {
+			continue;
+		}
+		if (!source_dir.empty() && value.StartsWith(source_dir)) {
+			settings.Write(key, clone_dir + value.Mid(source_dir.length()));
+		}
+	}
+
+	settings.Flush();
+}
+
 wxString ConfigPathsRenameMachine(const wxString &old_name, const wxString &new_name, const wxString &config_path)
 {
 	const wxString sanitized = ConfigPathsSanitizeName(new_name);

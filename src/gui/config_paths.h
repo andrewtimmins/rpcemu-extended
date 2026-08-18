@@ -56,6 +56,16 @@ using ConfigPathsCopyProgress = std::function<void(const wxString &file)>;
 
 bool ConfigPathsCopyDirectory(const wxString &src, const wxString &dst,
                               const ConfigPathsCopyProgress &progress = nullptr);
+/**
+ * Make a copied configuration belong to the machine it has become: clear the
+ * fields naming a resource only one machine may have, and re-point any path
+ * that lay inside the machine directory the copy came from.
+ */
+void ConfigPathsPrepareClonedConfig(const wxString &config_path,
+                                    const wxString &new_name,
+                                    const wxString &source_dir,
+                                    const wxString &clone_dir);
+
 wxString ConfigPathsRenameMachine(const wxString &old_name, const wxString &new_name, const wxString &config_path);
 
 // QSettings-style machine configs store keys under [General]; wxFileConfig needs an explicit group.

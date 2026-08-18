@@ -735,6 +735,18 @@ rpcemu_add_test(test_net_switch)
 # truncated every ShareFS data datagram, and the forged source address on the
 # fragmenting path. broadcast_relay.c is included by the test rather than
 # compiled here, because both are static.
+# What a cloned machine's configuration must stop sharing with its original.
+# config_paths.cpp is compiled in; it needs wx for wxFileConfig but no display.
+add_executable(test_clone_config test_clone_config.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui/config_paths.cpp
+               test_stubs.c)
+target_include_directories(test_clone_config PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui)
+target_link_libraries(test_clone_config PRIVATE rpcemu_core m)
+rpcemu_setup_wxwidgets(test_clone_config)
+rpcemu_add_test(test_clone_config)
+
 add_executable(test_relay_datagram test_relay_datagram.c)
 target_include_directories(test_relay_datagram PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src)
@@ -813,7 +825,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 49)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 50)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 10")	# JIT differential
 endif()
