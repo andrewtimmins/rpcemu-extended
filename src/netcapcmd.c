@@ -667,6 +667,61 @@ nc_write_client(void)
 
 /* ---- lifecycle --------------------------------------------------------- */
 
+#ifdef _WIN32
+/*
+ * Bind the first free port at or above `first`.
+ *
+ * Every machine's configuration carries the same default port, and Windows lets
+ * a second listener bind a port that already has one when SO_REUSEADDR is set,
+ * so two machines did not conflict loudly: both bound it and a connection went
+ * to whichever the system chose. The port settled on goes into the lock file,
+ * which is how the client tools find it. Same reasoning as the VNC server's.
+ */
+static int
+nc_listen_tcp_from(int first)
+{
+	const int attempts = 16;
+	int i;
+
+	for (i = 0; i < attempts; i++) {
+		const int port = first + i;
+		int fd;
+
+		if (port < 1 || port > 65535) {
+			break;
+		}
+		fd = nc_listen_tcp(port);
+		if (fd >= 0) {
+			if (i > 0) {
+				rpclog("NetCapCmd: TCP port %d was in use, listening on %d "
+				       "instead\n", first, port);
+			}
+			return fd;
+		}
+	}
+	return -1;
+}
+#endif /* _WIN32 - only the Windows path picks a port for itself */
+
+/* Record the port actually bound, so a tool does not have to guess it. */
+static void
+nc_record_tcp_endpoint(int fd)
+{
+	char endpoint[64];
+	struct sockaddr_in addr;
+	socklen_t len = sizeof(addr);
+
+	if (fd < 0) {
+		return;
+	}
+	if (getsockname(fd, (struct sockaddr *) &addr, &len) != 0) {
+		return;
+	}
+	snprintf(endpoint, sizeof(endpoint), "127.0.0.1:%u",
+	    (unsigned) ntohs(addr.sin_port));
+	machine_lock_set_netcap_endpoint(endpoint);
+}
+
 void
 netcapcmd_init(void)
 {
@@ -693,7 +748,8 @@ netcapcmd_init(void)
 				port = p;
 			}
 		}
-		nc.listen_fd = nc_listen_tcp(port);
+		nc.listen_fd = nc_listen_tcp_from(port);
+		nc_record_tcp_endpoint(nc.listen_fd);
 	}
 #else
 	if (config.netcap_socket[0] == '\0' || config.netcap_socket[0] == '/') {
@@ -705,11 +761,23 @@ netcapcmd_init(void)
 				rpclog("NetCapCmd: '%s' is not there any more, using the "
 				       "default socket instead\n", path);
 				snprintf(path, sizeof(path), "%srpcemu-netcap.sock",
-				    rpcemu_get_datadir());
+				    rpcemu_get_machine_datadir());
 			}
 		} else {
+			/*
+			 * ★ The machine's own directory, as hostcmd.c and debugcmd.c
+			 * already do.
+			 *
+			 * This was the data directory, which is one path for every
+			 * machine in it - and nc_listen_unix() unlinks before it binds,
+			 * so the second machine to start did not fail, it took the
+			 * first machine's socket away. The first was then unreachable
+			 * with its socket file gone from under it, rpcemu-netcap always
+			 * reached whichever machine had started last, and stopping that
+			 * one removed the path entirely.
+			 */
 			snprintf(path, sizeof(path), "%srpcemu-netcap.sock",
-			    rpcemu_get_datadir());
+			    rpcemu_get_machine_datadir());
 		}
 		nc.listen_fd = nc_listen_unix(path);
 		if (nc.listen_fd >= 0) {
@@ -721,6 +789,7 @@ netcapcmd_init(void)
 		const int p = atoi(config.netcap_socket);
 
 		nc.listen_fd = nc_listen_tcp((p > 0 && p < 65536) ? p : 15592);
+		nc_record_tcp_endpoint(nc.listen_fd);
 	}
 #endif
 }

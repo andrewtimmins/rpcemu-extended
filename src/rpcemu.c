@@ -242,11 +242,11 @@ Config config = {
 	"",			/* vnc_password */
 	"",			/* vnc_password_readonly */
 	1,			/* hostcmd_enabled (ON by default) */
-	"",			/* hostcmd_socket (empty => <datadir>hostcmd.sock) */
+	"",			/* hostcmd_socket (empty => <machinedir>hostcmd.sock) */
 	1,			/* netcap_enabled (ON by default, like the other two sockets) */
-	"",			/* netcap_socket (empty => <datadir>rpcemu-netcap.sock) */
+	"",			/* netcap_socket (empty => <machinedir>rpcemu-netcap.sock) */
 	1,			/* debug_enabled (ON by default) */
-	"",			/* debug_socket (empty => <datadir>rpcemu-debug.sock) */
+	"",			/* debug_socket (empty => <machinedir>rpcemu-debug.sock) */
 	Model_RPCARM710,	/* model (configured machine model) */
 	0,			/* clipboard_enabled (OFF: it shares your host clipboard with the guest) */
 	0,			/* start_fullscreen (OFF by default) */
