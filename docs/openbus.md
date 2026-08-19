@@ -185,6 +185,149 @@ processor eventually arrives, the plumbing under it is already known good, and a
 fault can be attributed to the processor rather than to the six other things
 that could have been wrong.
 
+## The co-processor card
+
+`src/copro/` holds a card for the second slot with a choice of processor, and the
+three processors themselves. No such card was ever made: only Aleph One's x86 PC
+card and Simtec's Hydra ever used this bus, and this is neither. Its ID register
+says so.
+
+Fit one from the machine editor's **Co-Processor Support** tab, or for one run
+with `--openbus-card=rv32i`, `6502` or `z80`. The tab writes `openbus_card` into
+the machine's configuration; the option overrides it for that run and is not
+written back. An empty slot is the default, as it was on every Risc PC nobody
+bought a card for.
+
+### The cores
+
+| Core | What is implemented | What stops it | Card RAM |
+| --- | --- | --- | --- |
+| **RV32IM** | The whole RV32I base set plus M. No CSRs, no A/F/D/C extensions, strict natural alignment. | `ecall` or `ebreak`, with a0 as the exit code | 1MB |
+| **6502** | All 151 documented NMOS opcodes, decimal mode, and the indirect-`JMP` page bug. Undocumented opcodes fault. | `BRK`, with A as the exit code | 64K |
+| **Z80** | The documented set: main, CB, ED including the block instructions, and DD/FD/DDCB/FDCB. Undocumented opcodes, `SLL` and the IXH/IXL halves fault. | `HALT`, with A as the exit code | 64K |
+
+Each core is a single file that executes out of a flat byte array and knows
+nothing about the bus, the emulator or wxWidgets. That is what makes them
+testable on every platform with no machine and no display, and it is why they
+live in their own directory rather than inside the card.
+
+**Cycles are instructions, not bus cycles.** Every core returns one cycle per
+instruction, so the card's `CYCLES` register counts instructions retired. The
+alternative would be a fiction: a real card's processor ran on its own crystal at
+a rate unrelated to how many host cycles the emulator hands over, and
+per-instruction timing tables would cost host time to maintain a number that
+still would not mean what it said.
+
+**A repeating Z80 instruction is interruptible.** `LDIR` and its relatives step
+the program counter back over their own two bytes when they have more to do, which
+is what the hardware does — and it matters here for a reason the hardware did not
+care about. A card is given a bounded slice of the host's cycles, so a 64K block
+move is spread across slices instead of stalling the machine for the whole of it.
+
+### One card design, not three
+
+`openbus.h` is emphatic that the register window is product specific and that
+generalising it would be a mistake. That still stands: what it warns against is
+inventing a layout to cover cards other people designed. This layout covers cards
+we designed, so all three cores share it and a `CORE` register says which is
+fitted — which is the whole reason one guest module can drive any of them.
+
+The card carries **its own RAM**, as a real second-processor card did: Aleph One's
+took a SIMM, and the Tube's second processors had theirs. That buys three things.
+Each core's whole address space is a simple array, so a processor stays a
+processor. A 6502 or Z80 gets the flat 64K it expects rather than a window into
+somebody else's 256MB. And the guest loads a program through an auto-incrementing
+aperture in the register window, with ordinary word writes and **no physical
+address** — so on RISC OS there is no dynamic area, no page translation and no
+contiguity to arrange.
+
+Bus mastering is there as well, because a card that cannot reach host memory is a
+podule and not a second bus master: the DMA registers copy between host physical
+memory and card RAM on the card's own timeslice, as the stub card's block copy
+does.
+
+### The register map
+
+At `OPENBUS_REG_BASE` (`&03600000`). Word registers; a narrower access reads or
+writes the addressed part of the word, little-endian, as the bus does. The full
+table with the bit meanings is in `src/copro/openbus_coproc.h`, which is the
+authority — this is the shape of it:
+
+| Offset | Name | | |
+| --- | --- | --- | --- |
+| `&00` | `ID` | R | `&4F424350`, `'OBCP'` |
+| `&04` | `CORE` | R | `'RV32'`, `'6502'` or `'Z80 '` |
+| `&08` | `RAMSIZE` | R | bytes of card RAM |
+| `&0C` | `CTRL` | RW | run, step, reset, interrupt on halt |
+| `&10` | `STATUS` | R | running, halted, faulted, interrupt, transfer in progress |
+| `&14` | `ENTRY` | RW | where the core starts on reset |
+| `&18` | `ADDR` | RW | the aperture into card RAM |
+| `&1C` | `DATA` | RW | the bytes at `ADDR`, which then advances |
+| `&20` | `MBOX_TX` | RW | guest to core |
+| `&24` | `MBOX_RX` | R | core to guest; the exit code on a halt |
+| `&28`–`&34` | | R | cycles, program counter, fault cause and address |
+| `&38` | `IRQCLEAR` | W | drop the interrupt |
+| `&3C`–`&48` | | RW | the bus-master transfer: host address, card address, length, control |
+
+The mailbox is **asymmetric on purpose**. `MBOX_RX` carries the exit code from
+every core. `MBOX_TX` can only be read by a core with an input space to read it
+through, which of these three means the Z80 alone: `IN A,(0)` returns its low byte
+and `OUT (0),A` posts a byte back while the core still runs. An RV32I or 6502
+program takes its parameters in card RAM, which is where a program of any size
+would want them. Saying that plainly beats inventing a channel two of the three
+cores cannot use.
+
+### The guest module
+
+`RPCEmuCoPro`, in `poduleroms/`, source in `riscos-progs/RPCEmuCoPro/`. It
+provides:
+
+- `*CoProInfo` — which core is fitted and how much RAM it has
+- `*CoProStatus` — running, halted or faulted, with the program counter, the
+  instruction count, the mailbox and any fault
+- `*CoProLoad <file> [<hex address>]` — stream a file into card RAM
+- `*CoProRun [<hex entry>]` — reset to the entry point, run, and report the exit
+  code and instruction count
+- `CoPro_Info`, `CoPro_Reset`, `CoPro_Write`, `CoPro_Read`, `CoPro_Run`,
+  `CoPro_Stop`, `CoPro_Status`, `CoPro_Step` and `CoPro_Mailbox` as SWIs
+
+**The register window is not a podule**, so `Podule_ReadInfo` will never find it
+and there is no logical address to inherit. The module asks the kernel for one
+with `OS_Memory 13`, which maps I/O space permanently and returns the logical
+address in R3; with no flags in R0 the mapping is non-bufferable and
+non-cacheable, which is what device registers need.
+
+It ships in the podule ROM, so it loads on every machine whether a card is fitted
+or not. Permanently mapping two megabytes of I/O space for an empty slot would be
+rude, so initialisation makes a *temporary* mapping with `OS_Memory 14`, reads the
+ID register, releases it with `OS_Memory 15`, and only maps permanently when a
+card really answers. On a machine with no card the module initialises anyway and
+every entry point reports that there is none — refusing to initialise would put an
+error on the screen at every boot of every machine.
+
+**It loads through the aperture, not by bus mastering.** The aperture needs no
+physical address, which keeps the module a few hundred bytes rather than an
+exercise in memory management. The DMA registers are the faster path for bulk
+data and are available to a caller that has a physical address; nothing in the
+module uses them yet, and that is a deliberate boundary rather than an oversight.
+
+### ★ The SWI chunk is provisional
+
+`&58CC0` is allocated to RPCEmu and is in use by `EtherRPCEm`. Nothing has been
+allocated for this module, and it currently uses `&58D00`, the chunk above it,
+because asking for the next one along is the natural request to make. **Until RISC
+OS Open allocates it, another module could legitimately be using it.**
+`*CoProInfo` says so in its own output, so a user cannot be unaware of it.
+
+### Writing something to run
+
+There is no software for this card beyond what you write yourself, which is the
+honest cost of a card nobody made. For RV32IM, `riscv32-unknown-elf-gcc
+-march=rv32im -mabi=ilp32` and `objcopy -O binary` produce something
+`*CoProLoad` will take; a 6502 or Z80 assembler produces the same. A program
+starts at whatever `*CoProRun` is given, which is 0 unless you say otherwise —
+worth knowing for a Z80 image, which conventionally starts at `&100`.
+
 ## What a real card would still need
 
 Beyond the bus, which is now here:
@@ -208,7 +351,14 @@ Beyond the bus, which is now here:
   because nothing would read it.
 - Register accesses are dispatched with a width but no timing. Gemini's real
   cycle costs are not documented anywhere I could find.
-- There is no GUI for fitting a card, since there is no card worth fitting.
+- The co-processor card's SWI chunk is provisional; see above.
+- `RPCEmuCoPro` loads programs through the aperture and never bus-masters, so a
+  large transfer is a word at a time through the register window. The card's DMA
+  path is tested but has no user in the guest.
+- The cores count instructions rather than bus cycles, so nothing on a card can
+  measure its own speed meaningfully.
+- Nothing hot-swaps a core: the card is fitted when the machine starts, as a real
+  one would be, so changing it needs a restart.
 
 ## Attribution
 

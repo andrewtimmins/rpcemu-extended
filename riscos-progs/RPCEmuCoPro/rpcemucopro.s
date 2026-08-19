@@ -136,7 +136,6 @@
 	Error_Syntax			= Error_Base + 3
 
 	V_bit				= 1 << 28
-	C_bit				= 1 << 29
 
 	@ How much of a file to move at a time in *CoProLoad. Any size works; a
 	@ page keeps the workspace small and the loop short.
@@ -253,8 +252,7 @@ init_done:
 init_failed:
 	add	sp, sp, #4		@ drop the saved r0, keeping the error
 	ldmfd	sp!, {r1-r5, lr}
-	orr	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_error
 
 
 @ Entry: r12 -> private word.
@@ -275,9 +273,44 @@ final:
 
 final_done:
 	ldmfd	sp!, {r0-r3, lr}
-	bic	lr, lr, #V_bit
+	b	return_ok
+
+
+
+@ ---------------------------------------------------------------- returning
+
+@ ★ HOW A 32-BIT MODULE REPORTS SUCCESS AND FAILURE, because getting this wrong
+@ is not a subtle bug. RISC OS signals an error from a SWI or a * command with
+@ the V flag, and on a 26-bit ARM the flags lived in the top bits of R15, so
+@ "ORR LR, LR, #V_bit" followed by "MOV PC, LR" set V as it returned, and
+@ "MOVS PC, LR" returned and restored the flags in one instruction. Neither
+@ works in 32-bit code: the first puts a stray bit in the program counter and
+@ branches into nowhere, and the second copies SPSR into CPSR, which is an
+@ exception return and not a subroutine return at all. This module was written
+@ with both idioms and the first * command it was given aborted on a data
+@ transfer inside the module. The flags now go through CPSR properly.
+@
+@ The scratch register is stacked rather than taken from the caller's, because
+@ CoPro_Status returns values in R0 to R5 and a return path that quietly used
+@ one of them would corrupt exactly the SWI hardest to notice it in.
+
+@ Return to the caller with V clear.
+return_ok:
+	stmfd	sp!, {r0}
+	mrs	r0, cpsr
+	bic	r0, r0, #V_bit
+	msr	cpsr_f, r0
+	ldmfd	sp!, {r0}	@ does not disturb the flags just set
 	mov	pc, lr
 
+@ Return to the caller with V set. r0 must already point at the error block.
+return_error:
+	stmfd	sp!, {r1}
+	mrs	r1, cpsr
+	orr	r1, r1, #V_bit
+	msr	cpsr_f, r1
+	ldmfd	sp!, {r1}
+	mov	pc, lr
 
 @ ------------------------------------------------------------------ helpers
 
@@ -302,8 +335,7 @@ get_ws:
 @ Return "no co-processor card is fitted", V set.
 error_no_card:
 	adrl	r0, err_no_card
-	orr	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_error
 
 
 @ ------------------------------------------------------------- SWI handler
@@ -338,27 +370,23 @@ swi_table:
 swi_no_card:
 	adrl	r0, err_no_card
 	ldmfd	sp!, {lr}
-	orr	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_error
 
 swi_unknown:
 	@ The same error RISC OS gives for an unclaimed SWI in a claimed chunk, so
 	@ a caller probing for this module cannot tell it from its absence.
 	adrl	r0, err_bad_swi
-	orr	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_error
 
 @ Return successfully from a SWI entered through the table above.
 swi_return:
 	ldmfd	sp!, {lr}
-	bic	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_ok
 
 @ Return an error from one. r0 -> error block.
 swi_error:
 	ldmfd	sp!, {lr}
-	orr	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_error
 
 
 @ CoPro_Info. Out: r0 = core id ('RV32', '6502' or 'Z80 '), r1 = card RAM size,
@@ -388,9 +416,10 @@ swi_range:
 @ CoPro_Write. In: r0 = address in card RAM, r1 -> buffer, r2 = length in bytes.
 @ Bytes rather than words, because a program image is a file and a file is bytes.
 swi_write:
-	stmfd	sp!, {r0-r4}
+	stmfd	sp!, {r0-r5}
 	bl	check_range
-	bcs	swi_write_range
+	cmp	r5, #0
+	bne	swi_write_range
 	str	r0, [r10, #REG_ADDR]
 	mov	r3, r1
 	mov	r4, r2
@@ -402,19 +431,20 @@ swi_write_loop:
 	sub	r4, r4, #1
 	b	swi_write_loop
 swi_write_done:
-	ldmfd	sp!, {r0-r4}
+	ldmfd	sp!, {r0-r5}
 	b	swi_return
 
 swi_write_range:
-	ldmfd	sp!, {r0-r4}
+	ldmfd	sp!, {r0-r5}
 	adrl	r0, err_range
 	b	swi_error
 
 @ CoPro_Read. In: r0 = address in card RAM, r1 -> buffer, r2 = length in bytes.
 swi_read:
-	stmfd	sp!, {r0-r4}
+	stmfd	sp!, {r0-r5}
 	bl	check_range
-	bcs	swi_write_range
+	cmp	r5, #0
+	bne	swi_write_range
 	str	r0, [r10, #REG_ADDR]
 	mov	r3, r1
 	mov	r4, r2
@@ -426,27 +456,30 @@ swi_read_loop:
 	sub	r4, r4, #1
 	b	swi_read_loop
 swi_read_done:
-	ldmfd	sp!, {r0-r4}
+	ldmfd	sp!, {r0-r5}
 	b	swi_return
 
-@ Is [r0, r0 + r2) inside card RAM? C set if not.
+@ Is [r0, r0 + r2) inside card RAM?
+@   In:  r0 = address, r2 = length, r10 = the register window
+@   Out: r5 = 0 if it is, 1 if it is not. Nothing else changes.
+@
 @ Written as a subtraction against the size so that a length near 2^32 cannot
-@ wrap the sum and come out looking valid.
+@ wrap the sum and come out looking valid. The verdict comes back in a register
+@ rather than in the carry, because returning a flag would mean returning with
+@ MOVS PC, LR - see the note above return_ok.
 check_range:
 	stmfd	sp!, {r1, r3, lr}
+	mov	r5, #1			@ assume it is not
 	ldr	r3, [r10, #REG_RAMSIZE]
 	cmp	r0, r3
-	bhi	check_range_bad
-	sub	r1, r3, r0
+	bhi	check_range_out
+	sub	r1, r3, r0		@ how much room there is from r0 up
 	cmp	r2, r1
-	bhi	check_range_bad
+	bhi	check_range_out
+	mov	r5, #0
+check_range_out:
 	ldmfd	sp!, {r1, r3, lr}
-	bic	lr, lr, #C_bit
-	movs	pc, lr
-check_range_bad:
-	ldmfd	sp!, {r1, r3, lr}
-	orr	lr, lr, #C_bit
-	movs	pc, lr
+	mov	pc, lr
 
 @ CoPro_Run. In: r0 = flags, bit 0 = raise the host's interrupt when the core
 @ stops. The core runs whenever the emulator gives the card a share of the ARM's
@@ -494,34 +527,39 @@ swi_mailbox:
 
 @ -------------------------------------------------------------- * commands
 
+@ Each entry is the command name, then four words: the code, the information
+@ word, the SYNTAX message and then the HELP text - in that order. Written the
+@ other way round at first, which put the syntax string where *Help looks and
+@ left a null pointer where RISC OS reads the syntax message when a command is
+@ given the wrong parameters.
 table:
 	.string	"CoProInfo"
 	.align
 	.int	cmd_info
 	.int	0x00000000		@ no parameters
-	.int	0
 	.int	syntax_info
+	.int	help_info
 
 	.string	"CoProStatus"
 	.align
 	.int	cmd_status
 	.int	0x00000000
-	.int	0
 	.int	syntax_status
+	.int	help_status
 
 	.string	"CoProLoad"
 	.align
 	.int	cmd_load
 	.int	0x00010002		@ 1 to 2 parameters
-	.int	0
 	.int	syntax_load
+	.int	help_load
 
 	.string	"CoProRun"
 	.align
 	.int	cmd_run
 	.int	0x00000001		@ 0 or 1 parameters
-	.int	0
 	.int	syntax_run
+	.int	help_run
 
 	.byte	0			@ end of table
 	.align
@@ -573,32 +611,35 @@ print_core_loop:
 	ldmfd	sp!, {r0-r4, lr}
 	mov	pc, lr
 
-@ Common prologue for a * command: r9 -> workspace, r10 -> window, or report
-@ that there is no card and return.
-@ Uses the caller's stack frame, so it is entered with bl and the caller must
-@ have saved lr already.
+@ Common prologue for a * command.
+@   Out: r9 -> workspace, r10 -> the register window, and r0 = 0;
+@        or r0 = 1 with neither valid, meaning no card is fitted.
+@
+@ r0 carries the verdict, which means it does not survive: every caller has
+@ already taken what it needs from the command tail before calling this.
 cmd_setup:
-	stmfd	sp!, {r0-r2, lr}
+	stmfd	sp!, {r1, r2, lr}
 	bl	get_ws
 	beq	cmd_setup_none
 	mov	r9, r0
 	bl	get_base
 	beq	cmd_setup_none
 	mov	r10, r0
-	ldmfd	sp!, {r0-r2, lr}
-	bic	lr, lr, #C_bit
-	movs	pc, lr
+	mov	r0, #0
+	ldmfd	sp!, {r1, r2, lr}
+	mov	pc, lr
 cmd_setup_none:
-	ldmfd	sp!, {r0-r2, lr}
-	orr	lr, lr, #C_bit
-	movs	pc, lr
+	mov	r0, #1
+	ldmfd	sp!, {r1, r2, lr}
+	mov	pc, lr
 
 
 @ *CoProInfo
 cmd_info:
 	stmfd	sp!, {r0-r10, lr}
 	bl	cmd_setup
-	bcs	cmd_no_card
+	cmp	r0, #0
+	bne	cmd_no_card
 
 	adrl	r0, msg_fitted
 	bl	print
@@ -618,21 +659,20 @@ cmd_info:
 	bl	newline
 
 	ldmfd	sp!, {r0-r10, lr}
-	bic	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_ok
 
 cmd_no_card:
 	ldmfd	sp!, {r0-r10, lr}
 	adrl	r0, err_no_card
-	orr	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_error
 
 
 @ *CoProStatus
 cmd_status:
 	stmfd	sp!, {r0-r10, lr}
 	bl	cmd_setup
-	bcs	cmd_no_card
+	cmp	r0, #0
+	bne	cmd_no_card
 
 	adrl	r0, msg_state
 	bl	print
@@ -694,8 +734,7 @@ cmd_status_said:
 
 cmd_status_done:
 	ldmfd	sp!, {r0-r10, lr}
-	bic	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_ok
 
 
 @ *CoProLoad <file> [<hex address>]
@@ -707,7 +746,8 @@ cmd_load:
 	stmfd	sp!, {r0-r11, lr}
 	mov	r11, r0			@ the command tail
 	bl	cmd_setup
-	bcs	cmd_no_card
+	cmp	r0, #0
+	bne	cmd_no_card
 
 	@ The filename runs to the first space or terminator. OS_Find needs it
 	@ terminated, and the tail is the OS's copy, so the terminator is written
@@ -743,8 +783,9 @@ cmd_load_addrskip:
 	beq	cmd_load_addrskip
 	cmp	r0, #13
 	bls	cmd_load_terminate
-	bl	parse_hex		@ r2 -> digits; r0 = value, C set if bad
-	bcs	cmd_load_syntax
+	bl	parse_hex		@ r2 -> digits; r0 = value, r3 = 0 if good
+	cmp	r3, #0
+	bne	cmd_load_syntax
 	mov	r8, r0
 
 cmd_load_terminate:
@@ -815,8 +856,7 @@ cmd_load_close:
 	bl	newline
 
 	ldmfd	sp!, {r0-r11, lr}
-	bic	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_ok
 
 cmd_load_closerange:
 	mov	r0, #0
@@ -824,8 +864,7 @@ cmd_load_closerange:
 	swi	XOS_Find
 	ldmfd	sp!, {r0-r11, lr}
 	adrl	r0, err_range
-	orr	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_error
 
 cmd_load_closefail:
 	stmfd	sp!, {r0}
@@ -835,26 +874,22 @@ cmd_load_closefail:
 	ldmfd	sp!, {r0}
 	add	sp, sp, #4		@ drop the stacked r0, keeping the error
 	ldmfd	sp!, {r1-r11, lr}
-	orr	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_error
 
 cmd_load_failed:
 	add	sp, sp, #4
 	ldmfd	sp!, {r1-r11, lr}
-	orr	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_error
 
 cmd_load_notfound:
 	ldmfd	sp!, {r0-r11, lr}
 	adrl	r0, err_syntax
-	orr	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_error
 
 cmd_load_syntax:
 	ldmfd	sp!, {r0-r11, lr}
 	adrl	r0, err_syntax
-	orr	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_error
 
 
 @ *CoProRun [<hex entry>]
@@ -867,7 +902,8 @@ cmd_run:
 	stmfd	sp!, {r0-r11, lr}
 	mov	r11, r0
 	bl	cmd_setup
-	bcs	cmd_no_card
+	cmp	r0, #0
+	bne	cmd_no_card
 
 	mov	r8, #0			@ the entry point
 	mov	r2, r11
@@ -879,7 +915,8 @@ cmd_run_skip:
 	cmp	r0, #13
 	bls	cmd_run_go		@ nothing given, so start at zero
 	bl	parse_hex
-	bcs	cmd_run_syntax
+	cmp	r3, #0
+	bne	cmd_run_syntax
 	mov	r8, r0
 
 cmd_run_go:
@@ -918,8 +955,7 @@ cmd_run_wait:
 	bl	newline
 
 	ldmfd	sp!, {r0-r11, lr}
-	bic	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_ok
 
 cmd_run_faulted:
 	adrl	r0, msg_fault
@@ -932,30 +968,29 @@ cmd_run_faulted:
 	bl	print_hex
 	bl	newline
 	ldmfd	sp!, {r0-r11, lr}
-	bic	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_ok
 
 cmd_run_range:
 	ldmfd	sp!, {r0-r11, lr}
 	adrl	r0, err_range
-	orr	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_error
 
 cmd_run_syntax:
 	ldmfd	sp!, {r0-r11, lr}
 	adrl	r0, err_syntax
-	orr	lr, lr, #V_bit
-	mov	pc, lr
+	b	return_error
 
 
 @ Parse a hexadecimal number.
 @   In:  r2 -> the first character; an "&" or "0x" prefix is accepted
-@   Out: r0 = the value, r2 -> past the digits, C clear
-@        C set and r0 undefined if there were no digits at all
-@ Written here rather than through OS_ReadUnsigned because it is fifteen
-@ instructions and needs no assumptions about that call's flag bits.
+@   Out: r0 = the value, r2 -> past the digits, r3 = 0 if there were digits
+@        and 1 if there were none, in which case r0 means nothing
+@
+@ Written here rather than through OS_ReadUnsigned because it is twenty
+@ instructions and needs no assumptions about that call's flag bits. The verdict
+@ is a register for the reason given above return_ok.
 parse_hex:
-	stmfd	sp!, {r1, r3, r4, lr}
+	stmfd	sp!, {r1, r4, lr}
 	mov	r0, #0
 	mov	r4, #0			@ how many digits were seen
 
@@ -975,29 +1010,29 @@ parse_hex_loop:
 	cmp	r1, #'0'
 	blo	parse_hex_end
 	cmp	r1, #'9'
-	subls	r3, r1, #'0'
+	subls	r1, r1, #'0'
 	bls	parse_hex_digit
 	orr	r1, r1, #0x20		@ fold case for the digits
 	cmp	r1, #'a'
 	blo	parse_hex_end
 	cmp	r1, #'f'
 	bhi	parse_hex_end
-	sub	r3, r1, #'a'
-	add	r3, r3, #10
+	sub	r1, r1, #'a'
+	add	r1, r1, #10
 
 parse_hex_digit:
 	mov	r0, r0, lsl #4
-	orr	r0, r0, r3
+	orr	r0, r0, r1
 	add	r2, r2, #1
 	add	r4, r4, #1
 	b	parse_hex_loop
 
 parse_hex_end:
+	mov	r3, #0
 	cmp	r4, #0
-	ldmfd	sp!, {r1, r3, r4, lr}
-	orreq	lr, lr, #C_bit		@ no digits at all
-	bicne	lr, lr, #C_bit
-	movs	pc, lr
+	moveq	r3, #1			@ no digits at all
+	ldmfd	sp!, {r1, r4, lr}
+	mov	pc, lr
 
 
 @ Print r0 as an unsigned decimal number.
@@ -1139,6 +1174,19 @@ err_syntax:
 err_bad_swi:
 	.int	Error_NoSuchSWI
 	.string	"SWI value not known"
+	.align
+
+help_info:
+	.string	"*CoProInfo reports which processor is fitted to the OPEN Bus second\n\rprocessor slot and how much RAM the card carries.\n\r"
+	.align
+help_status:
+	.string	"*CoProStatus reports whether the co-processor is running, halted or\n\rfaulted, with its program counter, how many instructions it has\n\rretired, and the word it has posted back to the host.\n\r"
+	.align
+help_load:
+	.string	"*CoProLoad reads a file into the co-processor card's own RAM, starting\n\rat the given address or at zero. A Z80 image conventionally wants &100.\n\r"
+	.align
+help_run:
+	.string	"*CoProRun resets the co-processor to the given entry point, or to zero,\n\rstarts it, waits for it to stop and reports what it handed back.\n\r"
 	.align
 
 syntax_info:

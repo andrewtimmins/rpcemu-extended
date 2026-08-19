@@ -89,7 +89,11 @@ find_recorded_socket(char *buf, size_t buflen, const char *machine)
 		if (machine_lock_read_hostcmd_endpoint(d, recorded, sizeof(recorded)) &&
 		    recorded[0] != '\0')
 		{
-			snprintf(buf, buflen, "%s", recorded);
+			/* Bounded like every other format in this file: the
+			   recorded endpoint is read into a 700-byte buffer and
+			   the callers' is smaller, and snprintf truncating
+			   quietly is still a warning the build gate refuses. */
+			snprintf(buf, buflen, "%.500s", recorded);
 			return buf;
 		}
 		return NULL;
@@ -117,7 +121,7 @@ find_recorded_socket(char *buf, size_t buflen, const char *machine)
 	closedir(dir);
 
 	if (count == 1) {
-		snprintf(buf, buflen, "%s", recorded);
+		snprintf(buf, buflen, "%.500s", recorded);
 		return buf;
 	}
 	return NULL;
