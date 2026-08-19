@@ -76,6 +76,7 @@ jobs:
   release-preflight:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-slim
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v7
         with:
@@ -130,12 +131,14 @@ jobs:
     needs: release-preflight
     if: always() && needs.release-preflight.result != 'failure'
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
 
       - name: Install dependencies
+        timeout-minutes: 4
         run: bash setup-build-env.sh
 
       # The interpreter, not the recompiler: ASan instruments compiled code, and
@@ -248,7 +251,7 @@ jobs:
     needs: release-preflight
     if: always() && needs.release-preflight.result != 'failure'
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 6
     outputs:
       leafname: ${{ steps.package.outputs.leafname }}
     steps:
@@ -372,6 +375,7 @@ jobs:
     needs: [sanitisers, interface-docs, mcp-server]
     if: always() && needs.sanitisers.result == 'success' && needs['interface-docs'].result == 'success' && needs['mcp-server'].result == 'success'
     runs-on: ubuntu-slim
+    timeout-minutes: 3
     steps:
       - run: echo "The sanitisers, the interface documentation and the MCP server are clear."
 
@@ -390,6 +394,7 @@ jobs:
     needs: build-gate
     if: always() && needs.build-gate.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
@@ -402,6 +407,7 @@ jobs:
       #
       # amd64 alone; the check below says why.
       - name: Install dependencies
+        timeout-minutes: 3
         run: bash setup-build-env.sh --podules
 
       # The assembled guest modules are committed, so a user needs no
@@ -518,12 +524,14 @@ jobs:
     needs: build-gate
     if: always() && needs.build-gate.result == 'success'
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
 
       - name: Install dependencies
+        timeout-minutes: 3
         run: bash setup-build-env.sh
 
       - name: Build and package (arm64, interpreter)
@@ -599,6 +607,7 @@ jobs:
     needs: [linux-amd64, linux-arm64]
     if: always() && needs.linux-amd64.result == 'success' && needs.linux-arm64.result == 'success'
     runs-on: ubuntu-slim
+    timeout-minutes: 3
     steps:
       - run: echo "Linux amd64 and arm64 both built and passed their tests."
 
@@ -609,6 +618,7 @@ jobs:
     # recompiler (full-speed dynarec; the JIT supports the Windows x64 ABI).
     # Uses build-windows.sh (build.sh is apt/.deb-only).
     runs-on: windows-latest
+    timeout-minutes: 15
     defaults:
       run:
         shell: msys2 {0}
@@ -618,6 +628,7 @@ jobs:
           fetch-tags: true
 
       - name: Set up MSYS2 / MinGW-w64
+        timeout-minutes: 5
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -769,6 +780,7 @@ jobs:
     # x86-64, so the build tools themselves run emulated. Setting up the
     # environment alone takes about four minutes.
     runs-on: windows-11-arm
+    timeout-minutes: 20
     defaults:
       run:
         shell: msys2 {0}
@@ -778,6 +790,7 @@ jobs:
           fetch-tags: true
 
       - name: Set up MSYS2 / CLANGARM64
+        timeout-minutes: 11
         uses: msys2/setup-msys2@v2
         with:
           msystem: CLANGARM64
@@ -892,6 +905,7 @@ jobs:
     needs: [windows-amd64, windows-arm64]
     if: always() && needs.windows-amd64.result == 'success' && needs.windows-arm64.result == 'success'
     runs-on: ubuntu-slim
+    timeout-minutes: 3
     steps:
       - run: echo "Windows amd64 and arm64 both built and passed their tests."
 
@@ -904,6 +918,7 @@ jobs:
     # need x86_64 libraries (from a Rosetta x86_64 Homebrew - the arm64 Homebrew
     # in /opt/homebrew can't provide them) and Rosetta 2 to run the JIT test.
     runs-on: macos-14
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@v7
         with:
@@ -913,6 +928,7 @@ jobs:
         run: softwareupdate --install-rosetta --agree-to-license
 
       - name: Install x86_64 Homebrew + dependencies
+        timeout-minutes: 10
         run: |
           # A separate Intel Homebrew installs into /usr/local (the arm64
           # Homebrew lives in /opt/homebrew); both coexist. The install script
@@ -966,12 +982,14 @@ jobs:
     # backend, so arm64 uses the interpreter (RPCEMU_DYNAREC=OFF), mirroring the
     # Linux arm64 build. On Apple Silicon the x86_64 slice also runs via Rosetta.
     runs-on: macos-14
+    timeout-minutes: 7
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
 
       - name: Install dependencies
+        timeout-minutes: 3
         run: |
           # Both slices need the SAME version of every dependency: lipo fuses
           # them, and a library from two upstream releases is not one library.
@@ -1164,6 +1182,7 @@ jobs:
     # something known to be relying on the compiler's goodwill.
     needs: [release-preflight, sanitisers, interface-docs, linux, windows, macos-universal]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
@@ -1232,6 +1251,7 @@ jobs:
       - macos-universal
       - release
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       actions: read   # to read whether the previous run was red
