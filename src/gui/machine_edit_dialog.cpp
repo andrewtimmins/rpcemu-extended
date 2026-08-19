@@ -32,6 +32,7 @@ extern "C" {
 #include "hostfs_path.h"
 }
 #include "gui_preferences.h"
+#include "openbus_coproc.h"
 #include "podule_config_dialog.h"
 #include "toolbar_icons.h"
 
@@ -41,6 +42,7 @@ extern "C" {
 #include <wx/fileconf.h>
 #include <wx/bmpbuttn.h>
 #include <wx/notebook.h>
+#include <wx/settings.h>
 #include <wx/filename.h>
 #include <wx/utils.h>
 
@@ -792,13 +794,80 @@ wxWindow *MachineEditDialog::BuildPodulesPage(wxWindow *parent)
 	return page;
 }
 
+
 /*
- * The dialog is a notebook of four pages.
+ * The Co-Processor Support page: what is fitted to the OPEN Bus second processor
+ * slot.
+ *
+ * The list of cores comes from openbus_coproc_core_name() rather than being
+ * written out here, so the option parser, the machine configuration and this
+ * choice cannot drift apart. Entry 0 is the empty slot, which is what every Risc
+ * PC had unless somebody bought a card.
+ */
+wxWindow *MachineEditDialog::BuildCoProcessorPage(wxWindow *parent)
+{
+	auto *page = new wxPanel(parent);
+	auto *sizer = new wxBoxSizer(wxVERTICAL);
+
+	auto *intro = new wxStaticText(page, wxID_ANY,
+	    "The Risc PC's OPEN Bus is its second processor interface: a card on it "
+	    "is a full bus master, not a podule. RPCEmu Extended emulates a "
+	    "co-processor card for that slot, with a choice of processor.");
+	intro->Wrap(460);
+	sizer->Add(intro, 0, wxEXPAND | wxBOTTOM, 10);
+
+	auto *row = new wxBoxSizer(wxHORIZONTAL);
+	row->Add(new wxStaticText(page, wxID_ANY, "Second processor:"), 0,
+	         wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+
+	copro_choice_ = new wxChoice(page, wxID_ANY);
+	copro_choice_->Append("None (empty slot)");
+	copro_choice_->Append("RISC-V RV32IM");
+	copro_choice_->Append("MOS 6502");
+	copro_choice_->Append("Zilog Z80");
+	copro_choice_->SetSelection(0);
+	copro_choice_->SetToolTip(
+	    "Fits a co-processor card to the second processor slot. The card carries "
+	    "its own RAM: a megabyte for RV32IM, and the whole 64K address space for "
+	    "each of the 8-bit cores.");
+	row->Add(copro_choice_, 0, wxALIGN_CENTER_VERTICAL);
+	sizer->Add(row, 0, wxEXPAND | wxBOTTOM, 10);
+
+	auto *detail = new wxStaticText(page, wxID_ANY,
+	    "Programs are loaded and run through the RPCEmuCoPro module in the "
+	    "guest, which provides the CoPro_* SWIs and the *CoProLoad, *CoProRun, "
+	    "*CoProInfo and *CoProStatus commands. Nothing else in RISC OS knows "
+	    "about this card: no such card was ever made, so there is no software "
+	    "for it beyond what you write yourself. See docs/openbus.md.");
+	detail->Wrap(460);
+	/* The theme's own colour for secondary text, not a grey written down here:
+	   a fixed mid-grey reads as intended on a light desktop and nearly
+	   disappears on a dark one. */
+	detail->SetForegroundColour(
+	    wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
+	sizer->Add(detail, 0, wxEXPAND | wxBOTTOM, 10);
+
+	auto *note = new wxStaticText(page, wxID_ANY,
+	    "Changing the second processor takes effect when this machine next "
+	    "starts, as fitting a card would.");
+	note->Wrap(460);
+	note->SetForegroundColour(
+	    wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
+	sizer->Add(note, 0, wxEXPAND);
+
+	auto *outer = new wxBoxSizer(wxVERTICAL);
+	outer->Add(sizer, 1, wxEXPAND | wxALL, 10);
+	page->SetSizer(outer);
+	return page;
+}
+
+/*
+ * The dialog is a notebook of six pages.
  *
  * As one long form it ran to well over 600 pixels and did not fit comfortably
  * on a small display. The split is by what the settings are rather than by
  * size: what the machine is made of, how it reaches the network, its discs,
- * and its expansion cards.
+ * its expansion cards, and what is in its second processor slot.
  *
  * The pages are built in this order because the podule list is rebuilt from
  * the networking selection - the network card occupies a slot - so the
@@ -813,6 +882,7 @@ void MachineEditDialog::BuildUi()
 	notebook->AddPage(BuildNetworkPage(notebook), "Network");
 	notebook->AddPage(BuildDrivesPage(notebook), "IDE Drives");
 	notebook->AddPage(BuildPodulesPage(notebook), "Podules");
+	notebook->AddPage(BuildCoProcessorPage(notebook), "Co-Processor Support");
 
 	auto *button_row = new wxBoxSizer(wxHORIZONTAL);
 	button_row->AddStretchSpacer();
@@ -1597,6 +1667,22 @@ void MachineEditDialog::LoadSettings()
 	}
 	vram_combo_->SetSelection(vram_index);
 
+	/* The second processor. Read as a name and matched against the core list,
+	   so an unrecognised name in a hand-edited configuration shows as an empty
+	   slot rather than as whichever core happened to be first. */
+	wxString copro;
+	settings.Read("openbus_card", &copro, wxEmptyString);
+	copro_choice_->SetSelection(0);
+	for (int core = OPENBUS_COPROC_RV32I; core <= OPENBUS_COPROC_Z80; core++) {
+		const char *name =
+		    openbus_coproc_core_name(static_cast<openbus_coproc_core>(core));
+
+		if (name != nullptr && copro.IsSameAs(wxString::FromUTF8(name), false)) {
+			copro_choice_->SetSelection(core + 1);
+			break;
+		}
+	}
+
 	long gfxcard = 0;
 	long accelerators = 1;
 	settings.Read("gfxcard_enabled", &gfxcard, 0L);
@@ -1819,6 +1905,22 @@ void MachineEditDialog::SaveSettings()
 	settings.Write("vram_size", wxString::Format("%d", vram_mb));
 	settings.Write("accelerators_enabled",
 	               static_cast<long>(accelerators_check_->GetValue() ? 1 : 0));
+	/* Selection 0 is the empty slot, so the core names start at 1. */
+	{
+		const int selection = copro_choice_->GetSelection();
+		wxString name;
+
+		if (selection > 0) {
+			const char *core = openbus_coproc_core_name(
+			    static_cast<openbus_coproc_core>(selection - 1));
+
+			if (core != nullptr) {
+				name = wxString::FromUTF8(core);
+			}
+		}
+		settings.Write("openbus_card", name);
+	}
+
 	settings.Write("gfxcard_enabled",
 	               static_cast<long>(gfxcard_check_->GetValue() ? 1 : 0));
 	settings.Write("gfxcard_boot_display",

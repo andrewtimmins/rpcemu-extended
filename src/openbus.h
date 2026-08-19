@@ -76,6 +76,19 @@ extern "C" {
  * a fake interrupt controller and checks the bus rules on every platform.
  */
 
+/**
+ * How many cycles a fitted card is offered per pass of the emulator's inner
+ * loop.
+ *
+ * Not the whole remaining budget, which is what it used to be given. A card that
+ * always wants time - a processor card running a program, as opposed to the stub
+ * card which only wants time during a copy - would take the entire 20000-cycle
+ * budget and leave the host ARM a single block of instructions per pass. The
+ * guest would crawl, and a guest polling for the card's answer would be starving
+ * the very loop it was waiting on.
+ */
+#define OPENBUS_SLICE		64
+
 /** Register window reserved by the TRM for second bus master registers. */
 #define OPENBUS_REG_BASE	0x03600000u
 #define OPENBUS_REG_SIZE	0x00200000u

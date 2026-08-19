@@ -61,6 +61,7 @@
 #include "usb_ohci.h"
 #include "usbcard.h"
 #include "openbus.h"
+#include "openbus_coproc.h"
 #include "openbus_stub.h"
 #include "podules.h"
 #include "fdc.h"
@@ -251,6 +252,9 @@ Config config = {
 	0,			/* clipboard_enabled (OFF: it shares your host clipboard with the guest) */
 	0,			/* start_fullscreen (OFF by default) */
 	0,			/* suspend_on_exit (OFF by default) */
+	"",			/* openbus_card (empty: the second processor slot is
+	                           empty, as it was on every Risc PC that did not
+	                           have a card bought for it) */
 };
 
 /* Performance measuring variables */
@@ -1590,6 +1594,32 @@ rpcemu_start(void)
 			rpclog("OPEN Bus: could not fit the test card\n");
 		}
 	}
+	/*
+	 * The co-processor card, from the machine's configuration unless the
+	 * command line named one - which overrides it for this run only, the same
+	 * relationship every other --option has with the setting it shadows.
+	 */
+	if (!openbus_coproc_requested() && config.openbus_card[0] != '\0') {
+		if (openbus_coproc_request(config.openbus_card) != 0) {
+			rpclog("OPEN Bus: configuration asks for an unknown "
+			       "co-processor '%s'; the slot is left empty\n",
+			       config.openbus_card);
+		}
+	}
+	if (openbus_coproc_requested()) {
+		/* The slot holds one card, and openbus_fit() refuses a second rather
+		   than replacing one silently, so asking for both the test card and a
+		   co-processor gets the test card and a line in the log saying the
+		   other did not fit. That is the intended outcome: the alternative is
+		   guessing which one the user meant. */
+		if (openbus_coproc_fit() == 0) {
+			rpclog("OPEN Bus: fitted '%s' to the second processor slot\n",
+			       openbus_name());
+		} else {
+			rpclog("OPEN Bus: could not fit the '%s' co-processor card\n",
+			       openbus_coproc_core_name(openbus_coproc_requested_core()));
+		}
+	}
 
 	/* Other components are initialised in the same way as the hardware
 	   being reset */
@@ -1627,9 +1657,24 @@ execrpcemu(void)
 		 * drives nWAIT to stall the host ARM while it holds the bus, so time it
 		 * uses really is time the ARM does not get. Costs one pointer test when
 		 * no card is fitted, which is every machine today. See openbus.h.
+		 *
+		 * ★ THE SHARE IS BOUNDED, and it has to be. The card is offered
+		 * OPENBUS_SLICE cycles rather than everything left in the budget: a
+		 * processor card that always wants time - which a co-processor running
+		 * a program does, unlike the stub card that only wants it during a copy
+		 * - would otherwise take the whole 20000 and leave the ARM one block of
+		 * instructions per pass. RISC OS would crawl while the second processor
+		 * ran, and a guest polling for the answer would be the thing starving
+		 * itself. Sixty-four still lets the co-processor outpace the ARM
+		 * severalfold, which is generous for a card whose cores are toys.
 		 */
 		if (openbus_present()) {
-			cycles -= openbus_run(cycles > 0 ? cycles : 0);
+			int slice = cycles;
+
+			if (slice > OPENBUS_SLICE) {
+				slice = OPENBUS_SLICE;
+			}
+			cycles -= openbus_run(slice > 0 ? slice : 0);
 		}
 
 		if (kcallback) {

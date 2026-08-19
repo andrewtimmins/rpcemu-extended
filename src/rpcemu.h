@@ -358,6 +358,18 @@ typedef struct {
 	int clipboard_enabled;	/**< Share the host clipboard with the guest (needs the SharedClipboard module in the guest) */
 	int start_fullscreen;	/**< Go full screen as soon as this machine starts */
 	int suspend_on_exit;	/**< Auto-save a machine snapshot on every exit (so the next launch can Resume). Off by default: normal Quit shuts down cleanly, and only File->Suspend / Save State write a snapshot. */
+	/**
+	 * What is fitted to the OPEN Bus second processor slot: a core name as
+	 * --openbus-card accepts it ("rv32i", "6502", "z80"), or empty for an
+	 * empty slot, which is what every Risc PC had unless somebody bought a
+	 * card.
+	 *
+	 * Kept as the NAME rather than an enumeration on purpose: the list of
+	 * cores then exists in exactly one place (openbus_coproc.c), and the
+	 * option parser, this configuration and the machine editor all read it
+	 * from there instead of each carrying their own copy to fall out of step.
+	 */
+	char openbus_card[16];
 } Config;
 
 extern Config config;

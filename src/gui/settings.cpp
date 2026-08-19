@@ -429,6 +429,8 @@ extern "C" void config_sync_machine_edit_to_copy(Config *dest, const Config *src
 	dest->model = src->model;
 	dest->refresh = src->refresh;
 	dest->network_type = src->network_type;
+	strncpy(dest->openbus_card, src->openbus_card, sizeof(dest->openbus_card) - 1);
+	dest->openbus_card[sizeof(dest->openbus_card) - 1] = '\0';
 
 	/* Pyromaniac networking travels with the rest of the machine's networking:
 	   the editor writes it, and this is what carries it to the running copy. */
@@ -671,6 +673,14 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 		ParseUsbPort(sText, &cfg->usb_port[port], cfg->usb_host[port],
 		    sizeof(cfg->usb_host[port]));
 	}
+	/* The OPEN Bus co-processor card. Absent by default, and an unknown name
+	   is left as it was written rather than corrected: openbus_coproc_fit()
+	   is what decides whether a name means anything, and it says so in the
+	   log if it does not. */
+	settings.Read("openbus_card", &sText, wxEmptyString);
+	strncpy(cfg->openbus_card, sText.utf8_str().data(),
+	    sizeof(cfg->openbus_card) - 1);
+	cfg->openbus_card[sizeof(cfg->openbus_card) - 1] = '\0';
 	settings.Read("start_fullscreen", &value, 0L);
 	cfg->start_fullscreen = static_cast<int>(value);
 	settings.Read("suspend_on_exit", &value, 0L);
@@ -880,6 +890,7 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 		settings.Write(wxString::Format("usb_port%d", port + 1),
 		    FormatUsbPort(cfg->usb_port[port], cfg->usb_host[port]));
 	}
+	settings.Write("openbus_card", wxString(cfg->openbus_card, wxConvUTF8));
 	settings.Write("start_fullscreen", static_cast<long>(cfg->start_fullscreen));
 	settings.Write("suspend_on_exit", static_cast<long>(cfg->suspend_on_exit));
 	/* The ways in to this machine, written with it: two machines can each have

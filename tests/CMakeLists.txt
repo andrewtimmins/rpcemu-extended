@@ -541,6 +541,53 @@ add_executable(test_openbus_decode test_openbus_decode.c test_stubs.c)
 target_link_libraries(test_openbus_decode PRIVATE rpcemu_core m)
 rpcemu_add_test(test_openbus_decode)
 
+# The three co-processor cores that can go in the OPEN Bus card. Each executes
+# out of a plain byte array and links nothing at all - not the bus, not the core
+# emulator, not wxWidgets - so all three run on every platform with no machine
+# and no display. That is the whole reason the cores were written as separate
+# files rather than inside the card.
+#
+# What each one pins down is in its own header comment. Worth knowing here: the
+# RV32I test checks its own assembler against known instruction words before it
+# executes anything, because an encoder and a decoder that are wrong the same way
+# agree with each other.
+add_executable(test_cpu_rv32i test_cpu_rv32i.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_rv32i.c)
+target_include_directories(test_cpu_rv32i PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro)
+rpcemu_add_test(test_cpu_rv32i)
+
+add_executable(test_cpu_6502 test_cpu_6502.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6502.c)
+target_include_directories(test_cpu_6502 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro)
+rpcemu_add_test(test_cpu_6502)
+
+add_executable(test_cpu_z80 test_cpu_z80.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_z80.c)
+target_include_directories(test_cpu_z80 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro)
+rpcemu_add_test(test_cpu_z80)
+
+# The co-processor card itself: the register window, the aperture a guest loads a
+# program through, the timeslice, the interrupt on halt and bus mastering. Links
+# the bus and all three cores against the same fake host memory and fake
+# interrupt controller test_openbus.c uses, so no emulator is involved.
+#
+# Separate from the core tests above because it covers everything a card does
+# AROUND a processor, and it runs a program on ALL THREE cores through the same
+# sequence: a register that works only for the core its author happened to be
+# testing is a failure this project has had more than once.
+add_executable(test_openbus_coproc test_openbus_coproc.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/openbus.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/openbus_coproc.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/openbus_stub.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_rv32i.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6502.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_z80.c)
+target_include_directories(test_openbus_coproc PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro
+)
+rpcemu_add_test(test_openbus_coproc)
+
 # Physical-address decode for the DMA fetch paths (sound, VIDC cursor). Links
 # rpcemu_core for the real physical accessors, as test_mmu_perms does, and writes
 # markers through them so a decode that lands in the wrong region is caught
@@ -825,7 +872,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 50)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 54)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 10")	# JIT differential
 endif()

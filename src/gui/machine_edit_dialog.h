@@ -77,6 +77,7 @@ private:
 	void UpdateJsonNetEnabled();
 	wxWindow *BuildDrivesPage(wxWindow *parent);
 	wxWindow *BuildPodulesPage(wxWindow *parent);
+	wxWindow *BuildCoProcessorPage(wxWindow *parent);
 	void BuildHardDiscPanel(wxWindow *parent, wxSizer *parent_sizer, HardDiscPanel &panel, int drive_num,
 	                        int ide_index);
 	wxSizer *BuildPoduleSection(wxWindow *parent);
@@ -205,6 +206,7 @@ private:
 	   k of combo i back to a short_name (lists differ per combo because a
 	   podule already used elsewhere is hidden). */
 	std::vector<wxChoice *> podule_combos_;
+	wxChoice *copro_choice_ = nullptr;
 	std::vector<wxButton *> podule_config_btns_;
 	std::vector<wxString> podule_selection_;
 	std::vector<std::vector<wxString>> podule_item_names_;

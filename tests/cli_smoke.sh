@@ -119,6 +119,7 @@ if run 0 "--help" -- --help; then
 	expect_output '--machine' "--help lists --machine"
 	expect_output '--resume' "--help lists --resume"
 	expect_output '--openbus-stub' "--help lists --openbus-stub"
+	expect_output '--openbus-card' "--help lists --openbus-card"
 fi
 
 # --list-machines names the machines it can find.

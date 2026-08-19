@@ -61,6 +61,7 @@ MODULES=(
 	"riscos-progs/SyncClock:syncclock,ffa:poduleroms"
 	"riscos-progs/RPCEmuUSBSupport:rpcemuusbsupport,ffa:poduleroms"
 	"riscos-progs/RPCEmuPCIEmulator:rpcemupciemulator,ffa:poduleroms"
+	"riscos-progs/RPCEmuCoPro:rpcemucopro,ffa:poduleroms"
 	"riscos-progs/RPCEmuGfx:RPCEmuGfx,ffa:gfxroms"
 	"riscos-progs/EtherRPCEm:EtherRPCEm,ffa:netroms"
 	"riscos-progs/MultiFS:70-multifs,ffa 80-multifsfiler,ffa:usbroms"

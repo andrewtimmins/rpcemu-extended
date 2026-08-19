@@ -49,6 +49,7 @@
 #include "riscos_fetch.h"
 
 extern "C" {
+#include "openbus_coproc.h"
 #include "openbus_stub.h"
 #include "rpcemu.h"
 #include "savestate.h"
@@ -1056,6 +1057,37 @@ int main(int argc, char **argv)
 			   reference to openbus_stub.o, which would otherwise sit unused in
 			   the static library. */
 			openbus_stub_request();
+		} else if (strcmp(arg, "--openbus-card") == 0 ||
+		           strncmp(arg, "--openbus-card=", 15) == 0) {
+			/* Fits a co-processor card to the second processor slot, with
+			   the named core in it. This OVERRIDES the machine's own
+			   Co-Processor Support setting for one run and is not written
+			   back, which is the relationship every other --option here
+			   has with the setting it shadows. The list of cores lives in
+			   openbus_coproc.c, so the parser, the help text and the error
+			   below all name the same three. */
+			const char *value = (arg[14] == '=') ? arg + 15
+			                                     : (i + 1 < argc ? argv[++i] : nullptr);
+
+			if (value == nullptr) {
+				ConsoleMessage(true, "error: --openbus-card requires a core name.\n");
+				ConsoleMessageFlush();
+				return 2;
+			}
+			if (openbus_coproc_request(value) != 0) {
+				ConsoleMessage(true, "error: unknown co-processor core '%s'.\n",
+				               value);
+				ConsoleMessage(true, "Available cores:");
+				for (int core = OPENBUS_COPROC_RV32I;
+				     core <= OPENBUS_COPROC_Z80; core++) {
+					ConsoleMessage(true, " %s",
+					               openbus_coproc_core_name(
+					                   (openbus_coproc_core) core));
+				}
+				ConsoleMessage(true, "\n");
+				ConsoleMessageFlush();
+				return 2;
+			}
 		} else if (strcmp(arg, "--no-disc") == 0) {
 			g_fetch_disc = false;
 		} else if (strcmp(arg, "--accept-licence") == 0 ||

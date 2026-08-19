@@ -29,6 +29,10 @@ set(RPCEMU_CORE_SOURCES
     keyboard.c
     openbus.c
     openbus_stub.c
+    copro/openbus_coproc.c
+    copro/cpu_rv32i.c
+    copro/cpu_6502.c
+    copro/cpu_z80.c
     folder_move.c
     hostfs_advice.c
     hostfs_path.c
@@ -126,6 +130,10 @@ add_library(rpcemu_core STATIC ${RPCEMU_CORE_SOURCES})
 target_include_directories(rpcemu_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/slirp
+    # The OPEN Bus co-processor card and its three CPU cores. PUBLIC because the
+    # GUI's option parser names a core, and because the tests that link the core
+    # include these headers by name.
+    ${CMAKE_CURRENT_SOURCE_DIR}/copro
 )
 
 # Shared podule support code (UART, MIDI interface, ...) lives in podules/common,
