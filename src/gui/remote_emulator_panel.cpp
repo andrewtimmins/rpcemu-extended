@@ -67,6 +67,20 @@ wxBEGIN_EVENT_TABLE(RemoteEmulatorPanel, wxPanel)
 	EVT_TIMER(wxID_ANY, RemoteEmulatorPanel::OnSettleTimer)
 wxEND_EVENT_TABLE()
 
+#if wxUSE_GLCANVAS
+/*
+ * How many paints a new GL canvas gets to say whether it works before the CPU
+ * path takes over. See the branch in OnPaint that uses it.
+ *
+ * Counted in paints rather than seconds because the panel is repainted as frames
+ * arrive, so this is "frames the guest has produced that GL has not drawn" -
+ * which is the thing that actually matters - and it needs no clock. A running
+ * machine repaints at its frame rate, so this is a fraction of a second before
+ * the picture appears anyway.
+ */
+static const int kGlUndecidedPaintLimit = 120;
+#endif
+
 RemoteEmulatorPanel::RemoteEmulatorPanel(wxWindow *parent, const std::string &shared_fb_name,
                                          const std::string &ipc_endpoint)
 	: wxPanel(parent, wxID_ANY, wxDefaultPosition, wxSize(640, 480), wxWANTS_CHARS)
@@ -853,6 +867,9 @@ void RemoteEmulatorPanel::TryCreateGlCanvas()
 
 	gl_canvas_ = new GlDisplayCanvas(this);
 	gl_canvas_->SetSize(GetClientSize());
+	/* A fresh canvas gets the full grace period, including one created again
+	   after the setting has been turned off and back on. */
+	gl_undecided_paints_ = 0;
 
 	/* The canvas asks for the newest frame from inside its paint, so that the
 	   upload is always followed by the swap that retires it. */
@@ -951,13 +968,32 @@ void RemoteEmulatorPanel::OnPaint(wxPaintEvent & /*event*/)
 				/* The canvas covers this panel and has drawn it. */
 				return;
 			}
-		} else {
+		} else if (++gl_undecided_paints_ <= kGlUndecidedPaintLimit) {
 			/* Not decided yet - its own first paint will settle it. Leave the
 			   panel black rather than drawing a frame that is about to be
 			   covered. */
 			dc.SetBackground(*wxBLACK_BRUSH);
 			dc.Clear();
 			return;
+		} else {
+			/*
+			 * ★ It never answered, so stop waiting and draw on the CPU.
+			 *
+			 * "Neither usable nor failed" is the state a canvas sits in while it
+			 * waits to be shown on screen, and EnsureContext() keeps it there by
+			 * design, retrying on each paint. Nothing bounded that wait, so a
+			 * canvas that never became ready left this branch clearing the panel
+			 * to black on every frame, for ever, with nothing logged by either
+			 * side - a machine running perfectly behind a black window and no
+			 * clue anywhere as to why.
+			 *
+			 * That is exactly what a bundle carrying two copies of wxWidgets
+			 * produced, and the cause was findable only by instrumenting this
+			 * file. Whatever the next cause turns out to be, the picture now
+			 * arrives and the log says what happened.
+			 */
+			DestroyGlCanvas("it never became ready");
+			/* Falls through to the CPU path below, this paint. */
 		}
 	}
 #endif

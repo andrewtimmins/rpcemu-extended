@@ -318,7 +318,26 @@ void GlDisplayCanvas::Render()
 		return;
 	}
 
-	glViewport(0, 0, size.GetWidth(), size.GetHeight());
+	/*
+	 * The viewport is in PIXELS; everything else here is in points.
+	 *
+	 * GetClientSize() answers in logical points, which on a Retina display is
+	 * half the drawable's real size. Passing those straight to glViewport left
+	 * the picture in the bottom-left quarter of a black panel - the quadrant a
+	 * GL viewport starts from - while the projection, the destination rectangle
+	 * and the pointer mapping all still agreed with each other in points.
+	 *
+	 * So the viewport is scaled up to the drawable and the projection is left in
+	 * points: the quad's corners stay the destination rectangle the caller
+	 * worked out, and no other coordinate here has to know about the scale.
+	 * GetContentScaleFactor() is 1.0 where that is the truth, so this is the
+	 * same arithmetic everywhere.
+	 */
+	const double scale = GetContentScaleFactor();
+	const int pixel_w = (int) (size.GetWidth() * scale + 0.5);
+	const int pixel_h = (int) (size.GetHeight() * scale + 0.5);
+
+	glViewport(0, 0, pixel_w, pixel_h);
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
 	glOrtho(0, size.GetWidth(), size.GetHeight(), 0, -1, 1);

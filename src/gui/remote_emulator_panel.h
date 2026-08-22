@@ -373,6 +373,10 @@ private:
 #if wxUSE_GLCANVAS
 	GlDisplayCanvas *gl_canvas_ = nullptr;
 	bool gl_tried_ = false;
+	/* Paints spent waiting for a new canvas to say whether it works. See the
+	   limit in OnPaint: a canvas that never answers must not mean a window that
+	   is never drawn. */
+	int gl_undecided_paints_ = 0;
 #endif
 
 	HeldKeys held_keys_{};
