@@ -19,7 +19,8 @@
  */
 
 /*
- * Instruction timings for the 6502 and the Z80, against published values.
+ * Instruction timings for the 6502, the Z80 and the 6809, against published
+ * values.
  *
  * ★ WHY THESE ARE WORTH A TEST OF THEIR OWN. A program emulating a machine paces
  * its display and its sound from the processor's clock: a PAL C64 raster line is
@@ -29,8 +30,16 @@
  *
  * The tables in the cores were derived mechanically - the 6502's from the
  * addressing mode each opcode uses, the Z80's from the memory accesses the core
- * actually makes - and the figures below are the independent half of that: values
- * from the published timings, checked against what the core charges.
+ * actually makes, the 6809's from which column of its opcode grid an instruction
+ * sits in - and the figures below are the independent half of that: values from
+ * the published timings, checked against what the core charges.
+ *
+ * ★ The 6809 needs this more than the others, not less, because a derivation
+ * from the grid is exactly the kind of rule that is right about 250 opcodes and
+ * wrong about the six that are exceptions to it. Its indexed instructions are
+ * also the only ones here whose cost is not a property of the opcode at all: the
+ * postbyte that follows decides, so the same LDA costs anything from four cycles
+ * to eleven.
  *
  * ★ AND BOTH POLARITIES OF EVERY CONDITIONAL, which is not padding. The first
  * version of the Z80 table was derived from a probe run whose flags came from a
@@ -40,6 +49,7 @@
  */
 
 #include "cpu_6502.h"
+#include "cpu_6809.h"
 #include "cpu_z80.h"
 
 #include <stdio.h>
@@ -312,6 +322,127 @@ test_8080(void)
 	{ const uint8_t p[]={0x86};           i8080("ADD M is 7", p, 1, 7, NULL); }
 }
 
+/* ------------------------------------------------------------------ 6809 */
+
+static void
+m6809(const char *what, const uint8_t *code, size_t len, int want,
+      void (*setup)(cpu6809_state *))
+{
+	cpu6809_state c;
+
+	memset(ram, 0, sizeof(ram));
+	memcpy(ram + 0x200, code, len);
+	memset(&c, 0, sizeof(c));
+	cpu6809_init(&c, ram, sizeof(ram));
+	cpu6809_reset(&c, 0x200);
+	if (setup != NULL) {
+		setup(&c);
+	}
+	check(what, cpu6809_step(&c), want);
+}
+
+static void m6809_z_set(cpu6809_state *c) { c->cc |= CPU6809_FLAG_Z; }
+static void m6809_z_clear(cpu6809_state *c)
+{
+	c->cc = (uint8_t) (c->cc & ~CPU6809_FLAG_Z);
+}
+static void m6809_stack(cpu6809_state *c) { c->s = 0x2000; }
+
+static void
+test_6809(void)
+{
+	printf("6809, against the published timings:\n");
+
+	/* The four addressing modes down one column of the grid, which is the
+	   rule the whole table was derived from. */
+	{ const uint8_t p[] = {0x86,0x00};           m6809("LDA #n", p, 2, 2, NULL); }
+	{ const uint8_t p[] = {0x96,0x10};           m6809("LDA direct", p, 2, 4, NULL); }
+	{ const uint8_t p[] = {0xa6,0x84};           m6809("LDA ,X", p, 2, 4, NULL); }
+	{ const uint8_t p[] = {0xb6,0x30,0x00};      m6809("LDA extended", p, 3, 5, NULL); }
+
+	/* A sixteen-bit operand costs more in every one of them. */
+	{ const uint8_t p[] = {0x8e,0x00,0x00};      m6809("LDX #nn", p, 3, 3, NULL); }
+	{ const uint8_t p[] = {0x9e,0x10};           m6809("LDX direct", p, 2, 5, NULL); }
+	{ const uint8_t p[] = {0xbe,0x30,0x00};      m6809("LDX extended", p, 3, 6, NULL); }
+	{ const uint8_t p[] = {0x83,0x00,0x00};      m6809("SUBD #nn", p, 3, 4, NULL); }
+	{ const uint8_t p[] = {0xb3,0x30,0x00};      m6809("SUBD extended", p, 3, 7, NULL); }
+
+	/* A prefix costs one, which is why the page two entries carry it. */
+	{ const uint8_t p[] = {0x10,0x8e,0x00,0x00}; m6809("LDY #nn, on page two", p, 4, 4, NULL); }
+	{ const uint8_t p[] = {0x10,0xbe,0x30,0x00}; m6809("LDY extended", p, 4, 7, NULL); }
+	{ const uint8_t p[] = {0x10,0xce,0x00,0x00}; m6809("LDS #nn", p, 4, 4, NULL); }
+	{ const uint8_t p[] = {0x11,0x83,0x00,0x00}; m6809("CMPU #nn, on page three", p, 4, 5, NULL); }
+
+	/* ★ Every postbyte form's own cost, added to the opcode's. */
+	{ const uint8_t p[] = {0xa6,0x80};           m6809("LDA ,X+", p, 2, 6, NULL); }
+	{ const uint8_t p[] = {0xa6,0x81};           m6809("LDA ,X++", p, 2, 7, NULL); }
+	{ const uint8_t p[] = {0xa6,0x82};           m6809("LDA ,-X", p, 2, 6, NULL); }
+	{ const uint8_t p[] = {0xa6,0x83};           m6809("LDA ,--X", p, 2, 7, NULL); }
+	{ const uint8_t p[] = {0xa6,0x05};           m6809("LDA 5,X, five-bit", p, 2, 5, NULL); }
+	/* ★ And the pair that catches a postbyte decoded as the wrong half of the
+	   encoding: an explicit zero offset in five bits costs ONE MORE than a
+	   bare ",X", because they are different forms and only one of them has an
+	   offset to add. Postbyte &00 is that zero offset; ",X+" is &80. */
+	{ const uint8_t p[] = {0xa6,0x00};           m6809("LDA 0,X, five-bit zero", p, 2, 5, NULL); }
+	{ const uint8_t p[] = {0xa6,0x85};           m6809("LDA B,X", p, 2, 5, NULL); }
+	{ const uint8_t p[] = {0xa6,0x86};           m6809("LDA A,X", p, 2, 5, NULL); }
+	{ const uint8_t p[] = {0xa6,0x88,0x04};      m6809("LDA n,X, eight-bit", p, 3, 5, NULL); }
+	{ const uint8_t p[] = {0xa6,0x89,0x00,0x04}; m6809("LDA n,X, sixteen-bit", p, 4, 8, NULL); }
+	{ const uint8_t p[] = {0xa6,0x8b};           m6809("LDA D,X", p, 2, 8, NULL); }
+	{ const uint8_t p[] = {0xa6,0x8c,0x04};      m6809("LDA n,PCR, eight-bit", p, 3, 5, NULL); }
+	{ const uint8_t p[] = {0xa6,0x8d,0x00,0x04}; m6809("LDA n,PCR, sixteen-bit", p, 4, 9, NULL); }
+	{ const uint8_t p[] = {0xa6,0x9f,0x30,0x00}; m6809("LDA [n], extended indirect", p, 4, 9, NULL); }
+
+	/* Indirection is three on top of whatever the form already cost. */
+	{ const uint8_t p[] = {0xa6,0x94};           m6809("LDA [,X]", p, 2, 7, NULL); }
+	{ const uint8_t p[] = {0xa6,0x91};           m6809("LDA [,X++]", p, 2, 10, NULL); }
+	{ const uint8_t p[] = {0xa6,0x98,0x04};      m6809("LDA [n,X], eight-bit", p, 3, 8, NULL); }
+
+	/* The read-modify-write column, in its three forms. */
+	{ const uint8_t p[] = {0x40};                m6809("NEGA, inherent", p, 1, 2, NULL); }
+	{ const uint8_t p[] = {0x00,0x10};           m6809("NEG direct", p, 2, 6, NULL); }
+	{ const uint8_t p[] = {0x60,0x84};           m6809("NEG ,X", p, 2, 6, NULL); }
+	{ const uint8_t p[] = {0x70,0x30,0x00};      m6809("NEG extended", p, 3, 7, NULL); }
+	{ const uint8_t p[] = {0x0e,0x10};           m6809("JMP direct", p, 2, 3, NULL); }
+	{ const uint8_t p[] = {0x7e,0x30,0x00};      m6809("JMP extended", p, 3, 4, NULL); }
+
+	/* And the ones that are each their own number. */
+	{ const uint8_t p[] = {0x12};                m6809("NOP", p, 1, 2, NULL); }
+	{ const uint8_t p[] = {0x3d};                m6809("MUL", p, 1, 11, NULL); }
+	{ const uint8_t p[] = {0x1d};                m6809("SEX", p, 1, 2, NULL); }
+	{ const uint8_t p[] = {0x3a};                m6809("ABX", p, 1, 3, NULL); }
+	{ const uint8_t p[] = {0x1f,0x89};           m6809("TFR", p, 2, 6, NULL); }
+	{ const uint8_t p[] = {0x1e,0x89};           m6809("EXG", p, 2, 8, NULL); }
+	{ const uint8_t p[] = {0x39};                m6809("RTS", p, 1, 5, m6809_stack); }
+	{ const uint8_t p[] = {0x8d,0x02};           m6809("BSR", p, 2, 7, m6809_stack); }
+	{ const uint8_t p[] = {0xbd,0x30,0x00};      m6809("JSR extended", p, 3, 8, m6809_stack); }
+	{ const uint8_t p[] = {0x17,0x00,0x02};      m6809("LBSR", p, 3, 9, m6809_stack); }
+	{ const uint8_t p[] = {0x16,0x00,0x02};      m6809("LBRA", p, 3, 5, NULL); }
+	{ const uint8_t p[] = {0x3f};                m6809("SWI", p, 1, 19, m6809_stack); }
+	{ const uint8_t p[] = {0x30,0x84};           m6809("LEAX ,X", p, 2, 4, NULL); }
+
+	/* ★ A push costs five plus one per byte, so its register list is part of
+	   the price and no table can hold it. */
+	{ const uint8_t p[] = {0x34,0x02};           m6809("PSHS A, one byte", p, 2, 6, m6809_stack); }
+	{ const uint8_t p[] = {0x34,0x10};           m6809("PSHS X, two bytes", p, 2, 7, m6809_stack); }
+	{ const uint8_t p[] = {0x34,0xff};           m6809("PSHS everything, twelve", p, 2, 17, m6809_stack); }
+	{ const uint8_t p[] = {0x35,0x03};           m6809("PULS CC and A", p, 2, 7, m6809_stack); }
+
+	/*
+	 * ★ BOTH POLARITIES, for the reason at the top of this file. A short
+	 * branch costs the same either way and a long one does not, which is the
+	 * pair a single-polarity sample would get wrong.
+	 */
+	{ const uint8_t p[] = {0x27,0x02};           m6809("BEQ taken", p, 2, 3, m6809_z_set); }
+	{ const uint8_t p[] = {0x27,0x02};           m6809("BEQ not taken", p, 2, 3, m6809_z_clear); }
+	{ const uint8_t p[] = {0x26,0x02};           m6809("BNE taken", p, 2, 3, m6809_z_clear); }
+	{ const uint8_t p[] = {0x26,0x02};           m6809("BNE not taken", p, 2, 3, m6809_z_set); }
+	{ const uint8_t p[] = {0x10,0x27,0x00,0x02}; m6809("LBEQ taken", p, 4, 6, m6809_z_set); }
+	{ const uint8_t p[] = {0x10,0x27,0x00,0x02}; m6809("LBEQ not taken", p, 4, 5, m6809_z_clear); }
+	{ const uint8_t p[] = {0x10,0x26,0x00,0x02}; m6809("LBNE taken", p, 4, 6, m6809_z_clear); }
+	{ const uint8_t p[] = {0x10,0x26,0x00,0x02}; m6809("LBNE not taken", p, 4, 5, m6809_z_set); }
+}
+
 int
 main(void)
 {
@@ -319,6 +450,7 @@ main(void)
 	test_65c02();
 	test_z80();
 	test_8080();
+	test_6809();
 
 	if (failures != 0) {
 		printf("%d failure(s)\n", failures);

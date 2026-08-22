@@ -986,6 +986,7 @@ wxWindow *MachineEditDialog::BuildCoProcessorPage(wxWindow *parent)
 	copro_choice_->Append("Zilog Z80");
 	copro_choice_->Append("WDC 65C02 (CMOS 6502)");
 	copro_choice_->Append("Intel 8080");
+	copro_choice_->Append("Motorola 6809");
 	copro_choice_->SetSelection(0);
 	copro_choice_->SetToolTip(
 	    "Fits a co-processor card to the second processor slot. The card carries "

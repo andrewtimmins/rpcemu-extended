@@ -134,7 +134,11 @@ extern "C" {
  *   0x50 STOPREASON R   why the last run ended: OPENBUS_COPROC_STOP_*.
  *   0x54 IRQCTRL    RW  bit 0     assert the core's maskable interrupt
  *                       bit 1     assert its non-maskable interrupt
- *                       bits 8-10 interrupt level, for a core that has them
+ *                       bits 8-10 interrupt level, for a core that has them.
+ *                       On a 6809, which has two maskable lines rather than
+ *                       one, level 0 is IRQ and level 1 is the FAST interrupt;
+ *                       the difference is not speed but how much state it
+ *                       pushes, so a guest must mean the one it asks for.
  *                       bits 16-23 vector byte, for a Z80 in mode 2
  *   0x58 MAPOFF     RW  offset in the control area of the region table
  *   0x5c MAPCOUNT   RW  how many entries it has; zero means no map, and then
@@ -210,6 +214,7 @@ extern "C" {
 #define OPENBUS_COPROC_CORE_Z80_ID	0x5a383020u	/* 'Z80 ' */
 #define OPENBUS_COPROC_CORE_65C02_ID	0x43303220u	/* 'C02 ' */
 #define OPENBUS_COPROC_CORE_8080_ID	0x38303830u	/* '8080' */
+#define OPENBUS_COPROC_CORE_6809_ID	0x36383039u	/* '6809' */
 
 /** CTRL bits. */
 #define OPENBUS_COPROC_CTRL_RUN		0x01
@@ -283,7 +288,8 @@ typedef enum {
 	   stores, so inserting one in the middle would silently change which
 	   processor every existing machine has fitted. */
 	OPENBUS_COPROC_65C02,
-	OPENBUS_COPROC_8080
+	OPENBUS_COPROC_8080,
+	OPENBUS_COPROC_6809
 } openbus_coproc_core;
 
 /*

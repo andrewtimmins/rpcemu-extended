@@ -36,6 +36,7 @@
 #include "copro_bus.h"
 
 #include "cpu_6502.h"
+#include "cpu_6809.h"
 #include "cpu_rv32i.h"
 #include "cpu_z80.h"
 #include "openbus.h"
@@ -55,6 +56,7 @@
 #define COPROC_RAM_RV32I	(1024u * 1024u)
 #define COPROC_RAM_6502		(64u * 1024u)
 #define COPROC_RAM_Z80		(64u * 1024u)
+#define COPROC_RAM_6809		(64u * 1024u)
 
 /* The size asked for, in bytes; zero means the core's default. Set from the
    machine's settings before the card is fitted, as the core selection is. */
@@ -71,6 +73,7 @@ typedef struct {
 		rv32i_state rv32i;
 		cpu6502_state m6502;
 		cpu_z80_state z80;
+		cpu6809_state m6809;
 	} cpu;
 
 	uint32_t ctrl;
@@ -168,6 +171,9 @@ COPROC_CORE_ACCESSORS(ops_m6502, m6502, uint16_t,
                       cpu6502_reset, cpu6502_run, cpu6502_step, cpu6502_set_mem_hook)
 COPROC_CORE_ACCESSORS(ops_z80, z80, uint16_t,
                       cpu_z80_reset, cpu_z80_run, cpu_z80_step, cpu_z80_set_mem_hook)
+COPROC_CORE_ACCESSORS(ops_m6809, m6809, uint16_t,
+                      cpu6809_reset, cpu6809_run, cpu6809_step,
+                      cpu6809_set_mem_hook)
 
 /*
  * The 65C02 IS the 6502 core with its CMOS flag set, so it shares every accessor
@@ -223,6 +229,47 @@ ops_m6502_reg_write(uint32_t sel, uint32_t val)
 	case 3:	cp.cpu.m6502.sp = (uint8_t) val; break;
 	case 4:	cp.cpu.m6502.p = (uint8_t) val; break;
 	case 5:	cp.cpu.m6502.pc = (uint16_t) val; break;
+	default: break;
+	}
+}
+
+/*
+ * The 6809's own numbering. Its two accumulators come first, then the four
+ * 16-bit registers in the order a programmer lists them, then the two that are
+ * neither: the direct page and the condition codes. D is not here because it is
+ * not a register - it is A and B side by side, and a guest that wants it can
+ * read both.
+ */
+static uint32_t
+ops_m6809_reg_read(uint32_t sel)
+{
+	switch (sel) {
+	case 0:	return cp.cpu.m6809.a;
+	case 1:	return cp.cpu.m6809.b;
+	case 2:	return cp.cpu.m6809.x;
+	case 3:	return cp.cpu.m6809.y;
+	case 4:	return cp.cpu.m6809.u;
+	case 5:	return cp.cpu.m6809.s;
+	case 6:	return cp.cpu.m6809.dp;
+	case 7:	return cp.cpu.m6809.cc;
+	case 8:	return cp.cpu.m6809.pc;
+	default: return 0xffffffffu;
+	}
+}
+
+static void
+ops_m6809_reg_write(uint32_t sel, uint32_t val)
+{
+	switch (sel) {
+	case 0:	cp.cpu.m6809.a = (uint8_t) val; break;
+	case 1:	cp.cpu.m6809.b = (uint8_t) val; break;
+	case 2:	cp.cpu.m6809.x = (uint16_t) val; break;
+	case 3:	cp.cpu.m6809.y = (uint16_t) val; break;
+	case 4:	cp.cpu.m6809.u = (uint16_t) val; break;
+	case 5:	cp.cpu.m6809.s = (uint16_t) val; break;
+	case 6:	cp.cpu.m6809.dp = (uint8_t) val; break;
+	case 7:	cp.cpu.m6809.cc = (uint8_t) val; break;
+	case 8:	cp.cpu.m6809.pc = (uint16_t) val; break;
 	default: break;
 	}
 }
@@ -305,6 +352,26 @@ ops_z80_interrupt(uint32_t ctrl)
 	}
 }
 
+/*
+ * ★ The 6809 is the one core here with TWO maskable interrupt lines, so the
+ * level field is not decoration for it. IRQ and FIRQ differ in how much state
+ * they push, which means a handler written for one cannot serve the other, and a
+ * guest that asked for the wrong one would return from it to a wrong address.
+ */
+static void
+ops_m6809_interrupt(uint32_t ctrl)
+{
+	if ((ctrl & OPENBUS_COPROC_IRQ_NMI) != 0) {
+		cpu6809_nmi(&cp.cpu.m6809);
+	} else if ((ctrl & OPENBUS_COPROC_IRQ_ASSERT) != 0) {
+		if (OPENBUS_COPROC_IRQ_LEVEL(ctrl) == 1) {
+			(void) cpu6809_firq(&cp.cpu.m6809);
+		} else {
+			(void) cpu6809_irq(&cp.cpu.m6809);
+		}
+	}
+}
+
 /* ---- and the table itself ----------------------------------------------- */
 
 typedef struct {
@@ -367,6 +434,11 @@ static const coproc_core_ops coproc_cores[] = {
 	  OPENBUS_COPROC_CORE_8080_ID,
 	  COPROC_RAM_Z80, OPENBUS_COPROC_RAM_MAX_8BIT, 64u * 1024u,
 	  COPROC_CORE_ROW(ops_z80) },
+
+	{ "6809", "OPEN Bus co-processor card (6809)",
+	  OPENBUS_COPROC_CORE_6809_ID,
+	  COPROC_RAM_6809, OPENBUS_COPROC_RAM_MAX_8BIT, 64u * 1024u,
+	  COPROC_CORE_ROW(ops_m6809) },
 };
 
 #define COPROC_CORE_COUNT ((int) (sizeof(coproc_cores) / sizeof(coproc_cores[0])))
@@ -1272,6 +1344,9 @@ openbus_coproc_fit(void)
 		/* The only difference between the two cards: which part it is. */
 		cpu6502_set_cmos(&cp.cpu.m6502,
 		                 cp.core == OPENBUS_COPROC_65C02);
+		break;
+	case OPENBUS_COPROC_6809:
+		cpu6809_init(&cp.cpu.m6809, cp.ram, cp.ram_size);
 		break;
 	case OPENBUS_COPROC_Z80:
 	case OPENBUS_COPROC_8080:

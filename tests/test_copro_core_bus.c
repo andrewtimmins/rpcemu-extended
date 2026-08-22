@@ -31,12 +31,15 @@
  *    core cannot suspend mid-instruction and the retry has to leave no trace.
  *    See the note in cpu_mem.h.
  *
- * 6502 and Z80 both, because the Z80 reaches the same decode through a separate
- * port space and that is a different path through the core.
+ * 6502, Z80 and 6809, because each reaches the decode differently: the Z80
+ * through a separate port space, and the 6809 through a postbyte that can have
+ * changed an index register BEFORE the access it computed stalls. That last one
+ * is the hardest case the retry has to undo and it exists on no other core here.
  */
 
 #include "copro_bus.h"
 #include "cpu_6502.h"
+#include "cpu_6809.h"
 #include "cpu_z80.h"
 
 #include <stdio.h>
@@ -441,6 +444,126 @@ test_z80_stall_abandons_and_retries(void)
 	CHECK(cpu.halted, "did not reach HALT");
 }
 
+/*
+ * ★ THE HARDEST RETRY IN THE PROJECT: a 6809 whose postbyte has already moved an
+ * index register when the access it computed stalls.
+ *
+ * "LDA ,X+" increments X and then reads. If the read stalls, the instruction is
+ * abandoned and retried - and unless the retry puts X back, the second attempt
+ * reads the byte AFTER the one the guest was asked about, and X ends up two on
+ * from where it started rather than one. Nothing about that looks like a fault;
+ * it is a program quietly reading the wrong address for ever after.
+ *
+ * The 6809 also has nine registers to put back where the 6502 has five, so this
+ * loads something distinctive into each of them first.
+ */
+static void
+test_6809_stall_rolls_back_a_postbyte(void)
+{
+	static const uint8_t code[] = {
+		0x86, 0x11,			/* LDA #&11        */
+		0xc6, 0x22,			/* LDB #&22        */
+		0x8e, 0xd0, 0x00,		/* LDX #&d000      */
+		0x10, 0x8e, 0x55, 0x66,		/* LDY #&5566      */
+		0xce, 0x77, 0x88,		/* LDU #&7788      */
+		0xa6, 0x80,			/* LDA ,X+         */
+		0x3f				/* SWI             */
+	};
+	copro_bus bus;
+	cpu6809_state cpu;
+	cpu_mem_hook hook;
+	int ran;
+
+	memset(ram, 0, sizeof(ram));
+	memset(ctl, 0, sizeof(ctl));
+	load(0x8000, code, sizeof(code));
+
+	copro_bus_init(&bus, ram, RAM_SIZE, ctl, CTL_SIZE);
+	put_region(0, 0xd000, 0x0010, COPRO_REGION_STALL, 0);
+	CHECK(copro_bus_set_map(&bus, MAP_OFF, 1), "map rejected");
+	copro_bus_hook(&bus, &hook);
+	CHECK(hook.can_stall == 1, "a stalling region said it cannot stall");
+
+	cpu6809_init(&cpu, ram, RAM_SIZE);
+	cpu6809_set_mem_hook(&cpu, &hook);
+	cpu6809_reset(&cpu, 0x8000);
+
+	ran = cpu6809_run(&cpu, 100);
+	/* LDA #n 2, LDB #n 2, LDX #nn 3, LDY #nn 4, LDU #nn 3. */
+	CHECK(ran == 2 + 2 + 3 + 4 + 3, "ran %d cycles before the stall", ran);
+	CHECK(bus.stalled == 1, "no stalled access");
+	CHECK(bus.wait_addr == 0xd000, "stalled on %x, wanted d000",
+	      bus.wait_addr);
+
+	/* Nothing of the abandoned instruction may remain. */
+	CHECK(cpu.a == 0x11, "A changed: %02x", cpu.a);
+	CHECK(cpu.b == 0x22, "B was lost: %02x", cpu.b);
+	CHECK(cpu.y == 0x5566, "Y was lost: %04x", cpu.y);
+	CHECK(cpu.u == 0x7788, "U was lost: %04x", cpu.u);
+	CHECK(cpu.pc == 0x800e, "pc is %04x, wanted 800e", cpu.pc);
+	/* ★ The one this test exists for. */
+	CHECK(cpu.x == 0xd000, "the postbyte's increment was not undone: %04x",
+	      cpu.x);
+
+	copro_bus_resume(&bus, 0x99);
+	cpu.stalled = 0;
+
+	ran = cpu6809_run(&cpu, 100);
+	/* The retried LDA ,R+ at 4 plus the postbyte's 2, and SWI at 19. */
+	CHECK(ran == 4 + 2 + 19, "ran %d cycles after resuming", ran);
+	CHECK(cpu.a == 0x99, "the retried read gave %02x", cpu.a);
+	/* Once, not twice: the increment happened on the retry and not before. */
+	CHECK(cpu.x == 0xd001, "X advanced to %04x, wanted d001", cpu.x);
+	CHECK(cpu.halted, "did not reach SWI");
+}
+
+/*
+ * A 6809 storing sixteen bits into a logged region. Two entries, high byte
+ * first, because this is the only core here that is big-endian - a guest
+ * rebuilding a display from the log has to be told the right order or every
+ * word it reconstructs is byte-swapped.
+ */
+static void
+test_6809_logs_a_word_high_byte_first(void)
+{
+	static const uint8_t code[] = {
+		0xcc, 0x12, 0x34,		/* LDD #&1234 */
+		0xfd, 0x40, 0x00,		/* STD &4000  */
+		0x3f				/* SWI        */
+	};
+	copro_bus bus;
+	cpu6809_state cpu;
+	cpu_mem_hook hook;
+	copro_log_entry e;
+
+	memset(ram, 0, sizeof(ram));
+	memset(ctl, 0, sizeof(ctl));
+	load(0x8000, code, sizeof(code));
+
+	copro_bus_init(&bus, ram, RAM_SIZE, ctl, CTL_SIZE);
+	put_region(0, 0x4000, 0x1000, COPRO_REGION_LOG, 0);
+	CHECK(copro_bus_set_map(&bus, MAP_OFF, 1), "map rejected");
+	CHECK(copro_bus_set_log(&bus, LOG_OFF, 16), "log rejected");
+	copro_bus_hook(&bus, &hook);
+
+	cpu6809_init(&cpu, ram, RAM_SIZE);
+	cpu6809_set_mem_hook(&cpu, &hook);
+	cpu6809_reset(&cpu, 0x8000);
+
+	/* LDD #nn 3, STD ext 6, SWI 19. */
+	CHECK(cpu6809_run(&cpu, 100) == 3 + 6 + 19, "ran %llu cycles",
+	      (unsigned long long) cpu.cycles);
+	CHECK(cpu.halted, "did not reach SWI");
+	CHECK(ram[0x4000] == 0x12 && ram[0x4001] == 0x34,
+	      "the word did not reach memory high byte first");
+	CHECK(copro_bus_log_pending(&bus) == 2, "logged %u writes, wanted 2",
+	      copro_bus_log_pending(&bus));
+	CHECK(copro_bus_log_pop(&bus, &e) == 1 && e.addr == 0x4000 &&
+	      e.value == 0x12, "the first entry is not the high byte");
+	CHECK(copro_bus_log_pop(&bus, &e) == 1 && e.addr == 0x4001 &&
+	      e.value == 0x34, "the second entry is not the low byte");
+}
+
 /* With no hook at all a core behaves exactly as it did before any of this, which
    is what keeps the cores usable on their own. */
 static void
@@ -471,6 +594,8 @@ main(void)
 	test_6502_stalled_write_completes_on_retry();
 	test_z80_ports_reach_the_decode();
 	test_z80_stall_abandons_and_retries();
+	test_6809_stall_rolls_back_a_postbyte();
+	test_6809_logs_a_word_high_byte_first();
 	test_no_hook_is_unchanged();
 
 	if (failures != 0) {

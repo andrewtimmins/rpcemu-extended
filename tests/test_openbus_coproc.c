@@ -230,7 +230,12 @@ test_identity(void)
 	check("a core name is matched whatever its case",
 	      openbus_coproc_request("RV32I") == 0 &&
 	      openbus_coproc_requested_core() == OPENBUS_COPROC_RV32I);
-	check("an unknown core is refused", openbus_coproc_request("6809") != 0);
+	/* ★ The name here must be one that will NEVER be a core. This check used
+	   to ask for a 6809 and passed for a year, then failed the day a 6809 was
+	   added - the check was right and its example had become a real card. A
+	   processor nobody would put on this bus cannot go stale that way. */
+	check("an unknown core is refused",
+	      openbus_coproc_request("nonesuch") != 0);
 	check("a name that is a prefix of one is refused",
 	      openbus_coproc_request("rv32") != 0);
 	check("a name that extends one is refused",
@@ -1101,6 +1106,86 @@ test_extended_cores(void)
 	}
 }
 
+/*
+ * The 6809, which is a core of its own rather than a flag on one already here.
+ * What is worth proving at the card's level, the core having its own test: that
+ * the card fits it and says which part it is, that a program runs through the
+ * aperture and hands an answer back the way every other core does, and that the
+ * register window reaches the 6809's own registers by the 6809's own numbering.
+ */
+static void
+test_6809_card(void)
+{
+	printf("\nThe 6809, a core in its own right:\n");
+
+	check("a 6809 card fits", fit("6809"));
+	check_u32("CORE says 6809", rd(OPENBUS_COPROC_REG_CORE),
+	          OPENBUS_COPROC_CORE_6809_ID);
+	check("with a name naming the part",
+	      strstr(openbus_name(), "6809") != NULL);
+	check_u32("and 64K, which is all it can address",
+	          rd(OPENBUS_COPROC_REG_RAMSIZE), 64u * 1024u);
+
+	{
+		/*
+		 * Seven times six, as every other core in this file computes it,
+		 * so the answer means the same thing across all of them.
+		 *
+		 *   LDA #7 ; LDB #6 ; MUL ; TFR B,A ; SWI
+		 *
+		 * MUL leaves the product in the pair with the low half in B, and
+		 * the halt hands back A, so the transfer is not decoration: it is
+		 * how the answer gets to where the card looks for it.
+		 */
+		static const uint8_t prog[] = {
+			0x86, 0x07,		/* LDA #7   */
+			0xc6, 0x06,		/* LDB #6   */
+			0x3d,			/* MUL      */
+			0x1f, 0x98,		/* TFR B,A  */
+			0x3f			/* SWI      */
+		};
+
+		load_program(prog, sizeof(prog));
+		wr(OPENBUS_COPROC_REG_ENTRY, 0);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RESET);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RUN);
+		check("a program runs on it", run_to_stop());
+		check_u32("and hands back forty-two",
+		          rd(OPENBUS_COPROC_REG_MBOX_RX), 0x2a);
+	}
+
+	{
+		/* The register window, by the 6809's numbering: A and B first,
+		   then its four sixteen-bit registers. A common numbering across
+		   cores would have to invent a place for U and the direct page. */
+		wr(OPENBUS_COPROC_REG_REGSEL, 0);
+		check_u32("register 0 is A", rd(OPENBUS_COPROC_REG_REGDATA), 0x2a);
+		wr(OPENBUS_COPROC_REG_REGSEL, 1);
+		check_u32("register 1 is B", rd(OPENBUS_COPROC_REG_REGDATA), 0x2a);
+		wr(OPENBUS_COPROC_REG_REGSEL, 6);
+		check_u32("register 6 is the direct page",
+		          rd(OPENBUS_COPROC_REG_REGDATA), 0x00);
+		wr(OPENBUS_COPROC_REG_REGSEL, 99);
+		check_u32("and out of range reads as all ones",
+		          rd(OPENBUS_COPROC_REG_REGDATA), 0xffffffffu);
+	}
+
+	{
+		/* An opcode a 6809 does not have must fault, not be executed as
+		   whatever it is nearest to. */
+		static const uint8_t prog[] = { 0x01, 0x3f };
+
+		load_program(prog, sizeof(prog));
+		wr(OPENBUS_COPROC_REG_ENTRY, 0);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RESET);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RUN);
+		(void) run_to_stop();
+		check("an opcode it does not have faults",
+		      (rd(OPENBUS_COPROC_REG_STATUS) &
+		       OPENBUS_COPROC_STATUS_FAULT) != 0);
+	}
+}
+
 int
 main(void)
 {
@@ -1122,6 +1207,7 @@ main(void)
 	test_dma();
 	test_bus_rules();
 	test_extended_cores();
+	test_6809_card();
 	test_ram_sizes();
 	test_ram_size_is_what_the_card_gets();
 	test_control_area();

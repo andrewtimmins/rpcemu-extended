@@ -128,10 +128,11 @@ had fallen behind it, which is worth knowing before trusting it.)
 | `test_cpu_rv32i` | the RV32IM core: the base integer set, the multiply and divide extension, and its faults |
 | `test_cpu_6502` | the 6502 core: all 151 documented NMOS opcodes, decimal mode and the indirect-JMP page bug |
 | `test_cpu_z80` | the Z80 core: the documented set including the CB, ED, DD, FD and DDCB pages |
+| `test_cpu_6809` | the 6809 core: every indexed postbyte form and the ones that do not exist, carry meaning borrow, the grid decoded at its corners, both stacks and all three interrupt lines |
 | `test_openbus_coproc` | the co-processor card itself: its registers, the RAM aperture, DMA, and that a refused second card leaves the first one alone |
 | `test_copro_bus` | the card's address decode: every region kind, the write log ring, latches, the stall protocol |
-| `test_copro_core_bus` | a 6502 and a Z80 running against that decode, including an instruction abandoned and retried |
-| `test_cpu_cycles` | 6502 and Z80 instruction timings against published values, both polarities of every conditional |
+| `test_copro_core_bus` | a 6502, a Z80 and a 6809 running against that decode, including an instruction abandoned and retried - and on the 6809, a postbyte whose auto-increment has to be rolled back |
+| `test_cpu_cycles` | 6502, Z80 and 6809 instruction timings against published values, both polarities of every conditional, and every 6809 postbyte's own cost |
 | `test_module_headers` | the guest module images this fork assembles: header offsets, the 32-bit flag, no 26-bit return idiom in the code, and each command's parameter counts the right way round |
 | `test_hostfs_path` | where a machine's HostFS drive resolves to, on all three platforms |
 | `test_hostfs_advice` | what the machine editor warns about when a HostFS folder is chosen |

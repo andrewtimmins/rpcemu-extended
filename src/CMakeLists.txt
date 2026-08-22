@@ -33,6 +33,7 @@ set(RPCEMU_CORE_SOURCES
     copro/openbus_coproc.c
     copro/cpu_rv32i.c
     copro/cpu_6502.c
+    copro/cpu_6809.c
     copro/cpu_z80.c
     folder_move.c
     hostfs_advice.c

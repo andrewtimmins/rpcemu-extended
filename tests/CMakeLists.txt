@@ -566,6 +566,16 @@ add_executable(test_cpu_z80 test_cpu_z80.c
 target_include_directories(test_cpu_z80 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro)
 rpcemu_add_test(test_cpu_z80)
 
+# The 6809's own test is the largest of the four, and deliberately: its indexed
+# addressing is fourteen modes in a postbyte, the core decodes three quarters of
+# its opcode map as a grid rather than as cases, and carry means borrow rather
+# than the 6502's carry. Each of those has a failure mode that a test only
+# looking at results would pass.
+add_executable(test_cpu_6809 test_cpu_6809.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6809.c)
+target_include_directories(test_cpu_6809 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro)
+rpcemu_add_test(test_cpu_6809)
+
 # The co-processor card itself: the register window, the aperture a guest loads a
 # program through, the timeslice, the interrupt on halt and bus mastering. Links
 # the bus and all three cores against the same fake host memory and fake
@@ -582,6 +592,7 @@ add_executable(test_openbus_coproc test_openbus_coproc.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/openbus_stub.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_rv32i.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6502.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6809.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_z80.c)
 target_include_directories(test_openbus_coproc PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
@@ -609,6 +620,7 @@ rpcemu_add_test(test_copro_bus)
 add_executable(test_copro_core_bus test_copro_core_bus.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/copro_bus.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6502.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6809.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_z80.c)
 target_include_directories(test_copro_core_bus PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro)
@@ -623,6 +635,7 @@ rpcemu_add_test(test_copro_core_bus)
 # polarity of each agreed with a table that was wrong for the other.
 add_executable(test_cpu_cycles test_cpu_cycles.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6502.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6809.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_z80.c)
 target_include_directories(test_cpu_cycles PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro)
@@ -926,7 +939,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 58)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 59)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 10")	# JIT differential
 endif()
