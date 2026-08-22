@@ -333,6 +333,77 @@ bool InputIsThirdMouseButtonKey(const wxKeyEvent &event)
 	return apply_macos_key_policy(scancode_from_physical_key(event)) == X11_MENU;
 }
 
+bool InputNeedsSyntheticRelease(const wxKeyEvent &event, unsigned scan_code)
+{
+#if defined(__WXOSX__)
+	/*
+	 * NSEvent modifier flags, which is what GetRawKeyFlags() carries here. Read
+	 * from the raw flags rather than asked of wxKeyEvent, because wxWidgets folds
+	 * Command and Control together on this platform - ControlDown() is true for
+	 * either - and telling them apart is the whole point.
+	 */
+	const unsigned NS_COMMAND = 0x00100000u;
+	const unsigned flags = static_cast<unsigned>(event.GetRawKeyFlags());
+	const unsigned raw = static_cast<unsigned>(event.GetRawKeyCode());
+
+	/*
+	 * The modifier keys, by ADB keycode. These arrive as flagsChanged rather
+	 * than as key events, and macOS does report their releases, so they are the
+	 * keys this must NOT touch: synthesising a release for a modifier would drop
+	 * it while it was still physically held.
+	 */
+	switch (raw) {
+	case 0x36:	/* right Command */
+	case 0x37:	/* left Command  */
+	case 0x38:	/* left Shift    */
+	case 0x3a:	/* left Option   */
+	case 0x3b:	/* left Control  */
+	case 0x3c:	/* right Shift   */
+	case 0x3d:	/* right Option  */
+	case 0x3e:	/* right Control */
+		return false;
+	default:
+		break;
+	}
+
+	/*
+	 * Caps Lock, which macOS reports as a press each time and never as a
+	 * release. One press therefore left the guest believing the key was held for
+	 * the rest of the session, and held_keys then suppressed every later press as
+	 * a key already down, so RISC OS latched Caps Lock on while the host's lamp
+	 * carried on toggling and came to mean the opposite of what it said
+	 * (issue #148).
+	 *
+	 * A real keyboard sends a make and a break for one tap, and RISC OS toggles
+	 * its own state from that. The caller supplies the interval between them.
+	 */
+	if (raw == 0x39) {	/* kVK_CapsLock */
+		return true;
+	}
+
+	/*
+	 * A key pressed while Command is held, whose keyUp macOS keeps to itself.
+	 * The press arrives, the release never does, and the guest is left with the
+	 * key down: RISC OS starts repeating it, and nothing stops it because no
+	 * release is ever coming (issue #149, "Cmd-L gives repeating Ls").
+	 *
+	 * Command is a shortcut modifier on a Mac, so one action per press is what is
+	 * wanted anyway - and it is the only behaviour available, the alternative
+	 * being a key held down for ever.
+	 */
+	if ((flags & NS_COMMAND) != 0u) {
+		return true;
+	}
+
+	(void) scan_code;
+	return false;
+#else
+	(void) event;
+	(void) scan_code;
+	return false;
+#endif
+}
+
 void InputLogKeyEvent(const wxKeyEvent &event, unsigned scan_code, bool key_down)
 {
 	static int enabled = -1;

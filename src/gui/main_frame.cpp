@@ -214,6 +214,7 @@ wxBEGIN_EVENT_TABLE(MainFrame, wxFrame)
 	EVT_TIMER(ID_TIMER_HOSTFS_LED, MainFrame::OnHostfsLedTimer)
 	EVT_TIMER(ID_TIMER_NETWORK_LED, MainFrame::OnNetworkLedTimer)
 	EVT_TIMER(ID_TIMER_CLIPBOARD, MainFrame::OnClipboardTimer)
+	EVT_TIMER(ID_TIMER_SYNTHETIC_RELEASE, MainFrame::OnSyntheticReleaseTimer)
 	EVT_DISPLAY_CHANGED(MainFrame::OnDisplayChanged)
 wxEND_EVENT_TABLE()
 
@@ -228,6 +229,7 @@ MainFrame::MainFrame()
 	  hostfs_led_timer_(this, ID_TIMER_HOSTFS_LED),
 	  network_led_timer_(this, ID_TIMER_NETWORK_LED),
 	  clipboard_timer_(this, ID_TIMER_CLIPBOARD)
+	, synthetic_release_timer_(this, ID_TIMER_SYNTHETIC_RELEASE)
 {
 	config_deep_copy(&config_copy_, &config);
 	pconfig_copy = &config_copy_;
@@ -1728,6 +1730,40 @@ void MainFrame::NativeKeyPress(unsigned key_id, unsigned scan_code)
 	}
 }
 
+/*
+ * Hold a made-up release back for the length of a keypress.
+ *
+ * The delay is the whole point. RISC OS is given a make, an interval, and a
+ * break, which is what a finger on a real keyboard produces; sending the break
+ * in the same event as the make leaves no interval at all and the guest acts on
+ * neither. 60ms is comfortably longer than a keyboard poll and far shorter than
+ * anybody can press a key twice.
+ *
+ * One timer for however many keys are waiting: they were all pressed within one
+ * event loop turn, so they can all be let go together.
+ */
+void MainFrame::QueueSyntheticRelease(unsigned key_id)
+{
+	static const int kSyntheticReleaseMs = 60;
+
+	synthetic_release_pending_.push_back(key_id);
+	if (!synthetic_release_timer_.IsRunning()) {
+		synthetic_release_timer_.StartOnce(kSyntheticReleaseMs);
+	}
+}
+
+void MainFrame::OnSyntheticReleaseTimer(wxTimerEvent & /*event*/)
+{
+	/* Swapped out first: NativeKeyRelease() must not be walking the list if
+	   anything it calls should ever add to it. */
+	std::vector<unsigned> pending;
+
+	pending.swap(synthetic_release_pending_);
+	for (const unsigned key_id : pending) {
+		NativeKeyRelease(key_id);
+	}
+}
+
 void MainFrame::NativeKeyRelease(unsigned key_id)
 {
 	unsigned scan_code = 0;
@@ -1810,7 +1846,29 @@ void MainFrame::ProcessEmulatorKeyEvent(wxKeyEvent &event, bool key_down)
 	}
 
 	if (key_down) {
-		NativeKeyPress(InputKeyIdentityFromKeyEvent(event), scan_code);
+		const unsigned key_id = InputKeyIdentityFromKeyEvent(event);
+
+		NativeKeyPress(key_id, scan_code);
+
+		/*
+		 * Some presses are never going to be answered by a release, so one is
+		 * made up - but AFTER AN INTERVAL, not in the same breath as the press.
+		 *
+		 * Releasing immediately was tried and the guest sees nothing at all:
+		 * there is then no interval in which the key was held, and both codes go
+		 * into the PS/2 queue back to back. A real keyboard tap is a make, the
+		 * time a finger takes, and a break, which is what RISC OS has always
+		 * been given and demonstrably copes with. So that is what this sends.
+		 *
+		 * Without it the guest is left holding a key nothing will ever lift:
+		 * RISC OS repeats it, and held_keys goes on suppressing further presses
+		 * of it as a key already down. Caps Lock latching while the host lamp
+		 * carried on toggling, and Cmd-L typing Ls for ever, were both this.
+		 * See InputNeedsSyntheticRelease().
+		 */
+		if (InputNeedsSyntheticRelease(event, scan_code)) {
+			QueueSyntheticRelease(key_id);
+		}
 	} else {
 		NativeKeyRelease(InputKeyIdentityFromKeyEvent(event));
 	}

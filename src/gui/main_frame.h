@@ -126,6 +126,7 @@ enum TimerId {
 	ID_TIMER_HOSTFS_LED,
 	ID_TIMER_NETWORK_LED,
 	ID_TIMER_CLIPBOARD,
+	ID_TIMER_SYNTHETIC_RELEASE,
 };
 
 enum StatusBarField {
@@ -245,6 +246,8 @@ private:
 	void OnLeftDown(wxMouseEvent &event);
 	void OnMipsTimer(wxTimerEvent &event);
 	void OnClipboardTimer(wxTimerEvent &event);
+	void OnSyntheticReleaseTimer(wxTimerEvent &event);
+	void QueueSyntheticRelease(unsigned key_id);
 	void OnVideoTimer(wxTimerEvent &event);
 	void OnFdcLedTimer(wxTimerEvent &event);
 	void OnIdeLedTimer(wxTimerEvent &event);
@@ -355,6 +358,15 @@ private:
 	wxTimer hostfs_led_timer_;
 	wxTimer network_led_timer_;
 	wxTimer clipboard_timer_;
+
+	/*
+	 * Keys pressed for the guest whose release the host is never going to send,
+	 * waiting to be let go of. See ProcessEmulatorKeyEvent(): the release cannot
+	 * be sent in the same breath as the press, because then there is no interval
+	 * in which the key was held and the guest sees nothing at all.
+	 */
+	wxTimer synthetic_release_timer_;
+	std::vector<unsigned> synthetic_release_pending_;
 	wxString clipboard_last_seen_;	/* host text already sent to the guest */
 	std::string clipboard_image_last_seen_;	/* and the same for an image, as PNG */
 
