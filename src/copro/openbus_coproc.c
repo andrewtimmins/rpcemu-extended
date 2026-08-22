@@ -37,6 +37,7 @@
 
 #include "cpu_6502.h"
 #include "cpu_6800.h"
+#include "cpu_68000.h"
 #include "cpu_6809.h"
 #include "cpu_rv32i.h"
 #include "cpu_z80.h"
@@ -59,6 +60,7 @@
 #define COPROC_RAM_Z80		(64u * 1024u)
 #define COPROC_RAM_6809		(64u * 1024u)
 #define COPROC_RAM_6800		(64u * 1024u)
+#define COPROC_RAM_68000	(1024u * 1024u)
 
 /* The size asked for, in bytes; zero means the core's default. Set from the
    machine's settings before the card is fitted, as the core selection is. */
@@ -77,6 +79,7 @@ typedef struct {
 		cpu_z80_state z80;
 		cpu6809_state m6809;
 		cpu6800_state m6800;
+		cpu68000_state m68000;
 	} cpu;
 
 	uint32_t ctrl;
@@ -180,6 +183,9 @@ COPROC_CORE_ACCESSORS(ops_m6809, m6809, uint16_t,
 COPROC_CORE_ACCESSORS(ops_m6800, m6800, uint16_t,
                       cpu6800_reset, cpu6800_run, cpu6800_step,
                       cpu6800_set_mem_hook)
+COPROC_CORE_ACCESSORS(ops_m68000, m68000, uint32_t,
+                      cpu68000_reset, cpu68000_run, cpu68000_step,
+                      cpu68000_set_mem_hook)
 
 /*
  * The 65C02 IS the 6502 core with its CMOS flag set, so it shares every accessor
@@ -314,6 +320,49 @@ ops_m6800_reg_write(uint32_t sel, uint32_t val)
 	}
 }
 
+/*
+ * The 68000's numbering: its two register files in order, then the registers
+ * that are neither. Both stack pointers are reachable, since which one A7 is
+ * depends on the privilege level and a debugger wants to see the other.
+ */
+static uint32_t
+ops_m68000_reg_read(uint32_t sel)
+{
+	if (sel < 8) {
+		return cp.cpu.m68000.d[sel];
+	}
+	if (sel < 16) {
+		return cp.cpu.m68000.a[sel - 8];
+	}
+	switch (sel) {
+	case 16: return cp.cpu.m68000.pc;
+	case 17: return cp.cpu.m68000.sr;
+	case 18: return cp.cpu.m68000.usp;
+	case 19: return cp.cpu.m68000.ssp;
+	default: return 0xffffffffu;
+	}
+}
+
+static void
+ops_m68000_reg_write(uint32_t sel, uint32_t val)
+{
+	if (sel < 8) {
+		cp.cpu.m68000.d[sel] = val;
+		return;
+	}
+	if (sel < 16) {
+		cp.cpu.m68000.a[sel - 8] = val;
+		return;
+	}
+	switch (sel) {
+	case 16: cp.cpu.m68000.pc = val; break;
+	case 17: cp.cpu.m68000.sr = (uint16_t) val; break;
+	case 18: cp.cpu.m68000.usp = val; break;
+	case 19: cp.cpu.m68000.ssp = val; break;
+	default: break;
+	}
+}
+
 static uint32_t
 ops_z80_reg_read(uint32_t sel)
 {
@@ -423,6 +472,28 @@ ops_m6800_interrupt(uint32_t ctrl)
 	}
 }
 
+/*
+ * ★ The 68000 has SEVEN interrupt levels, which is exactly what IRQCTRL's level
+ * field holds, and both autovectored and vectored interrupts - so the vector byte
+ * that exists for a Z80 in mode 2 is what a vectored interrupt needs. This is the
+ * closest fit of any core to a register map designed before it existed.
+ *
+ * Level 7 is effectively non-maskable on this part, so the NMI bit asks for that.
+ */
+static void
+ops_m68000_interrupt(uint32_t ctrl)
+{
+	if ((ctrl & OPENBUS_COPROC_IRQ_NMI) != 0) {
+		(void) cpu68000_interrupt(&cp.cpu.m68000, 7, 0, 1);
+	} else if ((ctrl & OPENBUS_COPROC_IRQ_ASSERT) != 0) {
+		const unsigned level = OPENBUS_COPROC_IRQ_LEVEL(ctrl);
+		const uint8_t vector = (uint8_t) OPENBUS_COPROC_IRQ_VECTOR(ctrl);
+
+		(void) cpu68000_interrupt(&cp.cpu.m68000,
+		    (level == 0) ? 1u : level, vector, vector == 0);
+	}
+}
+
 /* ---- and the table itself ----------------------------------------------- */
 
 typedef struct {
@@ -497,6 +568,12 @@ static const coproc_core_ops coproc_cores[] = {
 	  OPENBUS_COPROC_CORE_6800_ID,
 	  COPROC_RAM_6800, OPENBUS_COPROC_RAM_MAX_8BIT, 64u * 1024u,
 	  COPROC_CORE_ROW(ops_m6800) },
+
+	{ "68000", "OPEN Bus co-processor card (68000)",
+	  OPENBUS_COPROC_CORE_68000_ID,
+	  COPROC_RAM_68000, OPENBUS_COPROC_RAM_MAX_68000,
+	  OPENBUS_COPROC_RAM_MAX_68000,
+	  COPROC_CORE_ROW(ops_m68000) },
 };
 
 #define COPROC_CORE_COUNT ((int) (sizeof(coproc_cores) / sizeof(coproc_cores[0])))
@@ -1408,6 +1485,9 @@ openbus_coproc_fit(void)
 		break;
 	case OPENBUS_COPROC_6800:
 		cpu6800_init(&cp.cpu.m6800, cp.ram, cp.ram_size);
+		break;
+	case OPENBUS_COPROC_68000:
+		cpu68000_init(&cp.cpu.m68000, cp.ram, cp.ram_size);
 		break;
 	case OPENBUS_COPROC_Z80:
 	case OPENBUS_COPROC_8080:

@@ -34,6 +34,10 @@ set(RPCEMU_CORE_SOURCES
     copro/cpu_rv32i.c
     copro/cpu_6502.c
     copro/cpu_6800.c
+    copro/cpu_68000.c
+    copro/cpu_68000_ea.c
+    copro/cpu_68000_exc.c
+    copro/cpu_68000_ops.c
     copro/cpu_6809.c
     copro/cpu_z80.c
     folder_move.c

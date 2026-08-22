@@ -1258,6 +1258,79 @@ test_6800_card(void)
 	}
 }
 
+/*
+ * The 68000, which is a different kind of core from the rest: two privilege
+ * levels, a real exception vector table, and 16MB of flat address space rather
+ * than 64K paged.
+ */
+static void
+test_68000_card(void)
+{
+	printf("\nThe 68000:\n");
+
+	check("a 68000 card fits", fit("68000"));
+	check_u32("CORE says 68000", rd(OPENBUS_COPROC_REG_CORE),
+	          OPENBUS_COPROC_CORE_68000_ID);
+	check("with a name naming the part",
+	      strstr(openbus_name(), "68000") != NULL);
+	check_u32("★ and a megabyte by default, not 64K",
+	          rd(OPENBUS_COPROC_REG_RAMSIZE), 1024u * 1024u);
+
+	{
+		/*
+		 * Forty-two, as every core in this file computes it.
+		 *
+		 *   MOVEQ #42,D0 ; STOP #&2700
+		 *
+		 * STOP is how a program finishes on this part, and D0 is what it
+		 * hands back - the same bargain SWI makes on the 6809 and BRK on
+		 * the 6502.
+		 */
+		static const uint8_t prog[] = {
+			0x70, 0x2a,		/* MOVEQ #42,D0  */
+			0x4e, 0x72, 0x27, 0x00	/* STOP #&2700   */
+		};
+
+		load_program(prog, sizeof(prog));
+		wr(OPENBUS_COPROC_REG_ENTRY, 0);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RESET);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RUN);
+		check("a program runs on it", run_to_stop());
+		check_u32("and hands back forty-two",
+		          rd(OPENBUS_COPROC_REG_MBOX_RX), 0x2a);
+	}
+
+	{
+		/* Its own numbering: eight data registers, then eight address
+		   registers, then the ones that are neither. */
+		wr(OPENBUS_COPROC_REG_REGSEL, 0);
+		check_u32("register 0 is D0", rd(OPENBUS_COPROC_REG_REGDATA),
+		          0x2a);
+		wr(OPENBUS_COPROC_REG_REGSEL, 17);
+		check("register 17 is the status register, and supervisor is set",
+		      (rd(OPENBUS_COPROC_REG_REGDATA) & 0x2000u) != 0);
+		wr(OPENBUS_COPROC_REG_REGSEL, 99);
+		check_u32("and out of range reads as all ones",
+		          rd(OPENBUS_COPROC_REG_REGDATA), 0xffffffffu);
+	}
+
+	{
+		/* An &Fxxx opcode is not an instruction and has its own vector,
+		   so with no handler installed the core reports a fault rather
+		   than jumping into the bottom of memory. */
+		static const uint8_t prog[] = { 0xf0, 0x00, 0x4e, 0x71 };
+
+		load_program(prog, sizeof(prog));
+		wr(OPENBUS_COPROC_REG_ENTRY, 0);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RESET);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RUN);
+		(void) run_to_stop();
+		check("an unimplemented line-F opcode with no handler faults",
+		      (rd(OPENBUS_COPROC_REG_STATUS) &
+		       OPENBUS_COPROC_STATUS_FAULT) != 0);
+	}
+}
+
 int
 main(void)
 {
@@ -1281,6 +1354,7 @@ main(void)
 	test_extended_cores();
 	test_6809_card();
 	test_6800_card();
+	test_68000_card();
 	test_ram_sizes();
 	test_ram_size_is_what_the_card_gets();
 	test_control_area();

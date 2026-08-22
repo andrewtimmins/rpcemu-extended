@@ -989,6 +989,7 @@ wxWindow *MachineEditDialog::BuildCoProcessorPage(wxWindow *parent)
 	copro_choice_->Append("Motorola 6809");
 	/* One entry, not three: a 6802 and a 6808 are the same instruction set. */
 	copro_choice_->Append("Motorola 6800/6802/6808");
+	copro_choice_->Append("Motorola 68000");
 	copro_choice_->SetSelection(0);
 	copro_choice_->SetToolTip(
 	    "Fits a co-processor card to the second processor slot. The card carries "

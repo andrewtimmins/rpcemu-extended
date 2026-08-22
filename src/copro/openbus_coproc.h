@@ -216,6 +216,7 @@ extern "C" {
 #define OPENBUS_COPROC_CORE_8080_ID	0x38303830u	/* '8080' */
 #define OPENBUS_COPROC_CORE_6809_ID	0x36383039u	/* '6809' */
 #define OPENBUS_COPROC_CORE_6800_ID	0x36383030u	/* '6800' */
+#define OPENBUS_COPROC_CORE_68000_ID	0x36386b30u	/* '68k0' */
 
 /** CTRL bits. */
 #define OPENBUS_COPROC_CTRL_RUN		0x01
@@ -294,7 +295,8 @@ typedef enum {
 	/* One core covers the 6800, the 6802 and the 6808: the later two added
 	   on-chip RAM and a clock and took nothing away, so to a program there
 	   is nothing to tell apart. See cpu_6800.h. */
-	OPENBUS_COPROC_6800
+	OPENBUS_COPROC_6800,
+	OPENBUS_COPROC_68000
 } openbus_coproc_core;
 
 /*
@@ -323,6 +325,10 @@ typedef enum {
 /** The most that can be FITTED. What is addressable at once is below. */
 #define OPENBUS_COPROC_RAM_MAX_8BIT	(16u * 1024u * 1024u)
 #define OPENBUS_COPROC_RAM_MAX_RV32I	(64u * 1024u * 1024u)
+/* A 68000 has 24 address lines, so 16MB is its FLAT limit rather than a paged
+   ceiling: the same figure as the 8-bit cores' maximum, meaning something
+   different. See docs/copro-68000.md. */
+#define OPENBUS_COPROC_RAM_MAX_68000	(16u * 1024u * 1024u)
 
 /**
  * How much of the card's RAM a core can address without paging: its flat address

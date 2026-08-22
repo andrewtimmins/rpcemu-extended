@@ -589,6 +589,18 @@ add_executable(test_cpu_6800 test_cpu_6800.c
 target_include_directories(test_cpu_6800 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro)
 rpcemu_add_test(test_cpu_6800)
 
+# The 68000. What this checks that a published vector suite structurally cannot:
+# the generated dispatch table's own integrity - that no encoding was claimed by
+# two instructions, and that the encodings which are not instructions have no
+# handler - plus privilege, the exception model, and the resumable MOVEM.
+add_executable(test_cpu_68000 test_cpu_68000.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_68000.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_68000_ea.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_68000_exc.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_68000_ops.c)
+target_include_directories(test_cpu_68000 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro)
+rpcemu_add_test(test_cpu_68000)
+
 # The co-processor card itself: the register window, the aperture a guest loads a
 # program through, the timeslice, the interrupt on halt and bus mastering. Links
 # the bus and all three cores against the same fake host memory and fake
@@ -606,6 +618,10 @@ add_executable(test_openbus_coproc test_openbus_coproc.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_rv32i.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6502.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6800.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_68000.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_68000_ea.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_68000_exc.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_68000_ops.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6809.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_z80.c)
 target_include_directories(test_openbus_coproc PRIVATE
@@ -954,7 +970,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 60)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 61)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 10")	# JIT differential
 endif()
