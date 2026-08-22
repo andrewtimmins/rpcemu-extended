@@ -1186,6 +1186,78 @@ test_6809_card(void)
 	}
 }
 
+/*
+ * The 6800, which is the 6802 and the 6808 as well: those two added on-chip RAM
+ * and a clock and took nothing away, so there is one core and one entry in the
+ * list rather than the same instruction set three times.
+ */
+static void
+test_6800_card(void)
+{
+	printf("\nThe 6800, offered once for three parts:\n");
+
+	check("a 6800 card fits", fit("6800"));
+	check_u32("CORE says 6800", rd(OPENBUS_COPROC_REG_CORE),
+	          OPENBUS_COPROC_CORE_6800_ID);
+	check("with a name naming the part",
+	      strstr(openbus_name(), "6800") != NULL);
+
+	{
+		/*
+		 * Seven times six again, and this core has to work for it: there
+		 * is no MUL on a 6800, so it adds seven six times.
+		 *
+		 *   LDAA #0 ; LDAB #6 ; ADDA #7 ; DECB ; BNE ; SWI
+		 */
+		static const uint8_t prog[] = {
+			0x86, 0x00,		/* LDAA #0  */
+			0xc6, 0x06,		/* LDAB #6  */
+			0x8b, 0x07,		/* ADDA #7  */
+			0x5a,			/* DECB     */
+			0x26, 0xfb,		/* BNE      */
+			0x3f			/* SWI      */
+		};
+
+		load_program(prog, sizeof(prog));
+		wr(OPENBUS_COPROC_REG_ENTRY, 0);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RESET);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RUN);
+		check("a program runs on it", run_to_stop());
+		check_u32("and hands back forty-two the long way",
+		          rd(OPENBUS_COPROC_REG_MBOX_RX), 0x2a);
+	}
+
+	{
+		/* Its own numbering, which is shorter than the 6809's because the
+		   part has fewer registers rather than because anything is
+		   missing. */
+		wr(OPENBUS_COPROC_REG_REGSEL, 0);
+		check_u32("register 0 is A", rd(OPENBUS_COPROC_REG_REGDATA), 0x2a);
+		wr(OPENBUS_COPROC_REG_REGSEL, 1);
+		check_u32("register 1 is B, and the loop emptied it",
+		          rd(OPENBUS_COPROC_REG_REGDATA), 0x00);
+		wr(OPENBUS_COPROC_REG_REGSEL, 6);
+		check_u32("and there is no register 6 on this part",
+		          rd(OPENBUS_COPROC_REG_REGDATA), 0xffffffffu);
+	}
+
+	{
+		/* ★ &21 is BRN on a 6809 and is not an instruction here, which is
+		   the card-level version of the check that these two cores are not
+		   one core with a flag. */
+		static const uint8_t prog[] = { 0x21, 0x00, 0x3f };
+
+		load_program(prog, sizeof(prog));
+		wr(OPENBUS_COPROC_REG_ENTRY, 0);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RESET);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RUN);
+		(void) run_to_stop();
+		check("a 6809 branch that this part does not have faults",
+		      (rd(OPENBUS_COPROC_REG_STATUS) &
+		       OPENBUS_COPROC_STATUS_FAULT) != 0);
+	}
+}
+
 int
 main(void)
 {
@@ -1208,6 +1280,7 @@ main(void)
 	test_bus_rules();
 	test_extended_cores();
 	test_6809_card();
+	test_6800_card();
 	test_ram_sizes();
 	test_ram_size_is_what_the_card_gets();
 	test_control_area();

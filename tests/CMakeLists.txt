@@ -576,6 +576,19 @@ add_executable(test_cpu_6809 test_cpu_6809.c
 target_include_directories(test_cpu_6809 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro)
 rpcemu_add_test(test_cpu_6809)
 
+# The 6800, and with it the 6802 and the 6808, which are the same instruction
+# set. Almost none of what this test checks is the instruction set: it is the
+# quirks, because a 6800 that gets those wrong is not the part anybody's software
+# was written against. CPX not touching the carry, INX affecting only Z, TST
+# clearing the carry, V after a shift being N exclusive-or C, and a stack pointer
+# that addresses the next free byte. It also checks the opcodes this part and the
+# 6809 disagree about, which is what would catch somebody later deciding the two
+# could share a decoder.
+add_executable(test_cpu_6800 test_cpu_6800.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6800.c)
+target_include_directories(test_cpu_6800 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro)
+rpcemu_add_test(test_cpu_6800)
+
 # The co-processor card itself: the register window, the aperture a guest loads a
 # program through, the timeslice, the interrupt on halt and bus mastering. Links
 # the bus and all three cores against the same fake host memory and fake
@@ -592,6 +605,7 @@ add_executable(test_openbus_coproc test_openbus_coproc.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/openbus_stub.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_rv32i.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6502.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6800.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6809.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_z80.c)
 target_include_directories(test_openbus_coproc PRIVATE
@@ -635,6 +649,7 @@ rpcemu_add_test(test_copro_core_bus)
 # polarity of each agreed with a table that was wrong for the other.
 add_executable(test_cpu_cycles test_cpu_cycles.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6502.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6800.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6809.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_z80.c)
 target_include_directories(test_cpu_cycles PRIVATE
@@ -939,7 +954,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 59)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 60)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 10")	# JIT differential
 endif()

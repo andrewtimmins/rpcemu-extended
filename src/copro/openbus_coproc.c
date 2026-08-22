@@ -36,6 +36,7 @@
 #include "copro_bus.h"
 
 #include "cpu_6502.h"
+#include "cpu_6800.h"
 #include "cpu_6809.h"
 #include "cpu_rv32i.h"
 #include "cpu_z80.h"
@@ -57,6 +58,7 @@
 #define COPROC_RAM_6502		(64u * 1024u)
 #define COPROC_RAM_Z80		(64u * 1024u)
 #define COPROC_RAM_6809		(64u * 1024u)
+#define COPROC_RAM_6800		(64u * 1024u)
 
 /* The size asked for, in bytes; zero means the core's default. Set from the
    machine's settings before the card is fitted, as the core selection is. */
@@ -74,6 +76,7 @@ typedef struct {
 		cpu6502_state m6502;
 		cpu_z80_state z80;
 		cpu6809_state m6809;
+		cpu6800_state m6800;
 	} cpu;
 
 	uint32_t ctrl;
@@ -174,6 +177,9 @@ COPROC_CORE_ACCESSORS(ops_z80, z80, uint16_t,
 COPROC_CORE_ACCESSORS(ops_m6809, m6809, uint16_t,
                       cpu6809_reset, cpu6809_run, cpu6809_step,
                       cpu6809_set_mem_hook)
+COPROC_CORE_ACCESSORS(ops_m6800, m6800, uint16_t,
+                      cpu6800_reset, cpu6800_run, cpu6800_step,
+                      cpu6800_set_mem_hook)
 
 /*
  * The 65C02 IS the 6502 core with its CMOS flag set, so it shares every accessor
@@ -270,6 +276,40 @@ ops_m6809_reg_write(uint32_t sel, uint32_t val)
 	case 6:	cp.cpu.m6809.dp = (uint8_t) val; break;
 	case 7:	cp.cpu.m6809.cc = (uint8_t) val; break;
 	case 8:	cp.cpu.m6809.pc = (uint16_t) val; break;
+	default: break;
+	}
+}
+
+/*
+ * The 6800's numbering, which is the 6809's with what it does not have taken
+ * out: no second stack, no Y, no direct page. Keeping the registers it shares
+ * at the same numbers would mean leaving holes, and a hole a guest reads as
+ * all-ones is worse than a shorter list.
+ */
+static uint32_t
+ops_m6800_reg_read(uint32_t sel)
+{
+	switch (sel) {
+	case 0:	return cp.cpu.m6800.a;
+	case 1:	return cp.cpu.m6800.b;
+	case 2:	return cp.cpu.m6800.x;
+	case 3:	return cp.cpu.m6800.sp;
+	case 4:	return cp.cpu.m6800.cc;
+	case 5:	return cp.cpu.m6800.pc;
+	default: return 0xffffffffu;
+	}
+}
+
+static void
+ops_m6800_reg_write(uint32_t sel, uint32_t val)
+{
+	switch (sel) {
+	case 0:	cp.cpu.m6800.a = (uint8_t) val; break;
+	case 1:	cp.cpu.m6800.b = (uint8_t) val; break;
+	case 2:	cp.cpu.m6800.x = (uint16_t) val; break;
+	case 3:	cp.cpu.m6800.sp = (uint16_t) val; break;
+	case 4:	cp.cpu.m6800.cc = (uint8_t) val; break;
+	case 5:	cp.cpu.m6800.pc = (uint16_t) val; break;
 	default: break;
 	}
 }
@@ -372,6 +412,17 @@ ops_m6809_interrupt(uint32_t ctrl)
 	}
 }
 
+/* The 6800 has one maskable line, so the level field means nothing to it. */
+static void
+ops_m6800_interrupt(uint32_t ctrl)
+{
+	if ((ctrl & OPENBUS_COPROC_IRQ_NMI) != 0) {
+		cpu6800_nmi(&cp.cpu.m6800);
+	} else if ((ctrl & OPENBUS_COPROC_IRQ_ASSERT) != 0) {
+		(void) cpu6800_irq(&cp.cpu.m6800);
+	}
+}
+
 /* ---- and the table itself ----------------------------------------------- */
 
 typedef struct {
@@ -439,6 +490,13 @@ static const coproc_core_ops coproc_cores[] = {
 	  OPENBUS_COPROC_CORE_6809_ID,
 	  COPROC_RAM_6809, OPENBUS_COPROC_RAM_MAX_8BIT, 64u * 1024u,
 	  COPROC_CORE_ROW(ops_m6809) },
+
+	/* Offered once, not three times: the 6802 and the 6808 are this same
+	   instruction set. See cpu_6800.h. */
+	{ "6800", "OPEN Bus co-processor card (6800)",
+	  OPENBUS_COPROC_CORE_6800_ID,
+	  COPROC_RAM_6800, OPENBUS_COPROC_RAM_MAX_8BIT, 64u * 1024u,
+	  COPROC_CORE_ROW(ops_m6800) },
 };
 
 #define COPROC_CORE_COUNT ((int) (sizeof(coproc_cores) / sizeof(coproc_cores[0])))
@@ -1347,6 +1405,9 @@ openbus_coproc_fit(void)
 		break;
 	case OPENBUS_COPROC_6809:
 		cpu6809_init(&cp.cpu.m6809, cp.ram, cp.ram_size);
+		break;
+	case OPENBUS_COPROC_6800:
+		cpu6800_init(&cp.cpu.m6800, cp.ram, cp.ram_size);
 		break;
 	case OPENBUS_COPROC_Z80:
 	case OPENBUS_COPROC_8080:

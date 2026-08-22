@@ -19,8 +19,8 @@
  */
 
 /*
- * Instruction timings for the 6502, the Z80 and the 6809, against published
- * values.
+ * Instruction timings for the 6502, the Z80, the 6809 and the 6800, against
+ * published values.
  *
  * ★ WHY THESE ARE WORTH A TEST OF THEIR OWN. A program emulating a machine paces
  * its display and its sound from the processor's clock: a PAL C64 raster line is
@@ -49,6 +49,7 @@
  */
 
 #include "cpu_6502.h"
+#include "cpu_6800.h"
 #include "cpu_6809.h"
 #include "cpu_z80.h"
 
@@ -443,6 +444,94 @@ test_6809(void)
 	{ const uint8_t p[] = {0x10,0x26,0x00,0x02}; m6809("LBNE not taken", p, 4, 5, m6809_z_set); }
 }
 
+/* ------------------------------------------------------------------ 6800 */
+
+static void
+m6800(const char *what, const uint8_t *code, size_t len, int want,
+      void (*setup)(cpu6800_state *))
+{
+	cpu6800_state c;
+
+	memset(ram, 0, sizeof(ram));
+	memcpy(ram + 0x200, code, len);
+	memset(&c, 0, sizeof(c));
+	cpu6800_init(&c, ram, sizeof(ram));
+	cpu6800_reset(&c, 0x200);
+	if (setup != NULL) {
+		setup(&c);
+	}
+	check(what, cpu6800_step(&c), want);
+}
+
+static void m6800_carry(cpu6800_state *c) { c->cc |= CPU6800_FLAG_C; }
+static void m6800_no_carry(cpu6800_state *c)
+{
+	c->cc = (uint8_t) (c->cc & ~CPU6800_FLAG_C);
+}
+static void m6800_stack(cpu6800_state *c) { c->sp = 0x00ff; }
+
+static void
+test_6800(void)
+{
+	printf("6800, against the published timings:\n");
+
+	/*
+	 * ★ THE INVERSION WORTH CHECKING FIRST. On this processor an indexed
+	 * instruction costs MORE than the extended form of the same thing, the
+	 * offset having to be added to X where a full address needs no work. On
+	 * the 6809 it is the other way round. Getting the two tables the same way
+	 * round would be the easy mistake and neither part would be right.
+	 */
+	{ const uint8_t p[] = {0x86,0x00};      m6800("LDAA #n", p, 2, 2, NULL); }
+	{ const uint8_t p[] = {0x96,0x10};      m6800("LDAA direct", p, 2, 3, NULL); }
+	{ const uint8_t p[] = {0xb6,0x30,0x00}; m6800("LDAA extended", p, 3, 4, NULL); }
+	{ const uint8_t p[] = {0xa6,0x00};      m6800("LDAA indexed, which costs MORE", p, 2, 5, NULL); }
+
+	{ const uint8_t p[] = {0x97,0x10};      m6800("STAA direct", p, 2, 4, NULL); }
+	{ const uint8_t p[] = {0xb7,0x30,0x00}; m6800("STAA extended", p, 3, 5, NULL); }
+	{ const uint8_t p[] = {0xa7,0x00};      m6800("STAA indexed", p, 2, 6, NULL); }
+
+	{ const uint8_t p[] = {0x8e,0x00,0x00}; m6800("LDS #nn", p, 3, 3, NULL); }
+	{ const uint8_t p[] = {0x9e,0x10};      m6800("LDS direct", p, 2, 4, NULL); }
+	{ const uint8_t p[] = {0x9f,0x10};      m6800("STS direct", p, 2, 5, NULL); }
+	{ const uint8_t p[] = {0xce,0x00,0x00}; m6800("LDX #nn", p, 3, 3, NULL); }
+	{ const uint8_t p[] = {0xff,0x30,0x00}; m6800("STX extended", p, 3, 6, NULL); }
+	{ const uint8_t p[] = {0x8c,0x00,0x00}; m6800("CPX #nn", p, 3, 3, NULL); }
+	{ const uint8_t p[] = {0xbc,0x30,0x00}; m6800("CPX extended", p, 3, 5, NULL); }
+
+	{ const uint8_t p[] = {0x40};           m6800("NEGA, inherent", p, 1, 2, NULL); }
+	{ const uint8_t p[] = {0x60,0x00};      m6800("NEG indexed", p, 2, 7, NULL); }
+	{ const uint8_t p[] = {0x70,0x30,0x00}; m6800("NEG extended, one FEWER", p, 3, 6, NULL); }
+	{ const uint8_t p[] = {0x6e,0x00};      m6800("JMP indexed", p, 2, 4, NULL); }
+	{ const uint8_t p[] = {0x7e,0x30,0x00}; m6800("JMP extended", p, 3, 3, NULL); }
+
+	{ const uint8_t p[] = {0x01};           m6800("NOP", p, 1, 2, NULL); }
+	{ const uint8_t p[] = {0x08};           m6800("INX", p, 1, 4, NULL); }
+	{ const uint8_t p[] = {0x09};           m6800("DEX", p, 1, 4, NULL); }
+	{ const uint8_t p[] = {0x1b};           m6800("ABA", p, 1, 2, NULL); }
+	{ const uint8_t p[] = {0x19};           m6800("DAA", p, 1, 2, NULL); }
+	{ const uint8_t p[] = {0x30};           m6800("TSX", p, 1, 4, NULL); }
+	{ const uint8_t p[] = {0x36};           m6800("PSHA", p, 1, 4, m6800_stack); }
+	{ const uint8_t p[] = {0x32};           m6800("PULA", p, 1, 4, m6800_stack); }
+	{ const uint8_t p[] = {0x39};           m6800("RTS", p, 1, 5, m6800_stack); }
+	{ const uint8_t p[] = {0x3b};           m6800("RTI", p, 1, 10, m6800_stack); }
+	{ const uint8_t p[] = {0x3f};           m6800("SWI", p, 1, 12, m6800_stack); }
+	{ const uint8_t p[] = {0x8d,0x02};      m6800("BSR", p, 2, 8, m6800_stack); }
+	{ const uint8_t p[] = {0xad,0x00};      m6800("JSR indexed", p, 2, 8, m6800_stack); }
+	{ const uint8_t p[] = {0xbd,0x30,0x00}; m6800("JSR extended", p, 3, 9, m6800_stack); }
+
+	/*
+	 * ★ Both polarities, and on this part they are the same number. That is
+	 * the check: a table copied from the 6809's, where a long branch taken
+	 * costs one more, would be wrong here in one direction only.
+	 */
+	{ const uint8_t p[] = {0x25,0x02};      m6800("BCS taken", p, 2, 4, m6800_carry); }
+	{ const uint8_t p[] = {0x25,0x02};      m6800("BCS not taken", p, 2, 4, m6800_no_carry); }
+	{ const uint8_t p[] = {0x24,0x02};      m6800("BCC taken", p, 2, 4, m6800_no_carry); }
+	{ const uint8_t p[] = {0x24,0x02};      m6800("BCC not taken", p, 2, 4, m6800_carry); }
+	{ const uint8_t p[] = {0x20,0x02};      m6800("BRA", p, 2, 4, NULL); }
+}
+
 int
 main(void)
 {
@@ -451,6 +540,7 @@ main(void)
 	test_z80();
 	test_8080();
 	test_6809();
+	test_6800();
 
 	if (failures != 0) {
 		printf("%d failure(s)\n", failures);

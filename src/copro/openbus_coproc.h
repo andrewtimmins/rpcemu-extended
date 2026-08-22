@@ -215,6 +215,7 @@ extern "C" {
 #define OPENBUS_COPROC_CORE_65C02_ID	0x43303220u	/* 'C02 ' */
 #define OPENBUS_COPROC_CORE_8080_ID	0x38303830u	/* '8080' */
 #define OPENBUS_COPROC_CORE_6809_ID	0x36383039u	/* '6809' */
+#define OPENBUS_COPROC_CORE_6800_ID	0x36383030u	/* '6800' */
 
 /** CTRL bits. */
 #define OPENBUS_COPROC_CTRL_RUN		0x01
@@ -289,7 +290,11 @@ typedef enum {
 	   processor every existing machine has fitted. */
 	OPENBUS_COPROC_65C02,
 	OPENBUS_COPROC_8080,
-	OPENBUS_COPROC_6809
+	OPENBUS_COPROC_6809,
+	/* One core covers the 6800, the 6802 and the 6808: the later two added
+	   on-chip RAM and a clock and took nothing away, so to a program there
+	   is nothing to tell apart. See cpu_6800.h. */
+	OPENBUS_COPROC_6800
 } openbus_coproc_core;
 
 /*

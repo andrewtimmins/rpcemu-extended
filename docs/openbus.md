@@ -193,8 +193,8 @@ card and Simtec's Hydra ever used this bus, and this is neither. Its ID register
 says so.
 
 Fit one from the machine editor's **Co-Processor Card** tab, or for one run
-with `--openbus-card=rv32i`, `6502`, `65c02`, `z80`, `8080` or `6809`. `--help`
-lists
+with `--openbus-card=rv32i`, `6502`, `65c02`, `z80`, `8080`, `6809` or `6800`.
+`--help` lists
 them from the card's own table, so it cannot name a stale set. The tab writes
 `openbus_card` into
 the machine's configuration; the option overrides it for that run and is not
@@ -209,6 +209,7 @@ bought a card for.
 | **6502** | All 151 documented NMOS opcodes, decimal mode, and the indirect-`JMP` page bug. Undocumented opcodes fault. | `BRK`, with A as the exit code | 64K |
 | **65C02** | The 6502 above plus WDC's CMOS additions: `BRA`, `PHX`/`PHY`/`PLX`/`PLY`, `STZ`, `TRB`/`TSB`, `INC A`/`DEC A`, `BIT` immediate and indexed, the `(zp)` addressing forms, `JMP (abs,X)` and `STP`. The indirect-`JMP` page bug is fixed, as the part fixed it, and N and Z come from the decimal result. Rockwell's `RMB`/`SMB`/`BBR`/`BBS` and `WAI` are not implemented; `WAI` would need a wait state the card does not model. | `BRK`, with A as the exit code, or `STP` | 64K |
 | **Z80** | The documented set: main, CB, ED including the block instructions, and DD/FD/DDCB/FDCB. Undocumented opcodes, `SLL` and the IXH/IXL halves fault. | `HALT`, with A as the exit code | 64K |
+| **6800** | The 197 valid opcodes, all four addressing modes, and both accumulators. **This one core is also the 6802 and the 6808**: those added on-chip RAM and a clock oscillator and took nothing away, so to a program there is nothing to tell apart. `WAI` faults, for the reason `SYNC` does on the 6809. The quirks are reproduced rather than tidied up: `CPX` sets N, Z and V and leaves the **carry** alone; `INX` and `DEX` affect Z and nothing else; `TST` clears the carry; and the shifts define V as N exclusive-or C, so `LSR` sets V from the bit it shifted out. | `SWI`, with A as the exit code | 64K |
 | **6809** | The documented set, all three pages, and every indexed addressing form the postbyte encodes. Undocumented opcodes fault, and so do the postbyte forms that do not exist: there is no indirect `,R+` or `,-R`, because incrementing by one and then reading a 16-bit pointer would read half of one pointer and half of the next. `SYNC` and `CWAI` fault as well, for the reason `WAI` is left out of the 65C02: both stop the processor until an interrupt arrives, and this card does not model a processor waiting on a line. | `SWI`, with A as the exit code | 64K |
 | **8080** | Intel's original set, which is the Z80's without the extensions. The Z80's own instructions fault: the `CB`/`ED`/`DD`/`FD` prefixes, `JR`, `DJNZ`, `EXX` and `EX AF,AF'`. It is not merely the Z80 with instructions removed, and the difference that matters is the flags, not the opcodes: bit 2 is always parity where the Z80 redefined it as overflow for arithmetic, `DAA` always adds because there is no subtract flag, and the flag register reads bit 1 as one and bits 3 and 5 as zero. | `HLT`, with A as the exit code | 64K |
 
@@ -217,7 +218,7 @@ nothing about the bus, the emulator or wxWidgets. That is what makes them
 testable on every platform with no machine and no display, and it is why they
 live in their own directory rather than inside the card.
 
-The `CYCLES` register counts the **processor's own cycles** on the five 8-bit
+The `CYCLES` register counts the **processor's own cycles** on the six 8-bit
 cores, charged per the documented timing: the extra cycle an indexed read pays when
 it carries into the high byte of the address, the cost of a taken branch, the
 Z80's prefix and displacement costs, and 21 rather than 16 for an iteration of
@@ -276,7 +277,7 @@ authority — this is the shape of it:
 | Offset | Name | | |
 | --- | --- | --- | --- |
 | `&00` | `ID` | R | `&4F424350`, `'OBCP'` |
-| `&04` | `CORE` | R | `'RV32'`, `'6502'`, `'C02 '`, `'Z80 '`, `'8080'` or `'6809'` |
+| `&04` | `CORE` | R | `'RV32'`, `'6502'`, `'C02 '`, `'Z80 '`, `'8080'`, `'6809'` or `'6800'` |
 | `&08` | `RAMSIZE` | R | bytes of card RAM |
 | `&0C` | `CTRL` | RW | run, step, reset, interrupt on halt |
 | `&10` | `STATUS` | R | running, halted, faulted, interrupt, transfer in progress |
