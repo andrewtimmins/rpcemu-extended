@@ -234,6 +234,78 @@ static void test_ipc_name_for()
 	CHECK(MachineIpcNameFor(data, long_a, 111) == MachineIpcNameFor(data, long_b, 111));
 }
 
+/*
+ * Regression test for a machine that ran, beeped and stayed invisible.
+ *
+ * macOS caps a POSIX shared-memory name at PSHMNAMLEN - 31 characters,
+ * INCLUDING the leading '/' that Map() adds - and returns ENAMETOOLONG past it.
+ * That is far shorter than the Windows MAX_PATH the name length was originally
+ * chosen against, and the readable "rpcemu-fb-<hash>-<machine>-<pid>" form went
+ * over it for ordinary machine names: with a five-digit pid, "OS-530" came to
+ * exactly 32. shm_open() then failed, CreateNew() returned false, and the only
+ * sign was one line in a log the Manager never shows - the machine booted and
+ * played its startup beep with no display anywhere.
+ *
+ * It was also pid-dependent, so it looked intermittent: the same machine fitted
+ * in 31 characters with a four-digit pid and failed with a five-digit one.
+ *
+ * The length is asserted for every platform rather than under an #ifdef, so the
+ * limit cannot be quietly re-broken on the one platform that cares least.
+ */
+static void test_ipc_name_fits_platform_limit()
+{
+	/* The shortest limit of any platform this builds for, less the leading
+	   separator Map() prepends. */
+	static const size_t kShortestLimit = 31 - 1;
+
+	const std::string data = "/Users/somebody/RPCEmu/";
+	/* std::string, not const char *: a `std::string(80, 'a').c_str()` in this
+	   initialiser would dangle the moment the full expression ended. */
+	const std::string machines[] = {
+		"OS-530",		/* the name that actually failed */
+		"A",
+		"MyRiscPC-Kinetic",	/* what a machine gets called in practice */
+		std::string(80, 'a'),
+	};
+
+	/* Five and six digits: a Mac hands out pids well past 10000, and the
+	   original bug turned on exactly that. */
+	const long pids[] = { 111, 9999, 61293, 612934 };
+
+	for (const std::string &machine : machines) {
+		for (long pid : pids) {
+			const std::string name = MachineIpcNameFor(data, machine, pid);
+
+			if (name.size() > kShortestLimit) {
+				std::fprintf(stderr,
+				    "FAIL: name for machine '%s' pid %ld is %zu chars "
+				    "(limit %zu): %s\n",
+				    machine.c_str(), pid, name.size(), kShortestLimit,
+				    name.c_str());
+				failures++;
+			}
+		}
+	}
+}
+
+/*
+ * The same thing again, but against the operating system rather than a constant:
+ * create and open a segment under the name a real managed machine would use, so
+ * a platform whose limit is not the one assumed above still fails here.
+ */
+static void test_ipc_name_is_usable()
+{
+	const std::string name =
+	    MachineIpcNameFor("/Users/somebody/RPCEmu/", "MyRiscPC-Kinetic",
+	                      (long) getpid());
+
+	SharedFramebuffer writer;
+	CHECK(writer.CreateNew(name));
+
+	SharedFramebuffer reader;
+	CHECK(reader.OpenExisting(name));
+}
+
 static void test_ipc_roundtrip()
 {
 #ifdef _WIN32
@@ -443,6 +515,8 @@ int main()
 	test_shared_framebuffer();
 	test_shared_framebuffer_dirty_rows();
 	test_ipc_name_for();
+	test_ipc_name_fits_platform_limit();
+	test_ipc_name_is_usable();
 	test_ipc_roundtrip();
 	test_menu_command_roundtrip();
 

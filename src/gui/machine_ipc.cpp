@@ -351,10 +351,26 @@ static uint32_t NameHash(const std::string &s)
 std::string MachineIpcNameFor(const std::string &data_dir,
                               const std::string &machine_name, long pid)
 {
-	/* Enough to tell machines apart at a glance, and keeps the whole name
-	   inside the shortest limit: Windows object names are capped at MAX_PATH
-	   including the "Local\" prefix Map() adds. */
+	/* Enough to tell machines apart at a glance. */
 	static const size_t kMaxNameChars = 32;
+
+	/*
+	 * The shortest whole-name limit of any platform this builds for, less the
+	 * one-character separator Map() prepends.
+	 *
+	 * macOS is the binding constraint, by a long way: shm_open() takes
+	 * PSHMNAMLEN - 31 characters INCLUDING that separator - and fails with
+	 * ENAMETOOLONG past it, where Windows allows MAX_PATH and Linux NAME_MAX.
+	 * This limit used to be reasoned about against MAX_PATH alone, so the
+	 * readable form below went over macOS's for ordinary machine names and
+	 * shm_open() failed. CreateNew() then returned false and the machine ran
+	 * with no display anywhere, its one diagnostic a log line in the managed
+	 * child's log that the Manager never puts in front of anybody.
+	 *
+	 * Enforced on every platform rather than under an #ifdef, so it cannot be
+	 * quietly re-broken on the platforms that would not complain.
+	 */
+	static const size_t kMaxTotalChars = 30;
 
 	const uint32_t h = NameHash(data_dir);
 	const std::string shown = machine_name.substr(0, kMaxNameChars);
@@ -373,6 +389,25 @@ std::string MachineIpcNameFor(const std::string &data_dir,
 	   the same name. */
 	std::snprintf(buf, sizeof(buf), "rpcemu-fb-%08lx-%s-%ld",
 	    (unsigned long) h, shown.c_str(), pid);
+
+	if (std::strlen(buf) <= kMaxTotalChars) {
+		return std::string(buf);
+	}
+
+	/*
+	 * Too long to spell out here, so the machine's name goes into the hash
+	 * rather than the text. The hash covers the same TRUNCATED name the
+	 * readable form shows, keeping the property that form has: two machines
+	 * whose names differ only past the cut share a segment name, the pid tells
+	 * them apart, and machine_lock means only one of them is running anyway.
+	 *
+	 * A distinct prefix, so a compact name can never collide with a readable
+	 * one. Worst case is 6 + 8 + 1 + 8 = 23 characters, with the pid printed in
+	 * hex and even a 32-bit pid allowed for.
+	 */
+	std::snprintf(buf, sizeof(buf), "rpcfb-%08lx-%lx",
+	    (unsigned long) NameHash(data_dir + '\n' + shown),
+	    (unsigned long) pid);
 	return std::string(buf);
 }
 
