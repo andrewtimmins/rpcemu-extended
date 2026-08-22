@@ -1064,6 +1064,11 @@ int main(int argc, char **argv)
 				return 2;
 			}
 			app_settings_override_debug_socket(value);
+		} else if (strcmp(arg, "--no-gl") == 0) {
+			/* The escape hatch for a display where OpenGL works well enough to
+			   start and badly enough to be a nuisance - which nothing here can
+			   detect, so it has to be sayable. */
+			SetHardwareAccelerationOverride(0);
 		} else if (strcmp(arg, "--no-relay") == 0) {
 			app_settings_override_relay(0);
 		} else if (strcmp(arg, "--machine") == 0) {

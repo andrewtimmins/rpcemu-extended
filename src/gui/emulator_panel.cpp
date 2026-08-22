@@ -20,6 +20,8 @@
 
 #include "emulator_panel.h"
 
+#include "gui_preferences.h"
+
 #include <algorithm>
 #include <numeric>
 #include <cstdlib>
@@ -94,18 +96,44 @@ bool EmulatorPanel::ShouldSuppressHostMouseWarp() const
 	return std::chrono::steady_clock::now() < user_pointer_until_;
 }
 
-void EmulatorPanel::UpdateMouseCursor()
+/*
+ * Which cursor the host should be showing, in one place.
+ *
+ * Blank whenever RISC OS is drawing a pointer of its own, or the host one sits
+ * on top of the guest's and there are two. An arrow when the guest is not
+ * drawing one, so the hand still has something to follow.
+ */
+wxCursor EmulatorPanel::ChooseMouseCursor() const
 {
 	if (mouse_captured) {
-		SetCursor(wxCursor(wxCURSOR_BLANK));
-		return;
+		return wxCursor(wxCURSOR_BLANK);
 	}
-
 	if (pconfig_copy != nullptr && pconfig_copy->mousehackon && IsMouseOverPanel()) {
-		SetCursor(wxCursor(wxCURSOR_BLANK));
-	} else {
-		SetCursor(wxCursor(wxCURSOR_ARROW));
+		return wxCursor(wxCURSOR_BLANK);
 	}
+	return wxCursor(wxCURSOR_ARROW);
+}
+
+void EmulatorPanel::ApplyMouseCursor(const wxCursor &cursor)
+{
+	SetCursor(cursor);
+
+#if wxUSE_GLCANVAS
+	/*
+	 * And the canvas, which is a window in its own right sitting over this one
+	 * and carrying its own cursor. Setting only the panel's left the host arrow
+	 * drawn on top of the guest's pointer wherever the GPU path was up, because
+	 * the cursor the mouse is actually over is the canvas's.
+	 */
+	if (gl_canvas_ != nullptr) {
+		gl_canvas_->SetCursor(cursor);
+	}
+#endif
+}
+
+void EmulatorPanel::UpdateMouseCursor()
+{
+	ApplyMouseCursor(ChooseMouseCursor());
 }
 
 bool EmulatorPanel::IsMouseOverPanel() const
@@ -307,7 +335,27 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 
 	bool recalculate_needed = false;
 
-	if (!display_image_.IsOk() || display_image_.GetWidth() != update.xsize ||
+
+	if (GlActive()) {
+		/*
+		 * The GPU path. The guest's pixels go into a texture, so none of the
+		 * conversion below happens: no wxImage, no wxBitmap rebuild, no
+		 * sub-image Blit, and no full-frame rescale in the paint - which is the
+		 * cost this is here to remove.
+		 *
+		 * Only the CONVERSION is skipped. Everything after this, the scaling
+		 * maths and the panel resize on a mode change, still has to run: the
+		 * first version of this returned early and skipped it, so a guest
+		 * changing to 1440x900 left the panel at the old mode's 640x480 while
+		 * the destination rectangle grew to the new size, and all that could be
+		 * seen was the top-left corner of the screen.
+		 */
+		if (image_width_ != update.xsize || image_height_ != update.ysize) {
+			image_width_ = update.xsize;
+			image_height_ = update.ysize;
+			recalculate_needed = true;
+		}
+	} else if (!display_image_.IsOk() || display_image_.GetWidth() != update.xsize ||
 	    display_image_.GetHeight() != update.ysize || !display_bitmap_.IsOk()) {
 		display_image_ = wxImage(update.xsize, update.ysize, false);
 		image_width_ = update.xsize;
@@ -379,11 +427,34 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 				top->Layout();
 				if (auto *frame = wxDynamicCast(top, wxFrame)) {
 					frame->Fit();
+					/*
+					 * Centred again on the display it is on, because the
+					 * window has just changed size around a fixed top-left
+					 * corner: a guest going from 640x480 to 1440x900 grows
+					 * down and to the right, which walks the window towards
+					 * the bottom-right of the screen and can take most of it
+					 * off the edge. Only on a resize, so a window the user has
+					 * placed is left where they put it until the mode changes
+					 * again.
+					 */
+					if (!frame->IsMaximized() && !frame->IsIconized()) {
+						frame->Centre();
+					}
 				}
 			}
 		}
 
+		if (GlActive()) {
+			/* The rectangle has just changed, so the texture is drawn against
+			   the new one rather than a frame late. */
+			StoreFrameForGl(update);
+		}
 		Refresh(false);
+		return;
+	}
+
+	if (GlActive()) {
+		StoreFrameForGl(update);
 		return;
 	}
 
@@ -497,10 +568,202 @@ void EmulatorPanel::CalculateScaling()
 	}
 }
 
+#if wxUSE_GLCANVAS
+bool EmulatorPanel::GlActive() const
+{
+	return gl_canvas_ != nullptr && gl_canvas_->IsUsable();
+}
+
+/*
+ * Set up the GPU path, once.
+ *
+ * Attempted on every platform, unlike the Manager's panel which skips it on
+ * Windows: that one draws through wxGraphicsContext, which is Direct2D and
+ * already accelerated there, whereas this panel has always used a plain
+ * wxBufferedPaintDC everywhere. So Windows has the same full-frame rescale to
+ * lose as macOS and Linux.
+ */
+void EmulatorPanel::TryCreateGlCanvas()
+{
+	if (gl_tried_) {
+		return;
+	}
+	gl_tried_ = true;
+
+	if (!HardwareAccelerationWanted()) {
+		rpclog("Display: hardware acceleration is off, so the guest's screen "
+		       "is drawn on the CPU\n");
+		return;
+	}
+
+	gl_canvas_ = new GlDisplayCanvas(this);
+	gl_canvas_->SetSize(GetClientSize());
+	gl_undecided_paints_ = 0;
+
+	/* The canvas asks for the newest frame from inside its paint, so the upload
+	   is always followed by the swap that retires it. */
+	gl_canvas_->SetFrameSupplier([this] { SupplyFrameToGl(); });
+	/* Born with the default arrow otherwise, which UpdateMouseCursor() would
+	   only correct the next time something happened to call it. */
+	UpdateMouseCursor();
+
+	/* Input keeps coming to this panel. The canvas covers it exactly, so the
+	   coordinates in its events are already panel coordinates. Bound one by one
+	   rather than by pushing this panel as the canvas's handler, because this
+	   panel also handles EVT_PAINT and EVT_SIZE and letting those fire for the
+	   canvas would have the CPU path drawing over the GPU one. */
+	gl_canvas_->Bind(wxEVT_MOTION, &EmulatorPanel::OnMouseMove, this);
+	gl_canvas_->Bind(wxEVT_LEFT_DOWN, &EmulatorPanel::OnMouseDown, this);
+	gl_canvas_->Bind(wxEVT_MIDDLE_DOWN, &EmulatorPanel::OnMouseDown, this);
+	gl_canvas_->Bind(wxEVT_RIGHT_DOWN, &EmulatorPanel::OnMouseDown, this);
+	gl_canvas_->Bind(wxEVT_LEFT_DCLICK, &EmulatorPanel::OnMouseDoubleClick, this);
+	gl_canvas_->Bind(wxEVT_MIDDLE_DCLICK, &EmulatorPanel::OnMouseDoubleClick, this);
+	gl_canvas_->Bind(wxEVT_RIGHT_DCLICK, &EmulatorPanel::OnMouseDoubleClick, this);
+	gl_canvas_->Bind(wxEVT_LEFT_UP, &EmulatorPanel::OnMouseUp, this);
+	gl_canvas_->Bind(wxEVT_MIDDLE_UP, &EmulatorPanel::OnMouseUp, this);
+	gl_canvas_->Bind(wxEVT_RIGHT_UP, &EmulatorPanel::OnMouseUp, this);
+	gl_canvas_->Bind(wxEVT_MOUSEWHEEL, &EmulatorPanel::OnMouseWheel, this);
+	gl_canvas_->Bind(wxEVT_ENTER_WINDOW, &EmulatorPanel::OnEnterWindow, this);
+	gl_canvas_->Bind(wxEVT_LEAVE_WINDOW, &EmulatorPanel::OnLeaveWindow, this);
+}
+
+void EmulatorPanel::DestroyGlCanvas(const wxString &why)
+{
+	if (gl_canvas_ == nullptr) {
+		return;
+	}
+
+	rpclog("Display: OpenGL unavailable (%s); drawing the guest's screen on "
+	       "the CPU instead\n", why.utf8_str().data());
+
+	gl_canvas_->Destroy();
+	gl_canvas_ = nullptr;
+
+	/* The CPU path has drawn nothing so far, so its cache is empty rather than
+	   stale: the next frame rebuilds it from scratch. */
+	display_bitmap_ = wxBitmap();
+	Refresh(false);
+}
+
+/*
+ * Keep the newest frame, and remember which rows changed.
+ *
+ * Nothing is uploaded here. The canvas takes it from SupplyFrameToGl() during
+ * its own paint, which is what lets the upload be followed by the buffer swap
+ * that retires it - gl_display_canvas.h is explicit that uploading anywhere else
+ * causes trouble, and this used to call UpdateFrame() straight from here.
+ */
+void EmulatorPanel::StoreFrameForGl(const VideoUpdate &update)
+{
+	const size_t needed = (size_t) update.xsize * (size_t) update.ysize;
+
+	if (gl_frame_w_ != update.xsize || gl_frame_h_ != update.ysize ||
+	    gl_frame_.size() != needed) {
+		gl_frame_.assign(needed, 0);
+		gl_frame_w_ = update.xsize;
+		gl_frame_h_ = update.ysize;
+		/* A new buffer holds none of the old frame, so all of it is stale
+		   however few rows this update claims to have touched. */
+		gl_dirty_yl_ = 0;
+		gl_dirty_yh_ = update.ysize;
+	}
+
+	int yl = std::max(0, update.yl);
+	int yh = std::min(update.yh, update.ysize);
+
+	if (gl_dirty_yl_ == 0 && gl_dirty_yh_ == update.ysize) {
+		/* Already owing a full frame: copy it all rather than this band. */
+		yl = 0;
+		yh = update.ysize;
+	}
+
+	if (yh > yl) {
+		std::memcpy(gl_frame_.data() + (size_t) yl * (size_t) update.xsize,
+		            update.buffer + (size_t) yl * (size_t) update.xsize,
+		            (size_t) (yh - yl) * (size_t) update.xsize * sizeof(uint32_t));
+
+		/* The union, because several frames can arrive between paints. */
+		if (gl_dirty_yl_ < 0 || yl < gl_dirty_yl_) {
+			gl_dirty_yl_ = yl;
+		}
+		if (yh > gl_dirty_yh_) {
+			gl_dirty_yh_ = yh;
+		}
+	}
+
+	gl_canvas_->SetSize(GetClientSize());
+	gl_canvas_->SetDisplayRect(wxRect(offset_x_, offset_y_, scaled_x_, scaled_y_));
+	gl_canvas_->Refresh(false);
+}
+
+/* Called by the canvas from inside its paint. */
+void EmulatorPanel::SupplyFrameToGl()
+{
+	if (gl_frame_.empty() || gl_frame_w_ <= 0 || gl_frame_h_ <= 0) {
+		return;
+	}
+
+	/* A range of nothing is passed on rather than skipped: the canvas forces a
+	   full upload of its own accord when it has no frame yet, which is exactly
+	   the case on its first paint. */
+	gl_canvas_->UpdateFrame(gl_frame_.data(), gl_frame_w_, gl_frame_h_,
+	                        gl_dirty_yl_ < 0 ? 0 : gl_dirty_yl_,
+	                        gl_dirty_yh_ < 0 ? 0 : gl_dirty_yh_);
+
+	gl_dirty_yl_ = -1;
+	gl_dirty_yh_ = -1;
+}
+
+#endif /* wxUSE_GLCANVAS */
+
+#if wxUSE_GLCANVAS
+/*
+ * How many paints a new GL canvas gets to say whether it works before the CPU
+ * path takes over for good. Counted in paints because the panel is repainted as
+ * frames arrive, so this is frames the guest has produced that GL has not drawn.
+ */
+static const int kGlUndecidedPaintLimit = 120;
+#endif
+
 void EmulatorPanel::OnPaint(wxPaintEvent &event)
 {
 	wxBufferedPaintDC dc(this);
 	(void)event;
+
+#if wxUSE_GLCANVAS
+	/* Set up on the first paint that has something to show, not in the
+	   constructor: a GL context needs a window that has been realised. */
+	if (image_width_ > 0 && image_height_ > 0) {
+		TryCreateGlCanvas();
+	}
+
+	if (gl_canvas_ != nullptr) {
+		if (gl_canvas_->IsUsable()) {
+			/* The canvas covers this panel and has drawn it. */
+			return;
+		}
+		if (!gl_canvas_->Failure().empty()) {
+			DestroyGlCanvas(gl_canvas_->Failure());
+		} else if (++gl_undecided_paints_ > kGlUndecidedPaintLimit) {
+			/* It never answered. Bounded deliberately: a canvas that stays
+			   undecided must not mean a window that is never drawn, which is
+			   exactly the fault that made a black machine screen so hard to
+			   find on macOS. */
+			DestroyGlCanvas("it never became ready");
+		}
+
+		/*
+		 * Either way, fall through and draw on the CPU for this paint.
+		 *
+		 * A canvas waiting to be shown on screen is neither working nor failed,
+		 * and clearing the panel black while it made up its mind put a black box
+		 * on screen for the first few frames of every boot. There is nothing to
+		 * gain by it: the CPU bitmap is kept up to date for exactly as long as
+		 * the canvas is not drawing, so the picture is there to be drawn, and a
+		 * frame that is about to be covered is better than a hole.
+		 */
+	}
+#endif
 
 	if (!display_bitmap_.IsOk() || image_width_ <= 0 || image_height_ <= 0) {
 		return;
@@ -812,7 +1075,7 @@ void EmulatorPanel::OnEnterWindow(wxMouseEvent &event)
 void EmulatorPanel::OnLeaveWindow(wxMouseEvent &event)
 {
 	if (!mouse_captured) {
-		SetCursor(wxCursor(wxCURSOR_ARROW));
+		ApplyMouseCursor(wxCursor(wxCURSOR_ARROW));
 	}
 	event.Skip();
 }

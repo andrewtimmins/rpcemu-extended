@@ -267,6 +267,19 @@ MainFrame::MainFrame()
 	VncAppAttach(emulator_.get());
 #endif
 
+	/*
+	 * Black behind the panel, not the platform's window grey.
+	 *
+	 * Two things show this through at startup: the panel begins at its default
+	 * size before the guest has announced a mode, so the frame is briefly larger
+	 * than it, and a GL canvas clears to black until its first texture arrives.
+	 * Against a grey window both read as a fault - a small black box adrift in a
+	 * pale border - where against black they are simply a screen that has not
+	 * lit up yet, which is what they are. It is also the right colour for the
+	 * letterbox bars either side of a scaled display.
+	 */
+	SetBackgroundColour(*wxBLACK);
+
 	panel_ = new EmulatorPanel(this, *emulator_);
 	panel_->Bind(wxEVT_KEY_DOWN, &MainFrame::OnKeyDown, this);
 	panel_->Bind(wxEVT_KEY_UP, &MainFrame::OnKeyUp, this);

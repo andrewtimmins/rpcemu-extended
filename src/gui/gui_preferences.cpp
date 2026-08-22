@@ -20,6 +20,8 @@
 
 #include "gui_preferences.h"
 
+#include "display_acceleration.h"
+
 #include <algorithm>
 #include <sstream>
 
@@ -209,4 +211,42 @@ void
 ClearRecentCDROMs()
 {
 	WriteRecentList("recentCDROMs", {});
+}
+
+bool
+GetHardwareAcceleration()
+{
+	wxConfig *config = OpenPreferences();
+	bool enabled = true;
+
+	config->Read("HardwareAcceleration", &enabled, true);
+	delete config;
+	return enabled;
+}
+
+void
+SetHardwareAcceleration(bool enabled)
+{
+	wxConfig *config = OpenPreferences();
+
+	config->Write("HardwareAcceleration", enabled);
+	config->Flush();
+	delete config;
+}
+
+/* The command line's answer for this session, or none. See
+   display_acceleration.h for why the precedence is spelled out separately. */
+static int g_acceleration_override = DISPLAY_ACCELERATION_NO_OVERRIDE;
+
+void
+SetHardwareAccelerationOverride(int state)
+{
+	g_acceleration_override = state;
+}
+
+bool
+HardwareAccelerationWanted()
+{
+	return display_acceleration_decide(g_acceleration_override,
+	    GetHardwareAcceleration() ? 1 : 0) != 0;
 }

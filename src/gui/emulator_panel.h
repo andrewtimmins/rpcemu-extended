@@ -22,8 +22,11 @@
 #define EMULATOR_PANEL_H
 
 #include <chrono>
+#include <vector>
 
 #include <wx/wx.h>
+
+#include "gl_display_canvas.h"
 
 #include "emulator_host.h"
 #include "host_types.h"
@@ -36,6 +39,8 @@ public:
 	void HandleMoveHostMouse(const MouseMoveUpdate &update);
 	void ReleaseMouseCapture();
 	void UpdateMouseCursor();
+	wxCursor ChooseMouseCursor() const;
+	void ApplyMouseCursor(const wxCursor &cursor);
 	void FocusPanel();
 	void SetFullScreen(bool full_screen);
 	void SetIntegerScaling(bool integer_scaling);
@@ -59,6 +64,13 @@ private:
 	void ReleasePointerAfterDrag();
 
 	void CalculateScaling();
+#if wxUSE_GLCANVAS
+	void TryCreateGlCanvas();
+	void DestroyGlCanvas(const wxString &why);
+	bool GlActive() const;
+	void StoreFrameForGl(const VideoUpdate &update);
+	void SupplyFrameToGl();
+#endif
 	void ResizeToHostDisplay();
 	void SyncMousePosition(int x, int y);
 	bool IsMouseOverPanel() const;
@@ -70,6 +82,35 @@ private:
 	void MarkUserPointerActivity();
 
 	EmulatorHost &emulator_;
+	/*
+	 * The GPU path. When this is up it covers the panel and draws the guest's
+	 * screen as a texture, so the wxImage/wxBitmap conversion and the
+	 * full-frame CoreGraphics rescale below are skipped entirely. Null when the
+	 * setting is off, when the platform has no GL, or when a canvas was tried
+	 * and did not come up.
+	 */
+#if wxUSE_GLCANVAS
+	GlDisplayCanvas *gl_canvas_ = nullptr;
+	bool gl_tried_ = false;
+	int gl_undecided_paints_ = 0;
+
+	/*
+	 * The newest guest frame, and which of its rows have changed since the
+	 * canvas last took one.
+	 *
+	 * A copy, because the canvas must be handed its pixels from inside its own
+	 * paint (see SetFrameSupplier in gl_display_canvas.h) and the emulator's
+	 * buffer is not ours to read at that moment. Copying the dirty rows is far
+	 * cheaper than the wxImage conversion this replaces, and it is what lets a
+	 * burst of frames become one upload of the union of their rows.
+	 */
+	std::vector<uint32_t> gl_frame_;
+	int gl_frame_w_ = 0;
+	int gl_frame_h_ = 0;
+	int gl_dirty_yl_ = -1;
+	int gl_dirty_yh_ = -1;
+#endif
+
 	wxImage display_image_;
 	wxBitmap display_bitmap_;	/**< Cached bitmap of display_image_, rebuilt only when the frame changes */
 	int image_width_ = 640;
