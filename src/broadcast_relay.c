@@ -102,6 +102,21 @@ relay_sock_strerror(void)
 #define IP_HDR_LEN      20
 
 /*
+ * How much of an arriving datagram the relay can read.
+ *
+ * This must be at least the largest UDP payload IP can carry, because recvfrom()
+ * on a datagram socket copies what fits and throws the remainder away, returning
+ * the buffer size - so a buffer one byte short truncates and reports success.
+ * See the note at the receive buffer itself.
+ */
+#define RELAY_RECV_CAPACITY 65535
+#define RELAY_MAX_LEGAL_UDP_PAYLOAD (65535 - IP_HDR_LEN - 8)
+
+_Static_assert(RELAY_RECV_CAPACITY >= RELAY_MAX_LEGAL_UDP_PAYLOAD,
+    "the relay's receive buffer must hold the largest datagram a peer can send, "
+    "or recvfrom() truncates it silently");
+
+/*
  * Rate limiting, in two budgets, because the two kinds of traffic here want
  * opposite things.
  *
@@ -737,6 +752,7 @@ inject_fragmented_udp(const struct sockaddr_in *from,
     uint8_t *data;
     uint32_t dest_ip;
     uint32_t src_ip;
+    uint32_t src_ip_be;
     uint16_t ip_id;
     int offset;
     int frag_count = 0;
@@ -759,10 +775,18 @@ inject_fragmented_udp(const struct sockaddr_in *from,
         dest_ip = relay.guest_ip ? relay.guest_ip : SLIRP_GUEST_DEFAULT;
     }
 
-    /* Source IP: use SLiRP gateway (10.10.10.2) instead of real sender IP
-     * This keeps everything within the virtual network which may help with
-     * fragment reassembly on the guest side */
-    src_ip = 0x0a0a0a02;  /* 10.10.10.2 - SLiRP gateway */
+    /*
+     * The real sender, exactly as build_guest_frame() does for a datagram small
+     * enough not to need fragmenting.
+     *
+     * This said 10.10.10.2, the SLiRP gateway. A guest that answers such a
+     * datagram addresses its reply to the gateway, which is inside the NAT
+     * network, so broadcast_relay_tx() classifies it as internal traffic, hands
+     * it to SLiRP and it never reaches the peer. Every Access datagram over
+     * 1472 bytes takes this path, which is all of ShareFS's bulk traffic.
+     */
+    memcpy(&src_ip_be, &from->sin_addr, 4);
+    src_ip = ntohl(src_ip_be);
 
     /* Get unique IP ID for this datagram */
     ip_id = ip_id_counter++;
@@ -993,13 +1017,28 @@ build_guest_frame(uint8_t *frame, int max_len,
 static int
 poll_socket(int sock_idx)
 {
-    /* 
-     * Buffer sizes: 
-     * - UDP receive buffer: 8192 to avoid truncation (UDP datagrams can be up to 65535)
-     * - Frame buffer: must fit in nat.buffer (2048 bytes) after adding headers
-     * - Max UDP payload we can inject: 2048 - 14(eth) - 20(ip) - 8(udp) = 2006 bytes
+    /*
+     * The receive buffer must be able to hold the LARGEST datagram a peer can
+     * send, not merely a large one: recvfrom() on a datagram socket copies what
+     * fits and discards the remainder silently, returning the buffer size, so a
+     * buffer one byte short truncates and reports success.
+     *
+     * It was 8192, with a comment saying that avoided truncation. ShareFS sends
+     * bulk file data as 8200-byte UDP payloads, so every single data datagram
+     * lost its last 8 bytes, and the guest filled the hole with whatever was in
+     * its own buffer. The result was a file that transferred at the right length
+     * with no error reported and a corrupt 8 bytes near the end of each block -
+     * worse the larger the file, because there were more blocks.
+     *
+     * 65535 is the ceiling of the IP total-length field, so nothing legal can
+     * exceed it and truncation is now impossible by construction rather than by
+     * being generous.
      */
-    static uint8_t udp_payload[8192];  /* Static to avoid stack overflow */
+    static uint8_t udp_payload[RELAY_RECV_CAPACITY];  /* Static to avoid stack overflow */
+
+    /* One frame for the guest, so it has to fit nat.buffer (PKT_MAX_SIZE) once
+       the 42 bytes of headers are on it. Only datagrams small enough to go in a
+       single frame come this way; anything larger is fragmented instead. */
     uint8_t frame[2048];
     struct sockaddr_in from;
     socklen_t fromlen;
@@ -1525,6 +1564,18 @@ broadcast_relay_tx(const uint8_t *pkt, int pkt_len)
     /* Return 1 for external unicast (we handle it completely) */
     /* Return 0 for broadcast (let SLiRP see it too for local loopback) */
     return is_external_unicast ? 1 : 0;
+}
+
+/**
+ * How many bytes of a single datagram the relay can take.
+ *
+ * Exposed so a test can check the buffer against the largest datagram a peer may
+ * legally send, rather than restating the number and testing its own copy of it.
+ */
+size_t
+broadcast_relay_recv_capacity(void)
+{
+    return RELAY_RECV_CAPACITY;
 }
 
 /**

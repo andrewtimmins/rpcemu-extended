@@ -84,6 +84,8 @@ int broadcast_relay_tx(const uint8_t *pkt, int pkt_len);
  * @param rx_count   Packets relayed host -> guest
  * @param dropped    Packets dropped (rate limit, errors)
  */
+size_t broadcast_relay_recv_capacity(void);
+
 void broadcast_relay_stats(uint32_t *tx_count, uint32_t *rx_count, uint32_t *dropped);
 
 #ifdef __cplusplus

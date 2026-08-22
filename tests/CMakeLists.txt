@@ -604,6 +604,18 @@ if(WIN32)
 endif()
 rpcemu_add_test(test_net_slot)
 
+# The Access relay's inbound datagram path: the receive buffer that silently
+# truncated every ShareFS data datagram, and the forged source address on the
+# fragmenting path. broadcast_relay.c is included by the test rather than
+# compiled here, because both are static.
+add_executable(test_relay_datagram test_relay_datagram.c)
+target_include_directories(test_relay_datagram PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+if(WIN32)
+    target_link_libraries(test_relay_datagram PRIVATE ws2_32 iphlpapi)
+endif()
+rpcemu_add_test(test_relay_datagram)
+
 # The structure offsets the guest network driver hardcodes. It reads the equates
 # out of riscos-progs/EtherRPCEm/etherrpcem.s and checks them against the host's
 # own declarations in src/network.h and against models of Acorn's DCI4 headers,
@@ -656,7 +668,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 39)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 40)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()
