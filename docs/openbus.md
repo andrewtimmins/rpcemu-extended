@@ -188,12 +188,14 @@ that could have been wrong.
 ## The co-processor card
 
 `src/copro/` holds a card for the second slot with a choice of processor, and the
-three processors themselves. No such card was ever made: only Aleph One's x86 PC
+processors themselves. No such card was ever made: only Aleph One's x86 PC
 card and Simtec's Hydra ever used this bus, and this is neither. Its ID register
 says so.
 
-Fit one from the machine editor's **Co-Processor Support** tab, or for one run
-with `--openbus-card=rv32i`, `6502` or `z80`. The tab writes `openbus_card` into
+Fit one from the machine editor's **Co-Processor Card** tab, or for one run
+with `--openbus-card=rv32i`, `6502`, `65c02`, `z80` or `8080`. `--help` lists
+them from the card's own table, so it cannot name a stale set. The tab writes
+`openbus_card` into
 the machine's configuration; the option overrides it for that run and is not
 written back. An empty slot is the default, as it was on every Risc PC nobody
 bought a card for.
@@ -204,19 +206,35 @@ bought a card for.
 | --- | --- | --- | --- |
 | **RV32IM** | The whole RV32I base set plus M. No CSRs, no A/F/D/C extensions, strict natural alignment. | `ecall` or `ebreak`, with a0 as the exit code | 1MB |
 | **6502** | All 151 documented NMOS opcodes, decimal mode, and the indirect-`JMP` page bug. Undocumented opcodes fault. | `BRK`, with A as the exit code | 64K |
+| **65C02** | The 6502 above plus WDC's CMOS additions: `BRA`, `PHX`/`PHY`/`PLX`/`PLY`, `STZ`, `TRB`/`TSB`, `INC A`/`DEC A`, `BIT` immediate and indexed, the `(zp)` addressing forms, `JMP (abs,X)` and `STP`. The indirect-`JMP` page bug is fixed, as the part fixed it, and N and Z come from the decimal result. Rockwell's `RMB`/`SMB`/`BBR`/`BBS` and `WAI` are not implemented; `WAI` would need a wait state the card does not model. | `BRK`, with A as the exit code, or `STP` | 64K |
 | **Z80** | The documented set: main, CB, ED including the block instructions, and DD/FD/DDCB/FDCB. Undocumented opcodes, `SLL` and the IXH/IXL halves fault. | `HALT`, with A as the exit code | 64K |
+| **8080** | Intel's original set, which is the Z80's without the extensions. The Z80's own instructions fault: the `CB`/`ED`/`DD`/`FD` prefixes, `JR`, `DJNZ`, `EXX` and `EX AF,AF'`. It is not merely the Z80 with instructions removed, and the difference that matters is the flags, not the opcodes: bit 2 is always parity where the Z80 redefined it as overflow for arithmetic, `DAA` always adds because there is no subtract flag, and the flag register reads bit 1 as one and bits 3 and 5 as zero. | `HLT`, with A as the exit code | 64K |
 
 Each core is a single file that executes out of a flat byte array and knows
 nothing about the bus, the emulator or wxWidgets. That is what makes them
 testable on every platform with no machine and no display, and it is why they
 live in their own directory rather than inside the card.
 
-**Cycles are instructions, not bus cycles.** Every core returns one cycle per
-instruction, so the card's `CYCLES` register counts instructions retired. The
-alternative would be a fiction: a real card's processor ran on its own crystal at
-a rate unrelated to how many host cycles the emulator hands over, and
-per-instruction timing tables would cost host time to maintain a number that
-still would not mean what it said.
+The `CYCLES` register counts the **processor's own cycles** on the four 8-bit
+cores, charged per the documented timing: the extra cycle an indexed read pays when
+it carries into the high byte of the address, the cost of a taken branch, the
+Z80's prefix and displacement costs, and 21 rather than 16 for an iteration of
+`LDIR` that has more to do. That is what lets a machine emulated on the card pace
+a display and a sound chip, since a PAL C64 raster line is 63 cycles and a
+Spectrum frame is 69888 T-states.
+
+RV32IM counts instructions instead, deliberately: RV32 has no canonical timing to
+be accurate to, so a table would be a number invented to look precise, and
+nothing being reproduced depends on it.
+
+An instruction is indivisible, so a run reaches its budget and overshoots by
+whatever the last instruction cost. `RUNFOR` of 69888 stops at 69888 or a few
+cycles past it, never before, and a guest should carry the difference into the
+next frame rather than assume it got exactly what it asked for.
+
+Memory contention is **not** modelled. A Spectrum's ULA steals cycles from the
+Z80 while it is drawing, which is what makes some border effects work, and
+nothing here reproduces that.
 
 **A repeating Z80 instruction is interruptible.** `LDIR` and its relatives step
 the program counter back over their own two bytes when they have more to do, which
@@ -229,7 +247,7 @@ move is spread across slices instead of stalling the machine for the whole of it
 `openbus.h` is emphatic that the register window is product specific and that
 generalising it would be a mistake. That still stands: what it warns against is
 inventing a layout to cover cards other people designed. This layout covers cards
-we designed, so all three cores share it and a `CORE` register says which is
+we designed, so every core shares it and a `CORE` register says which is
 fitted — which is the whole reason one guest module can drive any of them.
 
 The card carries **its own RAM**, as a real second-processor card did: Aleph One's
@@ -256,7 +274,7 @@ authority — this is the shape of it:
 | Offset | Name | | |
 | --- | --- | --- | --- |
 | `&00` | `ID` | R | `&4F424350`, `'OBCP'` |
-| `&04` | `CORE` | R | `'RV32'`, `'6502'` or `'Z80 '` |
+| `&04` | `CORE` | R | `'RV32'`, `'6502'`, `'C02 '`, `'Z80 '` or `'8080'` |
 | `&08` | `RAMSIZE` | R | bytes of card RAM |
 | `&0C` | `CTRL` | RW | run, step, reset, interrupt on halt |
 | `&10` | `STATUS` | R | running, halted, faulted, interrupt, transfer in progress |
@@ -310,6 +328,132 @@ physical address, which keeps the module a few hundred bytes rather than an
 exercise in memory management. The DMA registers are the faster path for bulk
 data and are available to a caller that has a physical address; nothing in the
 module uses them yet, and that is a deliberate boundary rather than an oversight.
+
+### How much RAM the card carries
+
+The card's RAM **is** the core's address space, so how much it may have is not a
+preference but a count of address lines. A 6502 or a Z80 cannot form an address
+above `&FFFF`, so 64K is not their default, it is the whole of what they can
+reach. RV32IM has a 32-bit space and so its ceiling is a judgement instead: 64MB,
+which is far more than anything written for this card will want and still a small
+part of what the host has.
+
+The **Card RAM** choice on the machine editor's Co-Processor Card tab offers
+powers of two from 4K up to whichever ceiling applies, with the core's default
+marked. It writes `openbus_ram_kb` into the machine's configuration, in
+kilobytes; zero means the core's default, which is what a machine configured
+before this setting existed reads as. A size larger than the fitted processor can
+address is clamped rather than refused, because the value can be edited by hand
+and a machine that will not start is a worse answer than one with a sensible
+amount of memory. The size actually used is logged as the card is fitted.
+
+**More than 64K on an 8-bit core is a banking question, not a size question.** A
+Spectrum 128, a BBC's sideways ROMs and a C64's REU all page a larger store
+through a 64K window, which needs a region to be able to say where in card RAM it
+lives rather than needing a flat space no address could reach. The address map
+does not do that yet; see `src/copro/copro_bus.h`.
+
+### Writing an emulator on this card
+
+The registers above are enough to load a program and run it. Emulating a machine
+needs four more things, and the card provides them.
+
+**Say what the address space means.** Write a table of regions into the control
+area and point `MAPOFF` and `MAPCOUNT` at it. Each entry is sixteen bytes: base,
+size, kind, and a fourth word whose meaning depends on the kind. The kinds are
+`RAM`, `ROM` (writes dropped and logged), `LOG` (writes stored and logged),
+`LATCH` (reads come from the guest, writes logged), `STALL` (the core stops and
+the guest answers) and `UNMAPPED` (a bus error, which is how a Mac ROM sizes its
+own memory). A flag puts a region in the **port** space instead of memory, which
+is how a Z80's separate 64K of I/O is described without a second table.
+
+**Learn what the program wrote.** Writes to `LOG`, `ROM` and `LATCH` regions are
+appended to a ring in the control area with the cycle they happened on, and the
+core never stops for them. Drain it by reading up to `LOGHEAD` and then writing
+that value to `LOGTAIL`. The cycle stamp is what makes a raster-accurate display
+possible: the guest learns not only that the border changed but when. A full ring
+drops the newest write and marks the next entry, rather than overwriting what the
+guest has not read.
+
+**Present what it reads.** A `LATCH` region reads from a page in the control area
+that the guest fills in whenever it likes - a keyboard matrix, a joystick, a
+disc controller's status byte. Neither side waits for the other.
+
+**Stop it where you must.** A `STALL` region stops the core mid-instruction:
+`STATUS` shows `WAITING`, `WAITADDR` and `WAITINFO` say what was wanted, and the
+guest writes `WAITDATA` and pokes `WAITACK`. That is the only way to model a
+register whose *read* has a side effect, such as a CIA clearing its interrupt
+flag. It is much slower than the log and the latch, so mark only the registers
+that need it.
+
+**Interrupt it and pace it.** `IRQCTRL` raises the core's maskable or
+non-maskable interrupt, with a vector byte for a Z80 in mode 2. `RUNFOR` gives
+the core a cycle budget and `STOPREASON` says what ended the run, so a guest can
+run exactly one frame and then draw it.
+
+### The SWIs an emulator is written against
+
+The registers are the interface; these are the same thing with the arithmetic
+done for you, and they are what `RPCEmuCoPro` offers. The first nine are the
+original set - `CoPro_Info`, `_Reset`, `_Write`, `_Read`, `_Run`, `_Stop`,
+`_Status`, `_Step` and `_Mailbox`. The eight below are the emulator-facing half.
+
+| SWI | In | Out |
+| --- | --- | --- |
+| `CoPro_MapRegions` | R0 -> a list of regions, R1 = how many | - |
+| `CoPro_Latch` | R0 = latch offset, R1 = the byte a read there returns | - |
+| `CoPro_DrainLog` | R0 -> a buffer, R1 = entries it holds | R2 = entries copied |
+| `CoPro_Interrupt` | R0 = bit 0 maskable, bit 1 non-maskable; R1 = vector | - |
+| `CoPro_RunFor` | R0 = cycles, or zero for no limit | R0 = cycles used, R1 = why it stopped |
+| `CoPro_Resume` | R0 = the byte a stalled read returns | - |
+| `CoPro_Registers` | R0 = 0 read or 1 write, R1 = which, R2 = value | R2 = the value |
+| `CoPro_Transfer` | R0 -> a buffer, R1 = card address, R2 = bytes, R3 = flags | - |
+
+`CoPro_MapRegions` writes the table into the control area and arms the write log
+at the same time, because a machine that describes a screen wants its writes
+recorded and asking separately is a step everyone would forget. A count of zero
+removes the map and the log with it.
+
+`CoPro_Transfer` moves bytes through the aperture rather than by bus mastering,
+and that is deliberate: the card can master the bus, which is faster, but it
+needs a **physical** address, and a caller's buffer is a logical one whose pages
+need not be contiguous - so a correct implementation would translate and split
+the transfer per page. The aperture cannot be wrong about page boundaries. A
+caller that does have a physical address can drive the DMA registers itself.
+
+★ **The SWI chunk is `&58D00` and is provisional**; see below. The numbers are
+what other people's binaries would be compiled against, so an allocation has to
+land before anything is published against them.
+
+### Testing it from the guest
+
+`riscos-progs/CoProTest` is a module with one command, `*CoProSelfTest`, that
+maps a machine, runs a 6502 program against it, drains the log, reads a latch,
+answers a stalling access and checks all of it. It is **not** in `poduleroms/`,
+because it is a test and has no business loading on every machine: build it and
+`*RMLoad` it.
+
+It exists because no host-side test can execute ARM. `tests/test_openbus_coproc.c`
+drives the same card through its registers and proves the card; it cannot prove
+the module, and when this was first run **every SWI in the chunk was broken** in
+two independent ways that the host tests could not have seen. It is also written
+as a module rather than an application for a mechanical reason worth knowing: an
+application that leaves through `OS_Exit` never returns control to whatever ran
+it, so driven over HostCmd it hangs.
+
+### Banking: more than 64K on an 8-bit core
+
+A 6502 cannot form an address above `&FFFF`, so a flat space larger than that
+would be memory no instruction could name. Real machines with more memory did not
+have a wider space either - a Spectrum 128, a BBC's sideways ROMs and a C64's REU
+all page a larger store through a window.
+
+Set `COPRO_REGION_OFFSET` in a region's kind and its fourth word becomes the
+offset in card RAM that the region's base maps to. Give the card 512K, describe
+`&8000`-`&BFFF` as a window, and switching bank is one word written into that
+field: the same addresses then reach a different part of card RAM. A logged write
+in a banked region is logged at the address the **program** used, not where it
+landed, because the guest describes its machine in the core's addresses.
 
 ### ★ The SWI chunk is provisional
 

@@ -34,6 +34,7 @@
 #include "cpu_z80.h"
 #include "openbus.h"
 #include "openbus_coproc.h"
+#include "copro_bus.h"
 #include "openbus_stub.h"
 
 static int failures;
@@ -300,8 +301,11 @@ test_narrow_reads(void)
 	check_u32("byte 2", rd8(OPENBUS_COPROC_REG_ID + 2), 0x42);
 	check_u32("byte 3", rd8(OPENBUS_COPROC_REG_ID + 3), 0x4f);
 
+	/* Past the end of the register map. It was 0x80 until the emulator-facing
+	   registers were added and 0x80 became CTLADDR, which is a real register
+	   reading zero - so this check started failing and was right to. */
 	check_u32("an offset nothing drives reads as an undriven bus",
-	          rd(0x80), 0xffffffffu);
+	          rd(0x100), 0xffffffffu);
 	check_u32("and so does the write-only interrupt-clear register",
 	          rd(OPENBUS_COPROC_REG_IRQCLEAR), 0xffffffffu);
 }
@@ -409,9 +413,13 @@ test_step_and_fault(void)
 	wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RESET);
 
 	wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_STEP);
-	check_u32("a step executes exactly one instruction",
-	          rd(OPENBUS_COPROC_REG_CYCLES), 1);
-	check_u32("and the program counter moved over it",
+	/* One instruction, charged what it costs: the program starts with an
+	   LDA #n, which is two cycles. CYCLES counts cycles rather than
+	   instructions, so a step advances it by the instruction's own timing -
+	   the program counter is what says only one instruction ran. */
+	check_u32("a step charges the instruction's own cycles",
+	          rd(OPENBUS_COPROC_REG_CYCLES), 2);
+	check_u32("and the program counter moved over exactly one instruction",
 	          rd(OPENBUS_COPROC_REG_PC), 2);
 	check("the step bit does not stick",
 	      (rd(OPENBUS_COPROC_REG_CTRL) & OPENBUS_COPROC_CTRL_STEP) == 0);
@@ -659,6 +667,440 @@ test_bus_rules(void)
 	          rd(OPENBUS_COPROC_REG_DATA), 0);
 }
 
+/*
+ * How much RAM a card may have, which is a per-core question because the ceiling
+ * is how many address lines the processor has rather than a preference.
+ *
+ * The clamping matters more than it looks: the size arrives from a machine's
+ * configuration file, which somebody may have edited by hand, and asking a 6502
+ * for a megabyte has to produce a working card with 64K rather than a card whose
+ * top 960K no address can reach - or a machine that refuses to start.
+ */
+static void
+test_ram_sizes(void)
+{
+	printf("Card RAM, per core and clamped to what it can address:\n");
+
+	/* What a core can ADDRESS at once is its address lines. */
+	check_u32("the 6502 addresses 64K at once",
+	          openbus_coproc_ram_flat_limit(OPENBUS_COPROC_6502), 64u * 1024u);
+	check_u32("and so does the Z80",
+	          openbus_coproc_ram_flat_limit(OPENBUS_COPROC_Z80), 64u * 1024u);
+
+	/* What may be FITTED is larger, because banking pages it through a window
+	   exactly as a Spectrum 128 or a sideways ROM does. */
+	check("an 8-bit card may carry more than it can address at once",
+	      openbus_coproc_ram_max(OPENBUS_COPROC_6502) > 64u * 1024u);
+	check("RV32I has a 32-bit space, so it offers more still",
+	      openbus_coproc_ram_max(OPENBUS_COPROC_RV32I) >
+	      openbus_coproc_ram_max(OPENBUS_COPROC_6502));
+
+	/* Zero means the core's own default, which is what a machine whose
+	   configuration predates this setting reads as. */
+	check("the 6502 is recognised", openbus_coproc_request("6502") == 0);
+	check_u32("zero means the core's default",
+	          openbus_coproc_request_ram(0),
+	          openbus_coproc_ram_default(OPENBUS_COPROC_6502));
+	check_u32("a megabyte is allowed on a 6502 now, for paging",
+	          openbus_coproc_request_ram(1024u * 1024u), 1024u * 1024u);
+	check_u32("but not more than the card may carry",
+	          openbus_coproc_request_ram(64u * 1024u * 1024u),
+	          OPENBUS_COPROC_RAM_MAX_8BIT);
+	check_u32("an absurdly small size clamps up",
+	          openbus_coproc_request_ram(1), OPENBUS_COPROC_RAM_MIN);
+	check_u32("a size it can address is honoured exactly",
+	          openbus_coproc_request_ram(32u * 1024u), 32u * 1024u);
+
+	/* The same figure means different things to different cores, which is the
+	   whole reason the limit is per core. */
+	check("rv32i is recognised", openbus_coproc_request("rv32i") == 0);
+	check_u32("RV32I may have a megabyte",
+	          openbus_coproc_request_ram(1024u * 1024u), 1024u * 1024u);
+
+	openbus_coproc_request_ram(0);
+}
+
+/* A card really is given the size asked for, not merely told it. */
+static void
+test_ram_size_is_what_the_card_gets(void)
+{
+	printf("A resized card:\n");
+
+	check("the z80 is recognised", openbus_coproc_request("z80") == 0);
+	check_u32("16K is honoured", openbus_coproc_request_ram(16u * 1024u),
+	          16u * 1024u);
+	check("the card fits", fit("z80"));
+	check_u32("RAMSIZE reports it", rd(OPENBUS_COPROC_REG_RAMSIZE),
+	          16u * 1024u);
+
+	/* The size is real rather than just reported: the aperture wraps at it, so
+	   a byte written at the top is the byte read back at the top and the space
+	   above does not exist. */
+	wr(OPENBUS_COPROC_REG_ADDR, 16u * 1024u - 1u);
+	wr8(OPENBUS_COPROC_REG_DATA, 0x5a);
+	wr(OPENBUS_COPROC_REG_ADDR, 16u * 1024u - 1u);
+	check_u32("and the top byte of it is usable",
+	          rd8(OPENBUS_COPROC_REG_DATA), 0x5a);
+
+	/* Left as it was found, so a later test is not run against 16K. */
+	openbus_coproc_request_ram(0);
+}
+
+/* ---- the emulator-facing registers ------------------------------------- */
+
+/** Write a word into the control area through its aperture. */
+static void
+ctl_word_write(uint32_t offset, uint32_t value)
+{
+	wr(OPENBUS_COPROC_REG_CTLADDR, offset);
+	wr(OPENBUS_COPROC_REG_CTLDATA, value);
+}
+
+static uint32_t
+ctl_word_read(uint32_t offset)
+{
+	wr(OPENBUS_COPROC_REG_CTLADDR, offset);
+	return rd(OPENBUS_COPROC_REG_CTLDATA);
+}
+
+/** Describe one region, in the control area, as the guest module would. */
+static void
+map_region(uint32_t at, uint32_t base, uint32_t size, uint32_t kind,
+           uint32_t latch)
+{
+	ctl_word_write(at, base);
+	ctl_word_write(at + 4, size);
+	ctl_word_write(at + 8, kind);
+	ctl_word_write(at + 12, latch);
+}
+
+/*
+ * The control area and its aperture: the card's own memory, which the core
+ * cannot see. Everything the guest sets up lives here, so if the aperture is
+ * wrong nothing else can be right.
+ */
+static void
+test_control_area(void)
+{
+	printf("The control area, which the core cannot see:\n");
+
+	check("a card fits", fit("6502"));
+	check_u32("CTLSIZE reports it", rd(OPENBUS_COPROC_REG_CTLSIZE),
+	          OPENBUS_COPROC_CTL_SIZE);
+
+	ctl_word_write(0x40, 0xdeadbeefu);
+	check_u32("a word written through the aperture reads back",
+	          ctl_word_read(0x40), 0xdeadbeefu);
+
+	/* It advances as the card RAM aperture does, so a table is written by
+	   setting the address once and then writing words. */
+	wr(OPENBUS_COPROC_REG_CTLADDR, 0x80);
+	wr(OPENBUS_COPROC_REG_CTLDATA, 0x11111111u);
+	wr(OPENBUS_COPROC_REG_CTLDATA, 0x22222222u);
+	check_u32("the aperture advanced", rd(OPENBUS_COPROC_REG_CTLADDR), 0x88);
+	check_u32("first word", ctl_word_read(0x80), 0x11111111u);
+	check_u32("second word", ctl_word_read(0x84), 0x22222222u);
+
+	/* And it is NOT the core's memory: the core's address 0x40 is untouched. */
+	wr(OPENBUS_COPROC_REG_ADDR, 0x40);
+	check_u32("the core's RAM was not written instead",
+	          rd(OPENBUS_COPROC_REG_DATA) & 0xffu, 0);
+}
+
+/*
+ * A machine described through the registers, and a program's writes collected
+ * from the log. This is the whole interface working end to end, driven exactly
+ * as the guest module will drive it.
+ *
+ *   LDA #&aa : STA &4000 : LDA #&bb : STA &4001 : BRK
+ */
+static void
+test_map_and_log_through_registers(void)
+{
+	static const uint8_t prog[] = {
+		0xa9, 0xaa, 0x8d, 0x00, 0x40,
+		0xa9, 0xbb, 0x8d, 0x01, 0x40,
+		0x00
+	};
+	const uint32_t map_at = 0x100;
+	const uint32_t log_at = 0x400;
+	uint32_t head;
+
+	printf("A machine described through the registers:\n");
+
+	check("a 6502 card fits", fit("6502"));
+	load_program(prog, sizeof(prog));
+
+	/* &4000 upwards is a screen: writes reach memory and are logged. */
+	map_region(map_at, 0x4000, 0x1b00, COPRO_REGION_LOG, 0);
+	wr(OPENBUS_COPROC_REG_MAPOFF, map_at);
+	wr(OPENBUS_COPROC_REG_MAPCOUNT, 1);
+	wr(OPENBUS_COPROC_REG_LOGOFF, log_at);
+	wr(OPENBUS_COPROC_REG_LOGENTRIES, 16);
+
+	check_u32("the map is in place", rd(OPENBUS_COPROC_REG_MAPCOUNT), 1);
+	check_u32("and the log", rd(OPENBUS_COPROC_REG_LOGENTRIES), 16);
+
+	wr(OPENBUS_COPROC_REG_ENTRY, 0);
+	wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RESET);
+	wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RUN);
+	check("the program runs to its BRK", run_to_stop());
+
+	head = rd(OPENBUS_COPROC_REG_LOGHEAD);
+	check_u32("two writes were logged", head, 2);
+	check_u32("the guest has read none of them yet",
+	          rd(OPENBUS_COPROC_REG_LOGTAIL), 0);
+
+	/* Read them out of the control area, as the guest module will. */
+	check_u32("first entry's address", ctl_word_read(log_at + 4), 0x4000);
+	check_u32("first entry's value", ctl_word_read(log_at + 8), 0xaa);
+	check_u32("second entry's address", ctl_word_read(log_at + 16 + 4), 0x4001);
+	check_u32("second entry's value", ctl_word_read(log_at + 16 + 8), 0xbb);
+
+	/* Draining is the guest moving the tail up. */
+	wr(OPENBUS_COPROC_REG_LOGTAIL, head);
+	check_u32("draining leaves nothing pending",
+	          rd(OPENBUS_COPROC_REG_LOGHEAD) - rd(OPENBUS_COPROC_REG_LOGTAIL), 0);
+
+	/* The writes reached memory as well as the log. */
+	wr(OPENBUS_COPROC_REG_ADDR, 0x4000);
+	check_u32("and the screen memory has the byte",
+	          rd(OPENBUS_COPROC_REG_DATA) & 0xffu, 0xaa);
+}
+
+/*
+ * RUNFOR, which is what lets a guest run one frame at a time: the core stops
+ * when the budget is spent, whatever the emulator's own timeslices were.
+ *
+ * The program is an endless loop, so nothing but the budget can stop it.
+ */
+static void
+test_runfor_budget(void)
+{
+	static const uint8_t prog[] = { 0x4c, 0x00, 0x00 };	/* JMP &0000 */
+	int slices;
+
+	printf("Running for a fixed number of cycles:\n");
+
+	check("a 6502 card fits", fit("6502"));
+	load_program(prog, sizeof(prog));
+
+	wr(OPENBUS_COPROC_REG_ENTRY, 0);
+	wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RESET);
+	wr(OPENBUS_COPROC_REG_RUNFOR, 50);
+	wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RUN);
+
+	/* Give it more timeslices than the budget needs; it must still stop. */
+	for (slices = 0; slices < 20; slices++) {
+		openbus_run(1000);
+	}
+
+	/* At least the budget, and over it by at most one instruction: a JMP is
+	   three cycles and cannot be split, so 50 becomes 51. Asking for exactly
+	   the budget would be asking the card to stop mid-instruction. */
+	check("it ran the budget, overshooting by at most one instruction",
+	      rd(OPENBUS_COPROC_REG_CYCLES) >= 50 &&
+	      rd(OPENBUS_COPROC_REG_CYCLES) <= 50 + 3);
+	check_u32("and says the budget is why it stopped",
+	          rd(OPENBUS_COPROC_REG_STOPREASON), OPENBUS_COPROC_STOP_BUDGET);
+	check("RUN was cleared, so it does not carry on past the frame",
+	      (rd(OPENBUS_COPROC_REG_CTRL) & OPENBUS_COPROC_CTRL_RUN) == 0);
+	check("and it is neither halted nor faulted",
+	      (rd(OPENBUS_COPROC_REG_STATUS) &
+	       (OPENBUS_COPROC_STATUS_HALTED | OPENBUS_COPROC_STATUS_FAULT)) == 0);
+
+	/* Another budget carries on from where it was. */
+	wr(OPENBUS_COPROC_REG_RUNFOR, 25);
+	wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RUN);
+	for (slices = 0; slices < 20; slices++) {
+		openbus_run(1000);
+	}
+	check("a second budget continues from where the first stopped",
+	      rd(OPENBUS_COPROC_REG_CYCLES) >= 75 &&
+	      rd(OPENBUS_COPROC_REG_CYCLES) <= 75 + 6);
+}
+
+/*
+ * A stalling register: the core stops mid-instruction, the guest is told what
+ * was wanted, answers it, and the core carries on. This is the path a CIA or a
+ * VIA needs, and the one that cannot be done with a log and a latch.
+ *
+ *   LDA &dc00 : STA &10 : BRK
+ */
+static void
+test_stall_and_ack(void)
+{
+	static const uint8_t prog[] = {
+		0xad, 0x00, 0xdc,	/* LDA &dc00 */
+		0x85, 0x10,		/* STA &10   */
+		0x00			/* BRK       */
+	};
+	const uint32_t map_at = 0x100;
+	int slices;
+
+	printf("A register the guest has to answer for:\n");
+
+	check("a 6502 card fits", fit("6502"));
+	load_program(prog, sizeof(prog));
+
+	map_region(map_at, 0xdc00, 0x0100, COPRO_REGION_STALL, 0);
+	wr(OPENBUS_COPROC_REG_MAPOFF, map_at);
+	wr(OPENBUS_COPROC_REG_MAPCOUNT, 1);
+
+	wr(OPENBUS_COPROC_REG_ENTRY, 0);
+	wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RESET);
+	wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RUN);
+	for (slices = 0; slices < 5; slices++) {
+		openbus_run(1000);
+	}
+
+	check("STATUS says an access is waiting",
+	      (rd(OPENBUS_COPROC_REG_STATUS) & OPENBUS_COPROC_STATUS_WAITING) != 0);
+	check_u32("STOPREASON agrees", rd(OPENBUS_COPROC_REG_STOPREASON),
+	          OPENBUS_COPROC_STOP_WAITING);
+	check_u32("WAITADDR names the register", rd(OPENBUS_COPROC_REG_WAITADDR),
+	          0xdc00);
+	check_u32("WAITINFO says it is a read",
+	          rd(OPENBUS_COPROC_REG_WAITINFO) & 1u, 0);
+	check_u32("and nothing has run past it", rd(OPENBUS_COPROC_REG_CYCLES), 0);
+
+	/* Answer it. */
+	wr(OPENBUS_COPROC_REG_WAITDATA, 0x5b);
+	wr(OPENBUS_COPROC_REG_WAITACK, 1);
+	check("the wait is over",
+	      (rd(OPENBUS_COPROC_REG_STATUS) & OPENBUS_COPROC_STATUS_WAITING) == 0);
+
+	check("the program finishes", run_to_stop());
+	wr(OPENBUS_COPROC_REG_ADDR, 0x10);
+	check_u32("the answer reached the program",
+	          rd(OPENBUS_COPROC_REG_DATA) & 0xffu, 0x5b);
+}
+
+/*
+ * Interrupts. The 6502 takes one through the vector at &FFFE, which is what a
+ * machine's 50Hz or 100Hz tick becomes.
+ *
+ * The program loops at &0000; the handler at &0300 halts, so the core stopping
+ * at all is proof the interrupt was taken and the vector followed.
+ */
+static void
+test_interrupt(void)
+{
+	static const uint8_t prog[] = { 0x4c, 0x00, 0x00 };	/* JMP &0000 */
+	static const uint8_t handler[] = { 0x00 };		/* BRK */
+	int slices;
+
+	printf("An interrupt, and the vector it follows:\n");
+
+	check("a 6502 card fits", fit("6502"));
+	load_program(prog, sizeof(prog));
+
+	/* The handler, and BOTH vectors pointing at it: the maskable interrupt
+	   goes through &FFFE and the non-maskable one through &FFFA, and they are
+	   separate on purpose - a handler needs to know which happened. Setting
+	   only one and expecting the other to follow it is a mistake this test
+	   made first time round. */
+	wr(OPENBUS_COPROC_REG_ADDR, 0x0300);
+	wr8(OPENBUS_COPROC_REG_DATA, handler[0]);
+	wr(OPENBUS_COPROC_REG_ADDR, 0xfffa);
+	wr8(OPENBUS_COPROC_REG_DATA, 0x00);	/* NMI vector low  */
+	wr8(OPENBUS_COPROC_REG_DATA, 0x03);	/* NMI vector high */
+	wr(OPENBUS_COPROC_REG_ADDR, 0xfffe);
+	wr8(OPENBUS_COPROC_REG_DATA, 0x00);	/* IRQ vector low  */
+	wr8(OPENBUS_COPROC_REG_DATA, 0x03);	/* IRQ vector high */
+
+	wr(OPENBUS_COPROC_REG_ENTRY, 0);
+	wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RESET);
+	wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RUN);
+	openbus_run(100);
+
+	check("it is running the loop",
+	      (rd(OPENBUS_COPROC_REG_STATUS) & OPENBUS_COPROC_STATUS_RUNNING) != 0);
+
+	/* A reset leaves the 6502 with interrupts disabled, exactly as the
+	   hardware does, so the first one is ignored - which is worth checking,
+	   because a core that took it anyway would look like it worked. */
+	wr(OPENBUS_COPROC_REG_IRQCTRL, OPENBUS_COPROC_IRQ_ASSERT);
+	openbus_run(100);
+	check("a masked interrupt is ignored",
+	      (rd(OPENBUS_COPROC_REG_STATUS) & OPENBUS_COPROC_STATUS_HALTED) == 0);
+
+	/* The non-maskable one is taken whatever the flags say, which is what
+	   non-maskable means. */
+	wr(OPENBUS_COPROC_REG_IRQCTRL, OPENBUS_COPROC_IRQ_NMI);
+	for (slices = 0; slices < 5; slices++) {
+		openbus_run(100);
+	}
+	check("the non-maskable interrupt is taken whatever the flags say",
+	      (rd(OPENBUS_COPROC_REG_STATUS) & OPENBUS_COPROC_STATUS_HALTED) != 0);
+	check_u32("through its own vector, so it halted in the handler",
+	          rd(OPENBUS_COPROC_REG_STOPREASON), OPENBUS_COPROC_STOP_HALTED);
+}
+
+/*
+ * The two cores that extend cores we already had: they must be distinguishable
+ * from the parts they extend, or a machine's configuration cannot mean anything.
+ */
+static void
+test_extended_cores(void)
+{
+	printf("The 65C02 and the 8080, which extend cores already here:\n");
+
+	check("a 65C02 card fits", fit("65c02"));
+	check_u32("and says so, rather than 6502", rd(OPENBUS_COPROC_REG_CORE),
+	          OPENBUS_COPROC_CORE_65C02_ID);
+	check("with a name naming the part",
+	      strstr(openbus_name(), "65C02") != NULL);
+
+	{
+		/* BRA, which a 6502 does not have. Two instructions: BRA over an
+		   LDA #&ff, then LDA #&2a and BRK. On the CMOS part the answer is
+		   &2a; on the NMOS part the opcode faults. */
+		static const uint8_t prog[] = {
+			0x80, 0x02, 0xa9, 0xff, 0xa9, 0x2a, 0x00
+		};
+
+		load_program(prog, sizeof(prog));
+		wr(OPENBUS_COPROC_REG_ENTRY, 0);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RESET);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RUN);
+		check("a CMOS-only instruction runs on it", run_to_stop());
+		check_u32("and branched", rd(OPENBUS_COPROC_REG_MBOX_RX), 0x2a);
+
+		/* The same program on a 6502 must fault rather than do something
+		   plausible. */
+		check("a 6502 card fits", fit("6502"));
+		load_program(prog, sizeof(prog));
+		wr(OPENBUS_COPROC_REG_ENTRY, 0);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RESET);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RUN);
+		(void) run_to_stop();
+		check("while on a 6502 it faults",
+		      (rd(OPENBUS_COPROC_REG_STATUS) &
+		       OPENBUS_COPROC_STATUS_FAULT) != 0);
+	}
+
+	check("an 8080 card fits", fit("8080"));
+	check_u32("and says so, rather than Z80", rd(OPENBUS_COPROC_REG_CORE),
+	          OPENBUS_COPROC_CORE_8080_ID);
+	check("with a name naming the part",
+	      strstr(openbus_name(), "8080") != NULL);
+
+	{
+		/* JR, which an 8080 does not have. */
+		static const uint8_t prog[] = { 0x18, 0x00, 0x76 };
+
+		load_program(prog, sizeof(prog));
+		wr(OPENBUS_COPROC_REG_ENTRY, 0);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RESET);
+		wr(OPENBUS_COPROC_REG_CTRL, OPENBUS_COPROC_CTRL_RUN);
+		(void) run_to_stop();
+		check("a Z80-only instruction faults on it",
+		      (rd(OPENBUS_COPROC_REG_STATUS) &
+		       OPENBUS_COPROC_STATUS_FAULT) != 0);
+	}
+}
+
 int
 main(void)
 {
@@ -679,6 +1121,14 @@ main(void)
 	test_z80_mailbox();
 	test_dma();
 	test_bus_rules();
+	test_extended_cores();
+	test_ram_sizes();
+	test_ram_size_is_what_the_card_gets();
+	test_control_area();
+	test_map_and_log_through_registers();
+	test_runfor_budget();
+	test_stall_and_ack();
+	test_interrupt();
 
 	openbus_close();
 

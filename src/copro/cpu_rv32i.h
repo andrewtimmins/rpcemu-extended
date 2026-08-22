@@ -23,6 +23,8 @@
 
 #include <stdint.h>
 
+#include "cpu_mem.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -92,7 +94,24 @@ typedef struct rv32i_state {
 	uint32_t fault_cause;	/**< RV32I_FAULT_* */
 	uint32_t fault_addr;	/**< the address or instruction that faulted */
 
-	uint64_t cycles;	/**< instructions retired since reset */
+	uint64_t cycles;	/**< instructions retired since reset; see the note
+	                             on timing in openbus_coproc.h for why this core
+	                             counts instructions and the 8-bit ones do not */
+	/* Where accesses go when something other than a flat array is behind
+	   them. Zeroed means the RAM above, as it always was. See cpu_mem.h. */
+	cpu_mem_hook mem;
+
+	int stalled;
+	uint32_t stall_addr;
+	int stall_is_write;
+
+	/* The registers as they were before the current instruction, restored if
+	   it has to be abandoned. */
+	struct {
+		uint32_t x[32];
+		uint32_t pc;
+	} saved;
+
 } rv32i_state;
 
 /**
@@ -110,6 +129,12 @@ void rv32i_init(rv32i_state *s, uint8_t *ram, uint32_t ram_size);
  * program in. The stack pointer is NOT set up: a program that wants a stack sets
  * sp itself, or the loader does it through rv32i_state.
  */
+/**
+ * Route this core's accesses through a hook instead of straight into its RAM.
+ * NULL goes back to the array. See cpu_mem.h.
+ */
+void rv32i_set_mem_hook(rv32i_state *s, const cpu_mem_hook *hook);
+
 void rv32i_reset(rv32i_state *s, uint32_t entry);
 
 /**

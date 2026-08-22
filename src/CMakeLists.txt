@@ -29,6 +29,7 @@ set(RPCEMU_CORE_SOURCES
     keyboard.c
     openbus.c
     openbus_stub.c
+    copro/copro_bus.c
     copro/openbus_coproc.c
     copro/cpu_rv32i.c
     copro/cpu_6502.c

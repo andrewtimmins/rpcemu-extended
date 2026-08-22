@@ -255,6 +255,7 @@ Config config = {
 	"",			/* openbus_card (empty: the second processor slot is
 	                           empty, as it was on every Risc PC that did not
 	                           have a card bought for it) */
+	0			/* openbus_ram_kb (zero: the core's own default) */
 };
 
 /* Performance measuring variables */
@@ -1607,14 +1608,22 @@ rpcemu_start(void)
 		}
 	}
 	if (openbus_coproc_requested()) {
+		/* How much RAM the card carries. Clamped by the card to what the
+		   fitted processor can address, and the clamped figure is what gets
+		   logged, so a setting that asked for more is visibly not honoured
+		   rather than quietly ignored. */
+		const uint32_t ram = openbus_coproc_request_ram(
+		    (uint32_t) config.openbus_ram_kb * 1024u);
+
 		/* The slot holds one card, and openbus_fit() refuses a second rather
 		   than replacing one silently, so asking for both the test card and a
 		   co-processor gets the test card and a line in the log saying the
 		   other did not fit. That is the intended outcome: the alternative is
 		   guessing which one the user meant. */
 		if (openbus_coproc_fit() == 0) {
-			rpclog("OPEN Bus: fitted '%s' to the second processor slot\n",
-			       openbus_name());
+			rpclog("OPEN Bus: fitted '%s' to the second processor slot "
+			       "with %uK of card RAM\n",
+			       openbus_name(), (unsigned) (ram / 1024u));
 		} else {
 			rpclog("OPEN Bus: could not fit the '%s' co-processor card\n",
 			       openbus_coproc_core_name(openbus_coproc_requested_core()));

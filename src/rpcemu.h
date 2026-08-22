@@ -370,6 +370,18 @@ typedef struct {
 	 * from there instead of each carrying their own copy to fall out of step.
 	 */
 	char openbus_card[16];
+
+	/*
+	 * How much RAM the co-processor card carries, in KILOBYTES. Zero means
+	 * the core's own default, which is what a machine that has never had this
+	 * set will read.
+	 *
+	 * In KB rather than bytes because that is the unit the choice is offered
+	 * in and it keeps a hand-edited value readable; the card clamps whatever
+	 * arrives to what the fitted processor can actually address, so a 6502
+	 * cannot be given more than its 64K however this is set.
+	 */
+	unsigned openbus_ram_kb;
 } Config;
 
 extern Config config;

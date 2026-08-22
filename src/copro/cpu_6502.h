@@ -23,6 +23,8 @@
 
 #include <stdint.h>
 
+#include "cpu_mem.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -93,11 +95,85 @@ typedef struct cpu6502_state {
 	uint32_t fault_cause;	/**< CPU6502_FAULT_* */
 	uint32_t fault_addr;	/**< the address, or the opcode if illegal */
 
-	uint64_t cycles;	/**< instructions retired since reset */
+	uint64_t cycles;	/**< cycles since reset, per the documented timing */
+
+	/* Where accesses go when something other than a flat array is behind
+	   them. Zeroed means the RAM below, as it always was. See cpu_mem.h. */
+	cpu_mem_hook mem;
+
+	/* A stalled access: the instruction was abandoned and will be retried
+	   once the guest has answered. See the note in cpu_mem.h. */
+	/*
+	 * ★ CMOS OR NMOS, which is the difference between a 6502 and a 65C02.
+	 *
+	 * Set for a 65C02: it adds instructions the NMOS part does not have, fixes
+	 * the JMP (abs) page-boundary bug, and sets N and Z properly after decimal
+	 * arithmetic. One core with a flag rather than a copy of the file, because
+	 * the two share every one of the 151 documented NMOS opcodes and a copy
+	 * would be 700 lines that have to be fixed twice.
+	 */
+	int cmos;
+
+	/* Set by an indexed addressing mode when the index carried into the high
+	   byte of the address, which costs a real 6502 a cycle on a read. */
+	int page_crossed;
+	/* Set by a branch that was taken, and hence cost more than its base. */
+	int branch_taken;
+
+	int stalled;
+	uint32_t stall_addr;	/**< the address that stalled */
+	int stall_is_write;
+
+	/* The registers as they were before the current instruction, restored if
+	   it has to be abandoned. Only kept when the hook says it can stall. */
+	struct {
+		uint8_t a, x, y, sp, p;
+		uint16_t pc;
+	} saved;
 } cpu6502_state;
 
 /** Attach a core to its memory. @ram is not owned and must outlive the core. */
 void cpu6502_init(cpu6502_state *s, uint8_t *ram, uint32_t ram_size);
+
+/**
+ * Route this core's accesses through a hook instead of straight into its RAM.
+ * Pass NULL to go back to the flat array. See cpu_mem.h, including what a
+ * stalling hook assumes about the instruction that stalls.
+ */
+void cpu6502_set_mem_hook(cpu6502_state *s, const cpu_mem_hook *hook);
+
+/**
+ * Choose CMOS (65C02) or NMOS (6502) behaviour. Call it after cpu6502_init and
+ * before running: it changes which opcodes exist, so switching it under a
+ * running program would change the meaning of code already fetched.
+ *
+ * ★ What a 65C02 adds: BRA, PHX/PHY/PLX/PLY, STZ, TRB/TSB, INC A / DEC A, BIT
+ * with immediate and indexed addressing, the (zp) indirect forms of the ALU
+ * operations, JMP (abs,X) and STP. What it fixes: JMP (abs) no longer reads its
+ * high byte from the wrong page, and N and Z are meaningful after decimal
+ * arithmetic.
+ *
+ * ★ What it does NOT add: the Rockwell RMB/SMB/BBR/BBS bit instructions, which
+ * are an R65C02 extension rather than part of the CMOS part every 65C02 has, and
+ * WAI, which waits for an interrupt - a state this card does not model. Both
+ * fault rather than doing something plausible.
+ */
+void cpu6502_set_cmos(cpu6502_state *s, int cmos);
+
+/**
+ * Raise the maskable interrupt. Ignored when the I flag is set, as the hardware
+ * ignores it: pushes the program counter and the status register, sets I, and
+ * jumps through the vector at &FFFE.
+ *
+ * @return non-zero if the interrupt was taken.
+ */
+int cpu6502_irq(cpu6502_state *s);
+
+/**
+ * Raise the non-maskable interrupt, through the vector at &FFFA. Never ignored,
+ * which is what non-maskable means.
+ */
+void cpu6502_nmi(cpu6502_state *s);
 
 /**
  * Reset the core, with @entry as the first instruction.
@@ -113,14 +189,21 @@ void cpu6502_reset(cpu6502_state *s, uint16_t entry);
 /**
  * Execute one instruction.
  *
- * @return 1 if one executed, 0 if the core is halted or faulted. As with the
- *         other cores here the count is instructions retired, not bus cycles:
- *         see the note in openbus_coproc.h about why the card counts them that
- *         way and what that means for a program that measures itself.
+ * @return what it cost in cycles, or 0 if the core is halted, faulted or waiting
+ *         on a stalled access. Charged per the documented NMOS timing, including
+ *         the extra cycle an indexed read pays for a carry into the high byte and
+ *         the cost of a taken branch. See the timing note in openbus_coproc.h.
  */
 int cpu6502_step(cpu6502_state *s);
 
-/** Execute up to @cycles instructions, stopping early on halt or fault. */
+/**
+ * Run for up to @cycles cycles, stopping early on a halt, a fault or a stall.
+ *
+ * An instruction is indivisible, so this reaches the budget and then overshoots
+ * by whatever the last instruction cost; it never stops short of it.
+ *
+ * @return the cycles actually used.
+ */
 int cpu6502_run(cpu6502_state *s, int cycles);
 
 /** Name of a fault cause, for logs and *commands. Never NULL. */

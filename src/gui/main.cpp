@@ -1061,11 +1061,11 @@ int main(int argc, char **argv)
 		           strncmp(arg, "--openbus-card=", 15) == 0) {
 			/* Fits a co-processor card to the second processor slot, with
 			   the named core in it. This OVERRIDES the machine's own
-			   Co-Processor Support setting for one run and is not written
+			   Co-Processor Card setting for one run and is not written
 			   back, which is the relationship every other --option here
 			   has with the setting it shadows. The list of cores lives in
 			   openbus_coproc.c, so the parser, the help text and the error
-			   below all name the same three. */
+			   below all name the same set. */
 			const char *value = (arg[14] == '=') ? arg + 15
 			                                     : (i + 1 < argc ? argv[++i] : nullptr);
 
@@ -1077,12 +1077,18 @@ int main(int argc, char **argv)
 			if (openbus_coproc_request(value) != 0) {
 				ConsoleMessage(true, "error: unknown co-processor core '%s'.\n",
 				               value);
+				/* Walked until the names run out rather than up to a
+				   named last core, so adding one to the table is
+				   enough and this cannot list a stale set. */
 				ConsoleMessage(true, "Available cores:");
-				for (int core = OPENBUS_COPROC_RV32I;
-				     core <= OPENBUS_COPROC_Z80; core++) {
-					ConsoleMessage(true, " %s",
-					               openbus_coproc_core_name(
-					                   (openbus_coproc_core) core));
+				for (int core = 0; ; core++) {
+					const char *name = openbus_coproc_core_name(
+					    (openbus_coproc_core) core);
+
+					if (name == nullptr) {
+						break;
+					}
+					ConsoleMessage(true, " %s", name);
 				}
 				ConsoleMessage(true, "\n");
 				ConsoleMessageFlush();

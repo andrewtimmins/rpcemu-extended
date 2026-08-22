@@ -578,6 +578,7 @@ rpcemu_add_test(test_cpu_z80)
 add_executable(test_openbus_coproc test_openbus_coproc.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/openbus.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/openbus_coproc.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/copro_bus.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/openbus_stub.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_rv32i.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6502.c
@@ -587,6 +588,59 @@ target_include_directories(test_openbus_coproc PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro
 )
 rpcemu_add_test(test_openbus_coproc)
+
+# The card's address decode: what a core's loads and stores mean once the guest
+# has said which parts of the address space are ROM, a screen, a latch the guest
+# presents, a register that has to stop the core, or nothing at all. Links
+# nothing - no card, no bus, no emulator - because the decode is a function of a
+# region table and two byte arrays. That is why it is its own unit.
+add_executable(test_copro_bus test_copro_bus.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/copro_bus.c)
+target_include_directories(test_copro_bus PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro)
+rpcemu_add_test(test_copro_bus)
+
+# A core running against that decode: the two halves have to agree, and the part
+# most likely to be wrong is a stalling access, because a core cannot suspend
+# mid-instruction so the instruction is abandoned whole and retried. This checks
+# that the retry leaves no trace - registers, program counter, instruction count
+# and the store that follows - on the 6502 and on the Z80, which reaches the same
+# decode through its separate port space.
+add_executable(test_copro_core_bus test_copro_core_bus.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/copro_bus.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6502.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_z80.c)
+target_include_directories(test_copro_core_bus PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro)
+rpcemu_add_test(test_copro_core_bus)
+
+# Instruction timings against published values. The cores' tables were derived
+# mechanically - the 6502's from each opcode's addressing mode, the Z80's from the
+# memory accesses the core makes - and this is the independent half: figures from
+# the documentation, checked against what the core charges. Both polarities of
+# every conditional, because the Z80 table was once derived from a probe whose
+# flags came from a reset, where they are all ones, and a sample testing one
+# polarity of each agreed with a table that was wrong for the other.
+add_executable(test_cpu_cycles test_cpu_cycles.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_6502.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro/cpu_z80.c)
+target_include_directories(test_cpu_cycles PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src/copro)
+rpcemu_add_test(test_cpu_cycles)
+
+# The guest module images this fork assembles itself: header offsets inside the
+# image, the 32-bit flag present, no 26-bit return idiom anywhere in the code,
+# and every command table entry's minimum parameter count no greater than its
+# maximum. Reads the committed images and needs no emulator, no ARM assembler
+# and no guest, so it runs on all three platforms.
+#
+# It exists because every one of those mistakes is silent until a guest boots,
+# and one of them is not silent in proportion to its size: a module whose
+# initialisation returns to a corrupted address makes RISC OS abandon the entire
+# expansion-card scan, so a single bad word in one module took four other
+# modules and the graphics card's driver off the machine with it.
+add_executable(test_module_headers test_module_headers.c)
+rpcemu_add_test(test_module_headers ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 # Physical-address decode for the DMA fetch paths (sound, VIDC cursor). Links
 # rpcemu_core for the real physical accessors, as test_mmu_perms does, and writes
@@ -872,7 +926,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 54)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 58)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 10")	# JIT differential
 endif()

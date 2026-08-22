@@ -23,6 +23,8 @@
 
 #include <stdint.h>
 
+#include "cpu_mem.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -117,6 +119,45 @@ typedef struct cpu_z80_state {
 
 	uint8_t ports[256];	/**< the latch used when io_in/io_out are NULL */
 
+	/* Where accesses go when something other than a flat array is behind
+	   them; ports come through here too, marked with CPU_MEM_PORT. Zeroed
+	   means the RAM and the ports array above, as it always was. */
+	cpu_mem_hook mem;
+
+	/*
+	 * ★ 8080 OR Z80, which is more than a question of which opcodes exist.
+	 *
+	 * Set for an Intel 8080. The Z80 is a superset of its instruction set, so
+	 * one core covers both - but two behaviours differ and both are visible to
+	 * real software:
+	 *
+	 *  - the parity/overflow bit is ALWAYS parity on an 8080, where the Z80
+	 *    redefined it as overflow for arithmetic;
+	 *  - DAA on an 8080 always adds, having no subtract flag to consult.
+	 *
+	 * Plus the obvious: the Z80's own instructions - the prefixes, the relative
+	 * jumps, the alternate register set - do not exist and fault here.
+	 */
+	int i8080;
+
+	/* What the last instruction cost in T-states, and whether a conditional
+	   one was taken - the decode records it and the step charges for it. */
+	uint8_t last_cycles;
+	int branch_taken;
+
+	int stalled;
+	uint32_t stall_addr;	/**< the address that stalled, CPU_MEM_PORT and all */
+	int stall_is_write;
+
+	/* The registers as they were before the current instruction, restored if
+	   it has to be abandoned. See cpu_mem.h. */
+	struct {
+		uint8_t a, f, b, c, d, e, h, l;
+		uint8_t a2, f2, b2, c2, d2, e2, h2, l2;
+		uint16_t ix, iy, sp, pc;
+		uint8_t i, r, iff1, iff2, im;
+	} saved;
+
 	int halted;		/**< set by HALT */
 	int halt_reason;	/**< CPU_Z80_HALT_* when halted */
 	uint32_t exit_code;	/**< the accumulator as the core halted */
@@ -125,7 +166,7 @@ typedef struct cpu_z80_state {
 	uint32_t fault_cause;	/**< CPU_Z80_FAULT_* */
 	uint32_t fault_addr;	/**< the address, or the opcode if illegal */
 
-	uint64_t cycles;	/**< instructions retired since reset */
+	uint64_t cycles;	/**< T-states since reset, per the documented timing */
 } cpu_z80_state;
 
 /** Attach a core to its memory. @ram is not owned and must outlive the core. */
@@ -139,6 +180,37 @@ void cpu_z80_init(cpu_z80_state *s, uint8_t *ram, uint32_t ram_size);
  * SP become 0xffff, interrupts are disabled, interrupt mode 0, and both register
  * sets are cleared.
  */
+/**
+ * Route this core's accesses through a hook instead of straight into its RAM and
+ * ports array. NULL goes back to those. See cpu_mem.h.
+ */
+void cpu_z80_set_mem_hook(cpu_z80_state *s, const cpu_mem_hook *hook);
+
+/**
+ * Choose 8080 or Z80 behaviour. Call it after cpu_z80_init and before running.
+ *
+ * ★ An 8080 is NOT just a Z80 with fewer instructions. See the note on i8080 in
+ * the state above for what else changes; a core that only rejected the extra
+ * opcodes would make 8080 software appear to work and then get its flags wrong.
+ */
+void cpu_z80_set_8080(cpu_z80_state *s, int i8080);
+
+/**
+ * Raise the maskable interrupt, with @vector as the byte a device would put on
+ * the data bus. Ignored unless IFF1 is set, as the hardware ignores it.
+ *
+ * Mode 1 jumps to &0038 and mode 2 reads the address from the table at I<<8 with
+ * @vector as the index. Mode 0 would execute whatever instruction the device
+ * placed on the bus; nothing here can place one, so it is treated as mode 1,
+ * which is what mode 0 devices almost always arranged for anyway (an RST 38H).
+ *
+ * @return non-zero if the interrupt was taken.
+ */
+int cpu_z80_interrupt(cpu_z80_state *s, uint8_t vector);
+
+/** Raise the non-maskable interrupt: &0066, and IFF1 clear. Never ignored. */
+void cpu_z80_nmi(cpu_z80_state *s);
+
 void cpu_z80_reset(cpu_z80_state *s, uint16_t entry);
 
 /**

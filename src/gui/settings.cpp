@@ -431,6 +431,7 @@ extern "C" void config_sync_machine_edit_to_copy(Config *dest, const Config *src
 	dest->network_type = src->network_type;
 	strncpy(dest->openbus_card, src->openbus_card, sizeof(dest->openbus_card) - 1);
 	dest->openbus_card[sizeof(dest->openbus_card) - 1] = '\0';
+	dest->openbus_ram_kb = src->openbus_ram_kb;
 
 	/* Pyromaniac networking travels with the rest of the machine's networking:
 	   the editor writes it, and this is what carries it to the running copy. */
@@ -681,6 +682,16 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	strncpy(cfg->openbus_card, sText.utf8_str().data(),
 	    sizeof(cfg->openbus_card) - 1);
 	cfg->openbus_card[sizeof(cfg->openbus_card) - 1] = '\0';
+
+	/* Zero, which is what an older machine's configuration reads as, means the
+	   core's own default. The card clamps anything larger than the fitted
+	   processor can address. */
+	{
+		long ram_kb = 0;
+
+		settings.Read("openbus_ram_kb", &ram_kb, 0);
+		cfg->openbus_ram_kb = (ram_kb > 0) ? (unsigned) ram_kb : 0u;
+	}
 	settings.Read("start_fullscreen", &value, 0L);
 	cfg->start_fullscreen = static_cast<int>(value);
 	settings.Read("suspend_on_exit", &value, 0L);
@@ -891,6 +902,7 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 		    FormatUsbPort(cfg->usb_port[port], cfg->usb_host[port]));
 	}
 	settings.Write("openbus_card", wxString(cfg->openbus_card, wxConvUTF8));
+	settings.Write("openbus_ram_kb", (long) cfg->openbus_ram_kb);
 	settings.Write("start_fullscreen", static_cast<long>(cfg->start_fullscreen));
 	settings.Write("suspend_on_exit", static_cast<long>(cfg->suspend_on_exit));
 	/* The ways in to this machine, written with it: two machines can each have

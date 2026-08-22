@@ -184,7 +184,11 @@ test_djnz_loop(void)
 	check_u32("10 down to 1 summed to 55", cpu.a, 55);
 	check_u32("and 55 reached memory", ram[0x2000], 55);
 	check_u32("the accumulator is the exit code", cpu.exit_code, 55);
-	check("cycles were counted", cpu.cycles == 2 + 10 * 2 + 2);
+	/* T-states, not instructions: XOR A 4, LD B,n 7, then ten iterations of
+	   ADD A,B at 4 with a DJNZ at 13 taken nine times and 8 on the tenth,
+	   then LD (nn),A 13 and HALT 4. */
+	check("T-states were counted",
+	      cpu.cycles == 4 + 7 + 10 * 4 + 9 * 13 + 8 + 13 + 4);
 	check_u32("and b counted down to zero", cpu.b, 0);
 }
 
@@ -828,11 +832,16 @@ test_block_instructions(void)
 	}
 
 	{
-		/* ★ The property the implementation exists for. Three instructions
-		   of setup and then LDIR; a budget of six must therefore get three
-		   iterations in and no more, which can only happen if each
-		   iteration is a separate instruction. If LDIR looped internally,
-		   the whole 0x1000-byte move would happen inside one cycle. */
+		/* ★ The property the implementation exists for: each iteration of
+		   LDIR is a separate instruction, so a budget stops it part way.
+		   If it looped internally the whole 0x1000-byte move would happen
+		   inside one instruction and no budget could interrupt it.
+
+		   Counted in T-states: three 10-cycle loads of setup, then LDIR at
+		   21 an iteration. A budget of 30 covers the setup and one
+		   iteration, so a second iteration is what proves it did not run
+		   away - and because an instruction is indivisible, the run
+		   overshoots the budget by whatever the last one cost. */
 		const uint8_t prog[] = {
 			LD_HL_NN, 0x00, 0x40,
 			LD_DE_NN, 0x00, 0x50,
@@ -842,12 +851,19 @@ test_block_instructions(void)
 		};
 
 		load(prog, sizeof(prog));
-		check("a budget of six is used exactly", cpu_z80_run(&cpu, 6) == 6);
-		check_u32("three iterations happened, so ldir is interruptible",
-		          bc(), 0x1000 - 3);
-		check("and it has not finished", !cpu.halted);
-		check_u32("the program counter is back on the ldir itself",
-		          cpu.pc, PROG_BASE + 9);
+		{
+			/* The setup is exactly 30, so 31 is what forces one
+			   iteration of LDIR to run as well. */
+			const int used = cpu_z80_run(&cpu, 31);
+
+			check("a budget of 31 covers the setup and one iteration",
+			      used >= 31 && used <= 31 + 21);
+			check_u32("one iteration happened, so ldir is interruptible",
+			          bc(), 0x1000 - 1);
+			check("and it has not finished", !cpu.halted);
+			check_u32("the program counter is back on the ldir itself",
+			          cpu.pc, PROG_BASE + 9);
+		}
 
 		check("it finishes when given the time", run_to_stop() && cpu.halted);
 		check_u32("having moved the whole block", bc(), 0);
@@ -1016,12 +1032,157 @@ test_budget(void)
 	printf("\nRunning on a budget:\n");
 
 	load(prog, sizeof(prog));
-	check("a run uses exactly the budget it was given",
-	      cpu_z80_run(&cpu, 5) == 5);
-	check_u32("four iterations of DJNZ happened", cpu.b, 0x64 - 4);
+	{
+		/* LD B,n is 7 and a taken DJNZ is 13, so a budget of 20 is the
+		   setup plus one iteration. An instruction cannot be split, so a
+		   run may overshoot by the cost of its last one. */
+		const int used = cpu_z80_run(&cpu, 20);
+
+		check("a run uses at least its budget, and overshoots by at most "
+		      "one instruction", used >= 20 && used <= 20 + 13);
+		check_u32("one iteration of DJNZ happened", cpu.b, 0x64 - 1);
+	}
 	check("and it finishes when given the time", run_to_stop() && cpu.halted);
 	check_u32("with b counted down to zero", cpu.b, 0);
 	check("a halted core uses no cycles", cpu_z80_run(&cpu, 100) == 0);
+}
+
+/* ---- the 8080, which is this core with its own flag semantics ----------- */
+
+/*
+ * ★ WHY THIS IS NOT JUST "THE Z80 WITH FEWER INSTRUCTIONS".
+ *
+ * The instruction sets do overlap - the Z80's is a superset - and stopping there
+ * is the trap. Two behaviours differ and both are visible to real software:
+ *
+ *  - the parity/overflow bit is ALWAYS parity on an 8080, where the Z80
+ *    redefined it as overflow for arithmetic;
+ *  - DAA on an 8080 always adds, having no subtract flag to consult.
+ *
+ * A core that only withdrew the extra opcodes would make 8080 software appear to
+ * work and then get its flags wrong, which is worse than refusing to run it.
+ */
+static void
+load_8080(const uint8_t *prog, size_t len)
+{
+	load(prog, len);
+	cpu_z80_set_8080(&cpu, 1);
+	cpu_z80_reset(&cpu, PROG_BASE);
+}
+
+static void
+test_8080_flags(void)
+{
+	printf("\n8080: the parity flag, where a Z80 reports overflow:\n");
+
+	{
+		/*
+		 * &7f + &01 = &80. On a Z80 that overflows, so P/V is SET. On an
+		 * 8080 the same bit is the parity of &80, which has one bit set -
+		 * odd parity - so it is CLEAR. The same instruction, opposite
+		 * answers, and this is the check that a "just fewer opcodes" 8080
+		 * would fail.
+		 */
+		const uint8_t prog[] = { 0x3e, 0x7f, 0xc6, 0x01, 0x76 };
+
+		load(prog, sizeof(prog));
+		check("a Z80 runs it", run_to_stop());
+		check_u32("with the right answer", cpu.a, 0x80);
+		check("and reports overflow", flag(CPU_Z80_FLAG_PV));
+
+		load_8080(prog, sizeof(prog));
+		check("an 8080 runs it too", run_to_stop());
+		check_u32("with the same answer", cpu.a, 0x80);
+		check("but reports parity, which for &80 is odd, so clear",
+		      !flag(CPU_Z80_FLAG_PV));
+	}
+
+	{
+		/* &03 has even parity, so an 8080 sets the bit where a Z80 - no
+		   overflow here either - also sets nothing. Checking a case where
+		   they agree matters: it stops the test above passing for the wrong
+		   reason. */
+		const uint8_t prog[] = { 0x3e, 0x01, 0xc6, 0x02, 0x76 };
+
+		load_8080(prog, sizeof(prog));
+		check("an 8080 adds 1 + 2", run_to_stop());
+		check_u32("giving 3", cpu.a, 0x03);
+		check("and &03 has even parity, so the bit is set",
+		      flag(CPU_Z80_FLAG_PV));
+	}
+
+	{
+		/* An 8080 reads bit 1 of its flag register as one and bits 3 and 5
+		   as zero, which anything doing PUSH PSW can see. */
+		const uint8_t prog[] = { 0x3e, 0x00, 0xc6, 0x00, 0x76 };
+
+		load_8080(prog, sizeof(prog));
+		check("an 8080 runs an add", run_to_stop());
+		check("bit 1 of its flags reads as one", (cpu.f & 0x02u) != 0);
+		check("and the two undocumented bits as zero",
+		      (cpu.f & (CPU_Z80_FLAG_X | CPU_Z80_FLAG_Y)) == 0);
+	}
+}
+
+static void
+test_8080_withdrawn(void)
+{
+	printf("\n8080: and the Z80's own instructions are gone:\n");
+
+	{
+		static const uint8_t z80_only[] = {
+			0x08,	/* EX AF,AF'      */
+			0x10,	/* DJNZ           */
+			0x18,	/* JR             */
+			0x20, 0x28, 0x30, 0x38,	/* JR cc  */
+			0xcb,	/* the bit page   */
+			0xd9,	/* EXX            */
+			0xdd, 0xfd,		/* the index prefixes */
+			0xed	/* the extended page  */
+		};
+		unsigned i;
+		int all_faulted = 1;
+
+		for (i = 0; i < sizeof(z80_only); i++) {
+			const uint8_t prog[] = { z80_only[i], 0x00, 0x00, 0x00 };
+
+			load_8080(prog, sizeof(prog));
+			(void) cpu_z80_step(&cpu);
+			if (!cpu.faulted) {
+				printf("      &%02x did not fault on an 8080\n",
+				       z80_only[i]);
+				all_faulted = 0;
+			}
+		}
+		check("every Z80-only opcode faults on an 8080", all_faulted);
+	}
+
+	{
+		/* And the same opcode is fine on a Z80, so the guard is about the
+		   part rather than about the opcode being unimplemented. */
+		const uint8_t prog[] = { 0x18, 0x00, 0x76 };
+
+		load(prog, sizeof(prog));
+		(void) cpu_z80_step(&cpu);
+		check("while JR is fine on a Z80", !cpu.faulted);
+	}
+
+	{
+		/* What an 8080 DOES have, so the withdrawal has not taken too
+		   much: XCHG, XTHL, PCHL and the restarts are all 8080
+		   instructions that happen to survive into the Z80. */
+		const uint8_t prog[] = {
+			0x21, 0x34, 0x12,	/* LXI H,&1234 */
+			0x11, 0x78, 0x56,	/* LXI D,&5678 */
+			0xeb,			/* XCHG        */
+			0x76
+		};
+
+		load_8080(prog, sizeof(prog));
+		check("an 8080 runs XCHG", run_to_stop() && !cpu.faulted);
+		check_u32("HL took DE's value", (cpu.h << 8) | cpu.l, 0x5678);
+		check_u32("and DE took HL's", (cpu.d << 8) | cpu.e, 0x1234);
+	}
 }
 
 int
@@ -1039,6 +1200,8 @@ main(void)
 	test_ports();
 	test_faults_and_reset();
 	test_budget();
+	test_8080_flags();
+	test_8080_withdrawn();
 
 	printf("\n%d failure(s)\n", failures);
 	return failures == 0 ? 0 : 1;

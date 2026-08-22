@@ -92,9 +92,50 @@ fault(cpu_z80_state *s, uint32_t cause, uint32_t addr)
 
 /* ------------------------------------------------------------------ memory */
 
+/* One place for what a hooked access means, used by memory and ports alike:
+   @addr already carries CPU_MEM_PORT when it is a port. */
+static uint8_t
+hooked_read(cpu_z80_state *s, uint32_t addr)
+{
+	uint8_t val = 0;
+
+	switch (s->mem.read(s->mem.ctx, addr, &val)) {
+	case CPU_MEM_OK:
+		return val;
+	case CPU_MEM_STALL:
+		s->stalled = 1;
+		s->stall_addr = addr;
+		s->stall_is_write = 0;
+		return 0;
+	default:
+		fault(s, CPU_Z80_FAULT_ACCESS, addr & 0xffffu);
+		return 0;
+	}
+}
+
+static void
+hooked_write(cpu_z80_state *s, uint32_t addr, uint8_t val)
+{
+	switch (s->mem.write(s->mem.ctx, addr, val)) {
+	case CPU_MEM_OK:
+		return;
+	case CPU_MEM_STALL:
+		s->stalled = 1;
+		s->stall_addr = addr;
+		s->stall_is_write = 1;
+		return;
+	default:
+		fault(s, CPU_Z80_FAULT_ACCESS, addr & 0xffffu);
+		return;
+	}
+}
+
 static uint8_t
 rd8(cpu_z80_state *s, uint16_t addr)
 {
+	if (s->mem.read != NULL) {
+		return hooked_read(s, addr);
+	}
 	if (s->ram == NULL || addr >= s->ram_size) {
 		fault(s, CPU_Z80_FAULT_ACCESS, addr);
 		return 0;
@@ -105,6 +146,10 @@ rd8(cpu_z80_state *s, uint16_t addr)
 static void
 wr8(cpu_z80_state *s, uint16_t addr, uint8_t val)
 {
+	if (s->mem.write != NULL) {
+		hooked_write(s, addr, val);
+		return;
+	}
 	if (s->ram == NULL || addr >= s->ram_size) {
 		fault(s, CPU_Z80_FAULT_ACCESS, addr);
 		return;
@@ -162,11 +207,147 @@ pop16(cpu_z80_state *s)
 	return val;
 }
 
+
+/*
+ * ★ T-STATES, NOT INSTRUCTIONS.
+ *
+ * A Spectrum frame is 69888 T-states and its border effects are timed in them,
+ * so a program emulating one needs the processor's own clock rather than a count
+ * of instructions.
+ *
+ * ★ HOW THIS TABLE WAS ARRIVED AT, because a table of 256 numbers written from
+ * memory is a table with mistakes in it. The Z80's timing has a documented
+ * structure - four T-states for the opcode fetch, three for every further
+ * instruction byte, three for every byte of data read or written, plus a
+ * documented extra for certain classes - so the table was DERIVED from the
+ * accesses this core actually makes for each opcode, and then checked against
+ * forty published values (NOP 4, LD BC,nn 10, EX (SP),HL 19, CALL 17, OUT 11
+ * and so on). All forty agreed.
+ *
+ * The value here is the cost when a conditional instruction is NOT taken;
+ * cycles_taken below is what a taken one adds.
+ *
+ * ★ THE CONDITIONALS ARE NOT DERIVED, they are the documented figures written in
+ * directly - JR cc 7/12, DJNZ 8/13, RET cc 5/11, CALL cc 10/17, JP cc 10 either
+ * way. Deriving them from a probe run gave a table that was right for half of
+ * them and wrong for the other half, because a reset leaves the flags all ones,
+ * so the Z-set forms were measured taken and the NZ forms not. The first sample
+ * check agreed with it, because it only tested one polarity of each. Both are
+ * tested now.
+ */
+static const uint8_t cycles_main[256] = {
+	 4, 10,  7,  6,  4,  4,  7,  4,  4, 11,  7,  6,  4,  4,  7,  4,	/* 0x */
+	 8, 10,  7,  6,  4,  4,  7,  4, 12, 11,  7,  6,  4,  4,  7,  4,	/* 1x */
+	 7, 10, 16,  6,  4,  4,  7,  4,  7, 11, 16,  6,  4,  4,  7,  4,	/* 2x */
+	 7, 10, 13,  6, 11, 11, 10,  4,  7, 11, 13,  6,  4,  4,  7,  4,	/* 3x */
+	 4,  4,  4,  4,  4,  4,  7,  4,  4,  4,  4,  4,  4,  4,  7,  4,	/* 4x */
+	 4,  4,  4,  4,  4,  4,  7,  4,  4,  4,  4,  4,  4,  4,  7,  4,	/* 5x */
+	 4,  4,  4,  4,  4,  4,  7,  4,  4,  4,  4,  4,  4,  4,  7,  4,	/* 6x */
+	 7,  7,  7,  7,  7,  7,  4,  7,  4,  4,  4,  4,  4,  4,  7,  4,	/* 7x */
+	 4,  4,  4,  4,  4,  4,  7,  4,  4,  4,  4,  4,  4,  4,  7,  4,	/* 8x */
+	 4,  4,  4,  4,  4,  4,  7,  4,  4,  4,  4,  4,  4,  4,  7,  4,	/* 9x */
+	 4,  4,  4,  4,  4,  4,  7,  4,  4,  4,  4,  4,  4,  4,  7,  4,	/* ax */
+	 4,  4,  4,  4,  4,  4,  7,  4,  4,  4,  4,  4,  4,  4,  7,  4,	/* bx */
+	 5, 10, 10, 10, 10, 11,  7, 11,  5, 10, 10,  7, 10, 17,  7, 11,	/* cx */
+	 5, 10, 10, 11, 10, 11,  7, 11,  5,  4, 10, 11, 10,  7,  7, 11,	/* dx */
+	 5, 10, 10, 19, 10, 11,  7, 11,  5,  4, 10,  4, 10,  4,  7, 11,	/* ex */
+	 5, 10, 10,  4, 10, 11,  7, 11,  5,  6, 10,  4, 10,  7,  7, 11,	/* fx */
+};
+
+
+/*
+ * ★ WHERE AN 8080 IS TIMED DIFFERENTLY FROM A Z80.
+ *
+ * Zero means "as the Z80 table above", which is most of the map: the two parts
+ * agree on every immediate load, every ALU operation, the jumps, CALL, RET, the
+ * stack and the restarts. What differs is a short and reviewable list - MOV
+ * between registers is five rather than four, INX and DCX five rather than six,
+ * INR and DCR of a register five rather than four, DAD ten rather than eleven,
+ * XTHL eighteen rather than nineteen, IN and OUT ten rather than eleven, HLT
+ * seven rather than four, and a conditional CALL not taken eleven rather than
+ * ten.
+ *
+ * Generated from that list rather than typed out, and checked against
+ * thirty-eight published 8080 figures; each entry was also checked to differ
+ * from the Z80's value, because a "delta" that matches is not a delta and being
+ * in the list would be a mistake.
+ */
+static const uint8_t cycles_8080[256] = {
+	 0,  0,  0,  5,  5,  5,  0,  0,  0, 10,  0,  5,  5,  5,  0,  0,	/* 0x */
+	 0,  0,  0,  5,  5,  5,  0,  0,  0, 10,  0,  5,  5,  5,  0,  0,	/* 1x */
+	 0,  0,  0,  5,  5,  5,  0,  0,  0, 10,  0,  5,  5,  5,  0,  0,	/* 2x */
+	 0,  0,  0,  5, 10, 10,  0,  0,  0, 10,  0,  5,  5,  5,  0,  0,	/* 3x */
+	 5,  5,  5,  5,  5,  5,  0,  5,  5,  5,  5,  5,  5,  5,  0,  5,	/* 4x */
+	 5,  5,  5,  5,  5,  5,  0,  5,  5,  5,  5,  5,  5,  5,  0,  5,	/* 5x */
+	 5,  5,  5,  5,  5,  5,  0,  5,  5,  5,  5,  5,  5,  5,  0,  5,	/* 6x */
+	 0,  0,  0,  0,  0,  0,  7,  0,  5,  5,  5,  5,  5,  5,  0,  5,	/* 7x */
+	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,	/* 8x */
+	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,	/* 9x */
+	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,	/* ax */
+	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,	/* bx */
+	 0,  0,  0,  0, 11,  0,  0,  0,  0,  0,  0,  0, 11,  0,  0,  0,	/* cx */
+	 0,  0,  0, 10, 11,  0,  0,  0,  0,  0,  0, 10, 11,  0,  0,  0,	/* dx */
+	 0,  0,  0, 18, 11,  0,  0,  0,  0,  5,  0,  0, 11,  0,  0,  0,	/* ex */
+	 0,  0,  0,  0, 11,  0,  0,  0,  0,  5,  0,  0, 11,  0,  0,  0,	/* fx */
+};
+
+/* What a taken conditional adds: JR cc becomes 12, DJNZ 13, RET cc 11,
+   CALL cc 17. */
+static const uint8_t cycles_taken[256] = {
+	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,	/* 0x */
+	 5,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,	/* 1x */
+	 5,  0,  0,  0,  0,  0,  0,  0,  5,  0,  0,  0,  0,  0,  0,  0,	/* 2x */
+	 5,  0,  0,  0,  0,  0,  0,  0,  5,  0,  0,  0,  0,  0,  0,  0,	/* 3x */
+	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,	/* 4x */
+	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,	/* 5x */
+	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,	/* 6x */
+	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,	/* 7x */
+	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,	/* 8x */
+	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,	/* 9x */
+	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,	/* ax */
+	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,	/* bx */
+	 6,  0,  0,  0,  7,  0,  0,  0,  6,  0,  0,  0,  7,  0,  0,  0,	/* cx */
+	 6,  0,  0,  0,  7,  0,  0,  0,  6,  0,  0,  0,  7,  0,  0,  0,	/* dx */
+	 6,  0,  0,  0,  7,  0,  0,  0,  6,  0,  0,  0,  7,  0,  0,  0,	/* ex */
+	 6,  0,  0,  0,  7,  0,  0,  0,  6,  0,  0,  0,  7,  0,  0,  0,	/* fx */
+};
+
+/*
+ * The prefixed pages.
+ *
+ *   DD and FD add four for the prefix itself, and eight more when a
+ *   displacement byte is fetched and added - so LD A,(IX+d) is LD A,(HL)'s
+ *   seven plus twelve, which is the documented nineteen. LD (IX+d),n is the one
+ *   documented exception to that: nineteen rather than twenty-two, because it
+ *   overlaps the displacement fetch with the operand.
+ *
+ *   CB is eight for a register operation, twelve for BIT b,(HL) and fifteen for
+ *   any other (HL) form. Under DD or FD it is twenty for BIT and twenty-three
+ *   otherwise, whatever the operation.
+ */
+#define Z80_PREFIX_COST		4
+#define Z80_DISPLACEMENT_COST	8
+#define Z80_LD_IXD_N_COST	5	/* the exception noted above */
+#define Z80_CB_REG		8
+#define Z80_CB_BIT_HL		12
+#define Z80_CB_HL		15
+#define Z80_DDCB_BIT		20
+#define Z80_DDCB_OTHER		23
+
 /* ------------------------------------------------------------ input/output */
 
+/*
+ * The memory hook takes precedence over io_in/io_out, because a machine being
+ * emulated describes its ports in the same region table as its memory and
+ * having two ways in would mean two answers to which one wins. The older pair
+ * stays for a card that only wants a mailbox on port 0.
+ */
 static uint8_t
 io_read(cpu_z80_state *s, uint8_t port)
 {
+	if (s->mem.read != NULL) {
+		return hooked_read(s, (uint32_t) port | CPU_MEM_PORT);
+	}
 	if (s->io_in != NULL) {
 		return s->io_in(s->io_ctx, port);
 	}
@@ -176,6 +357,10 @@ io_read(cpu_z80_state *s, uint8_t port)
 static void
 io_write(cpu_z80_state *s, uint8_t port, uint8_t val)
 {
+	if (s->mem.write != NULL) {
+		hooked_write(s, (uint32_t) port | CPU_MEM_PORT, val);
+		return;
+	}
 	if (s->io_out != NULL) {
 		s->io_out(s->io_ctx, port, val);
 		return;
@@ -373,6 +558,35 @@ parity_even(uint8_t v)
 	return (v & 1u) == 0u;
 }
 
+/*
+ * ★ WHERE THE 8080 AND THE Z80 PART COMPANY, in one place.
+ *
+ * @res is the byte the flags describe and @arithmetic says whether the
+ * parity/overflow bit currently holds overflow. On an 8080 that bit is always
+ * parity - the Z80 redefined it for arithmetic and kept parity for logic - so
+ * every add, subtract, increment and decrement reports something different on
+ * the two parts, and software that tests it after arithmetic behaves differently
+ * on each.
+ *
+ * The undocumented bits differ too: an 8080 reads bit 1 as one and bits 3 and 5
+ * as zero, which anything doing PUSH PSW can see.
+ */
+static void
+store_flags(cpu_z80_state *s, uint8_t f, uint8_t res, int arithmetic)
+{
+	if (s->i8080) {
+		if (arithmetic) {
+			f &= (uint8_t) ~FLAG_PV;
+			if (parity_even(res)) {
+				f |= FLAG_PV;
+			}
+		}
+		f &= (uint8_t) ~FLAG_XY;
+		f |= 0x02u;
+	}
+	s->f = f;
+}
+
 static void
 alu_add(cpu_z80_state *s, uint8_t v, unsigned carry_in)
 {
@@ -399,7 +613,7 @@ alu_add(cpu_z80_state *s, uint8_t v, unsigned carry_in)
 		f |= FLAG_C;
 	}
 	s->a = r8;
-	s->f = f;
+	store_flags(s, f, r8, 1);
 }
 
 /**
@@ -436,7 +650,9 @@ alu_sub(cpu_z80_state *s, uint8_t v, unsigned borrow, int store)
 	if (store) {
 		s->a = r8;
 	}
-	s->f = f;
+	/* CP's flags describe the subtraction it threw away, so the parity an 8080
+	   reports is of that result rather than of the accumulator. */
+	store_flags(s, f, r8, 1);
 }
 
 static void
@@ -458,7 +674,9 @@ alu_logic(cpu_z80_state *s, uint8_t res, int half_carry)
 		f |= FLAG_PV;
 	}
 	s->a = res;
-	s->f = f;
+	/* Not arithmetic: the Z80 reports parity here too, so only the 8080's
+	   fixed bits differ. */
+	store_flags(s, f, res, 0);
 }
 
 static uint8_t
@@ -480,7 +698,7 @@ alu_inc(cpu_z80_state *s, uint8_t v)
 	if (v == 0x7fu) {
 		f |= FLAG_PV;	/* the only value that overflows on increment */
 	}
-	s->f = f;
+	store_flags(s, f, r, 1);
 	return r;
 }
 
@@ -503,7 +721,7 @@ alu_dec(cpu_z80_state *s, uint8_t v)
 	if (v == 0x80u) {
 		f |= FLAG_PV;
 	}
-	s->f = f;
+	store_flags(s, f, r, 1);
 	return r;
 }
 
@@ -597,7 +815,10 @@ static void
 alu_daa(cpu_z80_state *s)
 {
 	const uint8_t a = s->a;
-	const int subtract = (s->f & FLAG_N) != 0;
+	/* ★ An 8080 has no subtract flag, so its DAA always adds. Consulting the
+	   Z80's N bit here would make an 8080 program's decimal arithmetic depend
+	   on a flag its own instructions never set. */
+	const int subtract = !s->i8080 && (s->f & FLAG_N) != 0;
 	const int carry_in = (s->f & FLAG_C) != 0;
 	const int half_in = (s->f & FLAG_H) != 0;
 	uint8_t adjust = 0;
@@ -634,7 +855,7 @@ alu_daa(cpu_z80_state *s)
 	f |= res & FLAG_XY;
 
 	s->a = res;
-	s->f = f;
+	store_flags(s, f, res, 0);	/* DAA reports parity on both parts */
 }
 
 /** The eight rotate and shift operations of the CB page, in encoded order. */
@@ -768,6 +989,8 @@ condition(const cpu_z80_state *s, unsigned y)
 
 /* ----------------------------------------------------------- the ED page */
 
+static void ed_page_charge(cpu_z80_state *s, uint8_t op);
+
 /**
  * The block instructions: LDI/LDD/LDIR/LDDR, CPI/CPD/CPIR/CPDR,
  * INI/IND/INIR/INDR and OUTI/OUTD/OTIR/OTDR.
@@ -815,6 +1038,12 @@ ed_block(cpu_z80_state *s, unsigned y, unsigned z, uint8_t op)
 
 		if (repeat && bc != 0) {
 			s->pc = (uint16_t) (s->pc - 2u);
+			/* Twenty-one rather than sixteen: an iteration with more
+			   to do costs five more than the last one. Charged here
+			   because ed_page returns before its own tail for this
+			   family, which is why setting a flag for the tail to
+			   read did nothing. */
+			s->last_cycles = 21;
 		}
 		break;
 	}
@@ -854,6 +1083,12 @@ ed_block(cpu_z80_state *s, unsigned y, unsigned z, uint8_t op)
 		/* Stops early on a match, which is the whole point of CPIR. */
 		if (repeat && bc != 0 && (f & FLAG_Z) == 0) {
 			s->pc = (uint16_t) (s->pc - 2u);
+			/* Twenty-one rather than sixteen: an iteration with more
+			   to do costs five more than the last one. Charged here
+			   because ed_page returns before its own tail for this
+			   family, which is why setting a flag for the tail to
+			   read did nothing. */
+			s->last_cycles = 21;
 		}
 		break;
 	}
@@ -875,6 +1110,12 @@ ed_block(cpu_z80_state *s, unsigned y, unsigned z, uint8_t op)
 
 		if (repeat && s->b != 0) {
 			s->pc = (uint16_t) (s->pc - 2u);
+			/* Twenty-one rather than sixteen: an iteration with more
+			   to do costs five more than the last one. Charged here
+			   because ed_page returns before its own tail for this
+			   family, which is why setting a flag for the tail to
+			   read did nothing. */
+			s->last_cycles = 21;
 		}
 		break;
 	}
@@ -892,6 +1133,12 @@ ed_block(cpu_z80_state *s, unsigned y, unsigned z, uint8_t op)
 
 		if (repeat && s->b != 0) {
 			s->pc = (uint16_t) (s->pc - 2u);
+			/* Twenty-one rather than sixteen: an iteration with more
+			   to do costs five more than the last one. Charged here
+			   because ed_page returns before its own tail for this
+			   family, which is why setting a flag for the tail to
+			   read did nothing. */
+			s->last_cycles = 21;
 		}
 		break;
 	}
@@ -949,6 +1196,8 @@ ed_page(cpu_z80_state *s, pfx *p)
 
 	/* An index prefix followed by ED is not a defined encoding: the ED page
 	   has no (HL) references for a prefix to redirect. */
+
+	ed_page_charge(s, op);
 	if (p->prefix != 0) {
 		fault(s, CPU_Z80_FAULT_ILLEGAL, op);
 		return;
@@ -1085,6 +1334,42 @@ ed_page(cpu_z80_state *s, pfx *p)
 		}
 		break;
 	}
+
+}
+
+/*
+ * The ED page's cost, worked out from the opcode before it executes so that a
+ * path which returns early still leaves a figure behind. Eight T-states for the
+ * two fetches, and then per class as documented: an input or output is twelve,
+ * sixteen-bit arithmetic fifteen, a sixteen-bit load through an address twenty,
+ * a block instruction sixteen, and the nibble rotates eighteen.
+ */
+static void
+ed_page_charge(cpu_z80_state *s, uint8_t op)
+{
+	const unsigned x = op >> 6;
+	const unsigned y = (op >> 3) & 7u;
+	const unsigned z = op & 7u;
+
+	if (x == 2) {
+		s->last_cycles = 16;
+	} else if (x == 1) {
+		switch (z) {
+		case 0:				/* IN r,(C)  */
+		case 1:	s->last_cycles = 12; break;	/* OUT (C),r */
+		case 2:	s->last_cycles = 15; break;	/* SBC/ADC HL,rr */
+		case 3:	s->last_cycles = 20; break;	/* LD (nn),rr, LD rr,(nn) */
+		case 4:	s->last_cycles = 8;  break;	/* NEG */
+		case 5:	s->last_cycles = 14; break;	/* RETN, RETI */
+		case 6:	s->last_cycles = 8;  break;	/* IM n */
+		default:
+			/* RRD and RLD, against LD I,A and its relatives. */
+			s->last_cycles = (y >= 4) ? 18 : 9;
+			break;
+		}
+	} else {
+		s->last_cycles = 8;
+	}
 }
 
 /** The CB page, including the DDCB and FDCB forms that act on (IX+d). */
@@ -1096,6 +1381,11 @@ cb_page(cpu_z80_state *s, pfx *p)
 	uint16_t addr = 0;
 	uint8_t v;
 
+	/* Charged before the operation runs, from the rule in the note above the
+	   tables: eight for a register form, more for an (HL) one, and more again
+	   under an index prefix. Before, because this function returns early for an
+	   undefined encoding and a cost still has to have been recorded. */
+
 	/* Under a prefix the displacement comes BEFORE the opcode: DD CB d op. */
 	if (p->prefix != 0) {
 		p->disp = (int8_t) fetch8(s);
@@ -1106,6 +1396,14 @@ cb_page(cpu_z80_state *s, pfx *p)
 	x = op >> 6;
 	y = (op >> 3) & 7u;
 	z = op & 7u;
+
+	if (p->prefix != 0) {
+		s->last_cycles = (x == 1) ? Z80_DDCB_BIT : Z80_DDCB_OTHER;
+	} else if (z == 6) {
+		s->last_cycles = (x == 1) ? Z80_CB_BIT_HL : Z80_CB_HL;
+	} else {
+		s->last_cycles = Z80_CB_REG;
+	}
 
 	if (p->prefix != 0) {
 		if (z != 6) {
@@ -1152,6 +1450,7 @@ cb_page(cpu_z80_state *s, pfx *p)
 	} else {
 		reg_write(s, p, z, 0, op, v);
 	}
+
 }
 
 /* ------------------------------------------------------------------- main */
@@ -1198,6 +1497,7 @@ main_page(cpu_z80_state *s, pfx *p)
 				s->b = (uint8_t) (s->b - 1u);
 				if (s->b != 0) {
 					s->pc = (uint16_t) (s->pc + d);
+					s->branch_taken = 1;
 				}
 				break;
 			}
@@ -1212,6 +1512,7 @@ main_page(cpu_z80_state *s, pfx *p)
 
 				if (condition(s, y - 4u)) {
 					s->pc = (uint16_t) (s->pc + d);
+					s->branch_taken = 1;
 				}
 				break;
 			}
@@ -1352,6 +1653,7 @@ main_page(cpu_z80_state *s, pfx *p)
 		case 0:	/* RET cc */
 			if (condition(s, y)) {
 				s->pc = pop16(s);
+				s->branch_taken = 1;
 			}
 			break;
 
@@ -1389,6 +1691,7 @@ main_page(cpu_z80_state *s, pfx *p)
 
 				if (condition(s, y)) {
 					s->pc = addr;
+					s->branch_taken = 1;
 				}
 			}
 			break;
@@ -1427,6 +1730,7 @@ main_page(cpu_z80_state *s, pfx *p)
 				if (condition(s, y)) {
 					push16(s, s->pc);
 					s->pc = addr;
+					s->branch_taken = 1;
 				}
 			}
 			break;
@@ -1466,6 +1770,38 @@ main_page(cpu_z80_state *s, pfx *p)
 		break;
 	}
 
+	/*
+	 * What the instruction cost. The prefix and any displacement are charged
+	 * here rather than inside the decode, because they are properties of how
+	 * the instruction was reached rather than of what it did.
+	 */
+	/*
+	 * CB is a page of its own and has already charged itself a figure that
+	 * includes the prefix and the displacement, so nothing here applies to it:
+	 * adding the prefix cost again made RLC (IX+d) thirty-five rather than
+	 * twenty-three.
+	 */
+	if (op != 0xcbu) {
+		/* The 8080 table holds only the opcodes it times differently; zero
+		   there means the Z80's figure. */
+		const uint8_t base = (s->i8080 && cycles_8080[op] != 0)
+		    ? cycles_8080[op] : cycles_main[op];
+
+		s->last_cycles = base;
+		if (s->branch_taken) {
+			s->last_cycles = (uint8_t) (base + cycles_taken[op]);
+		}
+		if (p->prefix != 0) {
+			s->last_cycles = (uint8_t) (s->last_cycles +
+			                            Z80_PREFIX_COST);
+			if (p->disp_fetched) {
+				s->last_cycles = (uint8_t) (s->last_cycles +
+				    ((op == 0x36) ? Z80_LD_IXD_N_COST
+				                  : Z80_DISPLACEMENT_COST));
+			}
+		}
+	}
+
 	return s->faulted ? 0 : 1;
 }
 
@@ -1474,6 +1810,12 @@ main_page(cpu_z80_state *s, pfx *p)
 void
 cpu_z80_init(cpu_z80_state *s, uint8_t *ram, uint32_t ram_size)
 {
+	s->mem.ctx = NULL;
+	s->mem.read = NULL;
+	s->mem.write = NULL;
+	s->mem.can_stall = 0;
+	s->i8080 = 0;			/* a Z80 unless told otherwise */
+
 	unsigned i;
 
 	cpu_z80_reset(s, 0);
@@ -1526,6 +1868,111 @@ cpu_z80_reset(cpu_z80_state *s, uint16_t entry)
 	s->fault_cause = 0;
 	s->fault_addr = 0;
 	s->cycles = 0;
+
+	/* A reset clears a waiting access, or a card reset while one was pending
+	   would leave the core with nothing able to answer it. */
+	s->last_cycles = 0;
+	s->branch_taken = 0;
+	s->stalled = 0;
+	s->stall_addr = 0;
+	s->stall_is_write = 0;
+}
+
+/* Put the core back where it was before the abandoned instruction. See the note
+   in cpu_mem.h for why an instruction is retried whole rather than resumed. */
+static int
+cpu_z80_abandon(cpu_z80_state *s)
+{
+	s->a = s->saved.a;   s->f = s->saved.f;
+	s->b = s->saved.b;   s->c = s->saved.c;
+	s->d = s->saved.d;   s->e = s->saved.e;
+	s->h = s->saved.h;   s->l = s->saved.l;
+	s->a2 = s->saved.a2; s->f2 = s->saved.f2;
+	s->b2 = s->saved.b2; s->c2 = s->saved.c2;
+	s->d2 = s->saved.d2; s->e2 = s->saved.e2;
+	s->h2 = s->saved.h2; s->l2 = s->saved.l2;
+	s->ix = s->saved.ix; s->iy = s->saved.iy;
+	s->sp = s->saved.sp; s->pc = s->saved.pc;
+	s->i = s->saved.i;   s->r = s->saved.r;
+	s->iff1 = s->saved.iff1; s->iff2 = s->saved.iff2;
+	s->im = s->saved.im;
+	return 0;
+}
+
+static void
+cpu_z80_save(cpu_z80_state *s)
+{
+	s->saved.a = s->a;   s->saved.f = s->f;
+	s->saved.b = s->b;   s->saved.c = s->c;
+	s->saved.d = s->d;   s->saved.e = s->e;
+	s->saved.h = s->h;   s->saved.l = s->l;
+	s->saved.a2 = s->a2; s->saved.f2 = s->f2;
+	s->saved.b2 = s->b2; s->saved.c2 = s->c2;
+	s->saved.d2 = s->d2; s->saved.e2 = s->e2;
+	s->saved.h2 = s->h2; s->saved.l2 = s->l2;
+	s->saved.ix = s->ix; s->saved.iy = s->iy;
+	s->saved.sp = s->sp; s->saved.pc = s->pc;
+	s->saved.i = s->i;   s->saved.r = s->r;
+	s->saved.iff1 = s->iff1; s->saved.iff2 = s->iff2;
+	s->saved.im = s->im;
+}
+
+void
+cpu_z80_set_8080(cpu_z80_state *s, int i8080)
+{
+	s->i8080 = (i8080 != 0);
+}
+
+void
+cpu_z80_set_mem_hook(cpu_z80_state *s, const cpu_mem_hook *hook)
+{
+	if (hook == NULL) {
+		s->mem.ctx = NULL;
+		s->mem.read = NULL;
+		s->mem.write = NULL;
+		s->mem.can_stall = 0;
+	} else {
+		s->mem = *hook;
+	}
+	s->stalled = 0;
+}
+
+int
+cpu_z80_interrupt(cpu_z80_state *s, uint8_t vector)
+{
+	if (s->halted || s->faulted || !s->iff1) {
+		return 0;
+	}
+
+	/* Both latches clear as the interrupt is taken, so a handler that has not
+	   yet executed EI cannot be interrupted again. */
+	s->iff1 = 0;
+	s->iff2 = 0;
+
+	push16(s, s->pc);
+
+	if (s->im == 2) {
+		const uint16_t at = (uint16_t) ((s->i << 8) | vector);
+
+		s->pc = (uint16_t) (rd8(s, at) | (rd8(s, (uint16_t) (at + 1)) << 8));
+	} else {
+		s->pc = 0x0038;
+	}
+	return 1;
+}
+
+void
+cpu_z80_nmi(cpu_z80_state *s)
+{
+	if (s->halted || s->faulted) {
+		return;
+	}
+	/* IFF2 keeps IFF1's value so that RETN can put it back, which is the whole
+	   reason the Z80 has two of them. */
+	s->iff2 = s->iff1;
+	s->iff1 = 0;
+	push16(s, s->pc);
+	s->pc = 0x0066;
 }
 
 int
@@ -1536,6 +1983,13 @@ cpu_z80_step(cpu_z80_state *s)
 
 	if (s->halted || s->faulted) {
 		return 0;
+	}
+	if (s->stalled) {
+		return 0;	/* waiting for the guest to answer */
+	}
+	s->branch_taken = 0;
+	if (s->mem.can_stall) {
+		cpu_z80_save(s);
 	}
 
 	p.prefix = 0;
@@ -1560,22 +2014,79 @@ cpu_z80_step(cpu_z80_state *s)
 		s->pc = (uint16_t) (s->pc + 1);
 	}
 
+	/* A stall during the prefix or opcode fetch: bail out before executing
+	   anything, rather than letting the zero the failed fetch returned be
+	   decoded as an instruction. */
+	if (s->stalled) {
+		return cpu_z80_abandon(s);
+	}
+
+	/*
+	 * ★ THE Z80'S OWN INSTRUCTIONS DO NOT EXIST ON AN 8080.
+	 *
+	 * The prefixes (CB, DD, ED, FD), the relative jumps and DJNZ, the
+	 * alternate register set, and EXX. A real 8080 does something with these
+	 * encodings - mostly an undocumented NOP or an alias - and reproducing
+	 * that would be modelling a defect nobody should rely on. Faulting says
+	 * "this is not an 8080 program", which is the useful answer.
+	 */
+	if (s->i8080) {
+		/* ★ The index prefixes are consumed by the loop above, so by here
+		   `next` is the opcode they modified rather than the prefix itself.
+		   Asking about `next` alone let DD and FD through, which the test
+		   caught: it is p.prefix that records them. */
+		if (p.prefix != 0) {
+			fault(s, CPU_Z80_FAULT_ILLEGAL, p.prefix);
+			return 0;
+		}
+		switch (next) {
+		case 0x08:	/* EX AF,AF'   */
+		case 0x10:	/* DJNZ        */
+		case 0x18:	/* JR          */
+		case 0x20: case 0x28: case 0x30: case 0x38:	/* JR cc */
+		case 0xcb:	/* the bit page   */
+		case 0xd9:	/* EXX            */
+		case 0xdd: case 0xfd:	/* the index prefixes */
+		case 0xed:	/* the extended page  */
+			fault(s, CPU_Z80_FAULT_ILLEGAL, next);
+			return 0;
+		default:
+			break;
+		}
+	}
+
 	if (next == 0xedu) {
 		s->pc = (uint16_t) (s->pc + 1);
 		ed_page(s, &p);
 		if (s->faulted) {
 			return 0;
 		}
-		s->cycles++;
-		return 1;
+		if (s->stalled) {
+			return cpu_z80_abandon(s);
+		}
+		{
+			const int n = s->last_cycles;
+
+			s->cycles += (uint64_t) n;
+			return n;
+		}
 	}
 
 	if (!main_page(s, &p)) {
 		return 0;
 	}
+	/* An access anywhere in the instruction may have stalled; the opcode
+	   handlers do not check, so this is the one place that does. */
+	if (s->stalled) {
+		return cpu_z80_abandon(s);
+	}
 
-	s->cycles++;
-	return 1;
+	{
+		const int n = s->last_cycles;
+
+		s->cycles += (uint64_t) n;
+		return n;
+	}
 }
 
 int

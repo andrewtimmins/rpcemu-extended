@@ -60,6 +60,7 @@ extern "C" {
 #include "app_settings.h"
 #include "machine_lock.h"
 #include "savestate.h"
+#include "openbus_coproc.h"
 }
 
 /* C++ linkage: it takes a std::vector, so it must not be inside the extern "C"
@@ -444,6 +445,25 @@ static void HeadlessOutput(const char *fmt, ...)
 void HeadlessPrintUsage(const char *argv0)
 {
 	const char *name = (argv0 != nullptr && argv0[0] != '\0') ? argv0 : "rpcemu";
+
+	/* The co-processor cores are listed from the card's own table rather than
+	   written out here, for the reason the error path in main.cpp gives: a
+	   hand-kept list in the help text is a list that goes stale, and a core
+	   the help does not mention is a core nobody finds. */
+	std::string cores;
+	for (int core = 0; ; core++) {
+		const char *option = openbus_coproc_core_name(
+		    (openbus_coproc_core) core);
+
+		if (option == nullptr) {
+			break;
+		}
+		if (!cores.empty()) {
+			cores += ", ";
+		}
+		cores += option;
+	}
+
 	HeadlessOutput(
 	    "Usage: %s [options]\n"
 	    "\n"
@@ -523,12 +543,13 @@ void HeadlessPrintUsage(const char *argv0)
 	    "                        that cannot start OpenGL at all falls back on\n"
 	    "                        its own, without the option.\n"
 	    "  --openbus-card=CORE   Fit a co-processor card to the second processor\n"
-	    "                        slot, with CORE as its processor: rv32i, 6502 or\n"
-	    "                        z80. The card carries its own RAM and is driven\n"
+	    "                        slot, with CORE as its processor, one of:\n"
+	    "                        %s.\n"
+	    "                        The card carries its own RAM and is driven\n"
 	    "                        through its register window; the RPCEmuCoPro\n"
 	    "                        module in the guest provides the SWIs and\n"
 	    "                        * commands a program uses. Overrides the\n"
-	    "                        machine's own Co-Processor Support setting for\n"
+	    "                        machine's own Co-Processor Card setting for\n"
 	    "                        this run only. No such card was ever made.\n"
 	    "                        See docs/openbus.md.\n"
 	    "  -h, --help            Show this help and exit.\n"
@@ -545,7 +566,7 @@ void HeadlessPrintUsage(const char *argv0)
 	    "\n"
 	    "Data is located via $RPCEMU_DATADIR, else the executable directory or the\n"
 	    "current directory if it contains a 'configs/' folder, else the install prefix.\n",
-	    name);
+	    name, cores.c_str());
 }
 
 /**

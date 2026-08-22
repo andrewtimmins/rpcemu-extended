@@ -125,6 +125,14 @@ had fallen behind it, which is worth knowing before trusting it.)
 | `test_keymap` | host keys to RISC OS keys, for **all three platforms from any one of them** |
 | `test_openbus` | the second processor bus: window, bus mastering, nPIRQ, reset, timeslice |
 | `test_openbus_decode` | that the machine's own memory decode reaches a fitted card, which an unhooked window would hide |
+| `test_cpu_rv32i` | the RV32IM core: the base integer set, the multiply and divide extension, and its faults |
+| `test_cpu_6502` | the 6502 core: all 151 documented NMOS opcodes, decimal mode and the indirect-JMP page bug |
+| `test_cpu_z80` | the Z80 core: the documented set including the CB, ED, DD, FD and DDCB pages |
+| `test_openbus_coproc` | the co-processor card itself: its registers, the RAM aperture, DMA, and that a refused second card leaves the first one alone |
+| `test_copro_bus` | the card's address decode: every region kind, the write log ring, latches, the stall protocol |
+| `test_copro_core_bus` | a 6502 and a Z80 running against that decode, including an instruction abandoned and retried |
+| `test_cpu_cycles` | 6502 and Z80 instruction timings against published values, both polarities of every conditional |
+| `test_module_headers` | the guest module images this fork assembles: header offsets, the 32-bit flag, no 26-bit return idiom in the code, and each command's parameter counts the right way round |
 | `test_hostfs_path` | where a machine's HostFS drive resolves to, on all three platforms |
 | `test_hostfs_advice` | what the machine editor warns about when a HostFS folder is chosen |
 | `test_folder_move` | whether moving somebody's files can be offered: empty destination, free space, in use |
@@ -429,3 +437,20 @@ Said here rather than left to be discovered:
   after the machine is up. That is the rule worth having and it needs no
   maintenance, but a boot-phase regression that adds a new probing site will
   pass until somebody records one. See *Aborts during the boot test*.
+
+## The guest-side test that no host test can replace
+
+`riscos-progs/CoProTest` is a RISC OS module with one command, `*CoProSelfTest`,
+which exercises the `RPCEmuCoPro` module's SWIs against a fitted co-processor
+card. Build it with `make` in that directory, put the image where the guest can
+see it, `*RMLoad` it and run the command; it prints a line per check and ends
+with `COPROTEST-PASSED` or `COPROTEST-FAILED`, so a host driving it over HostCmd
+can grep for the verdict.
+
+It is not part of `ctest`, because it needs a booted machine with a card fitted.
+It earns its place regardless: **the module's entire SWI interface was broken in
+two independent ways** and no host-side test could have found either, because a
+host test cannot execute ARM code. The dispatch table held offsets and branched
+to them as addresses, and the handler let `get_base` return the window in R0 -
+where a SWI's first argument arrives. Nothing had ever called one of these SWIs,
+because every `*` command in the module reads the card's registers directly.

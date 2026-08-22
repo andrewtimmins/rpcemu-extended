@@ -27,9 +27,11 @@
 #include <functional>
 
 #include <map>
+#include <memory>
 #include <vector>
 
 class wxFileConfig;
+class wxNotebook;
 
 extern "C" {
 #include "rpcemu.h"
@@ -195,6 +197,38 @@ private:
 	wxStaticText *json_net_port_label_ = nullptr;
 	wxSpinCtrl *json_net_port_edit_ = nullptr;
 
+	/*
+	 * The explanatory paragraphs on these pages.
+	 *
+	 * Each one used to carry its own wrap width written into the call that
+	 * made it - 440, 460, 470 and 500 across the dialogue - and several a
+	 * smaller font as well. Every one of those widths is narrower than the
+	 * dialogue, which is sized by its widest page, so the text stopped short
+	 * of the right-hand edge and read as truncated; and the mixed sizes made
+	 * one window look like three. They go through MakeNote() now, which uses
+	 * the page's own font and re-wraps each paragraph to whatever width the
+	 * sizer gives it, so there is no width here to be wrong at another size
+	 * or under another platform's default font.
+	 *
+	 * The text is kept because wxStaticText::Wrap() inserts the line breaks
+	 * into the label itself: re-wrapping wider has to start from the original
+	 * string, or the old breaks stay in.
+	 */
+	struct Note {
+		wxStaticText *label = nullptr;
+		wxString text;
+		int wrapped_at = 0;
+	};
+	std::vector<std::shared_ptr<Note>> notes_;
+
+	wxStaticText *MakeNote(wxWindow *parent, const wxString &text = wxEmptyString);
+	void SetNoteText(wxStaticText *label, const wxString &text);
+	void WrapNotesToPageWidth();
+	int UsableNoteWidth(wxStaticText *label) const;
+
+	/* Kept so the paragraphs can be measured against the page area. */
+	wxNotebook *notebook_ = nullptr;
+
 	wxStaticText *mem_note_ = nullptr;
 	wxStaticText *compat_label_ = nullptr;
 	wxStaticText *hd_reset_note_ = nullptr;
@@ -207,6 +241,13 @@ private:
 	   podule already used elsewhere is hidden). */
 	std::vector<wxChoice *> podule_combos_;
 	wxChoice *copro_choice_ = nullptr;
+	wxChoice *copro_ram_choice_ = nullptr;
+	wxStaticText *copro_ram_label_ = nullptr;
+	/* The sizes currently offered, in KB, in the order the choice lists them.
+	   Rebuilt when the core changes, because what a processor can address is
+	   what decides them. */
+	std::vector<unsigned> copro_ram_sizes_;
+	void RebuildCoProcessorRamChoices(unsigned keep_kb);
 	std::vector<wxButton *> podule_config_btns_;
 	std::vector<wxString> podule_selection_;
 	std::vector<std::vector<wxString>> podule_item_names_;

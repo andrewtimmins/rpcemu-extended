@@ -36,6 +36,8 @@
 
 #include "cpu_rv32i.h"
 
+#include <string.h>
+
 #include <stddef.h>
 
 /* Opcodes, as the 7-bit field. Named as the RISC-V manual names them. */
@@ -109,47 +111,131 @@ fault(rv32i_state *s, uint32_t cause, uint32_t addr)
 static int
 in_range(const rv32i_state *s, uint32_t addr, uint32_t len)
 {
+	/* With a hook, what exists is whatever the decode behind it says exists,
+	   and a region may sit outside the RAM the card was given. The hook
+	   answers CPU_MEM_BUSERROR for an address that really is not there. */
+	if (s->mem.read != NULL || s->mem.write != NULL) {
+		(void) len;
+		return 1;
+	}
 	if (s->ram == NULL || s->ram_size < len) {
 		return 0;
 	}
 	return addr <= s->ram_size - len;
 }
 
-static uint32_t
-load32(const rv32i_state *s, uint32_t addr)
+/*
+ * One byte at a time when a hook is set, in ascending address order, because
+ * that is the order the decode behind it will report and log. Without a hook
+ * these stay what they were: a pointer into the array.
+ */
+static uint8_t
+load8(rv32i_state *s, uint32_t addr)
 {
-	const uint8_t *p = s->ram + addr;
+	if (s->mem.read != NULL) {
+		uint8_t val = 0;
 
-	return (uint32_t) p[0] | ((uint32_t) p[1] << 8) |
-	       ((uint32_t) p[2] << 16) | ((uint32_t) p[3] << 24);
+		switch (s->mem.read(s->mem.ctx, addr, &val)) {
+		case CPU_MEM_OK:
+			return val;
+		case CPU_MEM_STALL:
+			s->stalled = 1;
+			s->stall_addr = addr;
+			s->stall_is_write = 0;
+			return 0;
+		default:
+			fault(s, RV32I_FAULT_LOAD_ACCESS, addr);
+			return 0;
+		}
+	}
+	return s->ram[addr];
+}
+
+static void
+store8(rv32i_state *s, uint32_t addr, uint8_t val)
+{
+	if (s->mem.write != NULL) {
+		switch (s->mem.write(s->mem.ctx, addr, val)) {
+		case CPU_MEM_OK:
+			return;
+		case CPU_MEM_STALL:
+			s->stalled = 1;
+			s->stall_addr = addr;
+			s->stall_is_write = 1;
+			return;
+		default:
+			fault(s, RV32I_FAULT_STORE_ACCESS, addr);
+			return;
+		}
+	}
+	s->ram[addr] = val;
 }
 
 static uint32_t
-load16(const rv32i_state *s, uint32_t addr)
+load32(rv32i_state *s, uint32_t addr)
 {
-	const uint8_t *p = s->ram + addr;
+	if (s->mem.read != NULL) {
+		return (uint32_t) load8(s, addr)
+		     | ((uint32_t) load8(s, addr + 1) << 8)
+		     | ((uint32_t) load8(s, addr + 2) << 16)
+		     | ((uint32_t) load8(s, addr + 3) << 24);
+	}
+	{
+		const uint8_t *p = s->ram + addr;
 
-	return (uint32_t) p[0] | ((uint32_t) p[1] << 8);
+		return (uint32_t) p[0] | ((uint32_t) p[1] << 8) |
+		       ((uint32_t) p[2] << 16) | ((uint32_t) p[3] << 24);
+	}
+}
+
+static uint32_t
+load16(rv32i_state *s, uint32_t addr)
+{
+	if (s->mem.read != NULL) {
+		return (uint32_t) load8(s, addr)
+		     | ((uint32_t) load8(s, addr + 1) << 8);
+	}
+	{
+		const uint8_t *p = s->ram + addr;
+
+		return (uint32_t) p[0] | ((uint32_t) p[1] << 8);
+	}
 }
 
 static void
 store32(rv32i_state *s, uint32_t addr, uint32_t val)
 {
-	uint8_t *p = s->ram + addr;
+	if (s->mem.write != NULL) {
+		store8(s, addr, (uint8_t) val);
+		store8(s, addr + 1, (uint8_t) (val >> 8));
+		store8(s, addr + 2, (uint8_t) (val >> 16));
+		store8(s, addr + 3, (uint8_t) (val >> 24));
+		return;
+	}
+	{
+		uint8_t *p = s->ram + addr;
 
-	p[0] = (uint8_t) val;
-	p[1] = (uint8_t) (val >> 8);
-	p[2] = (uint8_t) (val >> 16);
-	p[3] = (uint8_t) (val >> 24);
+		p[0] = (uint8_t) val;
+		p[1] = (uint8_t) (val >> 8);
+		p[2] = (uint8_t) (val >> 16);
+		p[3] = (uint8_t) (val >> 24);
+	}
 }
 
 static void
 store16(rv32i_state *s, uint32_t addr, uint32_t val)
 {
-	uint8_t *p = s->ram + addr;
+	if (s->mem.write != NULL) {
+		store8(s, addr, (uint8_t) val);
+		store8(s, addr + 1, (uint8_t) (val >> 8));
+		return;
+	}
+	{
+		uint8_t *p = s->ram + addr;
 
-	p[0] = (uint8_t) val;
-	p[1] = (uint8_t) (val >> 8);
+		p[0] = (uint8_t) val;
+		p[1] = (uint8_t) (val >> 8);
+	}
 }
 
 /** Write a register, honouring x0 being hardwired to zero. */
@@ -164,6 +250,11 @@ set_reg(rv32i_state *s, uint32_t rd, uint32_t val)
 void
 rv32i_init(rv32i_state *s, uint8_t *ram, uint32_t ram_size)
 {
+	s->mem.ctx = NULL;
+	s->mem.read = NULL;
+	s->mem.write = NULL;
+	s->mem.can_stall = 0;
+
 	rv32i_reset(s, 0);
 	s->ram = ram;
 	s->ram_size = ram_size;
@@ -187,6 +278,11 @@ rv32i_reset(rv32i_state *s, uint32_t entry)
 	s->fault_cause = 0;
 	s->fault_addr = 0;
 	s->cycles = 0;
+
+	/* As for the other cores: a reset clears a waiting access. */
+	s->stalled = 0;
+	s->stall_addr = 0;
+	s->stall_is_write = 0;
 
 	/* Memory survives a reset, because on real hardware it does and because a
 	   card resets its core after the guest has loaded a program into it. */
@@ -301,6 +397,29 @@ branch_taken(uint32_t funct3, uint32_t a, uint32_t b)
 	}
 }
 
+/* Put the core back before the abandoned instruction. See cpu_mem.h. */
+static int
+rv32i_abandon(rv32i_state *s)
+{
+	memcpy(s->x, s->saved.x, sizeof(s->x));
+	s->pc = s->saved.pc;
+	return 0;
+}
+
+void
+rv32i_set_mem_hook(rv32i_state *s, const cpu_mem_hook *hook)
+{
+	if (hook == NULL) {
+		s->mem.ctx = NULL;
+		s->mem.read = NULL;
+		s->mem.write = NULL;
+		s->mem.can_stall = 0;
+	} else {
+		s->mem = *hook;
+	}
+	s->stalled = 0;
+}
+
 int
 rv32i_step(rv32i_state *s)
 {
@@ -311,6 +430,13 @@ rv32i_step(rv32i_state *s)
 
 	if (s->halted || s->faulted) {
 		return 0;
+	}
+	if (s->stalled) {
+		return 0;	/* waiting for the guest to answer */
+	}
+	if (s->mem.can_stall) {
+		memcpy(s->saved.x, s->x, sizeof(s->saved.x));
+		s->saved.pc = s->pc;
 	}
 
 	/* Fetch. A misaligned pc is its own exception in RISC-V, and since the C
@@ -393,7 +519,7 @@ rv32i_step(rv32i_state *s)
 				fault(s, RV32I_FAULT_LOAD_ACCESS, addr);
 				return 0;
 			}
-			a = s->ram[addr];
+			a = load8(s, addr);
 			set_reg(s, rd, (funct3 == 0) ? sign_extend(a, 8) : a);
 			break;
 
@@ -439,7 +565,7 @@ rv32i_step(rv32i_state *s)
 				fault(s, RV32I_FAULT_STORE_ACCESS, addr);
 				return 0;
 			}
-			s->ram[addr] = (uint8_t) b;
+			store8(s, addr, (uint8_t) b);
 			break;
 
 		case 1:	/* SH */
@@ -546,6 +672,12 @@ rv32i_step(rv32i_state *s)
 	default:
 		fault(s, RV32I_FAULT_ILLEGAL, insn);
 		return 0;
+	}
+
+	/* An access anywhere in the instruction may have stalled; a wide access
+	   is several byte accesses and any of them can be the one. */
+	if (s->stalled) {
+		return rv32i_abandon(s);
 	}
 
 	s->pc = next_pc;

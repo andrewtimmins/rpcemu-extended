@@ -59,7 +59,30 @@ const wxColour kHdColourMissing(120, 120, 120);
 const wxColour kHdColourEmpty(180, 120, 0);
 const wxColour kHdColourReady(27, 94, 32);
 const wxColour kHdColourBlocked(120, 120, 120);
-const wxColour kHdColourMuted(100, 100, 100);
+
+/*
+ * Secondary text takes its colour from the theme rather than a grey written
+ * down here. A fixed mid-grey is right on a light desktop and nearly invisible
+ * on a dark one, and this dialogue had one.
+ */
+wxColour MutedTextColour()
+{
+	return wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT);
+}
+
+/*
+ * The width to wrap a paragraph at before the dialogue has been laid out.
+ *
+ * It only has to be a sane starting point for Fit(): unwrapped, one of these
+ * paragraphs is a single line thousands of pixels wide and the dialogue would
+ * open wider than the display. Everything after the first layout re-wraps to
+ * the width the sizer actually hands out, so this number decides the initial
+ * shape of the window and nothing else.
+ */
+const int kNoteInitialWrap = 480;
+
+/* The border every page puts around its contents. */
+const int kPageMargin = 10;
 
 wxString FormatHardDiscSize(wxULongLong size_bytes)
 {
@@ -127,7 +150,153 @@ MachineEditDialog::MachineEditDialog(wxWindow *parent, const wxString &config_pa
 	UpdateHdStatus();
 	UpdateDiscDownloadAvailability();
 	Fit();
+	/* Now that the pages have a width, give the paragraphs all of it. Fit()
+	   again because a paragraph re-wrapped wider is shorter, and the dialogue
+	   was sized around the taller one. */
+	WrapNotesToPageWidth();
+	Fit();
 	CentreOnParent();
+}
+
+/*
+ * One of the explanatory paragraphs on these pages.
+ *
+ * Two things are deliberately not decided here: the font, which is the page's
+ * own so that every page reads at one size, and the width, which follows
+ * whatever the sizer gives the label. Add the result with wxEXPAND and it fills
+ * the page; the paragraph then re-wraps itself whenever the dialogue is
+ * resized, so a wider window shows longer lines rather than the same short ones
+ * with empty space beside them.
+ */
+wxStaticText *MachineEditDialog::MakeNote(wxWindow *parent, const wxString &text)
+{
+	auto note = std::make_shared<Note>();
+
+	note->label = new wxStaticText(parent, wxID_ANY, text);
+	note->text = text;
+	note->label->SetForegroundColour(MutedTextColour());
+	note->label->Wrap(kNoteInitialWrap);
+	note->wrapped_at = kNoteInitialWrap;
+
+	notes_.push_back(note);
+	return note->label;
+}
+
+/*
+ * Widen every paragraph to the width its page actually has, once.
+ *
+ * ★ THIS MUST NOT BE DRIVEN FROM A SIZE EVENT, which is how it was written
+ * first and why clicking Edit killed the Manager. wxStaticText::Wrap() rewrites
+ * the label and resizes the control, GTK allocates it again, and that delivers
+ * another wxEVT_SIZE - so a handler that wraps on resize calls itself. It is
+ * not even slowed down by only re-wrapping when the width changes, because
+ * every Wrap() changes the width. The core showed the cycle 52,000 frames deep:
+ * the lambda, Wrap(), DoSetSize(), gtk_widget_size_allocate, the lambda again.
+ *
+ * So the width is measured once here, after the dialogue has been laid out and
+ * from outside any size allocation, and that is the width the paragraph keeps.
+ * A paragraph cannot be measured in MakeNote() because inside a notebook a page
+ * has no useful width until the dialogue has been sized - which is what the
+ * fixed widths written into each call site were working around.
+ */
+void MachineEditDialog::WrapNotesToPageWidth()
+{
+	/*
+	 * Several passes, because wrapping the text changes how wide the pages want
+	 * to be and therefore how wide the dialogue ends up. One pass measured the
+	 * window as it was before Fit() had settled it, so the paragraphs kept a
+	 * width from an earlier, narrower window and stopped short of the edge -
+	 * which is exactly the fault this was supposed to remove, and it showed up
+	 * on the Co-Processor Card page where the paragraphs are longest.
+	 *
+	 * It settles after two, and the third is only there so a page that behaves
+	 * unexpectedly cannot leave the text wrapped to a stale width. This is a
+	 * plain loop and not a resize handler: it is called once from the
+	 * constructor, so nothing it does comes back round to it.
+	 */
+	for (int pass = 0; pass < 3; pass++) {
+		bool changed = false;
+
+		/* An unselected notebook page may not have been laid out, and a
+		   paragraph on it would then measure its parent as narrower than it
+		   really is. */
+		if (notebook_ != nullptr) {
+			for (size_t i = 0; i < notebook_->GetPageCount(); i++) {
+				notebook_->GetPage(i)->Layout();
+			}
+		}
+
+		for (const auto &note : notes_) {
+			const int width = UsableNoteWidth(note->label);
+
+			if (width <= 0 || width == note->wrapped_at) {
+				continue;
+			}
+			note->wrapped_at = width;
+			note->label->SetLabel(note->text);
+			note->label->Wrap(width);
+			changed = true;
+		}
+
+		Layout();
+		if (!changed) {
+			break;
+		}
+		/* Let the dialogue settle around the new shape before measuring
+		   again: this is what the single pass was missing. */
+		Fit();
+	}
+}
+
+/*
+ * How wide a paragraph may be: what its container has, less the border the
+ * pages put round their contents.
+ *
+ * Taken from the container rather than from the label, because a label's own
+ * width is a result of the last wrap and measuring it feeds the previous answer
+ * back in. The notebook's client area stands in for a page that has not been
+ * laid out yet.
+ */
+int MachineEditDialog::UsableNoteWidth(wxStaticText *label) const
+{
+	int width = 0;
+
+	if (label->GetParent() != nullptr) {
+		width = label->GetParent()->GetClientSize().GetWidth() - 2 * kPageMargin;
+	}
+
+	if (width < kNoteInitialWrap && notebook_ != nullptr) {
+		const int inner = notebook_->GetClientSize().GetWidth() - 2 * kPageMargin;
+		if (inner > width) {
+			width = inner;
+		}
+	}
+
+	return width < kNoteInitialWrap ? kNoteInitialWrap : width;
+}
+
+/*
+ * Change a paragraph's text. Goes through here rather than SetLabel() because
+ * the stored copy is what a later re-wrap starts from: setting the label
+ * directly would leave the paragraph wrapped correctly now and wrongly the next
+ * time the window is resized.
+ */
+void MachineEditDialog::SetNoteText(wxStaticText *label, const wxString &text)
+{
+	for (const auto &note : notes_) {
+		if (note->label != label) {
+			continue;
+		}
+		note->text = text;
+		note->label->SetLabel(text);
+		if (note->wrapped_at > 0) {
+			note->label->Wrap(note->wrapped_at);
+		}
+		return;
+	}
+
+	/* Not a registered paragraph: still do the useful thing. */
+	label->SetLabel(text);
 }
 
 void MachineEditDialog::BuildHardDiscPanel(wxWindow *parent, wxSizer *parent_sizer, HardDiscPanel &panel,
@@ -147,12 +316,11 @@ void MachineEditDialog::BuildHardDiscPanel(wxWindow *parent, wxSizer *parent_siz
 	card->Add(panel.badge, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 6);
 
 	panel.path_label = new wxStaticText(drive_panel, wxID_ANY, wxEmptyString);
-	panel.path_label->SetForegroundColour(kHdColourMuted);
+	panel.path_label->SetForegroundColour(MutedTextColour());
 	card->Add(panel.path_label, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 6);
 
 	panel.modified_label = new wxStaticText(drive_panel, wxID_ANY, wxEmptyString);
-	panel.modified_label->SetForegroundColour(kHdColourMuted);
-	panel.modified_label->SetFont(panel.modified_label->GetFont().Smaller());
+	panel.modified_label->SetForegroundColour(MutedTextColour());
 	card->Add(panel.modified_label, 0, wxEXPAND | wxLEFT | wxRIGHT, 6);
 
 	auto *actions = new wxBoxSizer(wxHORIZONTAL);
@@ -316,8 +484,7 @@ void MachineEditDialog::UpdateHostfsNote()
 		}
 	}
 
-	hostfs_note_->SetLabel(note);
-	hostfs_note_->Wrap(460);
+	SetNoteText(hostfs_note_, note);
 	Layout();
 }
 
@@ -344,25 +511,20 @@ wxWindow *MachineEditDialog::BuildSystemPage(wxWindow *parent)
 	    "folder and moves with it. An absolute path is used as given, and is how "
 	    "several machines can share one folder.");
 	hostfs_browse_ = new wxButton(page, wxID_ANY, "Browse...");
-	hostfs_note_ = new wxStaticText(page, wxID_ANY, wxEmptyString);
-	hostfs_note_->SetForegroundColour(kHdColourMuted);
-	hostfs_note_->SetFont(hostfs_note_->GetFont().Smaller());
+	hostfs_note_ = MakeNote(page);
 
-	get_disc_note_ = new wxStaticText(page, wxID_ANY, wxEmptyString);
-	get_disc_note_->SetForegroundColour(kHdColourMuted);
-	get_disc_note_->SetFont(get_disc_note_->GetFont().Smaller());
+	get_disc_note_ = MakeNote(page);
 	model_combo_ = new wxComboBox(page, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
 	mem_combo_ = new wxComboBox(page, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
 	vram_combo_ = new wxComboBox(page, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
 	refresh_slider_ = new wxSlider(page, wxID_ANY, 60, 20, 100);
 	refresh_label_ = new wxStaticText(page, wxID_ANY, "60 Hz");
-	compat_label_ = new wxStaticText(page, wxID_ANY, wxEmptyString);
-	compat_label_->SetMinSize(wxSize(460, -1));
+	compat_label_ = MakeNote(page);
 
 	/* Why the RAM/VRAM selectors are fixed on some models. Without this the
 	   greyed controls look like a fault rather than the shape of the machine
 	   (reported as issue #37). */
-	mem_note_ = new wxStaticText(page, wxID_ANY, wxEmptyString);
+	mem_note_ = MakeNote(page);
 
 	hostfs_browse_->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) {
 		wxDirDialog dlg(this, "Where should this machine's HostFS drive be?",
@@ -395,7 +557,7 @@ wxWindow *MachineEditDialog::BuildSystemPage(wxWindow *parent)
 	/* Not a graphics setting as such, but this is where what the machine's
 	   display costs is decided, and it is the only place a user would look. */
 	accelerators_check_ = new wxCheckBox(page, wxID_ANY,
-	    "Let the host do drawing it can do identically");
+	    "Use Host's Graphics Card to accelerate Sprite Plotting");
 	accelerators_check_->SetToolTip(
 	    "Some of what RISC OS draws a pixel at a time can be done by this "
 	    "computer instead, in one operation, with the same result. On a "
@@ -690,13 +852,10 @@ wxWindow *MachineEditDialog::BuildNetworkPage(wxWindow *parent)
 	form->Add(new wxStaticText(page, wxID_ANY, "Network:"), 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(network_combo_, 1, wxEXPAND);
 
-	auto *note = new wxStaticText(page, wxID_ANY,
+	auto *note = MakeNote(page,
 	    "NAT needs no configuration of this computer and suits every use: the "
 	    "guest sits behind it on a private address, and ports can be forwarded "
 	    "to it. Changes take effect after reset.");
-	note->Wrap(460);
-	note->SetForegroundColour(kHdColourMuted);
-	note->SetFont(note->GetFont().Smaller());
 
 	/*
 	 * Pyromaniac Networking: Charles Ferguson's JSON tun/tap server, which
@@ -723,7 +882,7 @@ wxWindow *MachineEditDialog::BuildNetworkPage(wxWindow *parent)
 	json_form->Add(json_net_port_label_, 0, wxALIGN_CENTER_VERTICAL);
 	json_form->Add(json_net_port_edit_, 0);
 
-	auto *json_note = new wxStaticText(json_parent, wxID_ANY,
+	auto *json_note = MakeNote(json_parent,
 	    "Frames are carried to and from a tun/tap JSON server, so this machine "
 	    "shares one virtual network with every other emulator connected to it, "
 	    "RISC OS Pyromaniac included. The server can run on another computer, "
@@ -732,9 +891,6 @@ wxWindow *MachineEditDialog::BuildNetworkPage(wxWindow *parent)
 	    "every frame, and being on both would deliver everything twice. "
 	    "Addresses are not handled for you: anything sharing this network needs "
 	    "an address on it that does not collide.");
-	json_note->Wrap(440);
-	json_note->SetForegroundColour(kHdColourMuted);
-	json_note->SetFont(json_note->GetFont().Smaller());
 
 	json_box->Add(json_net_check_, 0, wxALL, 6);
 	json_box->Add(json_form, 0, wxEXPAND | wxLEFT | wxRIGHT, 6);
@@ -771,10 +927,8 @@ wxWindow *MachineEditDialog::BuildDrivesPage(wxWindow *parent)
 	BuildHardDiscPanel(page, sizer, hd4_panel_, 4, 0);
 	BuildHardDiscPanel(page, sizer, hd5_panel_, 5, 1);
 
-	hd_reset_note_ = new wxStaticText(page, wxID_ANY,
-	                                  "Changes to hard discs take effect after emulator reset.");
-	hd_reset_note_->SetForegroundColour(kHdColourMuted);
-	hd_reset_note_->SetFont(hd_reset_note_->GetFont().Smaller());
+	hd_reset_note_ = MakeNote(page,
+	    "Changes to hard discs take effect after emulator reset.");
 	sizer->Add(hd_reset_note_, 0, wxEXPAND | wxTOP, 6);
 
 	auto *outer = new wxBoxSizer(wxVERTICAL);
@@ -796,7 +950,7 @@ wxWindow *MachineEditDialog::BuildPodulesPage(wxWindow *parent)
 
 
 /*
- * The Co-Processor Support page: what is fitted to the OPEN Bus second processor
+ * The Co-Processor Card page: what is fitted to the OPEN Bus second processor
  * slot.
  *
  * The list of cores comes from openbus_coproc_core_name() rather than being
@@ -809,11 +963,13 @@ wxWindow *MachineEditDialog::BuildCoProcessorPage(wxWindow *parent)
 	auto *page = new wxPanel(parent);
 	auto *sizer = new wxBoxSizer(wxVERTICAL);
 
-	auto *intro = new wxStaticText(page, wxID_ANY,
+	auto *intro = MakeNote(page,
 	    "The Risc PC's OPEN Bus is its second processor interface: a card on it "
 	    "is a full bus master, not a podule. RPCEmu Extended emulates a "
 	    "co-processor card for that slot, with a choice of processor.");
-	intro->Wrap(460);
+	/* The opening paragraph is the page's own description, not an aside, so it
+	   keeps the ordinary text colour. */
+	intro->SetForegroundColour(wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT));
 	sizer->Add(intro, 0, wxEXPAND | wxBOTTOM, 10);
 
 	auto *row = new wxBoxSizer(wxHORIZONTAL);
@@ -821,10 +977,15 @@ wxWindow *MachineEditDialog::BuildCoProcessorPage(wxWindow *parent)
 	         wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
 
 	copro_choice_ = new wxChoice(page, wxID_ANY);
+	/* ★ The order must match the openbus_coproc_core enum, because the
+	   selection index is turned into a core by subtracting one. A new core
+	   goes on the end of both. */
 	copro_choice_->Append("None (empty slot)");
 	copro_choice_->Append("RISC-V RV32IM");
 	copro_choice_->Append("MOS 6502");
 	copro_choice_->Append("Zilog Z80");
+	copro_choice_->Append("WDC 65C02 (CMOS 6502)");
+	copro_choice_->Append("Intel 8080");
 	copro_choice_->SetSelection(0);
 	copro_choice_->SetToolTip(
 	    "Fits a co-processor card to the second processor slot. The card carries "
@@ -833,32 +994,110 @@ wxWindow *MachineEditDialog::BuildCoProcessorPage(wxWindow *parent)
 	row->Add(copro_choice_, 0, wxALIGN_CENTER_VERTICAL);
 	sizer->Add(row, 0, wxEXPAND | wxBOTTOM, 10);
 
-	auto *detail = new wxStaticText(page, wxID_ANY,
+	/*
+	 * How much RAM the card carries.
+	 *
+	 * The list is per core rather than fixed, because the ceiling is not a
+	 * preference: a 6502 or a Z80 cannot form an address above &FFFF, so 64K
+	 * is the whole of what they can reach and offering more would be offering
+	 * memory the processor has no way to address. RV32I has a 32-bit space, so
+	 * its list runs up to a size chosen for the host's sake instead.
+	 */
+	auto *ram_row = new wxBoxSizer(wxHORIZONTAL);
+	copro_ram_label_ = new wxStaticText(page, wxID_ANY, "Card RAM:");
+	ram_row->Add(copro_ram_label_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+
+	copro_ram_choice_ = new wxChoice(page, wxID_ANY);
+	copro_ram_choice_->SetToolTip(
+	    "How much memory the card carries. This is the processor's whole "
+	    "address space, so the largest offered is what the fitted processor "
+	    "can address: 64K for the 6502 and the Z80, more for RV32IM.\n\n"
+	    "A program on the card never sees the host's memory, and the card "
+	    "takes this much when the machine starts.");
+	ram_row->Add(copro_ram_choice_, 0, wxALIGN_CENTER_VERTICAL);
+	sizer->Add(ram_row, 0, wxEXPAND | wxBOTTOM, 10);
+
+	auto *detail = MakeNote(page,
 	    "Programs are loaded and run through the RPCEmuCoPro module in the "
 	    "guest, which provides the CoPro_* SWIs and the *CoProLoad, *CoProRun, "
 	    "*CoProInfo and *CoProStatus commands. Nothing else in RISC OS knows "
 	    "about this card: no such card was ever made, so there is no software "
 	    "for it beyond what you write yourself. See docs/openbus.md.");
-	detail->Wrap(460);
-	/* The theme's own colour for secondary text, not a grey written down here:
-	   a fixed mid-grey reads as intended on a light desktop and nearly
-	   disappears on a dark one. */
-	detail->SetForegroundColour(
-	    wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
 	sizer->Add(detail, 0, wxEXPAND | wxBOTTOM, 10);
 
-	auto *note = new wxStaticText(page, wxID_ANY,
+	auto *note = MakeNote(page,
 	    "Changing the second processor takes effect when this machine next "
 	    "starts, as fitting a card would.");
-	note->Wrap(460);
-	note->SetForegroundColour(
-	    wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
 	sizer->Add(note, 0, wxEXPAND);
 
 	auto *outer = new wxBoxSizer(wxVERTICAL);
 	outer->Add(sizer, 1, wxEXPAND | wxALL, 10);
 	page->SetSizer(outer);
 	return page;
+}
+
+/*
+ * Fill the card RAM list for whichever core is selected, keeping @keep_kb if it
+ * is still offered and falling back to the core's default if it is not.
+ *
+ * Sizes are powers of two from 4K up to what the core can address. The default
+ * is marked rather than left to be guessed, because "1 MB" means nothing to
+ * somebody who has not read the docs and "1 MB (default)" does.
+ */
+void MachineEditDialog::RebuildCoProcessorRamChoices(unsigned keep_kb)
+{
+	const int selection = copro_choice_->GetSelection();
+	const bool fitted = selection > 0;
+
+	copro_ram_choice_->Clear();
+	copro_ram_sizes_.clear();
+
+	if (!fitted) {
+		/* Nothing in the slot: the question does not arise. */
+		copro_ram_choice_->Append("-");
+		copro_ram_choice_->SetSelection(0);
+		copro_ram_choice_->Enable(false);
+		copro_ram_label_->Enable(false);
+		return;
+	}
+
+	{
+		const auto core = static_cast<openbus_coproc_core>(selection - 1);
+		const unsigned max_kb = openbus_coproc_ram_max(core) / 1024u;
+		const unsigned def_kb = openbus_coproc_ram_default(core) / 1024u;
+		const unsigned min_kb = OPENBUS_COPROC_RAM_MIN / 1024u;
+		int keep_index = -1;
+		int def_index = 0;
+
+		const unsigned flat_kb = openbus_coproc_ram_flat_limit(core) / 1024u;
+
+		for (unsigned kb = min_kb; kb <= max_kb; kb *= 2u) {
+			wxString label = (kb >= 1024u)
+			    ? wxString::Format("%u MB", kb / 1024u)
+			    : wxString::Format("%u KB", kb);
+
+			if (kb == def_kb) {
+				label += " (default)";
+				def_index = (int) copro_ram_sizes_.size();
+			} else if (kb > flat_kb) {
+				/* Said here rather than left to be discovered: a 6502
+				   cannot name an address above &FFFF, so memory beyond
+				   its flat space is only reachable by paging it through
+				   a window. Offering it silently would look like a
+				   promise the processor cannot keep. */
+				label += " (needs paging)";
+			}
+			if (kb == keep_kb) {
+				keep_index = (int) copro_ram_sizes_.size();
+			}
+			copro_ram_sizes_.push_back(kb);
+			copro_ram_choice_->Append(label);
+		}
+
+		copro_ram_choice_->SetSelection(keep_index >= 0 ? keep_index : def_index);
+		copro_ram_choice_->Enable(true);
+		copro_ram_label_->Enable(true);
+	}
 }
 
 /*
@@ -876,13 +1115,14 @@ wxWindow *MachineEditDialog::BuildCoProcessorPage(wxWindow *parent)
 void MachineEditDialog::BuildUi()
 {
 	auto *notebook = new wxNotebook(this, wxID_ANY);
+	notebook_ = notebook;
 
 	notebook->AddPage(BuildSystemPage(notebook), "System", true);
 	notebook->AddPage(BuildOptionsPage(notebook), "Options");
 	notebook->AddPage(BuildNetworkPage(notebook), "Network");
 	notebook->AddPage(BuildDrivesPage(notebook), "IDE Drives");
 	notebook->AddPage(BuildPodulesPage(notebook), "Podules");
-	notebook->AddPage(BuildCoProcessorPage(notebook), "Co-Processor Support");
+	notebook->AddPage(BuildCoProcessorPage(notebook), "Co-Processor Card");
 
 	auto *button_row = new wxBoxSizer(wxHORIZONTAL);
 	button_row->AddStretchSpacer();
@@ -902,6 +1142,21 @@ void MachineEditDialog::BuildUi()
 	});
 	gfxcard_check_->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent &event) {
 		gfxcard_boot_check_->Enable(gfxcard_check_->GetValue());
+		event.Skip();
+	});
+	copro_choice_->Bind(wxEVT_CHOICE, [this](wxCommandEvent &event) {
+		/* Keep what is selected if the new core can also do it: changing
+		   from a Z80 to a 6502 should not silently move a machine off 64K. */
+		unsigned keep_kb = 0;
+
+		if (copro_ram_choice_ != nullptr) {
+			const int at = copro_ram_choice_->GetSelection();
+
+			if (at >= 0 && (size_t) at < copro_ram_sizes_.size()) {
+				keep_kb = copro_ram_sizes_[(size_t) at];
+			}
+		}
+		RebuildCoProcessorRamChoices(keep_kb);
 		event.Skip();
 	});
 	network_combo_->Bind(wxEVT_COMBOBOX, &MachineEditDialog::OnNetworkChanged, this);
@@ -1185,18 +1440,6 @@ Model MachineEditDialog::CurrentModelSelection() const
 }
 
 /*
- * Width the notes under the VRAM selector wrap to.
- *
- * A fixed figure rather than one measured from the window. Inside a notebook
- * the page has no useful size until the dialogue has been laid out, and these
- * notes are set during construction, so measuring gave a width from before the
- * dialogue was sized: the text wrapped to the wrong number of lines and then
- * overlapped the checkboxes beneath it. This matches the width the note's own
- * column actually gets.
- */
-static const int kNoteWrapWidth = 470;
-
-/*
  * Grow the dialogue to fit its contents, never shrink it.
  *
  * The notes appear and disappear as the model changes, and a taller note needs
@@ -1228,11 +1471,10 @@ void MachineEditDialog::SetMemoryNote(const char *text)
 		return;
 	}
 	if (text == nullptr || text[0] == '\0') {
-		mem_note_->SetLabel(wxEmptyString);
+		SetNoteText(mem_note_, wxEmptyString);
 		mem_note_->Show(false);
 	} else {
-		mem_note_->SetLabel(wxString::FromUTF8(text));
-		mem_note_->Wrap(kNoteWrapWidth);
+		SetNoteText(mem_note_, wxString::FromUTF8(text));
 		mem_note_->Show(true);
 	}
 	GrowToFitContents();
@@ -1305,9 +1547,8 @@ void MachineEditDialog::UpdateRomModelCompatibility()
 	const wxScopedCharBuffer rom_dir_utf8 = rom_dir.utf8_str();
 
 	if (!rom_model_is_compatible(model, rom_dir_utf8.data(), msg, sizeof(msg))) {
-		compat_label_->SetLabel(wxString::FromUTF8(msg));
+		SetNoteText(compat_label_, wxString::FromUTF8(msg));
 		compat_label_->SetForegroundColour(wxColour(176, 0, 32));
-		compat_label_->Wrap(kNoteWrapWidth);
 		GrowToFitContents();
 		return;
 	}
@@ -1321,9 +1562,9 @@ void MachineEditDialog::UpdateRomModelCompatibility()
 	} else if (addressing == RomAddressing_26Bit) {
 		label = "26-bit ROM - OK for this model";
 	} else {
-		compat_label_->SetLabel("ROM type unknown - 26-bit CPUs need RISC OS 3.xx ROMs");
+		SetNoteText(compat_label_,
+		    "ROM type unknown - 26-bit CPUs need RISC OS 3.xx ROMs");
 		compat_label_->SetForegroundColour(wxColour(27, 94, 32));
-		compat_label_->Wrap(kNoteWrapWidth);
 		GrowToFitContents();
 		return;
 	}
@@ -1332,9 +1573,8 @@ void MachineEditDialog::UpdateRomModelCompatibility()
 		label += wxString(" (") + wxString::FromUTF8(detail) + wxString(")");
 	}
 
-	compat_label_->SetLabel(label);
+	SetNoteText(compat_label_, label);
 	compat_label_->SetForegroundColour(wxColour(27, 94, 32));
-	compat_label_->Wrap(kNoteWrapWidth);
 	GrowToFitContents();
 }
 
@@ -1407,13 +1647,10 @@ wxSizer *MachineEditDialog::BuildPoduleSection(wxWindow *parent)
 	}
 	box->Add(grid, 0, wxEXPAND);
 
-	auto *note = new wxStaticText(p, wxID_ANY,
+	auto *note = MakeNote(p,
 	    "Eight expansion-card slots. Slot 0 (Support) and the network card are "
 	    "built-in. A podule can only be assigned to one slot; changes take "
 	    "effect after reset.");
-	note->Wrap(500);
-	note->SetForegroundColour(kHdColourMuted);
-	note->SetFont(note->GetFont().Smaller());
 	box->Add(note, 0, wxEXPAND | wxTOP, 8);
 
 	RebuildPoduleChoices();
@@ -1683,6 +1920,13 @@ void MachineEditDialog::LoadSettings()
 		}
 	}
 
+	{
+		long ram_kb = 0;
+
+		settings.Read("openbus_ram_kb", &ram_kb, 0);
+		RebuildCoProcessorRamChoices(ram_kb > 0 ? (unsigned) ram_kb : 0u);
+	}
+
 	long gfxcard = 0;
 	long accelerators = 1;
 	settings.Read("gfxcard_enabled", &gfxcard, 0L);
@@ -1919,6 +2163,27 @@ void MachineEditDialog::SaveSettings()
 			}
 		}
 		settings.Write("openbus_card", name);
+
+		/* Written as zero when the slot is empty or the core's default is
+		   chosen, so a machine that has not been given a size does not
+		   acquire one - and so the default can be changed later without
+		   every machine being pinned to the old one. */
+		long ram_kb = 0;
+
+		if (selection > 0) {
+			const int at = copro_ram_choice_->GetSelection();
+
+			if (at >= 0 && (size_t) at < copro_ram_sizes_.size()) {
+				const auto core =
+				    static_cast<openbus_coproc_core>(selection - 1);
+				const unsigned kb = copro_ram_sizes_[(size_t) at];
+
+				if (kb != openbus_coproc_ram_default(core) / 1024u) {
+					ram_kb = (long) kb;
+				}
+			}
+		}
+		settings.Write("openbus_ram_kb", ram_kb);
 	}
 
 	settings.Write("gfxcard_enabled",

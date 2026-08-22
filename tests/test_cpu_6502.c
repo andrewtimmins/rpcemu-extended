@@ -152,7 +152,11 @@ test_sum_loop(void)
 	check_u32("10 down to 1 summed to 55", cpu.a, 55);
 	check_u32("and 55 reached memory", ram[0x0200], 55);
 	check_u32("the accumulator is the exit code", cpu.exit_code, 55);
-	check("cycles were counted", cpu.cycles == 2 + 10 * 5 + 2);
+	/* Cycles, not instructions: LDA #n 2, LDX #n 2, then ten iterations of
+	   STX zp 3, CLC 2, ADC zp 3, DEX 2 with a BNE at 3 taken nine times and
+	   2 on the tenth, then STA abs 4 and BRK 7. */
+	check("cycles were counted",
+	      cpu.cycles == 2 + 2 + 10 * (3 + 2 + 3 + 2) + 9 * 3 + 2 + 4 + 7);
 	/* BRK is two bytes on real hardware even though nothing reads the second,
 	   so a core single-stepped past a halt resumes in the right place. */
 	check_u32("BRK consumed its second byte",
@@ -552,13 +556,25 @@ test_budget(void)
 	printf("\nRunning on a budget, stopping and resuming:\n");
 
 	load(prog, sizeof(prog));
-	check("a run uses exactly the budget it was given",
-	      cpu6502_run(&cpu, 9) == 9);
-	check("and is not finished", !cpu.halted && !cpu.faulted);
-	check_u32("having got four iterations in", cpu.x, 0x64 - 4);
+	{
+		/* LDX #n is 2 and an iteration is DEX 2 plus a taken BNE 3, so a
+		   budget of 12 is the setup and two iterations. An instruction
+		   cannot be split, so a run reaches at least its budget and
+		   overshoots by at most the cost of its last instruction. */
+		const int used = cpu6502_run(&cpu, 12);
 
-	check("a second run continues from there", cpu6502_run(&cpu, 10) == 10);
-	check_u32("reaching nine", cpu.x, 0x64 - 9);
+		check("a run uses at least its budget", used >= 12 && used <= 12 + 3);
+		check("and is not finished", !cpu.halted && !cpu.faulted);
+		check_u32("having got two iterations in", cpu.x, 0x64 - 2);
+	}
+
+	{
+		const int used = cpu6502_run(&cpu, 10);
+
+		check("a second run continues from there",
+		      used >= 10 && used <= 10 + 3);
+		check_u32("reaching four", cpu.x, 0x64 - 4);
+	}
 
 	check("and it eventually finishes", run_to_stop() && cpu.halted);
 	check_u32("with the loop having counted down to zero", cpu.x, 0);
@@ -588,6 +604,255 @@ test_reset(void)
 	check("and it runs again", run_to_stop() && cpu.a == 0x7f);
 }
 
+/* ---- the 65C02, which is this core with its CMOS flag set --------------- */
+
+/*
+ * ★ WHAT MAKES THIS WORTH TESTING SEPARATELY. The CMOS part is not "the same
+ * chip with more instructions": it also changes two behaviours that existing
+ * NMOS code could depend on. So the cases below are in three groups - the new
+ * instructions do the right thing, the fixed behaviours are fixed, and the new
+ * instructions do NOT exist on an NMOS part. That last group matters most: a
+ * core that quietly executed 65C02 opcodes on a 6502 would make software look
+ * portable when it is not.
+ */
+static void
+load_cmos(const uint8_t *prog, size_t len)
+{
+	load(prog, len);
+	cpu6502_set_cmos(&cpu, 1);
+	cpu6502_reset(&cpu, PROG_BASE);
+}
+
+static void
+test_cmos_instructions(void)
+{
+	printf("\n65C02: the instructions the NMOS part does not have:\n");
+
+	{
+		/* BRA is an unconditional branch, which the NMOS part lacks
+		   entirely - a program wanting one had to use a flag it knew. */
+		const uint8_t prog[] = { 0x80, 0x02, 0xa9, 0xff, 0xa9, 0x2a, 0x00 };
+
+		load_cmos(prog, sizeof(prog));
+		check("BRA branches", run_to_stop() && cpu.halted);
+		check_u32("over the instruction it skipped", cpu.a, 0x2a);
+	}
+
+	{
+		/* STZ: store zero without spending a register on it. */
+		const uint8_t prog[] = { 0xa9, 0xff, 0x85, 0x40, 0x64, 0x40, 0x00 };
+
+		load_cmos(prog, sizeof(prog));
+		check("STZ runs", run_to_stop());
+		check_u32("and zeroed the byte", ram[0x0040], 0);
+	}
+
+	{
+		/* INC A and DEC A: the NMOS part can only increment memory or the
+		   index registers. */
+		const uint8_t prog[] = { 0xa9, 0x10, 0x1a, 0x1a, 0x3a, 0x00 };
+
+		load_cmos(prog, sizeof(prog));
+		check("INC A and DEC A run", run_to_stop());
+		check_u32("10 + 1 + 1 - 1 = 11", cpu.a, 0x11);
+	}
+
+	{
+		/* PHX/PLY and friends: the NMOS part can only push A and P. */
+		const uint8_t prog[] = {
+			0xa2, 0x77,		/* LDX #&77 */
+			0xda,			/* PHX      */
+			0x7a,			/* PLY      */
+			0x98,			/* TYA      */
+			0x00
+		};
+
+		load_cmos(prog, sizeof(prog));
+		check("PHX then PLY runs", run_to_stop());
+		check_u32("X went out and came back in Y", cpu.a, 0x77);
+	}
+
+	{
+		/* TSB sets the bits of A in memory and reports whether any were
+		   already there. */
+		const uint8_t prog[] = {
+			0xa9, 0x0f, 0x85, 0x50,	/* &50 = &0f */
+			0xa9, 0xf0,		/* A = &f0   */
+			0x04, 0x50,		/* TSB &50   */
+			0x00
+		};
+
+		load_cmos(prog, sizeof(prog));
+		check("TSB runs", run_to_stop());
+		check_u32("the bits are now set", ram[0x0050], 0xff);
+		check("and Z said none of them were already", flag(CPU6502_FLAG_Z));
+	}
+
+	{
+		/* TRB clears them again. */
+		const uint8_t prog[] = {
+			0xa9, 0xff, 0x85, 0x51,
+			0xa9, 0x0f,
+			0x14, 0x51,		/* TRB &51 */
+			0x00
+		};
+
+		load_cmos(prog, sizeof(prog));
+		check("TRB runs", run_to_stop());
+		check_u32("the bits are cleared", ram[0x0051], 0xf0);
+		check("and Z said they had been set", !flag(CPU6502_FLAG_Z));
+	}
+
+	{
+		/* LDA (zp): indirect with no index, the addition most code uses. */
+		const uint8_t prog[] = {
+			0xa9, 0x00, 0x85, 0x60,	/* &60 = &3000 */
+			0xa9, 0x30, 0x85, 0x61,
+			0xb2, 0x60,		/* LDA (&60) */
+			0x00
+		};
+
+		/* After load_cmos, which clears the RAM. */
+		load_cmos(prog, sizeof(prog));
+		ram[0x3000] = 0x5c;
+		check("LDA (zp) runs", run_to_stop());
+		check_u32("and read through the pointer", cpu.a, 0x5c);
+	}
+
+	{
+		/* JMP (abs,X): a jump table without writing to your own code. */
+		const uint8_t prog[] = {
+			0xa2, 0x02,		/* LDX #2, so the second entry */
+			0x7c, 0x00, 0x31,	/* JMP (&3100,X) */
+			0x00
+		};
+
+		load_cmos(prog, sizeof(prog));
+		ram[0x3102] = 0x00;
+		ram[0x3103] = 0x32;	/* -> &3200 */
+		ram[0x3200] = 0xa9;	/* LDA #&99 */
+		ram[0x3201] = 0x99;
+		ram[0x3202] = 0x00;	/* BRK */
+		check("JMP (abs,X) runs", run_to_stop());
+		check_u32("through the table entry X selected", cpu.a, 0x99);
+	}
+
+	{
+		/* STP stops the core, which on this card is what "finished" means. */
+		const uint8_t prog[] = { 0xa9, 0x41, 0xdb };
+
+		load_cmos(prog, sizeof(prog));
+		check("STP stops the core", run_to_stop() && cpu.halted);
+		check_u32("with the accumulator as the result", cpu.exit_code, 0x41);
+	}
+}
+
+/* The two landing sites for the JMP (abs) test, and the pointer that reaches
+   one or the other depending on which part is running. */
+static void
+plant_jmp_targets(void)
+{
+	ram[0x30ff] = 0x00;
+	ram[0x3000] = 0x40;	/* where an NMOS part looks for the high byte */
+	ram[0x3100] = 0x50;	/* where a CMOS part looks                    */
+	ram[0x4000] = 0xa9;	/* LDA #&11 : BRK, at &4000                   */
+	ram[0x4001] = 0x11;
+	ram[0x4002] = 0x00;
+	ram[0x5000] = 0xa9;	/* LDA #&22 : BRK, at &5000                   */
+	ram[0x5001] = 0x22;
+	ram[0x5002] = 0x00;
+}
+
+static void
+test_cmos_fixes(void)
+{
+	printf("\n65C02: the two behaviours it changes:\n");
+
+	{
+		/*
+		 * ★ THE JMP (abs) PAGE-BOUNDARY BUG. An NMOS part reads the high
+		 * byte of the target from the same page as the low one, so
+		 * JMP (&30FF) takes its high byte from &3000 rather than &3100. The
+		 * CMOS part fixed it. Both are checked, because a core that fixed
+		 * it for the NMOS part too would break every program written to
+		 * work around it.
+		 */
+		const uint8_t prog[] = { 0x6c, 0xff, 0x30 };
+
+		/* Planted after each load, which clears the RAM. */
+		load(prog, sizeof(prog));	/* NMOS */
+		plant_jmp_targets();
+		check("an NMOS JMP (abs) runs", run_to_stop());
+		check_u32("and wrapped within the page, as the part does", cpu.a, 0x11);
+
+		load_cmos(prog, sizeof(prog));
+		plant_jmp_targets();
+		check("a CMOS JMP (abs) runs", run_to_stop());
+		check_u32("and read the high byte from the next page", cpu.a, 0x22);
+	}
+
+	{
+		/*
+		 * Decimal arithmetic: the CMOS part sets N and Z from the BCD
+		 * result. On the NMOS part Z comes from the binary sum, which is
+		 * why 0x99 + 0x01 leaves it clear there and set here.
+		 */
+		const uint8_t prog[] = {
+			0xf8,			/* SED      */
+			0xa9, 0x99,		/* LDA #&99 */
+			0x18,			/* CLC      */
+			0x69, 0x01,		/* ADC #&01 */
+			0x00
+		};
+
+		load_cmos(prog, sizeof(prog));
+		check("CMOS decimal ADC runs", run_to_stop());
+		check_u32("99 + 01 = 00 in BCD", cpu.a, 0x00);
+		check("with carry out", flag(CPU6502_FLAG_C));
+		check("and Z set from the BCD result", flag(CPU6502_FLAG_Z));
+	}
+}
+
+static void
+test_cmos_only_on_cmos(void)
+{
+	printf("\n65C02: and none of it exists on an NMOS part:\n");
+
+	{
+		static const uint8_t cmos_only[] = {
+			0x80, 0x1a, 0x3a, 0x5a, 0x7a, 0xda, 0xfa, 0x64, 0x74,
+			0x9c, 0x9e, 0x04, 0x0c, 0x14, 0x1c, 0x89, 0x34, 0x3c,
+			0x12, 0x32, 0x52, 0x72, 0x92, 0xb2, 0xd2, 0xf2, 0x7c,
+			0xdb
+		};
+		unsigned i;
+		int all_faulted = 1;
+
+		for (i = 0; i < sizeof(cmos_only); i++) {
+			const uint8_t prog[] = { cmos_only[i], 0x00, 0x00, 0x00 };
+
+			load(prog, sizeof(prog));	/* NMOS, not CMOS */
+			(void) cpu6502_step(&cpu);
+			if (!cpu.faulted) {
+				printf("      &%02x did not fault on an NMOS part\n",
+				       cmos_only[i]);
+				all_faulted = 0;
+			}
+		}
+		check("every CMOS-only opcode faults on a 6502", all_faulted);
+	}
+
+	{
+		/* And the same opcode is fine on the CMOS part, so the guard is
+		   about the part and not about the opcode being unimplemented. */
+		const uint8_t prog[] = { 0x80, 0x00, 0x00 };
+
+		load_cmos(prog, sizeof(prog));
+		(void) cpu6502_step(&cpu);
+		check("while BRA is fine on a 65C02", !cpu.faulted);
+	}
+}
+
 int
 main(void)
 {
@@ -603,6 +868,9 @@ main(void)
 	test_shifts_and_bit();
 	test_faults();
 	test_budget();
+	test_cmos_instructions();
+	test_cmos_fixes();
+	test_cmos_only_on_cmos();
 	test_reset();
 
 	printf("\n%d failure(s)\n", failures);
