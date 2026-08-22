@@ -1593,6 +1593,13 @@ void EmulatorHost::MainEmuLoop()
 				network_nat_rate++;
 				if ((network_nat_rate & 0x3u) == 0u) {
 					network_nat_poll();
+				} else {
+					/* The Access relay on every turn: it is a
+					   non-blocking read, and ShareFS's lock-step
+					   acknowledgements make the delay in noticing a
+					   datagram the transfer rate itself. See
+					   network_nat_poll_wires(). */
+					network_nat_poll_wires();
 				}
 			}
 		}

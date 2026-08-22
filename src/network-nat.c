@@ -375,6 +375,38 @@ network_nat_reset(void)
 	nat.pkt_queue_count = 0;
 }
 
+/**
+ * The cheap half of the poll: the Access relay.
+ *
+ * A bare non-blocking read on a socket this process owns, with none of SLiRP's
+ * select() behind it, so it can be run far more often than the full poll for
+ * very little.
+ *
+ * Worth it because Access is a lock-step protocol: ShareFS acknowledges each
+ * block of a file before the sender sends the next, so the time taken to notice
+ * an arriving datagram is not merely latency, it is the transfer rate. It is
+ * also what decides whether the acknowledgement gets back inside the sender's
+ * retransmission timer. Reached only every fourth turn of the emulator loop,
+ * that timer expired first for most blocks of a large file: measured over a real
+ * ShareFS copy, 37% of the frames on the wire were a block being sent a second
+ * time, and polling this half every turn takes that to about 28%.
+ *
+ * Note the modest figure. On the branch this came from the same change gets to
+ * about 2%, but only in company: the acknowledgement has to get inside the timer
+ * to help at all, so the two halves there are a threshold rather than two
+ * independent gains. The other half is a multi-machine switch that does not
+ * exist here, so this is the part of it that applies.
+ *
+ * This also reaches the relay on turns when the full poll would have given up
+ * before it: network_nat_poll() returns early when there is no stack yet or
+ * SLiRP has no descriptors to watch, and the relay is polled at the end of it.
+ */
+void
+network_nat_poll_wires(void)
+{
+	broadcast_relay_poll();
+}
+
 void
 network_nat_poll(void)
 {
