@@ -1260,34 +1260,34 @@ void ManagerFrame::StartMachine(const wxString &name, bool resume)
 	}
 
 	/*
-	 * ★ --datadir is passed on ONLY when it cannot do any harm, which is not
-	 * always.
-	 *
 	 * The child is a fresh process and works its data directory out from
-	 * scratch, so a Manager started with an explicit --datadir would list the
-	 * machines in that folder and then launch them against a different one.
-	 * Passing it on fixes that.
+	 * scratch, so without this a Manager started with an explicit --datadir
+	 * would list the machines in one folder and launch them against another.
 	 *
-	 * But --datadir does more than name the data directory: it makes the
-	 * resource directory the same folder (DATA_DIR_FROM_CLI in
-	 * data_paths.cpp). In the ordinary installation those are two different
-	 * places - machines and settings under the user's data directory, and
-	 * default/, resources/ and the podule ROMs beside the binary. Passing
-	 * --datadir there sent the child looking for all of that in the data
-	 * directory, where it is not, and the machine failed to find its CMOS
-	 * template, its HostFS defaults and its card ROMs.
+	 * Passed unconditionally, which it could not be before: --datadir used to
+	 * make the resource directory the same folder as well, so handing it to the
+	 * child sent it looking for the podule ROMs, default/ and the CMOS template
+	 * in the data directory, where in an ordinary install they are not. The test
+	 * here was therefore "only when the two are already the same folder", which
+	 * meant the data directory silently was NOT passed on in exactly the
+	 * arrangement macOS always has - payload in the bundle, data outside it.
 	 *
-	 * The two are only ever the same folder when the directory was given
-	 * explicitly, which is exactly when the child needs telling. So that is
-	 * the test: same folder, pass it on; different folders, say nothing and
-	 * let the child resolve them the way this process did.
+	 * --datadir now names only the data directory and the payload is looked for
+	 * on its own merits (DATA_DIR_FROM_CLI in data_paths.cpp), so there is
+	 * nothing left to be careful about, and both processes agree on both
+	 * directories.
 	 */
 	const wxString datadir = wxString::FromUTF8(rpcemu_get_datadir());
-	const wxString resourcedir = wxString::FromUTF8(rpcemu_get_resourcedir());
 
-	if (!datadir.empty() && datadir == resourcedir) {
+	if (!datadir.empty()) {
 		cmd << " --datadir \"" << datadir << '"';
 	}
+
+	/*
+	 * The payload is deliberately NOT passed on. The child is the same binary in
+	 * the same place, so it derives the same answer, and an explicit
+	 * RPCEMU_RESOURCE_DIR reaches it through the inherited environment.
+	 */
 
 	auto *process = new ManagerChildProcess(this, name);
 	const long pid = wxExecute(cmd, wxEXEC_ASYNC, process);
@@ -2043,15 +2043,15 @@ void ManagerFrame::OnCreateShortcut(wxCommandEvent & /*event*/)
 	wxString args = wxString::Format("--machine \"%s\"", name);
 
 	/*
-	 * --datadir on the same terms StartMachine uses it: it also decides where
-	 * the read-only payload is looked for, so passing it when the two
-	 * directories differ would send the machine hunting for its CMOS template
-	 * and podule ROMs in the data folder, where they are not.
+	 * --datadir on the same terms StartMachine uses it: unconditionally, now
+	 * that it names the data directory alone and no longer decides where the
+	 * read-only payload is looked for. A shortcut is the case that needs it
+	 * most - it is started from wherever the desktop happens to be, with none of
+	 * this process's context.
 	 */
 	const wxString datadir = wxString::FromUTF8(rpcemu_get_datadir());
-	const wxString resourcedir = wxString::FromUTF8(rpcemu_get_resourcedir());
 
-	if (!datadir.empty() && datadir == resourcedir) {
+	if (!datadir.empty()) {
 		args << " --datadir \"" << datadir << '"';
 	}
 

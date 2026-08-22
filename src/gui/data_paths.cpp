@@ -114,6 +114,44 @@ static wxString FindResourceDir(const wxString &bundle_dir, const wxString &exe_
 	return user_dir;
 }
 
+/*
+ * The payload, for a data directory the user named outright (--datadir or
+ * RPCEMU_DATADIR).
+ *
+ * Such a folder holding its own payload is a self-contained tree, and it goes on
+ * providing it - that is what somebody pointing the emulator at a whole tree
+ * means, and it is what happened before this function existed.
+ *
+ * What did NOT work was the other case: naming a data directory that holds only
+ * data. Both variables used to make the payload directory the same folder
+ * regardless, so on macOS - where the payload is inside
+ * RPCEmu.app/Contents/Resources and never in the user's data folder - moving
+ * your machines with RPCEMU_DATADIR took the search for poduleroms/ with them,
+ * and the machine came up with no HostFS, no card ROMs and no CMOS template.
+ * Then it is looked for wherever it actually is, as for a remembered or default
+ * data directory.
+ */
+static wxString ResourceDirForGivenDataDir(const wxString &bundle_dir,
+                                          const wxString &exe_dir,
+                                          const wxString &cwd,
+                                          const wxString &install_dir,
+                                          const wxString &user_dir)
+{
+	/*
+	 * poduleroms/ specifically, NOT HasPayloadDir(): that also accepts configs/,
+	 * which is right when ranking candidate locations - a portable tree has both
+	 * - and wrong here. configs/ is DATA. Every data directory has one, so
+	 * asking that question of a data directory always answers yes, and the first
+	 * attempt at this fix went on sending the search into a folder holding no
+	 * podule ROMs at all.
+	 */
+	if (wxDirExists(NormalizeDirPath(user_dir) + "poduleroms")) {
+		g_resource_source = RESOURCE_DIR_SAME_AS_DATA;
+		return user_dir;
+	}
+	return FindResourceDir(bundle_dir, exe_dir, cwd, install_dir, user_dir);
+}
+
 /* Writable per-user data lives in a visible ~/RPCEmu folder (machines, configs,
    ROMs, hostfs, logs). */
 static wxString UserDataRoot()
@@ -342,15 +380,40 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 
 	const DataDirDecision decision = data_dir_decide(&inputs);
 
+	/* RPCEMU_RESOURCE_DIR has no ResourceDirSource of its own - it is not one of
+	   the places that get searched, it is the answer - so the log line says so
+	   from here, as the headless resolver already did. */
+	bool env_resource_used = false;
+
 	switch (decision.source) {
+	/*
+	 * --datadir and RPCEMU_DATADIR name where the USER'S data goes. They used to
+	 * silently decide where the read-only payload was looked for as well, by
+	 * pointing both at the same folder.
+	 *
+	 * That is wrong wherever the payload is somewhere the user did not choose,
+	 * which on macOS is every ordinary install: the payload is inside
+	 * RPCEmu.app/Contents/Resources, so relocating your machines with
+	 * RPCEMU_DATADIR moved the search for poduleroms/ along with them, and the
+	 * machine came up with no HostFS, no card ROMs and no CMOS template - one
+	 * line in the log the only sign of it.
+	 *
+	 * So the payload is looked for exactly as it is for a remembered or default
+	 * data directory, with that folder still the fallback: a self-contained tree
+	 * handed over with --datadir keeps working, because nowhere else has the
+	 * payload and FindResourceDir() lands back on it. RPCEMU_RESOURCE_DIR
+	 * remains the way to say where the payload is, and still outranks this.
+	 */
 	case DATA_DIR_FROM_CLI:
 		user_dir = NormalizeDirPath(cli_datadir);
-		resource_dir = user_dir;
+		resource_dir = ResourceDirForGivenDataDir(bundle_dir, exe_dir, cwd,
+		                                         install_dir, user_dir);
 		break;
 
 	case DATA_DIR_FROM_ENV:
 		user_dir = NormalizeDirPath(env_datadir);
-		resource_dir = user_dir;
+		resource_dir = ResourceDirForGivenDataDir(bundle_dir, exe_dir, cwd,
+		                                         install_dir, user_dir);
 		break;
 
 	case DATA_DIR_FROM_STORED:
@@ -363,6 +426,7 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 	case DATA_DIR_FROM_ENV_RESOURCE:
 		resource_dir = NormalizeDirPath(env_resource);
 		user_dir = UserDataRoot();
+		env_resource_used = true;
 		break;
 
 	case DATA_DIR_FROM_BUNDLE:
@@ -372,22 +436,27 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 		   input was guarded by HasConfigsDir(). */
 		resource_dir = bundle_dir;
 		user_dir = UserDataRoot();
+		g_resource_source = RESOURCE_DIR_BUNDLE;
 		break;
 
 	case DATA_DIR_FROM_PORTABLE:
 		resource_dir = exe_dir;
 		user_dir = exe_dir;
+		g_resource_source = RESOURCE_DIR_BESIDE_BINARY;
 		break;
 
 	case DATA_DIR_FROM_CWD:
 		resource_dir = cwd;
 		user_dir = cwd;
+		g_resource_source = RESOURCE_DIR_CWD;
 		break;
 
 	case DATA_DIR_FROM_INSTALL:
 		resource_dir = HasConfigsDir(install_dir) ? install_dir
 		                                         : wxString("/usr/share/rpcemu/");
 		user_dir = UserDataRoot();
+		g_resource_source = HasConfigsDir(install_dir) ? RESOURCE_DIR_INSTALL
+		                                              : RESOURCE_DIR_USR_SHARE;
 		break;
 
 	case DATA_DIR_FROM_EXISTING_DEFAULT:
@@ -412,6 +481,7 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 	case DATA_DIR_DEFAULT_UNASKED:
 		user_dir = UserDataRoot();
 		resource_dir = cwd.empty() ? "./" : cwd;
+		g_resource_source = RESOURCE_DIR_CWD;
 		break;
 	}
 
@@ -442,7 +512,8 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 	       data_dir_source_name(decision.source),
 	       user_dir.utf8_str().data());
 	rpclog("Paths: resource directory from %s: %s\n",
-	       data_dir_resource_source_name(g_resource_source),
+	       env_resource_used ? "RPCEMU_RESOURCE_DIR"
+	                         : data_dir_resource_source_name(g_resource_source),
 	       resource_dir.utf8_str().data());
 
 	if (!SeedUserDataDir(resource_dir, user_dir)) {

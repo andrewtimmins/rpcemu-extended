@@ -24,6 +24,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdarg>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -41,6 +42,9 @@
 #include "../socket-compat.h"
 #else
 #include <unistd.h>
+#endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>	/* _NSGetExecutablePath - see ExeDir() */
 #endif
 
 extern "C" {
@@ -126,6 +130,32 @@ std::string ExeDir()
 	}
 	const std::string path(buf, n);
 	const size_t slash = path.find_last_of("/\\");
+#elif defined(__APPLE__)
+	/*
+	 * macOS has no /proc, so the readlink() below returns nothing at all here.
+	 * That used to leave this function returning an empty string on every Mac,
+	 * which the probing in InitHeadlessPaths() then joined with a leaf and
+	 * tested as a RELATIVE path - so an unrelated poduleroms/ in the current
+	 * directory answered "the payload is beside the binary", the resource
+	 * directory came out empty, and every console entry point failed with
+	 * "could not locate RPCEmu data" even when handed a valid --datadir.
+	 *
+	 * _NSGetExecutablePath is the documented way to ask. It can hand back a
+	 * path containing symlinks or .. components, so realpath() finishes the job
+	 * and the answer can be compared with other absolute paths.
+	 */
+	char raw[PATH_MAX];
+	uint32_t raw_len = sizeof(raw);
+	char buf[PATH_MAX];
+
+	if (_NSGetExecutablePath(raw, &raw_len) != 0) {
+		return {};
+	}
+	if (realpath(raw, buf) == nullptr) {
+		return {};
+	}
+	const std::string path(buf);
+	const size_t slash = path.find_last_of('/');
 #else
 	char buf[PATH_MAX];
 	const ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
@@ -145,9 +175,19 @@ std::string CwdDir()
 	return getcwd(buf, sizeof(buf)) != nullptr ? std::string(buf) : std::string();
 }
 
+/*
+ * Does this directory hold configs/?
+ *
+ * An empty dir is "no", not "look in the current directory". Every caller here
+ * passes a location that may legitimately not be known - there is no bundle off
+ * a bundle-less platform, and ExeDir() can still fail - and joining "" with a
+ * leaf produces a bare relative path that answers about the current directory
+ * instead. That made an unknown location quietly borrow the current one's
+ * contents, and the decision was then made from a fact that was not true.
+ */
 bool HasConfigs(const std::string &dir)
 {
-	return DirExists(WithSep(dir) + "configs");
+	return !dir.empty() && DirExists(WithSep(dir) + "configs");
 }
 
 /*
@@ -160,7 +200,44 @@ bool HasConfigs(const std::string &dir)
  */
 bool HasPayload(const std::string &dir)
 {
-	return DirExists(WithSep(dir) + "poduleroms") || HasConfigs(dir);
+	/* Empty means unknown, exactly as in HasConfigs() above. */
+	return !dir.empty() &&
+	       (DirExists(WithSep(dir) + "poduleroms") || HasConfigs(dir));
+}
+
+/*
+ * Contents/Resources of the .app this binary is inside, or empty if it is not
+ * inside one.
+ *
+ * The GUI asks wxStandardPaths for this; a console entry point has no wxApp to
+ * ask, so it is worked out from the executable's own location. Both bundle
+ * inputs used to be hardcoded to 0 here, which meant the shipped RPCEmu.app
+ * could not find its own read-only payload from --list-machines, --headless or
+ * --machine: those look for a data directory, and inside a bundle the only copy
+ * of poduleroms/ is the one in Contents/Resources.
+ */
+std::string BundleResourcesDir(const std::string &exe_dir)
+{
+#ifdef __APPLE__
+	/* .../RPCEmu.app/Contents/MacOS -> .../RPCEmu.app/Contents/Resources. Match
+	   the whole tail rather than just the leaf, so a plain directory called
+	   MacOS somewhere else is not mistaken for a bundle. */
+	static const char tail[] = "/Contents/MacOS";
+	const size_t tail_len = sizeof(tail) - 1;
+
+	if (exe_dir.size() <= tail_len ||
+	    exe_dir.compare(exe_dir.size() - tail_len, tail_len, tail) != 0) {
+		return {};
+	}
+
+	const std::string app = exe_dir.substr(0, exe_dir.size() - tail_len);
+	const std::string resources = app + "/Contents/Resources";
+
+	return DirExists(resources) ? resources : std::string();
+#else
+	(void) exe_dir;
+	return {};
+#endif
 }
 
 /* Writable per-user data folder, matching the GUI (~/RPCEmu). */
@@ -222,6 +299,7 @@ bool InitHeadlessPaths()
 	const std::string cwd = CwdDir();
 	const std::string install = RPCEMU_INSTALL_DATADIR;
 	const std::string home = HomeRpcemu();
+	const std::string bundle = BundleResourcesDir(exe);
 
 	/*
 	 * Writable per-user data, decided by the SAME rules the GUI uses.
@@ -249,7 +327,7 @@ bool InitHeadlessPaths()
 	inputs.configs_in_cwd = HasConfigs(cwd) ? 1 : 0;
 	inputs.configs_in_install_dir =
 	    (HasConfigs(install) || DirExists("/usr/share/rpcemu/configs")) ? 1 : 0;
-	inputs.configs_in_bundle = 0;
+	inputs.configs_in_bundle = HasConfigs(bundle) ? 1 : 0;
 	inputs.default_location_ready =
 	    (!home.empty() && HasConfigs(home)) ? 1 : 0;
 	inputs.can_ask = 0;
@@ -310,7 +388,7 @@ bool InitHeadlessPaths()
 		ResourceDirInputs res_inputs;
 
 		memset(&res_inputs, 0, sizeof(res_inputs));
-		res_inputs.payload_in_bundle = 0;
+		res_inputs.payload_in_bundle = HasPayload(bundle) ? 1 : 0;
 		res_inputs.payload_beside_binary = HasPayload(exe) ? 1 : 0;
 		res_inputs.payload_in_cwd = HasPayload(cwd) ? 1 : 0;
 		res_inputs.payload_in_install = HasPayload(install) ? 1 : 0;
@@ -324,7 +402,7 @@ bool InitHeadlessPaths()
 		case RESOURCE_DIR_CWD:			resourcedir = cwd; break;
 		case RESOURCE_DIR_INSTALL:		resourcedir = install; break;
 		case RESOURCE_DIR_USR_SHARE:		resourcedir = "/usr/share/rpcemu"; break;
-		case RESOURCE_DIR_BUNDLE:
+		case RESOURCE_DIR_BUNDLE:		resourcedir = bundle; break;
 		case RESOURCE_DIR_SAME_AS_DATA:
 			/* Last resort, and only if the payload really is in there. */
 			resourcedir = HasPayload(datadir) ? datadir : std::string();
