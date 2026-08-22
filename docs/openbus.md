@@ -203,6 +203,15 @@ bought a card for.
 
 ### The cores
 
+Each has its own page, covering what is implemented, what is not, how a program
+stops on it, its interrupts, its cycle counts and its register numbering:
+[RV32IM](copro-rv32i.md), [6502 and 65C02](copro-6502.md),
+[Z80 and 8080](copro-z80.md), [6809](copro-6809.md),
+[6800, 6802 and 6808](copro-6800.md). The [68000](copro-68000.md) is designed and
+not yet built.
+
+The table below is the summary; the pages are the detail.
+
 | Core | What is implemented | What stops it | Card RAM |
 | --- | --- | --- | --- |
 | **RV32IM** | The whole RV32I base set plus M. No CSRs, no A/F/D/C extensions, strict natural alignment. | `ecall` or `ebreak`, with a0 as the exit code | 1MB |
