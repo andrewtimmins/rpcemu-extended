@@ -426,6 +426,8 @@ void MainFrame::BuildToolBar()
 	// leading the machine controls there.
 	tool_bar_->AddTool(ID_MENU_RESET, wxEmptyString, ToolbarIconReset(icon_size),
 	                   "Reset machine");
+	tool_bar_->AddTool(ID_MENU_SUSPEND, wxEmptyString, ToolbarIconSuspend(icon_size),
+	                   "Save this machine's state and close it");
 	tool_bar_->AddSeparator();
 	tool_bar_->AddTool(ID_MENU_SCREENSHOT, wxEmptyString, ToolbarIconScreenshot(icon_size),
 	                   "Save screenshot");
@@ -462,6 +464,7 @@ void MainFrame::BuildToolBar()
 	tool_bar_->Bind(wxEVT_TOOL, &MainFrame::OnLoadDisc0, this, ID_MENU_LOAD_DISC0);
 	tool_bar_->Bind(wxEVT_TOOL, &MainFrame::OnCdromIso, this, ID_MENU_CDROM_ISO);
 	tool_bar_->Bind(wxEVT_TOOL, &MainFrame::OnReset, this, ID_MENU_RESET);
+	tool_bar_->Bind(wxEVT_TOOL, &MainFrame::OnSuspend, this, ID_MENU_SUSPEND);
 	tool_bar_->Bind(wxEVT_TOOL, &MainFrame::OnDebugRun, this, ID_MENU_DEBUG_RUN);
 	tool_bar_->Bind(wxEVT_TOOL, &MainFrame::OnDebugPause, this, ID_MENU_DEBUG_PAUSE);
 	tool_bar_->Bind(wxEVT_TOOL, &MainFrame::OnDebugStep, this, ID_MENU_DEBUG_STEP);

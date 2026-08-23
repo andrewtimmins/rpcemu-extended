@@ -84,7 +84,7 @@ endif()
 set(RPCEMU_TOOLBAR_SVGS
     screenshot floppy cdrom reset mute unmute
     fullscreen settings start pause step inspector
-    analyser power stop
+    analyser resume suspend power stop
     running starting stopped)
 set(_svg_header "${CMAKE_CURRENT_BINARY_DIR}/toolbar_icons_svg.h")
 file(WRITE "${_svg_header}"

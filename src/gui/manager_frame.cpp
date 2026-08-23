@@ -772,6 +772,10 @@ void ManagerFrame::BuildToolBar()
 	   the same kind of thing. */
 	tool_bar_->AddTool(ID_START, "Start", ToolbarIconPower(icon_size, true),
 	    "Start the selected machine");
+	tool_bar_->AddTool(ID_RESUME, "Resume", ToolbarIconResume(icon_size),
+	    "Start the selected machine from the state it was suspended in");
+	tool_bar_->AddTool(ID_MENU_SUSPEND, "Suspend", ToolbarIconSuspend(icon_size),
+	    "Save this machine's state and stop it");
 	tool_bar_->AddTool(ID_STOP, "Stop", ToolbarIconPower(icon_size, false),
 	    "Stop the selected machine");
 	/* ID_RESET, this window's own, rather than the machine menu's
@@ -813,6 +817,7 @@ void ManagerFrame::BuildToolBar()
 	tool_bar_->Realize();
 
 	tool_bar_->Bind(wxEVT_TOOL, &ManagerFrame::OnStart, this, ID_START);
+	tool_bar_->Bind(wxEVT_TOOL, &ManagerFrame::OnResume, this, ID_RESUME);
 	tool_bar_->Bind(wxEVT_TOOL, &ManagerFrame::OnStop, this, ID_STOP);
 	tool_bar_->Bind(wxEVT_TOOL, &ManagerFrame::OnReset, this, ID_RESET);
 
@@ -1073,27 +1078,21 @@ void ManagerFrame::UpdateButtons()
 		bar->Enable(ID_DELETE, have_selection && !is_running);
 	}
 
+	/* Resume only offers itself when there is something to resume from: a
+	   machine that has never been suspended has no snapshot, and a command that
+	   silently did nothing would be worse than one that is greyed out. */
+	const bool can_resume = have_selection && !is_running && HasSnapshot(name);
+
 	if (tool_bar_ != nullptr) {
 		tool_bar_->EnableTool(ID_START, have_selection && !is_running);
+		tool_bar_->EnableTool(ID_RESUME, can_resume);
 		tool_bar_->EnableTool(ID_STOP, is_running);
 		tool_bar_->EnableTool(ID_RESET, is_live);
 		tool_bar_->Refresh();	/* see UpdateMachineMenuState */
 	}
 	if (start_item_ != nullptr) start_item_->Enable(have_selection && !is_running);
-	/* Resume only offers itself when there is something to resume from: a
-	   machine that has never been suspended has no snapshot, and an item that
-	   silently did nothing would be worse than one that is greyed out. */
 	if (resume_item_ != nullptr) {
-		bool has_snapshot = false;
-
-		if (have_selection && !is_running) {
-			const wxString snapshot = ConfigPathsSnapshotForConfig(
-			    ConfigPathsConfigsDir() + wxFileName::GetPathSeparator() +
-			    name + ".cfg");
-
-			has_snapshot = !snapshot.empty() && wxFileExists(snapshot);
-		}
-		resume_item_->Enable(has_snapshot);
+		resume_item_->Enable(can_resume);
 	}
 	if (stop_item_ != nullptr) stop_item_->Enable(is_running);
 	if (reset_item_ != nullptr) reset_item_->Enable(is_live);
@@ -1548,8 +1547,10 @@ void ManagerFrame::OnMachineRightClick(wxListEvent &event)
 	wxMenu menu;
 
 	menu.Append(ID_START, "Start");
+	menu.Append(ID_RESUME, "Resume");
 	menu.Append(ID_STOP, "Stop");
 	menu.Enable(ID_START, !is_running);
+	menu.Enable(ID_RESUME, !is_running && HasSnapshot(name));
 	menu.Enable(ID_STOP, is_running);
 	menu.AppendSeparator();
 	menu.Append(ID_EDIT, "Edit...");
@@ -1946,6 +1947,19 @@ bool ManagerFrame::WillAskBeforeStopping(const wxString &name) const
 
 	return running != running_.end() && GetWarnOnStop() &&
 	    !running->second.suspend_on_exit;
+}
+
+bool ManagerFrame::HasSnapshot(const wxString &name) const
+{
+	if (name.empty()) {
+		return false;
+	}
+
+	const wxString snapshot = ConfigPathsSnapshotForConfig(
+	    ConfigPathsConfigsDir() + wxFileName::GetPathSeparator() +
+	    name + ".cfg");
+
+	return !snapshot.empty() && wxFileExists(snapshot);
 }
 
 /*
@@ -2410,7 +2424,8 @@ void ManagerFrame::UpdateMachineMenuState()
 	   answers to the same question. */
 	if (tool_bar_ != nullptr) {
 		static const int forwarded_tools[] = {
-			ID_MENU_SCREENSHOT, ID_MENU_LOAD_DISC0, ID_MENU_CDROM_ISO,
+			ID_MENU_SCREENSHOT, ID_MENU_SUSPEND, ID_MENU_LOAD_DISC0,
+			ID_MENU_CDROM_ISO,
 			ID_MENU_MUTE, ID_MENU_FULLSCREEN,
 			ID_MENU_MACHINE, ID_MENU_DEBUG_RUN, ID_MENU_DEBUG_PAUSE,
 			ID_MENU_DEBUG_STEP, ID_MENU_MACHINE_INSPECTOR,

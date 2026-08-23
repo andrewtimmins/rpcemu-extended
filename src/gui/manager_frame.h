@@ -113,6 +113,9 @@ private:
 	   Answers true when there is nothing running to lose. */
 	bool ConfirmStop(const wxString &name);
 	bool WillAskBeforeStopping(const wxString &name) const;
+
+	/* Has this machine a suspended state to start from? */
+	bool HasSnapshot(const wxString &name) const;
 	void ShowMachinePanel(const wxString &name);
 	void RemoveRunningEntry(const wxString &name);
 	void AttachPanelFor(const wxString &name, const wxString &shared_fb_name,

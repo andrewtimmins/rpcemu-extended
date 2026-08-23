@@ -103,6 +103,16 @@ wxBitmap ToolbarIconAnalyser(const wxSize &size)
 	return SvgIcon(analyser_svg, size);
 }
 
+wxBitmap ToolbarIconResume(const wxSize &size)
+{
+	return SvgIcon(resume_svg, size);
+}
+
+wxBitmap ToolbarIconSuspend(const wxSize &size)
+{
+	return SvgIcon(suspend_svg, size);
+}
+
 wxBitmap ToolbarIconPower(const wxSize &size, bool on)
 {
 	return SvgIcon(on ? power_svg : stop_svg, size);
