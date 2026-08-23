@@ -962,9 +962,13 @@ jobs:
   macos-arm64:
     needs: build-gate
     if: always() && needs.build-gate.result == 'success'
-    # Apple Silicon runner: builds the arm64 slice. There is no ARM dynarec
-    # backend, so arm64 uses the interpreter (RPCEMU_DYNAREC=OFF), mirroring the
-    # Linux arm64 build. On Apple Silicon the x86_64 slice also runs via Rosetta.
+    # Apple Silicon runner: builds the arm64 slice, with the recompiler.
+    #
+    # It was the interpreter until 1.1.14 because the arm64 recompiler did not
+    # boot (issue #30), which meant the machine most people run this on was
+    # downloading the slow one. build-macos.sh decides that; this job just calls
+    # it. The eight JIT differential tests build here now, checking the arm64
+    # backend against the interpreter on the architecture it emits code for.
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v7
@@ -990,7 +994,7 @@ jobs:
           echo "==> arm64 dependency versions"
           brew list --versions sdl2-compat sdl3 wxwidgets libvncserver libusb || true
 
-      - name: Build arm64 slice (interpreter) + test
+      - name: Build arm64 slice (recompiler) + test
         timeout-minutes: 3
         run: |
           chmod +x build-macos.sh

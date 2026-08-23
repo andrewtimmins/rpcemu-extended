@@ -5,11 +5,16 @@
 # releases/linux/<arch>/ and build-windows.sh's releases/windows/amd64/ layout.
 #
 # Why two slices instead of one -arch arm64 -arch x86_64 build:
-#   The dynarec (codegen_amd64.c) emits x86-64 machine code, so it can only be
-#   compiled into the x86_64 slice. The arm64 slice therefore uses the
-#   interpreter (RPCEMU_DYNAREC=OFF), exactly as the Linux arm64 build does.
-#   The universal binary = x86_64(dynarec) + arm64(interpreter), fused by lipo.
-#   On Apple Silicon the x86_64 slice can also run (fast) under Rosetta 2.
+#   Each slice gets the recompiler for its own architecture: codegen_amd64.c emits
+#   x86-64 and codegen_arm64.c emits AArch64, so the universal binary is
+#   x86_64(dynarec) + arm64(dynarec), fused by lipo.
+#
+#   The arm64 slice was the interpreter until 1.1.14, because the arm64 recompiler
+#   did not boot (issue #30) - which meant an Apple Silicon Mac, the machine most
+#   people now run this on, was downloading the slow one. That is fixed, so it
+#   ships the recompiler.
+#
+#   On Apple Silicon the x86_64 slice can also run (slowly) under Rosetta 2.
 #
 # Two toolchain modes, auto-detected:
 #   * Native on macOS (uname = Darwin). Apple clang cross-compiles between its
@@ -151,14 +156,13 @@ else
 	MODE=cross
 fi
 
-# Per-arch build knobs. The x86_64 slice is the recompiler, so it is the one that
-# exercises the JIT differential tests; the arm64 slice is the interpreter.
-slice_binname() { [ "$1" = "x86_64" ] && echo rpcemu-recompiler || echo rpcemu-interpreter; }
-slice_dynarec() { [ "$1" = "x86_64" ] && echo ON || echo OFF; }
-# Tests are built for both slices. The JIT differential tests need a native
-# dynarec backend and CMake skips them by itself when RPCEMU_DYNAREC is off, so
-# on the arm64 (interpreter) slice this builds the architecture-neutral tests -
-# which is better than the slice having no test coverage at all.
+# Per-arch build knobs. Both slices are the recompiler, each with its own backend.
+slice_binname() { echo rpcemu-recompiler; }
+slice_dynarec() { echo ON; }
+# Tests are built for both slices, and with a dynarec backend on each that now
+# includes the eight JIT differential tests - so the arm64 recompiler is checked
+# against the interpreter on the architecture it generates code for, which is
+# where a code-generation fault would actually show.
 slice_tests()   { echo ON; }
 slice_deploy()  { [ "$1" = "x86_64" ] && echo 10.15 || echo 11.0; }
 
@@ -692,9 +696,9 @@ if [ "$DO_FUSE" = true ]; then
 	# through into the bundle.
 	# What the release notes and the About box should say this bundle is.
 	case "$FUSE_ARCHES" in
-		"x86_64 arm64") BINARY_DESC="universal: x86_64 recompiler + arm64 interpreter" ;;
+		"x86_64 arm64") BINARY_DESC="universal: x86_64 and arm64, recompiler on both" ;;
 		x86_64)         BINARY_DESC="x86_64 only, recompiler" ;;
-		arm64)          BINARY_DESC="arm64 only, interpreter" ;;
+		arm64)          BINARY_DESC="arm64 only, recompiler" ;;
 		*)              BINARY_DESC="$FUSE_ARCHES" ;;
 	esac
 
