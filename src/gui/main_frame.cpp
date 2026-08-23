@@ -1084,7 +1084,18 @@ void MainFrame::OnScreenSize(wxCommandEvent &event)
 	const unsigned want_x = fixed_mode_items_[index].first;
 	const unsigned want_y = fixed_mode_items_[index].second;
 
-	if (want_x == config_copy_.screen_size_x &&
+	/*
+	 * Nothing to do only when the desktop is ALREADY this size, which is not the
+	 * same as the configuration naming it. RISC OS changes mode from its own end,
+	 * and a refused size leaves the configuration naming one it would not take,
+	 * so testing the configuration alone made picking the configured size do
+	 * nothing at all - with no way to ask for it again.
+	 */
+	const wxSize guest = panel_ != nullptr ? panel_->GuestScreenSize()
+	                                       : wxSize(0, 0);
+
+	if (guest.x == (int) want_x && guest.y == (int) want_y &&
+	    want_x == config_copy_.screen_size_x &&
 	    want_y == config_copy_.screen_size_y)
 	{
 		return;
@@ -1202,13 +1213,29 @@ void MainFrame::RebuildScreenSizeMenu()
 		fixed_mode_items_.push_back(modes[i]);
 	}
 
-	/* Tick whichever entry the configuration names. A machine whose size is no
-	   longer on offer - VRAM reduced, or the graphics card taken out - leaves
-	   nothing ticked, which is the honest display of it: the size it is
-	   configured for is not one this machine can currently show. */
+	/*
+	 * Tick the size the desktop actually is, falling back to the configured one
+	 * until a frame has said otherwise.
+	 *
+	 * The desktop rather than the configuration, because the two part company
+	 * readily: RISC OS can be given a mode from its own end, and a size it
+	 * refuses leaves the configuration naming one it would not take. A tick
+	 * against either would be pointing at a mode that is not on the screen.
+	 *
+	 * Nothing ticked is a real answer and is left to happen: the desktop is in a
+	 * mode this list does not offer, which is what a guest that has gone its own
+	 * way looks like, and claiming the nearest entry would be a lie.
+	 */
+	const wxSize shown = panel_ != nullptr ? panel_->GuestScreenSize()
+	                                       : wxSize(0, 0);
+	const unsigned tick_x = shown.x > 0 ? (unsigned) shown.x
+	                                    : config_copy_.screen_size_x;
+	const unsigned tick_y = shown.y > 0 ? (unsigned) shown.y
+	                                    : config_copy_.screen_size_y;
+
 	for (size_t i = 0; i < fixed_mode_items_.size(); i++) {
-		if (fixed_mode_items_[i].first == config_copy_.screen_size_x &&
-		    fixed_mode_items_[i].second == config_copy_.screen_size_y)
+		if (fixed_mode_items_[i].first == tick_x &&
+		    fixed_mode_items_[i].second == tick_y)
 		{
 			screen_size_menu_->Check(
 			    (int) (ID_MENU_SCREEN_FIXED_FIRST + (int) i), true);
@@ -1303,7 +1330,9 @@ void MainFrame::RequestGuestMode(unsigned width, unsigned height,
 		return;
 	}
 
-	rpcemu_request_guest_size(fitted_w, fitted_h);
+	/* A named size is forced through: see rpcemu_request_guest_size_ex(). A
+	   window drag is not, so its quantising still holds. */
+	rpcemu_request_guest_size_ex(fitted_w, fitted_h, explicit_choice ? 1 : 0);
 
 	/*
 	 * Only a size the user named is checked.
@@ -1430,6 +1459,10 @@ void MainFrame::NoteGuestFrame()
 	}
 	guest_size_seen_ = guest;
 	guest_resize_timer_.StartOnce(kGuestSettleMs);
+
+	/* The tick follows the desktop, so it has to move when RISC OS changes mode
+	   from its own end and not only when the change was asked for here. */
+	RebuildScreenSizeMenu();
 }
 
 void MainFrame::OnGuestResizeTimer(wxTimerEvent &event)
