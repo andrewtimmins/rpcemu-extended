@@ -505,9 +505,7 @@ private:
 	/** The size last asked of the guest, or (0,0) when nothing is outstanding. */
 	wxSize mode_requested_ = wxSize(0, 0);
 
-	/** True when mode_requested_ came from an explicit choice, so a refusal is
-	    worth telling the user about rather than quietly working around. */
-	bool mode_requested_explicitly_ = false;
+
 
 	/*
 	 * The guest desktop size this window has already reacted to.

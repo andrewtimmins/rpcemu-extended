@@ -1278,7 +1278,6 @@ void MainFrame::RequestGuestMode(unsigned width, unsigned height,
 	}
 
 	mode_requested_ = wxSize((int) fitted_w, (int) fitted_h);
-	mode_requested_explicitly_ = true;
 	mode_verify_timer_.StartOnce(kModeVerifyMs);
 }
 
@@ -1297,12 +1296,14 @@ void MainFrame::OnModeVerifyTimer(wxTimerEvent &event)
 {
 	(void)event;
 
+	/* Only ever reached for a size the user named: RequestGuestMode() starts this
+	   timer for nothing else, so there is no "was this explicit" to test. */
+
 	if (panel_ == nullptr || mode_requested_ == wxSize(0, 0)) {
 		return;
 	}
 
 	const wxSize requested = mode_requested_;
-	const bool was_explicit = mode_requested_explicitly_;
 	const wxSize guest = panel_->GuestScreenSize();
 
 	mode_requested_ = wxSize(0, 0);

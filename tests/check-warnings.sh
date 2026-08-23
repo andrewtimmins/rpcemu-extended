@@ -70,7 +70,13 @@ fi
 
 # Anything the compiler found outside the repository is somebody else's header
 # being included by us; there is nothing to fix in this repository for it.
-mapfile -t patterns < <(grep -vE "^\s*(#|$)" "$EXEMPT" | sed 's/[[:space:]]*$//')
+# Read with a loop rather than mapfile: mapfile is bash 4, and macOS still ships
+# bash 3.2, so this check could not be run at all on a Mac - which is exactly
+# where somebody investigating a CI warning failure is likely to be sitting.
+patterns=()
+while IFS= read -r pattern; do
+	patterns+=("$pattern")
+done < <(grep -vE "^[[:space:]]*(#|$)" "$EXEMPT" | sed 's/[[:space:]]*$//')
 
 exempt_count=0
 offending=""
