@@ -50,11 +50,19 @@ MAKE_ZIP=false
 # The x86-64 dynarec supports the Windows x64 ABI (codegen_amd64.c), so that
 # build uses the recompiler by default for full-speed emulation.
 #
-# ARM64 defaults to the interpreter, and deliberately: the AArch64 backend is not
-# shipped on any platform yet, and Windows on ARM adds its own questions to it -
-# x18 is reserved as the TEB pointer, and cache maintenance there wants
-# FlushInstructionCache rather than the EL0 dc/ic our backend uses. Pass
-# --dynarec to try it anyway; that is how it will eventually be proved.
+# ARM64 defaults to the interpreter, and still deliberately - but for a narrower
+# reason than before. The AArch64 backend now ships on macOS and Linux (1.1.15),
+# so "not shipped anywhere" is no longer the argument.
+#
+# What is left is specific to Windows on ARM: cache maintenance there wants
+# FlushInstructionCache rather than the EL0 dc cvau / ic ivau our backend falls
+# back on, and whether clang's __builtin___clear_cache lowers to something
+# equivalent on that target has not been checked. The other worry can be struck
+# off - x18 is reserved as the TEB pointer there, and codegen_arm64.c never uses
+# it.
+#
+# Pass --dynarec to try it anyway; that is how it will be proved. This is also
+# not a build anyone downloads yet: the release publishes windows_amd64 only.
 if [ "$WIN_ARCH" = arm64 ]; then
 	INTERPRETER=true
 else

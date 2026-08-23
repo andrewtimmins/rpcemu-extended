@@ -77,9 +77,10 @@ is on offer to select. One command and a reset fixes it:
 ```
 
 `*GfxCardStatus` reports the monitor type and says when it is the thing standing
-in the way, and `*GfxCardOn` says so at the moment of switching. *Settings → Follow Host Display Size*
-with `MonitorType EDID` is the easy route: the emulator synthesises a monitor
-definition from the host's real display, up to 2560 x 1440.
+in the way, and `*GfxCardOn` says so at the moment of switching. `MonitorType EDID`
+is the easy route: the emulator synthesises a monitor definition from the host's
+real display, up to 2560 x 1440. How large that definition goes depends on
+*Settings → RISC OS Screen Size* - see [docs/display.md](display.md).
 
 If a mode is too large for the card, RISC OS says "Mode not available" rather
 than trying it, because the driver vets each mode against the card's memory

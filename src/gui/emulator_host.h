@@ -60,9 +60,8 @@ enum class EmuCommandType {
 	MouseHack,
 	MouseTwobutton,
 	CpuIdle,
-	IntegerScaling,
-	FitToWindow,
-	FollowHostDisplay,
+	SetDisplayScaling,
+	SetScreenSize,
 	ClipboardEnabled,
 	HostClipboardChanged,
 	ReloadIdeImages,
@@ -99,6 +98,7 @@ struct EmuCommand {
 	unsigned scan_code = 0;
 	int arg1 = 0;
 	int arg2 = 0;
+	int arg3 = 0;
 	Config *config_ptr = nullptr;
 	Model model = Model_RPCARM710;
 	std::string string_path;
@@ -187,9 +187,18 @@ public:
 	void MouseHack();
 	void MouseTwobutton();
 	void CpuIdle();
-	void IntegerScaling();
-	void FitToWindow();
-	void FollowHostDisplay();
+	/** Store the drawing rule (a DisplayScaling). */
+	void SetDisplayScaling(int scaling);
+
+	/**
+	 * Store the configured RISC OS screen size.
+	 *
+	 * Storing only. Asking the guest for it is the front end's job, because the
+	 * front end is the only place that can then check whether the guest actually
+	 * adopted the mode - RISC OS refuses one its monitor definition does not
+	 * declare, and reports that on its own screen rather than to the host.
+	 */
+	void SetScreenSize(unsigned width, unsigned height);
 	void SetClipboardEnabled();
 	void SwitchMachine(const std::string &config_path);
 	void Restart();

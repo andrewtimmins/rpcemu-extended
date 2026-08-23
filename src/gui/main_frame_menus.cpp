@@ -30,6 +30,8 @@ extern "C" {
 #include "rpcemu.h"
 }
 
+#include "display_options.h"
+
 namespace {
 
 const wchar_t kLedOn = L'\u25cf';
@@ -188,16 +190,73 @@ void MainFrame::BuildMenus()
 	settings_menu->AppendSeparator();
 
 	mute_menu_item_ = settings_menu->AppendCheckItem(ID_MENU_MUTE, "Mute Sound");
-	fullscreen_menu_item_ = settings_menu->AppendCheckItem(ID_MENU_FULLSCREEN, "Fullscreen");
-	integer_scaling_menu_item_ =
-	    settings_menu->AppendCheckItem(ID_MENU_INTEGER_SCALING, "Pixel Perfect");
-	fit_to_window_menu_item_ =
-	    settings_menu->AppendCheckItem(ID_MENU_FIT_TO_WINDOW, "Fit to Window");
-	follow_host_display_menu_item_ =
-	    settings_menu->AppendCheckItem(ID_MENU_FOLLOW_HOST_DISPLAY,
-	                                   "Follow Host Display Size");
+
+	/*
+	 * The display: a screen size, and how to draw it.
+	 *
+	 * This was four checkboxes, then two submenus of three - one for where the
+	 * desktop's size came from and one for how it was drawn. The automatic
+	 * choices in the first (best for this display, follow the window) and the
+	 * stretching one in the second are gone, because between them they produced
+	 * the behaviour they were meant to avoid: RISC OS accepts only the modes its
+	 * monitor definition declares, so a desktop chasing the window landed on a
+	 * coarse and unpredictable set of sizes, leaving a border or a stretch at
+	 * every size in between and moving the window under the user's hand each time
+	 * it changed.
+	 *
+	 * A named resolution has none of that. It is advertised as the monitor's
+	 * native mode so the machine boots into it, the window is that size, and
+	 * nothing moves on its own.
+	 *
+	 * Every label comes from display_options.h, which the machine editor reads as
+	 * well, so the two views cannot drift apart.
+	 */
+	{
+		auto *screen_menu = new wxMenu;
+		screen_size_menu_ = screen_menu;
+		/* Filled in by RebuildScreenSizeMenu(), from the modes this machine's
+		   display memory can hold. */
+		settings_menu->AppendSubMenu(screen_menu,
+		                             DisplayOptions::ScreenSizeGroup());
+
+		auto *scaling_menu = new wxMenu;
+
+		scaling_menu_items_[DisplayScaling_ActualSize] =
+		    scaling_menu->AppendRadioItem(ID_MENU_SCALING_ACTUAL,
+		                                  DisplayOptions::ScalingActualSize());
+		scaling_menu_items_[DisplayScaling_ActualSize]->SetHelp(
+		    DisplayOptions::ScalingActualSizeHelp());
+		scaling_menu_items_[DisplayScaling_WholeMultiples] =
+		    scaling_menu->AppendRadioItem(ID_MENU_SCALING_MULTIPLES,
+		                                  DisplayOptions::ScalingWholeMultiples());
+		scaling_menu_items_[DisplayScaling_WholeMultiples]->SetHelp(
+		    DisplayOptions::ScalingWholeMultiplesHelp());
+		settings_menu->AppendSubMenu(scaling_menu,
+		                             DisplayOptions::ScalingGroup());
+	}
+
+	/* Full screen is neither of the two questions above: it is a place to put
+	   the window, and all three drawing rules still apply inside it. */
+	fullscreen_menu_item_ =
+	    settings_menu->AppendCheckItem(ID_MENU_FULLSCREEN,
+	                                   DisplayOptions::FullScreen());
+	fullscreen_menu_item_->SetHelp(DisplayOptions::FullScreenHelp());
+	settings_menu->AppendSeparator();
+	/*
+	 * Follow-mouse against capture-in-window.
+	 *
+	 * Follow-mouse is the default and works windowed, scaled and full-screen, so
+	 * this was hidden for a while. It is back because the two are not
+	 * interchangeable: following means the host pointer is moved to wherever
+	 * RISC OS has put its own, which cannot represent a guest pointer that has
+	 * stopped at an edge while the mouse keeps moving, and it leaves the guest's
+	 * own mouse-speed settings with nothing to act on. Capture takes the pointer
+	 * away from the host and feeds RISC OS the movement instead, which is what
+	 * full-screen use and RISC OS mouse acceleration both want (issue #128).
+	 */
 	mouse_hack_menu_item_ =
-	    settings_menu->AppendCheckItem(ID_MENU_MOUSE_HACK, "Mouse Follows Host Pointer");
+	    settings_menu->AppendCheckItem(ID_MENU_MOUSE_HACK,
+	                                   "Mouse Follows Host Pointer");
 	mouse_hack_menu_item_->SetHelp(
 	    "On, the RISC OS pointer goes wherever the host one is. Off, a click "
 	    "captures the mouse and RISC OS is sent movements instead, which is what "
@@ -306,12 +365,16 @@ void MainFrame::BuildMenus()
 	BindMenuItem(settings_menu, ID_MENU_MUTE, this, &MainFrame::OnMute);
 	BindMenuItem(settings_menu, ID_MENU_FULLSCREEN, this, &MainFrame::OnFullscreen);
 	BindMenuItem(view_menu, ID_MENU_MINIMAL_UI, this, &MainFrame::OnMinimalUi);
-	BindMenuItem(settings_menu, ID_MENU_INTEGER_SCALING, this, &MainFrame::OnIntegerScaling);
-	BindMenuItem(settings_menu, ID_MENU_FIT_TO_WINDOW, this, &MainFrame::OnFitToWindow);
-	BindMenuItem(settings_menu, ID_MENU_FOLLOW_HOST_DISPLAY, this,
-	             &MainFrame::OnFollowHostDisplay);
 	BindMenuItem(file_menu, ID_MENU_SUSPEND_ON_EXIT, this, &MainFrame::OnSuspendOnExit);
 	BindMenuItem(settings_menu, ID_MENU_CPU_IDLE, this, &MainFrame::OnCpuIdle);
+	BindMenuItem(file_menu, ID_MENU_SUSPEND_ON_EXIT, this, &MainFrame::OnSuspendOnExit);
+	BindMenuItem(settings_menu, ID_MENU_CPU_IDLE, this, &MainFrame::OnCpuIdle);
+	BindMenuItem(settings_menu, ID_MENU_SCALING_ACTUAL, this, &MainFrame::OnDisplayScaling);
+	BindMenuItem(settings_menu, ID_MENU_SCALING_MULTIPLES, this, &MainFrame::OnDisplayScaling);
+	/* One binding for the whole run of screen sizes: the list is built from the
+	   modes the machine can hold, so how many there are is not known here. */
+	Bind(wxEVT_MENU, &MainFrame::OnScreenSize, this,
+	     ID_MENU_SCREEN_FIXED_FIRST, ID_MENU_SCREEN_FIXED_LAST);
 	BindMenuItem(settings_menu, ID_MENU_MOUSE_HACK, this, &MainFrame::OnMouseHack);
 	BindMenuItem(settings_menu, ID_MENU_MOUSE_TWOBUTTON, this, &MainFrame::OnMouseTwobutton);
 	BindMenuItem(settings_menu, ID_MENU_SHARED_CLIPBOARD, this, &MainFrame::OnSharedClipboard);
@@ -479,15 +542,18 @@ void MainFrame::SyncSettingsMenuChecks()
 		default_machine_menu_item_->Check(
 		    wxString::FromUTF8(GetDefaultMachine()) == CurrentMachineBaseName());
 	}
-	if (integer_scaling_menu_item_ != nullptr) {
-		integer_scaling_menu_item_->Check(config_copy_.integer_scaling != 0);
+	{
+		const int scaling =
+		    DisplayOptions::ClampDisplayScaling(config_copy_.display_scaling);
+
+		if (scaling_menu_items_[scaling] != nullptr) {
+			scaling_menu_items_[scaling]->Check(true);
+		}
 	}
-	if (fit_to_window_menu_item_ != nullptr) {
-		fit_to_window_menu_item_->Check(config_copy_.fit_to_window != 0);
-	}
-	if (follow_host_display_menu_item_ != nullptr) {
-		follow_host_display_menu_item_->Check(config_copy_.follow_host_display != 0);
-	}
+	/* The fixed sizes come and go with the display memory, so rebuild before
+	   ticking: the mode this machine is set to may not have been in the list the
+	   menu was last built with. */
+	RebuildScreenSizeMenu();
 	if (suspend_on_exit_menu_item_ != nullptr) {
 		suspend_on_exit_menu_item_->Check(config_copy_.suspend_on_exit != 0);
 	}

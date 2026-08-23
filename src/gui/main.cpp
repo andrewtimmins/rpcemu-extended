@@ -902,9 +902,11 @@ bool RpcemuApp::OnInit()
 	// during loadroms(), and without this it falls back to a fixed 1920x1080 and
 	// the guest's "Auto" monitor detection learns the wrong native mode.
 	//
-	// The monitor's full geometry is used rather than its client area, because
-	// that is what an EDID's preferred timing means - the display's native mode,
-	// not the space left over beside a taskbar. rom_patch.c clamps it.
+	// Both the full geometry and the work area are published. The geometry is
+	// what an EDID's preferred timing means - the display's native mode - but the
+	// screen-size setting decides which of the two actually bounds the mode
+	// advertised, since a mode larger than the work area gives a 1:1 window that
+	// will not fit on screen. See rpcemu_edid_bound().
 	{
 		// Show() is asynchronous on some platforms, so the frame may not be
 		// mapped yet and GetFromWindow() can answer wxNOT_FOUND. Fall back to
@@ -917,14 +919,18 @@ bool RpcemuApp::OnInit()
 
 		const wxDisplay display((unsigned) index);
 		const wxRect geom = display.GetGeometry();
+		const wxRect work = display.GetClientArea();
 
 		if (geom.width > 0 && geom.height > 0) {
 			const wxVideoMode mode = display.GetCurrentMode();
 
 			rpcemu_set_host_display((unsigned) geom.width, (unsigned) geom.height,
-			                        mode.refresh > 0 ? (unsigned) mode.refresh : 0);
-			rpclog("main: host display %dx%d (display %d of %u)\n",
-			       geom.width, geom.height, index, wxDisplay::GetCount());
+			                        mode.refresh > 0 ? (unsigned) mode.refresh : 0,
+			                        (unsigned) (work.width > 0 ? work.width : 0),
+			                        (unsigned) (work.height > 0 ? work.height : 0));
+			rpclog("main: host display %dx%d, work area %dx%d (display %d of %u)\n",
+			       geom.width, geom.height, work.width, work.height,
+			       index, wxDisplay::GetCount());
 		}
 	}
 
@@ -1149,6 +1155,11 @@ int main(int argc, char **argv)
 				return 2;
 			}
 			app_settings_override_json_net(value);
+		} else if (strcmp(arg, "--no-gl") == 0) {
+			/* The escape hatch for a display where OpenGL works well enough to
+			   start and badly enough to be a nuisance - which nothing here can
+			   detect, so it has to be sayable. */
+			SetHardwareAccelerationOverride(0);
 		} else if (strcmp(arg, "--no-relay") == 0) {
 			app_settings_override_relay(0);
 		} else if (strcmp(arg, "--no-gl") == 0) {

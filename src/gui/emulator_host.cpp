@@ -927,16 +927,16 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 		config_save(&config);
 		resetrpc();
 		break;
-	case EmuCommandType::IntegerScaling:
-		config.integer_scaling ^= 1;
+	case EmuCommandType::SetDisplayScaling:
+		config.display_scaling = command.arg1;
 		config_save(&config);
 		break;
-	case EmuCommandType::FitToWindow:
-		config.fit_to_window ^= 1;
-		config_save(&config);
-		break;
-	case EmuCommandType::FollowHostDisplay:
-		config.follow_host_display ^= 1;
+	case EmuCommandType::SetScreenSize:
+		config.screen_size_x = (unsigned) command.arg1;
+		config.screen_size_y = (unsigned) command.arg2;
+		/* Storing only: the request itself is made by the front end, which is
+		   the only place that can then check whether the guest adopted the mode.
+		   See MainFrame::RequestGuestMode(). */
 		config_save(&config);
 		break;
 	case EmuCommandType::ClipboardEnabled:
@@ -1199,19 +1199,21 @@ void EmulatorHost::CpuIdle()
 	PostCommand(MakeCommand(EmuCommandType::CpuIdle));
 }
 
-void EmulatorHost::IntegerScaling()
+void EmulatorHost::SetDisplayScaling(int scaling)
 {
-	PostCommand(MakeCommand(EmuCommandType::IntegerScaling));
+	EmuCommand cmd = MakeCommand(EmuCommandType::SetDisplayScaling);
+
+	cmd.arg1 = scaling;
+	PostCommand(cmd);
 }
 
-void EmulatorHost::FitToWindow()
+void EmulatorHost::SetScreenSize(unsigned width, unsigned height)
 {
-	PostCommand(MakeCommand(EmuCommandType::FitToWindow));
-}
+	EmuCommand cmd = MakeCommand(EmuCommandType::SetScreenSize);
 
-void EmulatorHost::FollowHostDisplay()
-{
-	PostCommand(MakeCommand(EmuCommandType::FollowHostDisplay));
+	cmd.arg1 = (int) width;
+	cmd.arg2 = (int) height;
+	PostCommand(cmd);
 }
 
 void EmulatorHost::SetClipboardEnabled()
@@ -1623,6 +1625,11 @@ void EmulatorHost::MainEmuLoop()
 				if ((network_nat_rate & 0x3u) == 0u) {
 					network_nat_poll();
 				} else {
+					/* The Access relay on every turn: it is a
+					   non-blocking read, and ShareFS's lock-step
+					   acknowledgements make the delay in noticing a
+					   datagram the transfer rate itself. See
+					   network_nat_poll_wires(). */
 					network_nat_poll_wires();
 				}
 			}

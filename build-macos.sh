@@ -5,11 +5,16 @@
 # releases/linux/<arch>/ and build-windows.sh's releases/windows/amd64/ layout.
 #
 # Why two slices instead of one -arch arm64 -arch x86_64 build:
-#   The dynarec (codegen_amd64.c) emits x86-64 machine code, so it can only be
-#   compiled into the x86_64 slice. The arm64 slice therefore uses the
-#   interpreter (RPCEMU_DYNAREC=OFF), exactly as the Linux arm64 build does.
-#   The universal binary = x86_64(dynarec) + arm64(interpreter), fused by lipo.
-#   On Apple Silicon the x86_64 slice can also run (fast) under Rosetta 2.
+#   Each slice gets the recompiler for its own architecture: codegen_amd64.c emits
+#   x86-64 and codegen_arm64.c emits AArch64, so the universal binary is
+#   x86_64(dynarec) + arm64(dynarec), fused by lipo.
+#
+#   The arm64 slice was the interpreter until 1.1.14, because the arm64 recompiler
+#   did not boot (issue #30) - which meant an Apple Silicon Mac, the machine most
+#   people now run this on, was downloading the slow one. That is fixed, so it
+#   ships the recompiler.
+#
+#   On Apple Silicon the x86_64 slice can also run (slowly) under Rosetta 2.
 #
 # Two toolchain modes, auto-detected:
 #   * Native on macOS (uname = Darwin). Apple clang cross-compiles between its
@@ -75,6 +80,19 @@ done
 if [ "$FUSE_REQUESTED" = true ]; then
 	DO_FUSE=true
 	[ -n "$ONE_ARCH" ] || DO_BUILD=false
+fi
+
+# Bare "--fuse", with no --arch, is the only form that skips building: it means
+# "assemble a bundle from slices that already exist", which is what the CI job
+# that only downloads them wants.
+#
+# It used to skip building whenever --fuse appeared at all, whatever else was on
+# the command line. "--arch arm64 --fuse" therefore re-fused a stale slice and
+# produced a bundle with none of the current source in it - silently, since
+# everything it printed looked like a successful build. Several rounds of "this
+# is still broken" were spent on a binary that predated the fix being tested.
+if [ "$FUSE_REQUESTED" = true ] && [ -z "$ONE_ARCH" ]; then
+	DO_BUILD=false
 fi
 
 get_version() {
@@ -690,6 +708,22 @@ if [ "$DO_FUSE" = true ]; then
 		chmod +x "$out"
 	}
 
+	# lipo the named binary from every slice that has it, or nothing if none do.
+	# One input produces a thin binary, which is what a single-arch bundle is.
+	fuse_binary() {
+		local name="$1" out="$2"
+		local -a inputs=()
+		local stage
+
+		for stage in "${STAGES[@]}"; do
+			[ -f "$stage/bin/$name" ] && inputs+=("$stage/bin/$name")
+		done
+		[ ${#inputs[@]} -gt 0 ] || return 1
+		"$LIPO" -create ${inputs[@]+"${inputs[@]}"} -output "$out"
+		chmod +x "$out"
+		return 0
+	}
+
 	# Assemble a proper macOS application bundle:
 	#   RPCEmu.app/Contents/MacOS/rpcemu      (universal emulator + CLI helpers)
 	#   RPCEmu.app/Contents/Resources/...     (read-only payload + rpcemu.icns)
@@ -761,7 +795,8 @@ if [ "$DO_FUSE" = true ]; then
 	# working rather than failing the whole build.
 	FRAMEWORKSD="$CONTENTS/Frameworks"
 	bundled=0
-	for lib in "$X86_STAGE/libs/"* "$ARM_STAGE/libs/"*; do
+	for stage in "${STAGES[@]}"; do
+	for lib in "$stage/libs/"*; do
 		[ -f "$lib" ] || continue
 		base=${lib##*/}
 		[ -f "$FRAMEWORKSD/$base" ] && continue
@@ -801,7 +836,12 @@ if [ "$DO_FUSE" = true ]; then
 			"$LIPO" -create "$X86_STAGE/libs/$base" "$ARM_STAGE/libs/$base" \
 				-output "$FRAMEWORKSD/$base"
 		else
-			echo "   ! $base is single-architecture (present in only one slice)"
+			# Worth saying only when the bundle is meant to be universal. In a
+			# single-arch bundle every library is thin by definition, and warning
+			# about each of twenty-one of them is noise that hides real problems.
+			if [ ${#STAGES[@]} -gt 1 ]; then
+				echo "   ! $base is single-architecture (present in only one slice)"
+			fi
 			cp -f "$lib" "$FRAMEWORKSD/$base"
 		fi
 		# The thin copies were given this id before fusing, so lipo should
@@ -814,6 +854,7 @@ if [ "$DO_FUSE" = true ]; then
 				"$FRAMEWORKSD/$base" 2>/dev/null || true
 		fi
 		bundled=$((bundled + 1))
+	done
 	done
 	if [ "$bundled" -gt 0 ]; then
 		echo "==> Bundled $bundled libraries into Contents/Frameworks"
@@ -913,7 +954,7 @@ if [ "$DO_FUSE" = true ]; then
 RPCEmu Extended $VERSION
 Built: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 Host:  $(uname -s) $(uname -m) ($MODE)
-Binary: rpcemu (universal: x86_64 recompiler + arm64 interpreter)
+Binary: rpcemu ($BINARY_DESC)
 Toolkit: wxWidgets (wxOSX/Cocoa) + CMake
 EOF
 
@@ -1066,7 +1107,7 @@ EOF
 
 	# Portable archive of the bundle (optional; the DMG is the primary artifact).
 	if [ "$MAKE_ZIP" = true ]; then
-		ARCHIVE="rpcemu_${VERSION}_macos_universal.tar.gz"
+		ARCHIVE="rpcemu_${VERSION}_macos_${ARCHTAG}.tar.gz"
 		echo "==> Packaging releases/macos/$ARCHIVE"
 		( cd releases/macos && tar czf "$ARCHIVE" RPCEmu.app )
 		echo "✓ macOS archive: releases/macos/$ARCHIVE"

@@ -35,6 +35,8 @@ extern "C" {
 
 #include <wx/arrstr.h>
 
+#include "display_options.h"
+
 static char current_config_path[512] = "";
 
 static void peripheral_config_load(wxFileConfig &settings)
@@ -439,6 +441,15 @@ extern "C" void config_sync_machine_edit_to_copy(Config *dest, const Config *src
 	dest->json_net_port = src->json_net_port;
 	strncpy(dest->json_net_host, src->json_net_host, sizeof(dest->json_net_host) - 1);
 	dest->json_net_host[sizeof(dest->json_net_host) - 1] = '\0';
+
+	/* The display choices, so the Settings menu and the window agree with what
+	   the editor was just told. Without these the editor wrote them to the
+	   configuration and to the live config, and the frame's copy - which is what
+	   the menu ticks and the drawing rule are read from - kept the old values:
+	   the two views of one setting disagreed the moment either was used. */
+	dest->display_scaling = src->display_scaling;
+	dest->screen_size_x = src->screen_size_x;
+	dest->screen_size_y = src->screen_size_y;
 }
 
 extern "C" void config_apply_machine_edit(Config *cfg, const char *name, const char *rom_dir,
@@ -652,12 +663,49 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	cfg->cpu_idle = static_cast<int>(value);
 	settings.Read("show_fullscreen_message", &value, 1L);
 	cfg->show_fullscreen_message = static_cast<int>(value);
-	settings.Read("integer_scaling", &value, 0L);
-	cfg->integer_scaling = static_cast<int>(value);
-	settings.Read("fit_to_window", &value, 0L);
-	cfg->fit_to_window = static_cast<int>(value);
-	settings.Read("follow_host_display", &value, 0L);
-	cfg->follow_host_display = static_cast<int>(value);
+	/*
+	 * The display settings, and the switches they grew out of.
+	 *
+	 * A configuration written before any of this has integer_scaling,
+	 * fit_to_window and follow_host_display; one written between then and now may
+	 * also have a "screen_size" naming a policy - best for this display, or follow
+	 * the window. Those policies are gone: RISC OS accepts only the screen modes
+	 * its monitor definition declares, so a desktop that chased the window landed
+	 * on a coarse and unpredictable set of sizes and moved the window about while
+	 * it did it. What is left is a plain resolution.
+	 *
+	 * Anything that named a policy therefore converts to no resolution at all,
+	 * which MainFrame::StartEmulator() then fills in with the best one for this
+	 * display - the same answer the policy would have given on its first run, but
+	 * recorded once instead of re-decided behind the user's back.
+	 */
+	{
+		long old_integer = 0, old_fit = 0;
+
+		settings.Read("integer_scaling", &old_integer, 0L);
+		settings.Read("fit_to_window", &old_fit, 0L);
+
+		/* fit_to_window became "fill the window", which is gone too: it stretched
+		   the desktop to cover a window that did not match it, and with the window
+		   now being the desktop's size there is nothing to cover. Actual size is
+		   what it becomes. */
+		const long scaling_default = (old_integer != 0 && old_fit == 0)
+		    ? DisplayScaling_WholeMultiples : DisplayScaling_ActualSize;
+
+		settings.Read("display_scaling", &value, scaling_default);
+		cfg->display_scaling = DisplayOptions::ClampDisplayScaling((int) value);
+
+		settings.Read("screen_size_x", &value, 0L);
+		cfg->screen_size_x = (unsigned) (value < 0 ? 0 : value);
+		settings.Read("screen_size_y", &value, 0L);
+		cfg->screen_size_y = (unsigned) (value < 0 ? 0 : value);
+
+		/* A size that is not a whole mode is no size at all. */
+		if (cfg->screen_size_x == 0 || cfg->screen_size_y == 0) {
+			cfg->screen_size_x = 0;
+			cfg->screen_size_y = 0;
+		}
+	}
 	settings.Read("gfxcard_enabled", &value, 0L);
 	cfg->gfxcard_enabled = static_cast<int>(value);
 	settings.Read("gfxcard_boot_display", &value, 0L);
@@ -892,9 +940,9 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	settings.Write("macaddress", cfg->macaddress ? wxString(cfg->macaddress, wxConvUTF8) : wxString());
 	settings.Write("cpu_idle", static_cast<long>(cfg->cpu_idle));
 	settings.Write("show_fullscreen_message", static_cast<long>(cfg->show_fullscreen_message));
-	settings.Write("integer_scaling", static_cast<long>(cfg->integer_scaling));
-	settings.Write("fit_to_window", static_cast<long>(cfg->fit_to_window));
-	settings.Write("follow_host_display", static_cast<long>(cfg->follow_host_display));
+	settings.Write("display_scaling", static_cast<long>(cfg->display_scaling));
+	settings.Write("screen_size_x", static_cast<long>(cfg->screen_size_x));
+	settings.Write("screen_size_y", static_cast<long>(cfg->screen_size_y));
 	settings.Write("gfxcard_enabled", static_cast<long>(cfg->gfxcard_enabled));
 	settings.Write("gfxcard_boot_display", static_cast<long>(cfg->gfxcard_boot_display));
 	for (int port = 0; port < USB_PORTS; port++) {

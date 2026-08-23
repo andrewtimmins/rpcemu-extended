@@ -26,6 +26,7 @@
 #include <list>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <wx/wx.h>
@@ -94,9 +95,9 @@ enum MainFrameMenuId {
 	ID_MENU_NETCAP,
 	ID_MENU_MUTE,
 	ID_MENU_FULLSCREEN,
-	ID_MENU_INTEGER_SCALING,
-	ID_MENU_FIT_TO_WINDOW,
-	ID_MENU_FOLLOW_HOST_DISPLAY,
+	/* Show In Window: one drawing rule, in DisplayScaling order. */
+	ID_MENU_SCALING_ACTUAL,
+	ID_MENU_SCALING_MULTIPLES,
 	ID_MENU_SUSPEND_ON_EXIT,
 	ID_MENU_VNC,
 	ID_MENU_SERIAL,
@@ -136,6 +137,23 @@ enum LocalMenuId {
 	ID_MENU_MINIMAL_UI = ID_MENU_CHECK_UPDATE + 1,
 };
 
+/*
+ * RISC OS Screen Size: a run of consecutive ids, since the list is built from the
+ * modes this machine's display memory can hold and so is not known at compile
+ * time. ID_MENU_SCREEN_FIXED_LAST bounds the run for the range binding.
+ *
+ * Deliberately NOT in the forwardable enum above, for two reasons. Sixty-four
+ * reserved ids inside a range two processes must agree on is a lot of room to
+ * give up, and it pushed that range into the timer ids - which the static_assert
+ * below caught. And the meaning of each id here depends on what the machine's
+ * display memory can hold, so it is not a stable command that one process can
+ * send another in the first place.
+ */
+enum ScreenSizeMenuId {
+	ID_MENU_SCREEN_FIXED_FIRST = wxID_HIGHEST + 400,
+	ID_MENU_SCREEN_FIXED_LAST = ID_MENU_SCREEN_FIXED_FIRST + 63,
+};
+
 enum TimerId {
 	ID_TIMER_MIPS = wxID_HIGHEST + 100,
 	ID_TIMER_VIDEO,
@@ -145,6 +163,10 @@ enum TimerId {
 	ID_TIMER_NETWORK_LED,
 	ID_TIMER_CLIPBOARD,
 	ID_TIMER_SYNTHETIC_RELEASE,
+	ID_TIMER_MODE_VERIFY,
+	ID_TIMER_GUEST_RESIZE,
+	ID_TIMER_TEST_CLOSE,
+	ID_TIMER_TEST_FULLSCREEN,
 };
 
 /* The menu ids are bound as a range, so they must not grow into the timers. */
@@ -225,6 +247,21 @@ public:
 
 private:
 	void OnClose(wxCloseEvent &event);
+
+	/**
+	 * Ask before shutting a running machine down, offering the machine list as
+	 * an alternative to quitting.
+	 *
+	 * @return true to carry on closing, false to leave the machine running
+	 *         (the caller must veto the close event)
+	 */
+	bool ConfirmCloseOrSwitch();
+
+	/** Ask whether to close, then offer the machine list. */
+	void AskAboutClosing();
+
+	/** This machine's name for a dialogue title, or the application's. */
+	wxString MachineDisplayName() const;
 	void OnExit(wxCommandEvent &event);
 	void OnScreenshot(wxCommandEvent &event);
 	void OnAboutRiscos(wxCommandEvent &event);
@@ -254,9 +291,8 @@ private:
 	void OnFullscreen(wxCommandEvent &event);
 	void OnMinimalUi(wxCommandEvent &event);
 	void ApplyMinimalUi(bool minimal);
-	void OnIntegerScaling(wxCommandEvent &event);
-	void OnFitToWindow(wxCommandEvent &event);
-	void OnFollowHostDisplay(wxCommandEvent &event);
+	void OnDisplayScaling(wxCommandEvent &event);
+	void OnScreenSize(wxCommandEvent &event);
 	void OnSuspendOnExit(wxCommandEvent &event);
 	void OnCpuIdle(wxCommandEvent &event);
 	void OnMouseHack(wxCommandEvent &event);
@@ -304,7 +340,86 @@ private:
 	void ProcessEmulatorKeyEvent(wxKeyEvent &event, bool key_down);
 	void ExitFullScreen();
 	void EnterFullScreen();
-	void ApplyFitToWindowSize();
+	/**
+	 * Centre the window on its display, keeping the title bar reachable.
+	 *
+	 * Called after the window's size changes and at no other time, so the window
+	 * never moves while the guest is doing something.
+	 */
+	void CentreWindowOnScreen();
+
+	/** Make the window the size of the guest's desktop, and centre it. */
+	void SizeWindowToGuest();
+
+	/**
+	 * Rebuild the entries in the Screen Size menu.
+	 *
+	 * The list is what the machine's display memory can hold, so it changes when
+	 * the graphics card is fitted or the VRAM altered, not just at startup.
+	 */
+	void RebuildScreenSizeMenu();
+
+	/** True when the window's size is not derived from the guest's desktop. */
+	bool WindowSizeIsFree() const;
+
+	/** Push the current scaling and screen-size choices into the panel. */
+	void ApplyDisplayModeToPanel();
+
+	/**
+	 * Tell the guest the window's size, for ScreenSize_MatchWindow.
+	 *
+	 * Debounced: a resize drag fires continuously, and a mode change reflows
+	 * every window on the RISC OS desktop, so acting on each intermediate size
+	 * would leave the guest thrashing through modes it is about to leave. The
+	 * timer restarts on every event and only the size the drag settles on is
+	 * published.
+	 */
+
+
+	/**
+	 * Ask the guest for a screen size, and check that it takes it.
+	 *
+	 * @param width    Requested width in pixels
+	 * @param height   Requested height
+	 * @param explicit_choice True when the user named this size, so a refusal
+	 *                 should be reported rather than silently worked around.
+	 */
+	void RequestGuestMode(unsigned width, unsigned height, bool explicit_choice);
+	void OnModeVerifyTimer(wxTimerEvent &event);
+	void OnGuestResizeTimer(wxTimerEvent &event);
+
+	/**
+	 * RPCEMU_TEST_CLOSE_AFTER: ask the window to close, as the close button does.
+	 *
+	 * There to make the close flow testable without a pointer. The dialogues it
+	 * raises cannot be driven by a script here (macOS accessibility refuses to see
+	 * the process), but this proves the part that was actually broken: that the
+	 * question is asked at all and waits for an answer, rather than answering
+	 * itself and shutting the machine down. See AskAboutClosing().
+	 */
+	void OnTestCloseTimer(wxTimerEvent &event);
+
+	/**
+	 * RPCEMU_TEST_FULLSCREEN_AFTER: enter full screen, then leave it again, and
+	 * log the window's size at each step.
+	 *
+	 * Full screen needs a real display, so this cannot be driven headless, and
+	 * the dialogues and key handling cannot be driven by a script here. What it
+	 * does prove is the part that broke: that leaving full screen puts the window
+	 * back to the size of the guest's desktop rather than leaving it filling the
+	 * screen.
+	 */
+	void OnTestFullscreenTimer(wxTimerEvent &event);
+
+	/**
+	 * A frame arrived from the guest. Notices a change of desktop size and, for
+	 * ScreenSize_MatchWindow, waits for it to settle before acting.
+	 */
+	void NoteGuestFrame();
+
+	/** Repaint the panel from the retained frame, after the current event. */
+	void ForcePanelRedraw();
+
 
 	/* The running machine's configuration file name, without .cfg: what the
 	   default-machine preference is keyed on. */
@@ -427,9 +542,14 @@ private:
 	wxMenuItem *mute_menu_item_ = nullptr;
 	wxMenuItem *fullscreen_menu_item_ = nullptr;
 	wxMenuItem *minimal_ui_item_ = nullptr;
-	wxMenuItem *integer_scaling_menu_item_ = nullptr;
-	wxMenuItem *fit_to_window_menu_item_ = nullptr;
-	wxMenuItem *follow_host_display_menu_item_ = nullptr;
+	/* Indexed by DisplayScaling, so a value out of the configuration selects the
+	   right item directly. */
+	wxMenuItem *scaling_menu_items_[2] = { nullptr, nullptr };
+	wxMenu *screen_size_menu_ = nullptr;
+
+	/* The fixed sizes actually offered, in the order they appear in the menu, so
+	   an id can be turned back into a mode without re-deriving the list. */
+	std::vector<std::pair<unsigned, unsigned>> fixed_mode_items_;
 	wxMenuItem *suspend_on_exit_menu_item_ = nullptr;
 	wxMenuItem *cpu_idle_menu_item_ = nullptr;
 	wxMenuItem *mouse_hack_menu_item_ = nullptr;
@@ -449,6 +569,14 @@ private:
 	wxToolBarToolBase *tb_mute_tool_ = nullptr;
 
 	bool shutting_down_ = false;
+
+	/* Set once the user has confirmed closing, so the close that follows is not
+	   questioned all over again. */
+	bool close_confirmed_ = false;
+
+	/* A close question is already on screen. One click on the close button can
+	   raise more than one close event, and each was queueing another question. */
+	bool close_question_pending_ = false;
 	bool suspend_on_exit_requested_ = false;
 	/* Set when the window is closing because the process was signalled rather
 	   than because the user asked. A signal is a way out in a hurry, so the
@@ -485,6 +613,59 @@ private:
 	 */
 	wxTimer synthetic_release_timer_;
 	std::vector<unsigned> synthetic_release_pending_;
+
+	/*
+	 * Waiting to see whether the guest adopted the mode it was asked for.
+	 *
+	 * RISC OS refuses any mode its monitor definition does not declare, and says
+	 * so only on its own screen - the host is told nothing. So the request is
+	 * checked instead of trusted: if the desktop has not become the requested
+	 * size by the time this fires, that mode is marked unavailable and the next
+	 * one down is tried. See VerifyRequestedMode().
+	 */
+	wxTimer mode_verify_timer_;
+
+	/*
+	 * Waiting for the guest's screen mode to stop changing.
+	 *
+	 * RISC OS changes mode two or three times on its way to a desktop, and on a
+	 * machine with the graphics card the display is handed over part way through
+	 * as well. The window has to end up the size of the desktop - smaller clips
+	 * it and loses the icon bar, larger leaves a border - but resizing on every
+	 * one of those changes made it jump through three sizes and positions before
+	 * settling. So each change restarts this, and the window is sized once the
+	 * changes stop.
+	 */
+	wxTimer guest_resize_timer_;
+
+	/* RPCEMU_TEST_CLOSE_AFTER only; never started otherwise. */
+	wxTimer test_close_timer_;
+
+	/* RPCEMU_TEST_FULLSCREEN_AFTER only. */
+	wxTimer test_fullscreen_timer_;
+	int test_fullscreen_step_ = 0;
+
+	/** The size last asked of the guest, or (0,0) when nothing is outstanding. */
+	wxSize mode_requested_ = wxSize(0, 0);
+
+
+
+	/*
+	 * The guest desktop size this window has already reacted to.
+	 *
+	 * Two jobs. With ScreenSize_Fixed it stops the window being resized over and
+	 * over for frames that say nothing new. With ScreenSize_MatchWindow it tells
+	 * the two directions apart: a change the guest made for its own reasons - and
+	 * RISC OS makes several while it boots - means the window should follow it,
+	 * while a window that has moved with the guest standing still means the user
+	 * dragged an edge and the guest should follow instead. Without that, the boot
+	 * sequence read as the second case and the frame's own layout events
+	 * published an intermediate 800x520, driving the guest to 640x480 before the
+	 * desktop had even appeared.
+	 */
+	wxSize guest_size_seen_ = wxSize(0, 0);
+
+
 	wxString clipboard_last_seen_;	/* host text already sent to the guest */
 	std::string clipboard_image_last_seen_;	/* and the same for an image, as PNG */
 

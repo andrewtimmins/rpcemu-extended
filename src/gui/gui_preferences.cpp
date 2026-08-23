@@ -21,6 +21,8 @@
 #include "display_acceleration.h"
 #include "gui_preferences.h"
 
+#include "display_acceleration.h"
+
 #include <algorithm>
 #include <sstream>
 
@@ -128,7 +130,8 @@ ClearDataDir()
 }
 
 /*
- * Hardware acceleration for the Manager's display.
+ * Hardware acceleration for drawing a machine's screen, in its own window and
+ * in the Manager alike.
  *
  * Stored as a plain 0/1 under "HardwareAcceleration"; absent means on, which is
  * what a preferences file written before this existed looks like.

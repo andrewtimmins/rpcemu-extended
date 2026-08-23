@@ -23,11 +23,13 @@
 
 #include <wx/wx.h>
 #include <wx/spinctrl.h>
+#include <wx/radiobut.h>
 
 #include <functional>
 
 #include <map>
 #include <memory>
+#include <utility>
 #include <vector>
 
 class wxFileConfig;
@@ -160,9 +162,33 @@ private:
 	/* Options page. Each maps to one per-machine configuration field, except
 	   default_machine_check_ which is a host preference. */
 	wxCheckBox *fullscreen_msg_check_ = nullptr;
-	wxCheckBox *integer_scaling_check_ = nullptr;
-	wxCheckBox *fit_to_window_check_ = nullptr;
-	wxCheckBox *follow_host_check_ = nullptr;
+	/* The two display choices, mirroring the Settings menu. scaling_radio_ is
+	   indexed by DisplayScaling, so a configured value selects directly. */
+	wxRadioButton *scaling_radio_[2] = { nullptr, nullptr };
+	wxChoice *fixed_mode_choice_ = nullptr;
+
+	/* The modes fixed_mode_choice_ is currently offering, in its own order. */
+	std::vector<std::pair<unsigned, unsigned>> fixed_modes_;
+
+	/** Refill fixed_mode_choice_ for the VRAM and graphics card now selected. */
+	void RebuildFixedModeChoice();
+
+	/** Display memory the pending VRAM / graphics card selection would give. */
+	size_t PendingDisplayMemory() const;
+
+	/** Point fixed_mode_choice_ at a mode, or at the largest if it is not there. */
+	void SelectFixedMode(unsigned width, unsigned height);
+
+	/** Which drawing rule the radio group has selected (a DisplayScaling). */
+	int SelectedDisplayScaling() const;
+
+	/**
+	 * The screen size chosen from the list, or (0, 0) if the list is empty -
+	 * which only happens if the machine's display memory cannot hold even the
+	 * smallest standard mode. Zero means "choose one for this display", which is
+	 * what MainFrame::StartEmulator() does with it.
+	 */
+	void SelectedScreenSize(unsigned *width, unsigned *height) const;
 	wxCheckBox *sound_check_ = nullptr;
 	wxCheckBox *cdrom_check_ = nullptr;
 	wxCheckBox *mouse_twobutton_check_ = nullptr;

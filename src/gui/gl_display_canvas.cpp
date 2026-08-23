@@ -132,7 +132,7 @@ bool GlDisplayCanvas::EnsureContext()
 
 	usable_ = true;
 
-	rpclog("Manager: OpenGL display in use - %s, %s\n",
+	rpclog("Display: OpenGL display in use - %s, %s\n",
 	    renderer != nullptr ? renderer : "unknown renderer",
 	    version != nullptr ? version : "unknown version");
 
@@ -244,10 +244,10 @@ void GlDisplayCanvas::UpdateFrame(const uint32_t *pixels, int width, int height,
 
 		if (level1 > 0) {
 			mipmaps_ = true;
-			rpclog("Manager: OpenGL display has mipmaps, so a scaled-down "
+			rpclog("Display: OpenGL display has mipmaps, so a scaled-down "
 			       "screen is filtered trilinearly\n");
 		} else {
-			rpclog("Manager: OpenGL display has no automatic mipmaps, so a "
+			rpclog("Display: OpenGL display has no automatic mipmaps, so a "
 			       "scaled-down screen is filtered linearly\n");
 		}
 	}

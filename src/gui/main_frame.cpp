@@ -56,6 +56,7 @@
 
 #include "about_dialog.h"
 #include "check_update.h"
+#include "display_options.h"
 #include "config_paths.h"
 #include "gui_preferences.h"
 #include "input_helpers.h"
@@ -84,6 +85,7 @@
 
 extern "C" {
 #include "rpcemu.h"
+#include "display_mode.h"
 #include "hostclipboard.h"
 #include "machine_lock.h"
 }
@@ -167,9 +169,9 @@ bool MachineNeedsRestart(const Config *before, const Config *after)
 
 	/* Flatten every Options-tab setting so it cannot register as a change. */
 	a.show_fullscreen_message = b.show_fullscreen_message = 0;
-	a.integer_scaling = b.integer_scaling = 0;
-	a.fit_to_window = b.fit_to_window = 0;
-	a.follow_host_display = b.follow_host_display = 0;
+	a.display_scaling = b.display_scaling = 0;
+	a.screen_size_x = b.screen_size_x = 0;
+	a.screen_size_y = b.screen_size_y = 0;
 	a.soundenabled = b.soundenabled = 0;
 	a.cdromenabled = b.cdromenabled = 0;
 	a.mousetwobutton = b.mousetwobutton = 0;
@@ -219,6 +221,10 @@ wxBEGIN_EVENT_TABLE(MainFrame, wxFrame)
 	EVT_TIMER(ID_TIMER_NETWORK_LED, MainFrame::OnNetworkLedTimer)
 	EVT_TIMER(ID_TIMER_CLIPBOARD, MainFrame::OnClipboardTimer)
 	EVT_TIMER(ID_TIMER_SYNTHETIC_RELEASE, MainFrame::OnSyntheticReleaseTimer)
+	EVT_TIMER(ID_TIMER_MODE_VERIFY, MainFrame::OnModeVerifyTimer)
+	EVT_TIMER(ID_TIMER_GUEST_RESIZE, MainFrame::OnGuestResizeTimer)
+	EVT_TIMER(ID_TIMER_TEST_CLOSE, MainFrame::OnTestCloseTimer)
+	EVT_TIMER(ID_TIMER_TEST_FULLSCREEN, MainFrame::OnTestFullscreenTimer)
 	EVT_DISPLAY_CHANGED(MainFrame::OnDisplayChanged)
 wxEND_EVENT_TABLE()
 
@@ -234,6 +240,10 @@ MainFrame::MainFrame()
 	  network_led_timer_(this, ID_TIMER_NETWORK_LED),
 	  clipboard_timer_(this, ID_TIMER_CLIPBOARD)
 	, synthetic_release_timer_(this, ID_TIMER_SYNTHETIC_RELEASE)
+	, mode_verify_timer_(this, ID_TIMER_MODE_VERIFY)
+	, guest_resize_timer_(this, ID_TIMER_GUEST_RESIZE)
+	, test_close_timer_(this, ID_TIMER_TEST_CLOSE)
+	, test_fullscreen_timer_(this, ID_TIMER_TEST_FULLSCREEN)
 {
 	config_deep_copy(&config_copy_, &config);
 	pconfig_copy = &config_copy_;
@@ -257,6 +267,19 @@ MainFrame::MainFrame()
 	}
 	VncAppAttach(emulator_.get());
 #endif
+
+	/*
+	 * Black behind the panel, not the platform's window grey.
+	 *
+	 * Two things show this through at startup: the panel begins at its default
+	 * size before the guest has announced a mode, so the frame is briefly larger
+	 * than it, and a GL canvas clears to black until its first texture arrives.
+	 * Against a grey window both read as a fault - a small black box adrift in a
+	 * pale border - where against black they are simply a screen that has not
+	 * lit up yet, which is what they are. It is also the right colour for the
+	 * letterbox bars either side of a scaled display.
+	 */
+	SetBackgroundColour(*wxBLACK);
 
 	panel_ = new EmulatorPanel(this, *emulator_);
 
@@ -646,9 +669,11 @@ void MainFrame::ReportMenuState()
 	static const int checkable[] = {
 		ID_MENU_MUTE,
 		ID_MENU_FULLSCREEN,
-		ID_MENU_INTEGER_SCALING,
-		ID_MENU_FIT_TO_WINDOW,
-		ID_MENU_FOLLOW_HOST_DISPLAY,
+		/* The drawing rule, as a radio pair. The screen sizes are not here:
+		   which id means which resolution depends on the machine's display
+		   memory, so it is not something one process can tell another. */
+		ID_MENU_SCALING_ACTUAL,
+		ID_MENU_SCALING_MULTIPLES,
 		ID_MENU_SUSPEND_ON_EXIT,
 		ID_MENU_CPU_IDLE,
 		/* Not only for the Manager's tick-box: its panel needs this one to know
@@ -735,15 +760,65 @@ void MainFrame::StartEmulator()
 	model_copy_ = machine.model;
 	if (panel_ != nullptr) {
 		panel_->UpdateMouseCursor();
-		panel_->SetIntegerScaling(config_copy_.integer_scaling != 0);
-		panel_->SetFitToWindow(config_copy_.fit_to_window != 0);
 	}
-	if (config_copy_.fit_to_window) {
-		CallAfter([this] { ApplyFitToWindowSize(); });
+	/*
+	 * A machine that has never been given a screen size gets one now, chosen for
+	 * this display. Stored, so it is a plain resolution from here on rather than
+	 * a policy that re-decides itself behind the user's back.
+	 */
+	if (config_copy_.screen_size_x == 0 || config_copy_.screen_size_y == 0) {
+		unsigned w = 0, h = 0;
+
+		if (rpcemu_default_screen_size(&w, &h)) {
+			config_copy_.screen_size_x = w;
+			config_copy_.screen_size_y = h;
+			config.screen_size_x = w;
+			config.screen_size_y = h;
+			rpclog("Display: no screen size configured, chose %ux%u\n", w, h);
+		}
 	}
+
+	/*
+	 * The window is sized here, once, from the configuration - and then left
+	 * alone. It is NOT sized from the guest: RISC OS passes through two or three
+	 * modes on the way up, and on a machine with the graphics card the display is
+	 * handed over part way through as well, so a window that followed the guest
+	 * jumped through three sizes and positions before settling. See
+	 * ApplyDisplayModeToPanel() and NoteGuestFrame().
+	 */
+	ApplyDisplayModeToPanel();
+	guest_size_seen_ = wxSize(0, 0);
+
+	/* Whatever this machine's monitor definition declares, it is this machine's
+	   and nothing learned about the last one applies. */
+	display_mode_clear_unavailable();
+
+	/* The size has to be asked for, or the guest never hears about it: the
+	   support module polls, and until something bumps the generation there is
+	   nothing for it to act on. Not reported if refused - the machine is still
+	   starting, and the mode it boots into comes from the EDID anyway. */
+	RequestGuestMode(config_copy_.screen_size_x, config_copy_.screen_size_y,
+	                 false);
 	SyncSettingsMenuChecks();
 	SyncCdromMenuChecks();
 	UpdateMachineStatus();
+
+	if (const char *after = getenv("RPCEMU_TEST_FULLSCREEN_AFTER")) {
+		const long seconds = strtol(after, nullptr, 10);
+
+		if (seconds > 0) {
+			test_fullscreen_timer_.StartOnce((int) (seconds * 1000));
+		}
+	}
+
+	if (const char *after = getenv("RPCEMU_TEST_CLOSE_AFTER")) {
+		const long seconds = strtol(after, nullptr, 10);
+
+		if (seconds > 0) {
+			rpclog("MainFrame: RPCEMU_TEST_CLOSE_AFTER=%ld\n", seconds);
+			test_close_timer_.StartOnce((int) (seconds * 1000));
+		}
+	}
 
 	AddRecentMachine(config_copy_.name);
 
@@ -1328,6 +1403,7 @@ void MainFrame::EnterFullScreen()
 	if (panel_ != nullptr) {
 		panel_->UpdateMouseCursor();
 	}
+
 	/*
 	 * ★ Give the panel the keyboard back.
 	 *
@@ -1365,6 +1441,10 @@ void MainFrame::ExitFullScreen()
 		return;
 	}
 
+	/* Cleared first: SizeWindowToGuest() below does nothing while it is set, and
+	   it is the thing that puts the window back. */
+	full_screen_ = false;
+
 	if (panel_ != nullptr) {
 		panel_->SetFullScreen(false);
 	}
@@ -1384,45 +1464,33 @@ void MainFrame::ExitFullScreen()
 	 *
 	 * This was a bare Layout(), on the grounds that ShowFullScreen(false) had
 	 * already restored the size and that fitting would shrink-wrap the frame to a
-	 * panel with no minimum. The second half is not true: SetFullScreen(false)
-	 * above calls ResizeToHostDisplay(), which gives the panel the guest's screen
-	 * size as both its minimum and its maximum. And the first half is exactly the
-	 * sort of thing a platform may not do - leaving the window full-screen-sized
-	 * on Windows, where leaving full screen appeared to do nothing at all.
+	 * panel with no minimum. Neither half held: the panel takes the guest's
+	 * screen size as its minimum, and leaving the geometry to the toolkit meant
+	 * leaving the window full-screen-sized on Windows, where leaving full screen
+	 * appeared to do nothing at all.
+	 *
+	 * Cleared first, because SizeWindowToGuest() does nothing while it is set.
 	 */
 	full_screen_ = false;
-	Layout();
-	Fit();
+	SizeWindowToGuest();
 
-	/* Sized around a fixed top-left corner, so centre it - but only while it
-	   fits, since centring something taller than the work area puts its title bar
-	   above the top of the screen where it cannot be grabbed. */
-	if (!IsMaximized() && !IsIconized()) {
-		int index = wxDisplay::GetFromWindow(this);
-
-		if (index == wxNOT_FOUND) {
-			index = 0;
-		}
-
-		const wxRect work = wxDisplay((unsigned) index).GetClientArea();
-		const wxSize size = GetSize();
-
-		if (size.x <= work.width && size.y <= work.height) {
-			Centre();
-		} else {
-			SetPosition(work.GetTopLeft());
-		}
-	}
-
-	/* Force a full repaint once the windowed layout has settled (see the note
-	   in EnterFullScreen). */
-	if (panel_ != nullptr) {
-		panel_->CallAfter([this] {
-			if (panel_ != nullptr) {
-				panel_->ForceRedraw();
-			}
-		});
-	}
+	/*
+	 * ★ Put the window back explicitly, rather than trusting ShowFullScreen().
+	 *
+	 * This used to be a bare Layout(), on the grounds that ShowFullScreen(false)
+	 * had already restored the size and that fitting would shrink-wrap the frame
+	 * to a panel with no minimum. Both halves of that stopped being true.
+	 *
+	 * The panel now has a minimum in windowed mode - a hard one at actual size,
+	 * where the panel IS the guest's screen - so Fit() no longer collapses
+	 * anything; and leaving the geometry to ShowFullScreen(false) meant leaving
+	 * the window full-screen-sized on Windows, where leaving full screen appeared
+	 * to do nothing at all. Reported against 1.1.14.
+	 *
+	 * Everything else that changes the window's size goes through here, so full
+	 * screen is no longer the one path with its own idea of how to get back.
+	 */
+	SizeWindowToGuest();
 
 	if (panel_ != nullptr) {
 		panel_->UpdateMouseCursor();
@@ -1441,99 +1509,454 @@ void MainFrame::OnFullscreen(wxCommandEvent &)
 	}
 }
 
-void MainFrame::OnIntegerScaling(wxCommandEvent &event)
+/*
+ * Show In Window: which of the three drawing rules to use.
+ *
+ * Note what is NOT here any more. The two old handlers each had to notice that
+ * the other setting contradicted theirs, clear it, re-tick its menu item and
+ * tell the emulator thread about that as well - a piece of bookkeeping that
+ * existed only because two mutually exclusive settings were stored as two
+ * independent flags. One value cannot contradict itself, so a radio group needs
+ * none of it.
+ */
+/*
+ * Show In Window: actual size, or whole multiples.
+ *
+ * Note what is not here any more. When these were two mutually exclusive
+ * checkboxes, each handler had to notice that the other contradicted it, clear
+ * it, re-tick its menu item and tell the emulator thread about that as well -
+ * bookkeeping that existed only because one setting was stored as two flags.
+ */
+void MainFrame::OnDisplayScaling(wxCommandEvent &event)
 {
-	config_copy_.integer_scaling = event.IsChecked() ? 1 : 0;
-	if (integer_scaling_menu_item_ != nullptr) {
-		integer_scaling_menu_item_->Check(config_copy_.integer_scaling != 0);
-	}
-	/* Integer scaling and fit-to-window are alternative scaling modes; turning
-	   one on turns the other off. */
-	if (config_copy_.integer_scaling && config_copy_.fit_to_window) {
-		config_copy_.fit_to_window = 0;
-		if (fit_to_window_menu_item_ != nullptr) {
-			fit_to_window_menu_item_->Check(false);
-		}
-		if (emulator_) {
-			emulator_->FitToWindow();
-		}
-	}
-	if (panel_ != nullptr) {
-		panel_->SetFitToWindow(config_copy_.fit_to_window != 0);
-		panel_->SetIntegerScaling(config_copy_.integer_scaling != 0);
-		Layout();
-	}
-	if (emulator_) {
-		emulator_->IntegerScaling();
-	}
-}
+	const int scaling = event.GetId() == ID_MENU_SCALING_MULTIPLES
+	    ? DisplayScaling_WholeMultiples : DisplayScaling_ActualSize;
 
-void MainFrame::OnFitToWindow(wxCommandEvent &event)
-{
-	config_copy_.fit_to_window = event.IsChecked() ? 1 : 0;
-	if (fit_to_window_menu_item_ != nullptr) {
-		fit_to_window_menu_item_->Check(config_copy_.fit_to_window != 0);
-	}
-	/* Mutually exclusive with integer scaling. */
-	if (config_copy_.fit_to_window && config_copy_.integer_scaling) {
-		config_copy_.integer_scaling = 0;
-		if (integer_scaling_menu_item_ != nullptr) {
-			integer_scaling_menu_item_->Check(false);
-		}
-		if (emulator_) {
-			emulator_->IntegerScaling();
-		}
-	}
-	if (panel_ != nullptr) {
-		panel_->SetIntegerScaling(config_copy_.integer_scaling != 0);
-		panel_->SetFitToWindow(config_copy_.fit_to_window != 0);
-		Layout();
-	}
-	if (emulator_) {
-		emulator_->FitToWindow();
-	}
-
-	/* Give the now freely-resizable window a comfortable starting size, then
-	   force a repaint - a static guest desktop sends no fresh frame to trigger
-	   one after the resize. */
-	if (config_copy_.fit_to_window) {
-		ApplyFitToWindowSize();
-	}
-	if (panel_ != nullptr) {
-		panel_->CallAfter([this] {
-			if (panel_ != nullptr) {
-				panel_->ForceRedraw();
-			}
-		});
-	}
-}
-
-/* Size the window to a comfortable default for fit-to-window mode: no larger
-   than 80% of the display, and no smaller than a usable floor, while leaving it
-   freely resizable by the user afterwards. */
-void MainFrame::ApplyFitToWindowSize()
-{
-	if (!config_copy_.fit_to_window) {
+	if (scaling == config_copy_.display_scaling) {
 		return;
 	}
 
-	const wxRect area = wxDisplay(wxDisplay::GetFromWindow(this)).GetClientArea();
-	const int cap_w = std::max(area.width * 4 / 5, 800);
-	const int cap_h = std::max(area.height * 4 / 5, 600);
-	const wxSize cur = GetSize();
-	const int w = std::clamp(cur.x, 800, cap_w);
-	const int h = std::clamp(cur.y, 600, cap_h);
-
-	if (w != cur.x || h != cur.y) {
-		SetSize(wxSize(w, h));
+	config_copy_.display_scaling = scaling;
+	if (scaling_menu_items_[scaling] != nullptr) {
+		scaling_menu_items_[scaling]->Check(true);
 	}
-	/* Force the sizer to re-lay-out so the (now unconstrained) panel expands to
-	   fill the client area, even if the frame size did not actually change. */
+	if (emulator_) {
+		emulator_->SetDisplayScaling(scaling);
+	}
+	ApplyDisplayModeToPanel();
+	ForcePanelRedraw();
+}
+
+void MainFrame::OnScreenSize(wxCommandEvent &event)
+{
+	const int id = event.GetId();
+
+	if (id < ID_MENU_SCREEN_FIXED_FIRST || id > ID_MENU_SCREEN_FIXED_LAST) {
+		return;
+	}
+
+	const size_t index = (size_t) (id - ID_MENU_SCREEN_FIXED_FIRST);
+
+	if (index >= fixed_mode_items_.size()) {
+		return;		/* Stale id from a menu that has since been rebuilt */
+	}
+
+	const unsigned want_x = fixed_mode_items_[index].first;
+	const unsigned want_y = fixed_mode_items_[index].second;
+
+	if (want_x == config_copy_.screen_size_x &&
+	    want_y == config_copy_.screen_size_y)
+	{
+		return;
+	}
+
+	config_copy_.screen_size_x = want_x;
+	config_copy_.screen_size_y = want_y;
+	if (emulator_) {
+		emulator_->SetScreenSize(want_x, want_y);
+	}
+
+	/* Named explicitly, so a refusal is reported rather than quietly turned
+	   into some other size. */
+	RequestGuestMode(want_x, want_y, true);
+}
+
+/*
+ * Whether the window's size is the user's to choose.
+ *
+ * Only when whole-multiple scaling is on. At actual size the window is exactly
+ * the desktop, because at 1:1 any other size is either a border or a clipped
+ * desktop and neither is what anybody wanted.
+ */
+bool MainFrame::WindowSizeIsFree() const
+{
+	return config_copy_.display_scaling == DisplayScaling_WholeMultiples;
+}
+
+void MainFrame::ApplyDisplayModeToPanel()
+{
+	if (panel_ == nullptr) {
+		return;
+	}
+
+	panel_->SetDisplayMode(
+	    DisplayOptions::ClampDisplayScaling(config_copy_.display_scaling));
+	SizeWindowToGuest();
+}
+
+/*
+ * Make the window the size of the RISC OS desktop, and centre it.
+ *
+ * Called when the guest's mode has settled, and when the drawing rule changes -
+ * never from a video update. Both halves matter: the size, because a window
+ * smaller than the desktop clips it and loses the icon bar off the bottom while a
+ * larger one leaves a black border; and the centring, because a window that has
+ * just changed size grows around its top-left corner and walks off the
+ * bottom-right of the screen.
+ */
+void MainFrame::SizeWindowToGuest()
+{
+	if (panel_ == nullptr || full_screen_) {
+		return;
+	}
+
+	panel_->SizeToGuest();
 	Layout();
-	if (panel_ != nullptr) {
-		panel_->ForceRedraw();
+	Fit();
+	CentreWindowOnScreen();
+	ForcePanelRedraw();
+}
+
+
+void MainFrame::ForcePanelRedraw()
+{
+	if (panel_ == nullptr) {
+		return;
+	}
+	/* Deferred: a static guest desktop sends no fresh frame after a resize, so
+	   without this the panel keeps showing the old geometry. */
+	panel_->CallAfter([this] {
+		if (panel_ != nullptr) {
+			panel_->ForceRedraw();
+		}
+	});
+}
+
+/*
+ * The fixed screen sizes on offer, which depend on the machine.
+ *
+ * Only modes this machine's display memory can hold: offering one it cannot show
+ * would put us back where this redesign started, with a control that looks as
+ * though it works and then does not - RISC OS answers "not suitable for
+ * displaying the desktop" and the user is none the wiser.
+ */
+void MainFrame::RebuildScreenSizeMenu()
+{
+	if (screen_size_menu_ == nullptr) {
+		return;
+	}
+
+	std::vector<std::pair<unsigned, unsigned>> modes;
+	DisplayOptions::FixedModes(rpcemu_display_memory(), modes);
+
+	const size_t limit =
+	    (size_t) (ID_MENU_SCREEN_FIXED_LAST - ID_MENU_SCREEN_FIXED_FIRST) + 1;
+	if (modes.size() > limit) {
+		modes.resize(limit);
+	}
+
+	/* Rebuilt rather than patched: the list is short, and working out which
+	   entries moved is more code than throwing them away. */
+	for (size_t i = 0; i < fixed_mode_items_.size(); i++) {
+		screen_size_menu_->Delete(
+		    (int) (ID_MENU_SCREEN_FIXED_FIRST + (int) i));
+	}
+	fixed_mode_items_.clear();
+
+	for (size_t i = 0; i < modes.size(); i++) {
+		wxMenuItem *item = screen_size_menu_->AppendRadioItem(
+		    (int) (ID_MENU_SCREEN_FIXED_FIRST + (int) i),
+		    DisplayOptions::ModeLabel(modes[i].first, modes[i].second));
+
+		item->SetHelp(DisplayOptions::ScreenSizeHelp());
+		fixed_mode_items_.push_back(modes[i]);
+	}
+
+	/* Tick whichever entry the configuration names. A machine whose size is no
+	   longer on offer - VRAM reduced, or the graphics card taken out - leaves
+	   nothing ticked, which is the honest display of it: the size it is
+	   configured for is not one this machine can currently show. */
+	for (size_t i = 0; i < fixed_mode_items_.size(); i++) {
+		if (fixed_mode_items_[i].first == config_copy_.screen_size_x &&
+		    fixed_mode_items_[i].second == config_copy_.screen_size_y)
+		{
+			screen_size_menu_->Check(
+			    (int) (ID_MENU_SCREEN_FIXED_FIRST + (int) i), true);
+			return;
+		}
 	}
 }
+
+/*
+ * The window was resized, and the guest is following it.
+ *
+ * Debounced, because a drag fires this continuously and each mode change reflows
+ * every window on the RISC OS desktop. Publishing every intermediate width would
+ * have the guest working its way through modes it is about to leave, which looks
+ * and feels like a fault. Only the size the drag settles on is sent.
+ */
+
+/*
+ * A frame arrived from the guest.
+ *
+ * Deliberately does almost nothing. The window's size comes from the
+ * configuration and not from the guest, so a mode change - and RISC OS makes
+ * several while it boots - is simply drawn, centred, inside the window that is
+ * already there. Nothing is resized and nothing is moved.
+ *
+ * The one thing worth noticing is the desktop reaching the size that was asked
+ * for, which is how a refused mode is told from an accepted one.
+ */
+/*
+ * How long to give the guest to change mode before deciding it will not.
+ *
+ * The support module polls a few times a second and then queues a callback that
+ * runs *WimpMode, and RISC OS itself takes a moment to reflow the desktop. Two
+ * seconds is comfortably longer than that and short enough that a refused mode
+ * does not feel like a hang.
+ */
+static const int kModeVerifyMs = 2000;
+
+/*
+ * Put the window in the middle of the display, with its title bar reachable.
+ *
+ * Called after anything that changes the window's size - the machine starting,
+ * the screen size being changed, the drawing rule being changed - and at no other
+ * time. Nothing here reacts to the guest, which is the point: the window used to
+ * be resized and re-centred every time RISC OS changed mode while booting, and
+ * watching a window jump around three times before settling is not a startup
+ * anybody wants.
+ *
+ * The clamp matters as much as the centring. A window taller than the work area,
+ * centred, has its title bar above the top of the screen where it cannot be
+ * grabbed - so the window can then be neither moved nor resized back. Pinned to
+ * the top-left of the work area instead, the title bar is always in reach.
+ */
+void MainFrame::CentreWindowOnScreen()
+{
+	int index = wxDisplay::GetFromWindow(this);
+
+	if (index == wxNOT_FOUND) {
+		index = 0;
+	}
+
+	const wxRect work = wxDisplay((unsigned) index).GetClientArea();
+	const wxSize size = GetSize();
+
+	if (size.x <= work.width && size.y <= work.height) {
+		SetPosition(wxPoint(work.x + (work.width - size.x) / 2,
+		                    work.y + (work.height - size.y) / 2));
+	} else {
+		SetPosition(work.GetTopLeft());
+	}
+}
+
+void MainFrame::RequestGuestMode(unsigned width, unsigned height,
+                                 bool explicit_choice)
+{
+	unsigned fitted_w = 0, fitted_h = 0;
+
+	if (width == 0 || height == 0) {
+		return;
+	}
+
+	/* Ask the core what this rounds to, so the size being waited for is the one
+	   the guest will actually be asked for. */
+	if (!rpcemu_guest_size_for(width, height, &fitted_w, &fitted_h)) {
+		if (explicit_choice) {
+			wxMessageBox(
+			    "No screen mode this machine can display is small enough for "
+			    "that.\n\nFit more VRAM, or the graphics card, for the larger "
+			    "modes.",
+			    "Screen Size", wxOK | wxICON_INFORMATION, this);
+		}
+		return;
+	}
+
+	rpcemu_request_guest_size(fitted_w, fitted_h);
+
+	/*
+	 * Only a size the user named is checked.
+	 *
+	 * Checking the one made at startup was a bad mistake: the request goes out
+	 * before RISC OS has a desktop, so two seconds later the guest is still part
+	 * way through booting and is obviously not in the requested mode. That read
+	 * as a refusal, struck a perfectly good size off the list, and dragged the
+	 * window down to whatever transient boot mode happened to be on screen.
+	 *
+	 * There is nothing to check at startup anyway. Nobody is waiting on an answer,
+	 * and the window follows whatever the guest settles into regardless.
+	 */
+	if (!explicit_choice) {
+		mode_requested_ = wxSize(0, 0);
+		return;
+	}
+
+	mode_requested_ = wxSize((int) fitted_w, (int) fitted_h);
+	mode_verify_timer_.StartOnce(kModeVerifyMs);
+}
+
+/*
+ * The guest was asked for a mode. Did it take it?
+ *
+ * A refusal is invisible from here - RISC OS reports "this screen mode is
+ * unsuitable for displaying the desktop" on its own screen and the host is told
+ * nothing at all - so the only evidence is the desktop still being the size it
+ * was. Measured on a machine with the graphics card fitted, seven of the thirteen
+ * modes that fit its display memory were refused, because the monitor definition
+ * in force was a definition file rather than the synthesised EDID. Nothing on the
+ * host can know which modes a given definition declares, so they are learned.
+ */
+void MainFrame::OnModeVerifyTimer(wxTimerEvent &event)
+{
+	(void)event;
+
+	/* Only ever reached for a size the user named: RequestGuestMode() starts this
+	   timer for nothing else, so there is no "was this explicit" to test. */
+
+	if (panel_ == nullptr || mode_requested_ == wxSize(0, 0)) {
+		return;
+	}
+
+	const wxSize requested = mode_requested_;
+	const wxSize guest = panel_->GuestScreenSize();
+
+	mode_requested_ = wxSize(0, 0);
+
+	if (guest == requested) {
+		return;		/* Taken */
+	}
+
+	rpclog("Display: the guest refused %dx%d\n", requested.x, requested.y);
+
+	/*
+	 * Struck off the list.
+	 *
+	 * RISC OS accepts only the screen modes the monitor definition in force
+	 * declares. That definition is usually a monitor definition file the guest's
+	 * own !Boot loads - not the EDID this emulator synthesises - and nothing on
+	 * the host can read what it contains. Measured on a machine with the graphics
+	 * card fitted, seven of the thirteen modes that fit its display memory were
+	 * refused, and not the ones anybody would guess: 1920x1200 accepted,
+	 * 1920x1080 refused.
+	 *
+	 * Nothing else needs doing. The window is the size of whatever the desktop
+	 * actually is, so a refusal leaves it where it was rather than leaving a
+	 * border or a clipped desktop behind.
+	 */
+	display_mode_mark_unavailable((unsigned) requested.x, (unsigned) requested.y);
+	RebuildScreenSizeMenu();
+
+	/*
+	 * Said once, plainly, with the cause and the cure.
+	 *
+	 * The cure is real and worth spelling out: this machine has MonitorType
+	 * configured as EDID, and RISC OS is nevertheless using a definition file,
+	 * because its !Boot loads one over the top. Remove that and the emulator's
+	 * own monitor definition applies, which declares the whole list.
+	 *
+	 * Note what is NOT offered: a restart. Advertising the chosen size as the
+	 * monitor's native mode does not make RISC OS boot into it - the desktop mode
+	 * comes from CMOS and the monitor definition only vets it - so suggesting a
+	 * restart would be sending somebody round a loop that does not arrive.
+	 */
+	wxMessageBox(
+	    wxString::Format(
+	        "RISC OS would not switch to %d x %d, and is still using %d x %d.\n\n"
+	        "It only accepts screen modes the monitor definition it has loaded "
+	        "declares, and that one does not include this size, so it has been "
+	        "taken out of the list.\n\n"
+	        "To get the full set of sizes, stop RISC OS loading its own monitor "
+	        "definition file: in Configure, set the monitor type to Auto or EDID "
+	        "rather than a definition file, then restart the machine. The "
+	        "emulator's own monitor definition offers every size in the list.",
+	        requested.x, requested.y,
+	        guest.x > 0 ? guest.x : requested.x,
+	        guest.y > 0 ? guest.y : requested.y),
+	    "Screen Size Not Available", wxOK | wxICON_INFORMATION, this);
+}
+
+void MainFrame::NoteGuestFrame()
+{
+	/*
+	 * How long the guest's screen mode has to hold still before the window is
+	 * resized to it.
+	 *
+	 * Long enough to swallow the run of mode changes RISC OS makes while booting -
+	 * and the graphics card's display handover in the middle of them - so the
+	 * window is sized once at the end rather than at every step. Short enough that
+	 * a mode change the user asked for feels immediate.
+	 */
+	static const int kGuestSettleMs = 500;
+
+	if (panel_ == nullptr) {
+		return;
+	}
+
+	const wxSize guest = panel_->GuestScreenSize();
+
+	if (guest.x <= 0 || guest.y <= 0 || guest == guest_size_seen_) {
+		return;
+	}
+	guest_size_seen_ = guest;
+	guest_resize_timer_.StartOnce(kGuestSettleMs);
+}
+
+void MainFrame::OnGuestResizeTimer(wxTimerEvent &event)
+{
+	(void)event;
+	SizeWindowToGuest();
+}
+
+void MainFrame::OnTestFullscreenTimer(wxTimerEvent &event)
+{
+	(void)event;
+
+	const wxSize before = GetSize();
+	const wxSize guest = panel_ != nullptr ? panel_->GuestScreenSize()
+	                                       : wxSize(0, 0);
+
+	switch (test_fullscreen_step_++) {
+	case 0:
+		rpclog("TEST_FULLSCREEN: window %dx%d, guest %dx%d - entering\n",
+		       before.x, before.y, guest.x, guest.y);
+		/* Not through the dialogue: that would need answering. */
+		config_copy_.show_fullscreen_message = 0;
+		EnterFullScreen();
+		rpclog("TEST_FULLSCREEN: full screen, window now %dx%d\n",
+		       GetSize().x, GetSize().y);
+		test_fullscreen_timer_.StartOnce(5000);
+		break;
+
+	case 1:
+		rpclog("TEST_FULLSCREEN: window %dx%d - leaving\n", before.x, before.y);
+		ExitFullScreen();
+		rpclog("TEST_FULLSCREEN: left, window now %dx%d, guest %dx%d\n",
+		       GetSize().x, GetSize().y, guest.x, guest.y);
+		break;
+
+	default:
+		break;
+	}
+}
+
+void MainFrame::OnTestCloseTimer(wxTimerEvent &event)
+{
+	(void)event;
+	rpclog("MainFrame: RPCEMU_TEST_CLOSE_AFTER - requesting close\n");
+	Close(false);	/* false: may be vetoed, exactly like the close button */
+}
+
 
 void MainFrame::OnCpuIdle(wxCommandEvent &event)
 {
@@ -2040,6 +2463,14 @@ void MainFrame::EditMachineConfiguration()
 	if (panel_ != nullptr) {
 		panel_->UpdateMouseCursor();
 	}
+	/* The display choices take effect now, not at the next restart: they are the
+	   same settings the Settings menu applies immediately, and it would be a
+	   strange dialog that made you restart for one and not the other. */
+	ApplyDisplayModeToPanel();
+	guest_size_seen_ = wxSize(0, 0);
+	RequestGuestMode(config_copy_.screen_size_x, config_copy_.screen_size_y,
+	                 true);
+	ForcePanelRedraw();
 	SyncSettingsMenuChecks();
 	SyncCdromMenuChecks();
 	UpdateMachineStatus();
@@ -2347,27 +2778,6 @@ void MainFrame::OnActivate(wxActivateEvent &event)
 	event.Skip();
 }
 
-/* Let the guest change screen mode to match the host display.
- *
- * Not mutually exclusive with the scaling options, because they answer the same
- * question differently rather than incompatibly: these two keep the guest's mode
- * and scale the picture, this changes the guest's mode. The combination worth
- * having is full-screen plus this, which gives a crisp desktop at the monitor's
- * own resolution with no scaling at all.
- *
- * Takes effect from the next display change: switching it on does not retune the
- * mode the desktop is already in, which also means ticking it never reflows
- * anyone's windows by surprise. */
-void MainFrame::OnFollowHostDisplay(wxCommandEvent &event)
-{
-	config_copy_.follow_host_display = event.IsChecked() ? 1 : 0;
-	if (follow_host_display_menu_item_ != nullptr) {
-		follow_host_display_menu_item_->Check(config_copy_.follow_host_display != 0);
-	}
-	if (emulator_) {
-		emulator_->FollowHostDisplay();
-	}
-}
 
 /* The host's displays changed: a monitor was attached or removed, or its
    resolution was altered. Republish the geometry so the guest support module can
@@ -2386,13 +2796,21 @@ void MainFrame::OnDisplayChanged(wxDisplayChangedEvent &event)
 
 	const wxDisplay display((unsigned) index);
 	const wxRect geom = display.GetGeometry();
+	const wxRect work = display.GetClientArea();
 
 	if (geom.width > 0 && geom.height > 0) {
 		const wxVideoMode mode = display.GetCurrentMode();
 
 		rpcemu_set_host_display((unsigned) geom.width, (unsigned) geom.height,
-		                        mode.refresh > 0 ? (unsigned) mode.refresh : 0);
+		                        mode.refresh > 0 ? (unsigned) mode.refresh : 0,
+		                        (unsigned) std::max(work.width, 0),
+		                        (unsigned) std::max(work.height, 0));
 	}
+
+	/* The window may have moved to a display of a different size, so put it back
+	   in the middle of whichever one it is on now. The guest's screen size is a
+	   configured resolution and does not change with the monitor. */
+	CentreWindowOnScreen();
 
 	event.Skip();
 }
@@ -2435,6 +2853,7 @@ void MainFrame::PostVideoUpdate(VideoUpdate update)
 	if (wxIsMainThread()) {
 		if (panel_ != nullptr) {
 			panel_->ApplyVideoUpdate(update);
+			NoteGuestFrame();
 		}
 		return;
 	}
@@ -2568,6 +2987,7 @@ void MainFrame::PostVideoUpdate(VideoUpdate update)
 		(void) pixels; // returns the slot to the pool once the frame is applied
 		if (panel_ != nullptr) {
 			panel_->ApplyVideoUpdate(copy);
+			NoteGuestFrame();
 		}
 	});
 }
@@ -2757,8 +3177,8 @@ void MainFrame::PostMachineSwitched(const std::string &machine_name)
 		model_copy_ = machine.model;
 		if (panel_ != nullptr) {
 			panel_->UpdateMouseCursor();
-			panel_->SetIntegerScaling(config_copy_.integer_scaling != 0);
 		}
+		ApplyDisplayModeToPanel();
 		SyncSettingsMenuChecks();
 		SyncCdromMenuChecks();
 		UpdateMachineStatus();
@@ -2773,13 +3193,156 @@ void MainFrame::PostQuit()
 	CallAfter([this]() { Close(true); });
 }
 
-void MainFrame::OnExit(wxCommandEvent &) { Close(true); }
+/*
+ * File > Exit, which on macOS is RPCEmu > Quit (Cmd+Q).
+ *
+ * Close(false), not Close(true). The forced form cannot be declined, so quitting
+ * this way skipped the "are you sure" entirely and took the machine down without
+ * asking - the close button asked and the Quit menu did not, for the same action.
+ */
+void MainFrame::OnExit(wxCommandEvent &) { Close(false); }
+
+/*
+ * Closing the window: confirm, then offer the machine list.
+ *
+ * Two things were missing. Closing a running machine took it down with no
+ * question asked, which for an emulator is the same shape of mistake as closing
+ * an unsaved document - RISC OS is running, its discs are mounted, and there may
+ * be work in it. And quitting was the only thing closing could do, so somebody
+ * who wanted a different machine had to quit and start the application again,
+ * even though switching machines in place is something RPCEmu already does.
+ *
+ * Both dialogues are deliberately plain two-button ones, and both are run OUTSIDE
+ * the close event. The first attempt at this was a single three-button alert with
+ * custom labels, raised from inside the close handler, and on macOS it never ran
+ * its modal loop at all: ShowModal() returned wxID_YES straight away, so the
+ * machine was shut down as though the user had picked "Quit" from a dialogue they
+ * were never shown. Vetoing first and asking afterwards keeps the questions out
+ * of a handler that is in the middle of tearing the window down.
+ */
+bool MainFrame::ConfirmCloseOrSwitch()
+{
+	if (close_confirmed_) {
+		return true;	/* Already been through this; this is the real close */
+	}
+
+	/*
+	 * One question at a time.
+	 *
+	 * A single click on the close button can produce more than one close event -
+	 * the window's own, and the application's check for whether it should quit
+	 * now that its last window is going - and each of those was queueing another
+	 * question. The result was the confirmation appearing a second time on top of
+	 * the machine selector, with two answers wanted for one click.
+	 */
+	if (close_question_pending_) {
+		return false;
+	}
+	close_question_pending_ = true;
+
+	/* Deferred, so the dialogues run with the close event finished and the frame
+	   in a settled state rather than half way through being destroyed. */
+	CallAfter([this] { AskAboutClosing(); });
+	return false;
+}
+
+/*
+ * Are you sure you wish to shut down this machine?
+ *
+ * Yes: the window closes. No: nothing happens.
+ *
+ * Simpler here than it is for a single-machine build, and deliberately so. There,
+ * closing the window was the end of the application, so the close had to offer
+ * the machine list as an alternative or somebody finishing with one machine had
+ * to quit and start again. The Manager makes that unnecessary: a managed machine
+ * is its own process and the Manager is another, so closing a machine leaves the
+ * Manager exactly where it was, showing the machine list. There is nothing to
+ * reopen.
+ *
+ * Runs from a CallAfter(), with the close event already declined, and NOT from
+ * inside the close handler. That is not tidiness, it is the bug this had: a
+ * three-button alert with custom labels raised from inside the close handler
+ * never ran its modal loop on macOS - ShowModal() returned wxID_YES straight
+ * away, so the machine was shut down as though the user had picked "Quit" from a
+ * dialogue they were never shown.
+ */
+void MainFrame::AskAboutClosing()
+{
+	const bool running = emulator_ != nullptr && emulator_->IsRunning();
+
+	rpclog("MainFrame: asking about closing (running=%d)\n", running ? 1 : 0);
+
+	if (running) {
+		const int answer = wxMessageBox(
+		    "Are you sure you wish to shut down this machine?",
+		    wxString::Format("Shut Down %s", MachineDisplayName()),
+		    wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION, this);
+
+		/* wxMessageBox answers with the STYLE flags - wxYES, wxNO - and not with
+		   wxID_YES and friends, which is what wxMessageDialog::ShowModal()
+		   returns. Mixing the two families up is an easy way to write a
+		   confirmation that silently always takes the same branch. */
+		rpclog("MainFrame: shutdown question answered %d (yes=%d)\n",
+		       answer, wxYES);
+
+		if (answer != wxYES) {
+			return;
+		}
+	}
+
+	/* Confirmed, so let the close through. Flagged so it is not questioned all
+	   over again on the way out. */
+	close_confirmed_ = true;
+	close_question_pending_ = false;
+	Close(true);
+}
+
+/** This machine's name for a dialogue title, or the application's. */
+wxString MainFrame::MachineDisplayName() const
+{
+	const wxString name = CurrentMachineBaseName();
+
+	return name.IsEmpty() ? wxString("RPCEmu") : name;
+}
 
 void MainFrame::OnClose(wxCloseEvent &event)
 {
 	if (shutting_down_) {
 		event.Skip();
 		return;
+	}
+
+	/* One line per close. Kept because it is what found two separate faults in
+	   this path: a dialogue that answered itself, and a bundle that did not
+	   contain the code being tested. */
+	rpclog("MainFrame: close requested (vetoable=%d signal=%d fatal=%d confirmed=%d)\n",
+	       event.CanVeto() ? 1 : 0, closing_for_signal_ ? 1 : 0,
+	       EmulatorFatalOccurred() ? 1 : 0, close_confirmed_ ? 1 : 0);
+
+	/*
+	 * A forced close - a signal, or the session ending - is not a request that
+	 * may be declined, so it is not put to the user.
+	 *
+	 * CanVeto() is deliberately NOT part of the test any more. A close that
+	 * cannot be vetoed still has to be obeyed, but it must not be the reason the
+	 * question is skipped: one click on the close button can raise more than one
+	 * close event, and if a non-vetoable one arrives first then testing CanVeto()
+	 * first means the machine is taken down without anything being asked. Ask
+	 * first, and then veto only if we are allowed to.
+	 */
+	if (!closing_for_signal_ && !EmulatorFatalOccurred() &&
+	    !ConfirmCloseOrSwitch())
+	{
+		if (event.CanVeto()) {
+			event.Veto();
+			return;
+		}
+		/* Cannot decline it, so the machine is going down regardless. Drop the
+		   question that was queued, since there is nothing left for it to
+		   decide. */
+		rpclog("MainFrame: close cannot be vetoed - going down without asking\n");
+		close_question_pending_ = false;
+		close_confirmed_ = true;
 	}
 
 	// If a fatal error has been raised, the emulator thread is spinning forever

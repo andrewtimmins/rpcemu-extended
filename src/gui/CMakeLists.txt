@@ -14,6 +14,7 @@ set(GUI_SOURCES
     text_screen.c
     console_font.c
     emulator_panel.cpp
+    gl_display_canvas.cpp
     emulator_host.cpp
     emulator_snapshot.cpp
     gui_preferences.cpp
@@ -132,23 +133,24 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(${RPCEMU_GUI_TARGET} PRIVATE rt)
 endif()
 
-# OpenGL itself, for gl_display_canvas.cpp - the Manager draws a machine's screen
-# as a texture where the platform's own renderer is not accelerated. wx-config's
-# "gl" component provides wxWidgets' GL canvas, NOT the GL library it calls
-# into, so this is separate: without it the link fails on glEnable with "DSO
-# missing from command line".
+# OpenGL itself, for gl_display_canvas.cpp, which draws a machine's screen as a
+# texture rather than rescaling it on the CPU for every frame - both in a
+# machine's own window and in the Manager's view of one. wx-config's "gl"
+# component provides wxWidgets' GL canvas, NOT the GL library it calls into, so
+# this is separate: without it the link fails on glEnable with "DSO missing from
+# command line".
 #
 # Not REQUIRED. A build on a machine with no GL headers is a build whose wx will
 # have wxUSE_GLCANVAS 0 anyway, and the canvas compiles away to nothing behind
-# that guard, leaving the CPU path - which is the same thing that happens at run
-# time on a display that cannot start GL.
+# that guard, leaving the CPU path - the same thing that happens at run time on a
+# display that cannot start GL.
 find_package(OpenGL)
 if(OpenGL_FOUND OR OPENGL_FOUND)
     target_link_libraries(${RPCEMU_GUI_TARGET} PRIVATE OpenGL::GL)
 else()
     message(STATUS
-        "RPCEmu: no OpenGL found, so the Manager will draw a machine's screen "
-        "on the CPU")
+        "RPCEmu: no OpenGL found, so a machine's screen is drawn on the CPU, "
+        "in its own window and in the Manager alike")
 endif()
 
 find_package(PkgConfig REQUIRED)

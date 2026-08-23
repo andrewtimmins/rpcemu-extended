@@ -22,10 +22,13 @@
 #define EMULATOR_PANEL_H
 
 #include <chrono>
+#include <vector>
 
 #include <wx/wx.h>
 
 #include "captured_pointer.h"
+#include "gl_display_canvas.h"
+
 #include "emulator_host.h"
 #include "guest_cursor.h"
 #include "host_types.h"
@@ -48,10 +51,40 @@ public:
 	void ApplyPointerShape(const PointerShape &shape);
 	void ReleaseMouseCapture();
 	void UpdateMouseCursor();
+	wxCursor ChooseMouseCursor() const;
+	void ApplyMouseCursor(const wxCursor &cursor);
 	void FocusPanel();
 	void SetFullScreen(bool full_screen);
-	void SetIntegerScaling(bool integer_scaling);
-	void SetFitToWindow(bool fit_to_window);
+
+	/**
+	 * The size of the guest's desktop in guest pixels, or (0, 0) before the
+	 * first frame has arrived.
+	 *
+	 * Already doubled where VIDC is doubling, so it is the number of pixels a
+	 * 1:1 window would have to be, not the number RISC OS thinks it has.
+	 */
+	wxSize GuestScreenSize() const { return wxSize(host_xsize_, host_ysize_); }
+	/**
+	 * Set how the guest's screen is drawn: a DisplayScaling.
+	 *
+	 * The panel's SIZE is not set here. It comes from the guest's own screen mode
+	 * (see SizeToGuest()), because a window smaller than the desktop clips it -
+	 * losing the icon bar off the bottom - and a window larger than it wastes the
+	 * difference on a border.
+	 */
+	void SetDisplayMode(int scaling);
+
+	/**
+	 * Size this panel to the guest's current screen mode.
+	 *
+	 * Called by the frame, never from a video update. That is the difference that
+	 * matters: RISC OS changes mode two or three times while it boots, and on a
+	 * machine with the graphics card the display is handed over part way through
+	 * as well. Resizing on each one made the window jump through three sizes and
+	 * positions before settling, so the frame waits for the changes to stop and
+	 * then calls this once. See MainFrame::NoteGuestFrame().
+	 */
+	void SizeToGuest();
 	void ForceRedraw();
 	bool SaveScreenshot(const wxString &path);
 
@@ -71,6 +104,13 @@ private:
 	void ReleasePointerAfterDrag();
 
 	void CalculateScaling();
+#if wxUSE_GLCANVAS
+	void TryCreateGlCanvas();
+	void DestroyGlCanvas(const wxString &why);
+	bool GlActive() const;
+	void StoreFrameForGl(const VideoUpdate &update);
+	void SupplyFrameToGl();
+#endif
 	void ResizeToHostDisplay();
 	void SyncMousePosition(int x, int y);
 	bool IsMouseOverPanel() const;
@@ -87,6 +127,35 @@ private:
 	void ReportCapturedPointerRate();
 
 	EmulatorHost &emulator_;
+	/*
+	 * The GPU path. When this is up it covers the panel and draws the guest's
+	 * screen as a texture, so the wxImage/wxBitmap conversion and the
+	 * full-frame CoreGraphics rescale below are skipped entirely. Null when the
+	 * setting is off, when the platform has no GL, or when a canvas was tried
+	 * and did not come up.
+	 */
+#if wxUSE_GLCANVAS
+	GlDisplayCanvas *gl_canvas_ = nullptr;
+	bool gl_tried_ = false;
+	int gl_undecided_paints_ = 0;
+
+	/*
+	 * The newest guest frame, and which of its rows have changed since the
+	 * canvas last took one.
+	 *
+	 * A copy, because the canvas must be handed its pixels from inside its own
+	 * paint (see SetFrameSupplier in gl_display_canvas.h) and the emulator's
+	 * buffer is not ours to read at that moment. Copying the dirty rows is far
+	 * cheaper than the wxImage conversion this replaces, and it is what lets a
+	 * burst of frames become one upload of the union of their rows.
+	 */
+	std::vector<uint32_t> gl_frame_;
+	int gl_frame_w_ = 0;
+	int gl_frame_h_ = 0;
+	int gl_dirty_yl_ = -1;
+	int gl_dirty_yh_ = -1;
+#endif
+
 	wxImage display_image_;
 	wxBitmap display_bitmap_;	/**< Cached bitmap of display_image_, rebuilt only when the frame changes */
 	int image_width_ = 640;
@@ -142,8 +211,8 @@ private:
 	wxPoint warp_target_ = wxPoint(-1, -1);
 	int warp_repeats_ = 0;
 
-	bool integer_scaling_ = false;
-	bool fit_to_window_ = false;
+	int display_scaling_ = DisplayScaling_ActualSize;
+
 	bool full_screen_ = false;
 	std::chrono::steady_clock::time_point user_pointer_until_{};
 

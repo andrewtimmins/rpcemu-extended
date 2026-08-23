@@ -22,6 +22,8 @@
 
 #include <wx/display.h>
 
+#include "gui_preferences.h"
+
 #include <algorithm>
 #include <numeric>
 #include <cstdlib>
@@ -69,7 +71,7 @@ EmulatorPanel::EmulatorPanel(wxWindow *parent, EmulatorHost &emulator)
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
 	SetCanFocus(true);
 	if (pconfig_copy != nullptr) {
-		integer_scaling_ = pconfig_copy->integer_scaling != 0;
+		display_scaling_ = pconfig_copy->display_scaling;
 	}
 #ifdef __WXGTK__
 	if (GtkWidget *widget = GTK_WIDGET(GetHandle())) {
@@ -154,6 +156,41 @@ void EmulatorPanel::RebuildGuestCursor()
 	UpdateMouseCursor();
 }
 
+/*
+ * Which cursor the host should be showing, in one place.
+ *
+ * Blank whenever RISC OS is drawing a pointer of its own, or the host one sits
+ * on top of the guest's and there are two. An arrow when the guest is not
+ * drawing one, so the hand still has something to follow.
+ */
+wxCursor EmulatorPanel::ChooseMouseCursor() const
+{
+	if (mouse_captured) {
+		return wxCursor(wxCURSOR_BLANK);
+	}
+	if (pconfig_copy != nullptr && pconfig_copy->mousehackon && IsMouseOverPanel()) {
+		return wxCursor(wxCURSOR_BLANK);
+	}
+	return wxCursor(wxCURSOR_ARROW);
+}
+
+void EmulatorPanel::ApplyMouseCursor(const wxCursor &cursor)
+{
+	SetCursor(cursor);
+
+#if wxUSE_GLCANVAS
+	/*
+	 * And the canvas, which is a window in its own right sitting over this one
+	 * and carrying its own cursor. Setting only the panel's left the host arrow
+	 * drawn on top of the guest's pointer wherever the GPU path was up, because
+	 * the cursor the mouse is actually over is the canvas's.
+	 */
+	if (gl_canvas_ != nullptr) {
+		gl_canvas_->SetCursor(cursor);
+	}
+#endif
+}
+
 void EmulatorPanel::UpdateMouseCursor()
 {
 	if (mouse_captured) {
@@ -207,17 +244,16 @@ void EmulatorPanel::SetFullScreen(bool full_screen)
 	Refresh(false);
 }
 
-void EmulatorPanel::SetIntegerScaling(bool integer_scaling)
+void EmulatorPanel::SetDisplayMode(int scaling)
 {
-	integer_scaling_ = integer_scaling;
+	display_scaling_ = scaling;
 	ResizeToHostDisplay();
 	CalculateScaling();
 	Refresh(false);
 }
 
-void EmulatorPanel::SetFitToWindow(bool fit_to_window)
+void EmulatorPanel::SizeToGuest()
 {
-	fit_to_window_ = fit_to_window;
 	ResizeToHostDisplay();
 	CalculateScaling();
 	Refresh(false);
@@ -275,21 +311,29 @@ void EmulatorPanel::ReportCapturedPointerRate()
 	}
 }
 
+/*
+ * One path, not two.
+ *
+ * The guest's picture is always placed within the panel - at actual size with the
+ * guest in the configured mode the offsets are zero and the scale is 1, which is
+ * the old fast path expressed as a special case of this one rather than as
+ * separate code. Having a single mapping is what keeps the pointer, the dirty
+ * rectangles and the blit agreeing with each other.
+ */
 wxPoint EmulatorPanel::PanelPointToHost(int x, int y) const
 {
-	if (integer_scaling_ || fit_to_window_) {
-		const int local_x = x - offset_x_;
-		const int local_y = y - offset_y_;
-		if (local_x < 0 || local_y < 0 || local_x >= scaled_x_ || local_y >= scaled_y_) {
-			return wxPoint(-1, -1);
-		}
+	const int local_x = x - offset_x_;
+	const int local_y = y - offset_y_;
 
-		return wxPoint(local_x * host_xsize_ / scaled_x_,
-		                 local_y * host_ysize_ / scaled_y_);
+	if (scaled_x_ <= 0 || scaled_y_ <= 0) {
+		return wxPoint(-1, -1);
+	}
+	if (local_x < 0 || local_y < 0 || local_x >= scaled_x_ || local_y >= scaled_y_) {
+		return wxPoint(-1, -1);
 	}
 
-	return wxPoint(std::clamp(x, 0, std::max(host_xsize_ - 1, 0)),
-	               std::clamp(y, 0, std::max(host_ysize_ - 1, 0)));
+	return wxPoint(local_x * host_xsize_ / scaled_x_,
+	               local_y * host_ysize_ / scaled_y_);
 }
 
 wxPoint EmulatorPanel::HostPointToPanel(int host_x, int host_y) const
@@ -303,14 +347,8 @@ wxPoint EmulatorPanel::HostPointToPanel(int host_x, int host_y) const
 		panel_y *= 2;
 	}
 
-	if (integer_scaling_ || fit_to_window_) {
-		return wxPoint(offset_x_ + (panel_x * scaled_x_) / std::max(host_xsize_, 1),
-		               offset_y_ + (panel_y * scaled_y_) / std::max(host_ysize_, 1));
-	}
-
-	panel_x = std::clamp(panel_x, 0, std::max(GetClientSize().x - 1, 0));
-	panel_y = std::clamp(panel_y, 0, std::max(GetClientSize().y - 1, 0));
-	return wxPoint(panel_x, panel_y);
+	return wxPoint(offset_x_ + (panel_x * scaled_x_) / std::max(host_xsize_, 1),
+	               offset_y_ + (panel_y * scaled_y_) / std::max(host_ysize_, 1));
 }
 
 void EmulatorPanel::SyncMousePosition(int x, int y)
@@ -336,37 +374,45 @@ wxPoint EmulatorPanel::CaptureCentre() const
 
 void EmulatorPanel::ResizeToHostDisplay()
 {
-	if (full_screen_ || fit_to_window_ || host_xsize_ <= 0 || host_ysize_ <= 0) {
+	const wxSize guest(host_xsize_, host_ysize_);
+	const bool have_size = host_xsize_ > 0 && host_ysize_ > 0;
+
+	/* Full screen: the display sets the size and nothing here has a say. */
+	if (full_screen_ || !have_size) {
 		SetMinSize(wxDefaultSize);
 		SetMaxSize(wxDefaultSize);
 		SetSizeHints(wxDefaultSize, wxDefaultSize);
 		return;
 	}
 
-	const wxSize host_size(host_xsize_, host_ysize_);
-
-	/*
-	 * Pixel-perfect scaling keeps a minimum of one host pixel per guest pixel
-	 * and is free to grow to a whole multiple of it.
-	 *
-	 * The minimum matters: this used to clear it, like the freely-resizable
-	 * modes above. Toggling from the menu was fine, because by then the window
-	 * had a size of its own, but a machine that started with the setting
-	 * already on had a panel contributing no minimum at all, so the frame's
-	 * Fit() shrink-wrapped it to just the menu and toolbar. That is issue #47:
-	 * "the main window fails to open".
-	 */
-	if (integer_scaling_) {
-		SetMinSize(host_size);
+	if (display_scaling_ == DisplayScaling_WholeMultiples) {
+		/*
+		 * Free to grow, but never below one host pixel per guest pixel.
+		 *
+		 * The minimum matters: this used to be cleared. Toggling from the menu was
+		 * fine, because by then the window had a size of its own, but a machine
+		 * that started with the setting already on had a panel contributing no
+		 * minimum at all, so the frame's Fit() shrink-wrapped it to just the menu
+		 * and toolbar. That is issue #47, "the main window fails to open".
+		 */
+		SetMinSize(guest);
 		SetMaxSize(wxDefaultSize);
-		SetSizeHints(host_size, wxDefaultSize);
+		SetSizeHints(guest, wxDefaultSize);
 		return;
 	}
 
-	SetMinSize(host_size);
-	SetMaxSize(host_size);
-	SetSize(host_size);
-	SetSizeHints(host_size, host_size);
+	/*
+	 * Actual size: the panel is exactly the guest's screen.
+	 *
+	 * Both directions matter. Smaller and the desktop is clipped, which loses the
+	 * icon bar off the bottom; larger and the difference is a black border. The
+	 * screen-size setting decides what the guest is ASKED to be; what it actually
+	 * is, is what gets shown.
+	 */
+	SetMinSize(guest);
+	SetMaxSize(guest);
+	SetSize(guest);
+	SetSizeHints(guest, guest);
 }
 
 namespace {
@@ -404,7 +450,27 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 
 	bool recalculate_needed = false;
 
-	if (!display_image_.IsOk() || display_image_.GetWidth() != update.xsize ||
+
+	if (GlActive()) {
+		/*
+		 * The GPU path. The guest's pixels go into a texture, so none of the
+		 * conversion below happens: no wxImage, no wxBitmap rebuild, no
+		 * sub-image Blit, and no full-frame rescale in the paint - which is the
+		 * cost this is here to remove.
+		 *
+		 * Only the CONVERSION is skipped. Everything after this, the scaling
+		 * maths and the panel resize on a mode change, still has to run: the
+		 * first version of this returned early and skipped it, so a guest
+		 * changing to 1440x900 left the panel at the old mode's 640x480 while
+		 * the destination rectangle grew to the new size, and all that could be
+		 * seen was the top-left corner of the screen.
+		 */
+		if (image_width_ != update.xsize || image_height_ != update.ysize) {
+			image_width_ = update.xsize;
+			image_height_ = update.ysize;
+			recalculate_needed = true;
+		}
+	} else if (!display_image_.IsOk() || display_image_.GetWidth() != update.xsize ||
 	    display_image_.GetHeight() != update.ysize || !display_bitmap_.IsOk()) {
 		display_image_ = wxImage(update.xsize, update.ysize, false);
 		image_width_ = update.xsize;
@@ -442,17 +508,9 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 		recalculate_needed = true;
 	}
 
-	if (!full_screen_ && !integer_scaling_ && !fit_to_window_ &&
-	    (update.host_xsize != host_xsize_ || update.host_ysize != host_ysize_)) {
-		host_xsize_ = update.host_xsize;
-		host_ysize_ = update.host_ysize;
-		recalculate_needed = true;
-	}
-
-	/* In fit-to-window mode the guest size still drives the scaling maths, but
-	   the window is left free for the user to resize. */
-	if (fit_to_window_ &&
-	    (update.host_xsize != host_xsize_ || update.host_ysize != host_ysize_)) {
+	/* The guest's size drives the scaling maths whatever the mode; what differs
+	   is whether the window is then resized to match, below. */
+	if (update.host_xsize != host_xsize_ || update.host_ysize != host_ysize_) {
 		host_xsize_ = update.host_xsize;
 		host_ysize_ = update.host_ysize;
 		recalculate_needed = true;
@@ -461,61 +519,35 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 	if (recalculate_needed) {
 		CalculateScaling();
 
-		if (!full_screen_ && !fit_to_window_) {
-			if (integer_scaling_) {
-				ResizeToHostDisplay();
-			} else {
-				const wxSize host_size(update.host_xsize, update.host_ysize);
-				SetMinSize(host_size);
-				SetMaxSize(host_size);
-				SetSize(host_size);
-				SetSizeHints(host_size, host_size);
-			}
+		/*
+		 * Deliberately nothing here any more.
+		 *
+		 * The window used to be resized to the guest's new mode at this point,
+		 * and then re-centred, on every mode change. RISC OS changes mode two or
+		 * three times while it boots - and on a machine with the graphics card
+		 * the display is handed over part way through as well - so the window
+		 * jumped through three sizes and positions before settling on one. As a
+		 * startup it was indefensible.
+		 *
+		 * The window's size now comes from the configured screen size, and is set
+		 * once by the frame: when the machine starts, or when the setting is
+		 * changed. Whatever mode the guest is actually in is drawn centred inside
+		 * it, so the modes passed through on the way up cost nothing more than a
+		 * repaint. See ResizeToHostDisplay() and
+		 * MainFrame::CentreWindowOnScreen().
+		 */
 
-			if (wxWindow *top = wxGetTopLevelParent(this)) {
-				top->Layout();
-				if (auto *frame = wxDynamicCast(top, wxFrame)) {
-					frame->Fit();
-					/*
-					 * Put the window somewhere it can still be reached.
-					 *
-					 * It has just changed size around a fixed top-left corner,
-					 * so a guest going from 640x480 to 1440x900 grows down and
-					 * to the right and walks off the bottom-right of the
-					 * screen. Centring fixes that - but only while the window
-					 * fits. A guest mode BIGGER than the display cannot be
-					 * fitted at all without scaling, and centring something
-					 * taller than the screen puts its title bar above the top
-					 * edge, where it cannot be dragged back into view. So
-					 * anything that does not fit is pinned to the top-left of
-					 * the work area instead, which keeps the title bar and the
-					 * menu reachable.
-					 *
-					 * Only on a resize, so a window the user has placed is left
-					 * where they put it until the mode changes again.
-					 */
-					if (!frame->IsMaximized() && !frame->IsIconized()) {
-						int index = wxDisplay::GetFromWindow(frame);
-
-						if (index == wxNOT_FOUND) {
-							index = 0;
-						}
-
-						const wxRect work =
-						    wxDisplay((unsigned) index).GetClientArea();
-						const wxSize size = frame->GetSize();
-
-						if (size.x <= work.width && size.y <= work.height) {
-							frame->Centre();
-						} else {
-							frame->SetPosition(work.GetTopLeft());
-						}
-					}
-				}
-			}
+		if (GlActive()) {
+			/* The rectangle has just changed, so the texture is drawn against
+			   the new one rather than a frame late. */
+			StoreFrameForGl(update);
 		}
-
 		Refresh(false);
+		return;
+	}
+
+	if (GlActive()) {
+		StoreFrameForGl(update);
 		return;
 	}
 
@@ -531,7 +563,7 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 		ymax *= 2;
 	}
 
-	if (full_screen_ || integer_scaling_ || fit_to_window_) {
+	{
 		width = (width * scaled_x_) / std::max(host_xsize_, 1);
 
 		if (ymin > 0) {
@@ -546,9 +578,6 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 
 		const int height = ymax - ymin;
 		RefreshRect(wxRect(offset_x_, offset_y_ + ymin, width, height), false);
-	} else {
-		const int height = ymax - ymin;
-		RefreshRect(wxRect(0, ymin, width, height), false);
 	}
 }
 
@@ -669,34 +698,35 @@ void EmulatorPanel::CalculateScaling()
 		host_ysize_ = image_height_;
 	}
 
-	if (full_screen_ || integer_scaling_ || fit_to_window_) {
-		const int widget_x = client.x;
-		const int widget_y = client.y;
+	/*
+	 * One rule: draw the guest's picture at a whole-number scale and centre it.
+	 *
+	 * There is no aspect-ratio fitting and no stretching. Both existed to paper
+	 * over a window whose size did not match the guest's mode, and now that the
+	 * window is the configured screen size, the only times they differ are while
+	 * RISC OS is booting through other modes and when whole-multiple scaling has
+	 * been asked for. Neither wants the picture distorted - a boot message
+	 * stretched to an odd shape looks like a fault, and whole multiples exist
+	 * precisely to keep pixels square.
+	 *
+	 * Full screen scales up as far as whole multiples allow, for the same reason:
+	 * sharp and centred beats filling the screen with a soft picture.
+	 */
+	const int scale_x = host_xsize_ > 0 ? client.x / host_xsize_ : 0;
+	const int scale_y = host_ysize_ > 0 ? client.y / host_ysize_ : 0;
+	int scale = std::min(scale_x, scale_y);
 
-		if (integer_scaling_) {
-			const int scale_x = std::max(1, widget_x / host_xsize_);
-			const int scale_y = std::max(1, widget_y / host_ysize_);
-			const int scale = std::min(scale_x, scale_y);
-			scaled_x_ = host_xsize_ * scale;
-			scaled_y_ = host_ysize_ * scale;
-		} else {
-			if ((widget_x * host_ysize_) >= (widget_y * host_xsize_)) {
-				scaled_x_ = (widget_y * host_xsize_) / host_ysize_;
-				scaled_y_ = widget_y;
-			} else {
-				scaled_x_ = widget_x;
-				scaled_y_ = (widget_x * host_ysize_) / host_xsize_;
-			}
-		}
-
-		offset_x_ = (widget_x - scaled_x_) / 2;
-		offset_y_ = (widget_y - scaled_y_) / 2;
-	} else {
-		scaled_x_ = host_xsize_;
-		scaled_y_ = host_ysize_;
-		offset_x_ = 0;
-		offset_y_ = 0;
+	if (scale < 1) {
+		scale = 1;	/* Smaller than the picture: centre it and clip */
 	}
+	if (display_scaling_ == DisplayScaling_ActualSize && !full_screen_) {
+		scale = 1;	/* Exactly what it says */
+	}
+
+	scaled_x_ = host_xsize_ * scale;
+	scaled_y_ = host_ysize_ * scale;
+	offset_x_ = (client.x - scaled_x_) / 2;
+	offset_y_ = (client.y - scaled_y_) / 2;
 
 	/* One guest pixel is a different size on screen now, so the pointer has
 	   to be rebuilt at the new size. Cheap: it returns at once unless the
@@ -704,10 +734,202 @@ void EmulatorPanel::CalculateScaling()
 	RebuildGuestCursor();
 }
 
+#if wxUSE_GLCANVAS
+bool EmulatorPanel::GlActive() const
+{
+	return gl_canvas_ != nullptr && gl_canvas_->IsUsable();
+}
+
+/*
+ * Set up the GPU path, once.
+ *
+ * Attempted on every platform, unlike the Manager's panel which skips it on
+ * Windows: that one draws through wxGraphicsContext, which is Direct2D and
+ * already accelerated there, whereas this panel has always used a plain
+ * wxBufferedPaintDC everywhere. So Windows has the same full-frame rescale to
+ * lose as macOS and Linux.
+ */
+void EmulatorPanel::TryCreateGlCanvas()
+{
+	if (gl_tried_) {
+		return;
+	}
+	gl_tried_ = true;
+
+	if (!HardwareAccelerationWanted()) {
+		rpclog("Display: hardware acceleration is off, so the guest's screen "
+		       "is drawn on the CPU\n");
+		return;
+	}
+
+	gl_canvas_ = new GlDisplayCanvas(this);
+	gl_canvas_->SetSize(GetClientSize());
+	gl_undecided_paints_ = 0;
+
+	/* The canvas asks for the newest frame from inside its paint, so the upload
+	   is always followed by the swap that retires it. */
+	gl_canvas_->SetFrameSupplier([this] { SupplyFrameToGl(); });
+	/* Born with the default arrow otherwise, which UpdateMouseCursor() would
+	   only correct the next time something happened to call it. */
+	UpdateMouseCursor();
+
+	/* Input keeps coming to this panel. The canvas covers it exactly, so the
+	   coordinates in its events are already panel coordinates. Bound one by one
+	   rather than by pushing this panel as the canvas's handler, because this
+	   panel also handles EVT_PAINT and EVT_SIZE and letting those fire for the
+	   canvas would have the CPU path drawing over the GPU one. */
+	gl_canvas_->Bind(wxEVT_MOTION, &EmulatorPanel::OnMouseMove, this);
+	gl_canvas_->Bind(wxEVT_LEFT_DOWN, &EmulatorPanel::OnMouseDown, this);
+	gl_canvas_->Bind(wxEVT_MIDDLE_DOWN, &EmulatorPanel::OnMouseDown, this);
+	gl_canvas_->Bind(wxEVT_RIGHT_DOWN, &EmulatorPanel::OnMouseDown, this);
+	gl_canvas_->Bind(wxEVT_LEFT_DCLICK, &EmulatorPanel::OnMouseDoubleClick, this);
+	gl_canvas_->Bind(wxEVT_MIDDLE_DCLICK, &EmulatorPanel::OnMouseDoubleClick, this);
+	gl_canvas_->Bind(wxEVT_RIGHT_DCLICK, &EmulatorPanel::OnMouseDoubleClick, this);
+	gl_canvas_->Bind(wxEVT_LEFT_UP, &EmulatorPanel::OnMouseUp, this);
+	gl_canvas_->Bind(wxEVT_MIDDLE_UP, &EmulatorPanel::OnMouseUp, this);
+	gl_canvas_->Bind(wxEVT_RIGHT_UP, &EmulatorPanel::OnMouseUp, this);
+	gl_canvas_->Bind(wxEVT_MOUSEWHEEL, &EmulatorPanel::OnMouseWheel, this);
+	gl_canvas_->Bind(wxEVT_ENTER_WINDOW, &EmulatorPanel::OnEnterWindow, this);
+	gl_canvas_->Bind(wxEVT_LEAVE_WINDOW, &EmulatorPanel::OnLeaveWindow, this);
+}
+
+void EmulatorPanel::DestroyGlCanvas(const wxString &why)
+{
+	if (gl_canvas_ == nullptr) {
+		return;
+	}
+
+	rpclog("Display: OpenGL unavailable (%s); drawing the guest's screen on "
+	       "the CPU instead\n", why.utf8_str().data());
+
+	gl_canvas_->Destroy();
+	gl_canvas_ = nullptr;
+
+	/* The CPU path has drawn nothing so far, so its cache is empty rather than
+	   stale: the next frame rebuilds it from scratch. */
+	display_bitmap_ = wxBitmap();
+	Refresh(false);
+}
+
+/*
+ * Keep the newest frame, and remember which rows changed.
+ *
+ * Nothing is uploaded here. The canvas takes it from SupplyFrameToGl() during
+ * its own paint, which is what lets the upload be followed by the buffer swap
+ * that retires it - gl_display_canvas.h is explicit that uploading anywhere else
+ * causes trouble, and this used to call UpdateFrame() straight from here.
+ */
+void EmulatorPanel::StoreFrameForGl(const VideoUpdate &update)
+{
+	const size_t needed = (size_t) update.xsize * (size_t) update.ysize;
+
+	if (gl_frame_w_ != update.xsize || gl_frame_h_ != update.ysize ||
+	    gl_frame_.size() != needed) {
+		gl_frame_.assign(needed, 0);
+		gl_frame_w_ = update.xsize;
+		gl_frame_h_ = update.ysize;
+		/* A new buffer holds none of the old frame, so all of it is stale
+		   however few rows this update claims to have touched. */
+		gl_dirty_yl_ = 0;
+		gl_dirty_yh_ = update.ysize;
+	}
+
+	int yl = std::max(0, update.yl);
+	int yh = std::min(update.yh, update.ysize);
+
+	if (gl_dirty_yl_ == 0 && gl_dirty_yh_ == update.ysize) {
+		/* Already owing a full frame: copy it all rather than this band. */
+		yl = 0;
+		yh = update.ysize;
+	}
+
+	if (yh > yl) {
+		std::memcpy(gl_frame_.data() + (size_t) yl * (size_t) update.xsize,
+		            update.buffer + (size_t) yl * (size_t) update.xsize,
+		            (size_t) (yh - yl) * (size_t) update.xsize * sizeof(uint32_t));
+
+		/* The union, because several frames can arrive between paints. */
+		if (gl_dirty_yl_ < 0 || yl < gl_dirty_yl_) {
+			gl_dirty_yl_ = yl;
+		}
+		if (yh > gl_dirty_yh_) {
+			gl_dirty_yh_ = yh;
+		}
+	}
+
+	gl_canvas_->SetSize(GetClientSize());
+	gl_canvas_->SetDisplayRect(wxRect(offset_x_, offset_y_, scaled_x_, scaled_y_));
+	gl_canvas_->Refresh(false);
+}
+
+/* Called by the canvas from inside its paint. */
+void EmulatorPanel::SupplyFrameToGl()
+{
+	if (gl_frame_.empty() || gl_frame_w_ <= 0 || gl_frame_h_ <= 0) {
+		return;
+	}
+
+	/* A range of nothing is passed on rather than skipped: the canvas forces a
+	   full upload of its own accord when it has no frame yet, which is exactly
+	   the case on its first paint. */
+	gl_canvas_->UpdateFrame(gl_frame_.data(), gl_frame_w_, gl_frame_h_,
+	                        gl_dirty_yl_ < 0 ? 0 : gl_dirty_yl_,
+	                        gl_dirty_yh_ < 0 ? 0 : gl_dirty_yh_);
+
+	gl_dirty_yl_ = -1;
+	gl_dirty_yh_ = -1;
+}
+
+#endif /* wxUSE_GLCANVAS */
+
+#if wxUSE_GLCANVAS
+/*
+ * How many paints a new GL canvas gets to say whether it works before the CPU
+ * path takes over for good. Counted in paints because the panel is repainted as
+ * frames arrive, so this is frames the guest has produced that GL has not drawn.
+ */
+static const int kGlUndecidedPaintLimit = 120;
+#endif
+
 void EmulatorPanel::OnPaint(wxPaintEvent &event)
 {
 	wxBufferedPaintDC dc(this);
 	(void)event;
+
+#if wxUSE_GLCANVAS
+	/* Set up on the first paint that has something to show, not in the
+	   constructor: a GL context needs a window that has been realised. */
+	if (image_width_ > 0 && image_height_ > 0) {
+		TryCreateGlCanvas();
+	}
+
+	if (gl_canvas_ != nullptr) {
+		if (gl_canvas_->IsUsable()) {
+			/* The canvas covers this panel and has drawn it. */
+			return;
+		}
+		if (!gl_canvas_->Failure().empty()) {
+			DestroyGlCanvas(gl_canvas_->Failure());
+		} else if (++gl_undecided_paints_ > kGlUndecidedPaintLimit) {
+			/* It never answered. Bounded deliberately: a canvas that stays
+			   undecided must not mean a window that is never drawn, which is
+			   exactly the fault that made a black machine screen so hard to
+			   find on macOS. */
+			DestroyGlCanvas("it never became ready");
+		}
+
+		/*
+		 * Either way, fall through and draw on the CPU for this paint.
+		 *
+		 * A canvas waiting to be shown on screen is neither working nor failed,
+		 * and clearing the panel black while it made up its mind put a black box
+		 * on screen for the first few frames of every boot. There is nothing to
+		 * gain by it: the CPU bitmap is kept up to date for exactly as long as
+		 * the canvas is not drawing, so the picture is there to be drawn, and a
+		 * frame that is about to be covered is better than a hole.
+		 */
+	}
+#endif
 
 	if (!display_bitmap_.IsOk() || image_width_ <= 0 || image_height_ <= 0) {
 		return;
@@ -721,7 +943,7 @@ void EmulatorPanel::OnPaint(wxPaintEvent &event)
 		dest = GetClientRect();
 	}
 
-	if (full_screen_ || integer_scaling_ || fit_to_window_) {
+	{
 		if ((dest.x < offset_x_) || (dest.y < offset_y_) ||
 		    (dest.x + dest.width > offset_x_ + scaled_x_) ||
 		    (dest.y + dest.height > offset_y_ + scaled_y_)) {
@@ -893,16 +1115,15 @@ void EmulatorPanel::OnMouseMove(wxMouseEvent &event)
 		/* The captured pointer delta is measured in host-window pixels; when the
 		   display is scaled down the guest is larger than the window, so scale
 		   the delta up to guest units or the pointer crawls. */
-		if ((integer_scaling_ || fit_to_window_ || full_screen_) &&
-		    scaled_x_ > 0 && scaled_y_ > 0) {
+		if (scaled_x_ > 0 && scaled_y_ > 0) {
 			dx = (dx * host_xsize_) / scaled_x_;
 			dy = (dy * host_ysize_) / scaled_y_;
 		}
 		if (captured_pointer_debug_wanted()) {
-			rpclog("MOUSEDBG ev=%d,%d mid=%d,%d raw=%d,%d sent=%d,%d host=%dx%d scaled=%dx%d off=%d,%d full=%d fit=%d moves=%lu recentres=%lu\n",
+			rpclog("MOUSEDBG ev=%d,%d mid=%d,%d raw=%d,%d sent=%d,%d host=%dx%d scaled=%dx%d off=%d,%d full=%d scaling=%d moves=%lu recentres=%lu\n",
 			       event.GetX(), event.GetY(), middle.x, middle.y, rawdx, rawdy, dx, dy,
 			       host_xsize_, host_ysize_, scaled_x_, scaled_y_, offset_x_, offset_y_,
-			       full_screen_, fit_to_window_,
+			       full_screen_, display_scaling_,
 			       captured_pointer_.moves, captured_pointer_.recentres);
 		}
 		if (captured_pointer_debug_wanted()) {
@@ -1045,7 +1266,7 @@ void EmulatorPanel::OnEnterWindow(wxMouseEvent &event)
 void EmulatorPanel::OnLeaveWindow(wxMouseEvent &event)
 {
 	if (!mouse_captured) {
-		SetCursor(wxCursor(wxCURSOR_ARROW));
+		ApplyMouseCursor(wxCursor(wxCURSOR_ARROW));
 	}
 	event.Skip();
 }

@@ -77,6 +77,54 @@ static const struct {
 	{  640,  480 },	/*  307200 */
 };
 
+/* One flag per entry above: set when the guest has refused that mode. Static
+   storage, so every mode starts available. */
+static unsigned char mode_unavailable[sizeof(display_modes) / sizeof(display_modes[0])];
+
+static size_t
+mode_index(unsigned width, unsigned height)
+{
+	size_t i;
+
+	for (i = 0; i < sizeof(display_modes) / sizeof(display_modes[0]); i++) {
+		if (display_modes[i].width == width &&
+		    display_modes[i].height == height)
+		{
+			return i;
+		}
+	}
+
+	return (size_t) -1;
+}
+
+void
+display_mode_mark_unavailable(unsigned width, unsigned height)
+{
+	const size_t i = mode_index(width, height);
+
+	if (i != (size_t) -1) {
+		mode_unavailable[i] = 1;
+	}
+}
+
+int
+display_mode_is_unavailable(unsigned width, unsigned height)
+{
+	const size_t i = mode_index(width, height);
+
+	return i != (size_t) -1 && mode_unavailable[i] != 0;
+}
+
+void
+display_mode_clear_unavailable(void)
+{
+	size_t i;
+
+	for (i = 0; i < sizeof(mode_unavailable) / sizeof(mode_unavailable[0]); i++) {
+		mode_unavailable[i] = 0;
+	}
+}
+
 int
 display_mode_fit(unsigned max_width, unsigned max_height,
                  unsigned bytes_per_pixel, size_t budget_bytes,
@@ -88,6 +136,9 @@ display_mode_fit(unsigned max_width, unsigned max_height,
 		const unsigned w = display_modes[i].width;
 		const unsigned h = display_modes[i].height;
 
+		if (mode_unavailable[i]) {
+			continue;	/* The guest has already refused this one */
+		}
 		if (w > max_width || h > max_height) {
 			continue;
 		}
@@ -105,4 +156,22 @@ display_mode_fit(unsigned max_width, unsigned max_height,
 	}
 
 	return 0;
+}
+
+size_t
+display_mode_count(void)
+{
+	return sizeof(display_modes) / sizeof(display_modes[0]);
+}
+
+int
+display_mode_get(size_t index, unsigned *width, unsigned *height)
+{
+	if (index >= display_mode_count()) {
+		return 0;
+	}
+
+	*width = display_modes[index].width;
+	*height = display_modes[index].height;
+	return 1;
 }

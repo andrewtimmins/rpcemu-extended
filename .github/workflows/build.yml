@@ -387,8 +387,8 @@ jobs:
   # so Linux is written the same way: the graph reads alike across all three, and
   # each platform offers one check for a branch protection rule to require.
   #
-  # Both architectures get the recompiler, each with its own backend. Three steps run on amd64 alone and each says why where it
-  # stands.
+  # Both architectures get the recompiler, each with its own backend. Three steps
+  # run on amd64 alone and each says why where it stands.
   linux-amd64:
     needs: build-gate
     if: always() && needs.build-gate.result == 'success'
@@ -516,9 +516,11 @@ jobs:
             releases/linux/amd64/*.deb
           if-no-files-found: error
 
-  # The interpreter, there being no AArch64 dynarec backend shipped on any
-  # platform. Otherwise the same build as amd64, minus the three checks that only
-  # need running once against the same C.
+  # The recompiler, as of 1.1.15. It was the interpreter while the AArch64 backend
+  # did not boot (issue #30); it does, and this runner is real arm64 hardware with
+  # a headless boot test, so the switch is proved here rather than hoped for.
+  # Otherwise the same build as amd64, minus the three checks that only need
+  # running once against the same C.
   linux-arm64:
     needs: build-gate
     if: always() && needs.build-gate.result == 'success'
@@ -864,7 +866,9 @@ jobs:
       # architecture this project has never used before.
       #
       # Longer timeout than the amd64 job gets: this is the interpreter rather
-      # than the recompiler, and the same trade the linux-arm64 job lives with.
+      # than the recompiler. It is now the only build that is, the other two arm64
+      # platforms having moved to the recompiler in 1.1.15 - see build-windows.sh
+      # for what is still outstanding on Windows on ARM specifically.
       - name: Headless boot smoke test
         timeout-minutes: 3
         run: |
@@ -977,9 +981,13 @@ jobs:
   macos-arm64:
     needs: build-gate
     if: always() && needs.build-gate.result == 'success'
-    # Apple Silicon runner: builds the arm64 slice. There is no ARM dynarec
-    # backend, so arm64 uses the interpreter (RPCEMU_DYNAREC=OFF), mirroring the
-    # Linux arm64 build. On Apple Silicon the x86_64 slice also runs via Rosetta.
+    # Apple Silicon runner: builds the arm64 slice, with the recompiler.
+    #
+    # It was the interpreter until 1.1.14 because the arm64 recompiler did not
+    # boot (issue #30), which meant the machine most people run this on was
+    # downloading the slow one. build-macos.sh decides that; this job just calls
+    # it. The eight JIT differential tests build here now, checking the arm64
+    # backend against the interpreter on the architecture it emits code for.
     runs-on: macos-14
     timeout-minutes: 7
     steps:
@@ -1007,7 +1015,7 @@ jobs:
           echo "==> arm64 dependency versions"
           brew list --versions sdl2-compat sdl3 wxwidgets libvncserver libusb || true
 
-      - name: Build arm64 slice (interpreter) + test
+      - name: Build arm64 slice (recompiler) + test
         timeout-minutes: 3
         run: |
           chmod +x build-macos.sh

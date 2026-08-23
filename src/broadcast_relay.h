@@ -39,6 +39,7 @@
 #ifndef BROADCAST_RELAY_H
 #define BROADCAST_RELAY_H
 
+#include <stddef.h>	/* size_t, for broadcast_relay_recv_capacity() */
 #include <stdint.h>
 
 #ifdef __cplusplus

@@ -107,4 +107,23 @@ std::vector<std::string> GetRecentCDROMs();
 void AddRecentCDROM(const std::string &path);
 void ClearRecentCDROMs();
 
+
+/*
+ * Whether a machine's screen is drawn through the platform's accelerated path
+ * (an OpenGL texture) rather than rescaled on the CPU for every frame.
+ *
+ * On by default. The accelerated path falls back to the software one by itself
+ * when it cannot start, so defaulting to off would only slow down the users who
+ * never find the setting.
+ */
+bool GetHardwareAcceleration();
+void SetHardwareAcceleration(bool enabled);
+
+/* Set from the command line (--no-gl), for this session only, and beats the
+   stored preference. */
+void SetHardwareAccelerationOverride(int state);
+
+/* The answer to act on: the override if there is one, the preference if not. */
+bool HardwareAccelerationWanted();
+
 #endif

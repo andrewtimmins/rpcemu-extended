@@ -21,6 +21,8 @@
 #include "gui_resources.h"
 #include "manager_frame.h"
 
+#include "display_options.h"
+
 #include "window_owner.h"
 
 #include "manager_settings_dialog.h"
@@ -686,10 +688,19 @@ void ManagerFrame::BuildMachineMenus(wxMenuBar *menu_bar)
 	machine_settings_menu_->AppendSeparator();
 	machine_settings_menu_->AppendCheckItem(ID_MENU_MUTE, "Mute Sound");
 	machine_settings_menu_->AppendCheckItem(ID_MENU_FULLSCREEN, "Fullscreen");
-	machine_settings_menu_->AppendCheckItem(ID_MENU_INTEGER_SCALING, "Integer Scaling");
-	machine_settings_menu_->AppendCheckItem(ID_MENU_FIT_TO_WINDOW, "Fit to Window");
-	machine_settings_menu_->AppendCheckItem(ID_MENU_FOLLOW_HOST_DISPLAY,
-	    "Follow Host Display");
+	/*
+	 * How the machine draws its screen, as the radio pair it now is rather than
+	 * three checkboxes that contradicted each other.
+	 *
+	 * The screen SIZE is deliberately not offered here. Which id means which
+	 * resolution depends on how much display memory that machine has, so it is
+	 * not something the Manager can decide on the machine's behalf - it is set in
+	 * the machine's own Settings menu, or in the machine editor.
+	 */
+	machine_settings_menu_->AppendRadioItem(ID_MENU_SCALING_ACTUAL,
+	    DisplayOptions::ScalingActualSize());
+	machine_settings_menu_->AppendRadioItem(ID_MENU_SCALING_MULTIPLES,
+	    DisplayOptions::ScalingWholeMultiples());
 	machine_settings_menu_->AppendSeparator();
 	machine_settings_menu_->AppendCheckItem(ID_MENU_MOUSE_HACK,
 	    "Mouse Follows Host Pointer");

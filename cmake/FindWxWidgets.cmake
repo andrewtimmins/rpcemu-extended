@@ -1,5 +1,10 @@
 # wxWidgets helper.
 #
+# The "gl" component is wxGLCanvas, which src/gui/gl_display_canvas.cpp draws a
+# machine's screen with. Note that it provides wx's canvas class and NOT the GL
+# library that class calls into: OpenGL itself is linked separately in
+# src/gui/CMakeLists.txt, or the link fails on glEnable and friends.
+#
 # The "net" component is wxWebRequest, used to fetch RISC OS from RISC OS Open
 # (src/gui/riscos_fetch.cpp). It wraps whichever HTTP stack the platform already
 # has - WinHTTP, NSURLSession or libcurl - so it costs no new dependency.
