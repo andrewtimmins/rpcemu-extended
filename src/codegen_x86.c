@@ -34,6 +34,17 @@ int lastflagchange;
 
 uint8_t rcodeblock[BLOCKS][1792+512+64] __attribute__ ((aligned (4096)));
 static const void *codeblockaddr[BLOCKS];
+/* One block's slot in the cache. */
+#define CODEBLOCK_SIZE	((int) sizeof(rcodeblock[0]))
+
+/*
+ * How far into a block generation may run before the block is ended. The test
+ * happens AFTER a whole ARM instruction has been emitted, so whatever is left
+ * over has to cover the largest expansion a single instruction can produce plus
+ * the tail endblock() adds. This leaves about 570 bytes of a 2368-byte slot.
+ */
+#define BLOCK_END_AT	1800
+
 uint32_t codeblockpc[0x8000];
 int codeblocknum[0x8000];
 static uint8_t codeblockpresent[0x10000];
@@ -60,6 +71,21 @@ static uint32_t currentblockpc, currentblockpc2;
 static inline void
 addbyte(uint32_t a)
 {
+	/*
+	 * ★ Never write outside the block's own slot.
+	 *
+	 * Overrunning it does not fault: it writes into the NEXT block, corrupting
+	 * code already generated there, and the failure then surfaces much later and
+	 * somewhere else entirely. That cost a long hunt on the arm64 backend, where
+	 * the end-of-block threshold left too little room for one instruction
+	 * (issue #30). BLOCK_END_AT is meant to make this unreachable; the check is
+	 * here because being wrong about that is so hard to diagnose.
+	 */
+	if (codeblockpos + 1 > CODEBLOCK_SIZE) {
+		fatal("Recompiler: block %d overran its %d-byte slot at %d - "
+		      "BLOCK_END_AT (%d) leaves too little room for one instruction",
+		      blockpoint2, CODEBLOCK_SIZE, codeblockpos, BLOCK_END_AT);
+	}
 	rcodeblock[blockpoint2][codeblockpos] = (uint8_t) a;
 	codeblockpos++;
 }
@@ -2127,7 +2153,7 @@ generatepcinc(void)
 	if (pcinc == 124) {
 		generateupdatepc();
 	}
-	if (codeblockpos >= 1800) {
+	if (codeblockpos >= BLOCK_END_AT) {
 		blockend = 1;
 	}
 }

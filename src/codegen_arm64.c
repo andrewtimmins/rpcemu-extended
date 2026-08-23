@@ -77,6 +77,26 @@ uint8_t (*rcodeblock)[1792];	/* MAP_JIT code cache, allocated in initcodeblocks(
 #else
 uint8_t rcodeblock[BLOCKS][1792] __attribute__ ((aligned (4096)));
 #endif
+/* One block's slot in the cache. */
+#define CODEBLOCK_SIZE	((int) sizeof(rcodeblock[0]))
+
+/*
+ * How far into a block generation may run before the block is ended.
+ *
+ * The test happens AFTER a whole ARM instruction has been emitted, so whatever
+ * is left over has to cover the largest expansion a single instruction can
+ * produce, plus the tail endblock() adds. On AArch64 that is a lot: one ARM
+ * instruction becomes many, and an LDM or STM of sixteen registers runs to
+ * several hundred bytes.
+ *
+ * This was 1500, leaving 292 bytes of a 1792-byte slot. An LDM/STM overran it
+ * and wrote into the next block, which is what stopped the arm64 recompiler
+ * booting (issue #30). The amd64 and x86 backends leave about 590 and 570 bytes
+ * respectively; this leaves 768, more than either, because AArch64 expansion is
+ * the widest of the three.
+ */
+#define BLOCK_END_AT	1024
+
 uint32_t codeblockpc[0x8000];
 int codeblocknum[0x8000];
 static const void *codeblockaddr[BLOCKS];	/* base pointer of each block, for linking */
@@ -119,6 +139,24 @@ enum {
 static inline void
 addword(uint32_t w)
 {
+	/*
+	 * ★ Never write outside the block's own slot.
+	 *
+	 * Overrunning it does not fault: it writes into the NEXT block, corrupting
+	 * code already generated there. That block's prologue and epilogue then hold
+	 * rubbish, and the failure surfaces much later and somewhere else entirely -
+	 * as a RET into the emulator's own static data, which is what issue #30
+	 * looked like from the outside. Turning silent corruption into an immediate,
+	 * named error is worth far more than limping on.
+	 *
+	 * BLOCK_END_AT is meant to make this unreachable; the check is here because
+	 * being wrong about that is so hard to diagnose.
+	 */
+	if (codeblockpos + 4 > CODEBLOCK_SIZE) {
+		fatal("Recompiler: block %d overran its %d-byte slot at %d - "
+		      "BLOCK_END_AT (%d) leaves too little room for one instruction",
+		      blockpoint2, CODEBLOCK_SIZE, codeblockpos, BLOCK_END_AT);
+	}
 	memcpy(&rcodeblock[blockpoint2][codeblockpos], &w, sizeof(uint32_t));
 	codeblockpos += 4;
 }
@@ -1366,7 +1404,7 @@ generatepcinc(void)
 	if (pcinc == 124) {
 		generateupdatepc();
 	}
-	if (codeblockpos >= 1500) {
+	if (codeblockpos >= BLOCK_END_AT) {
 		blockend = 1;
 	}
 }
