@@ -137,6 +137,7 @@ enum TimerId {
 	ID_TIMER_MODE_VERIFY,
 	ID_TIMER_GUEST_RESIZE,
 	ID_TIMER_TEST_CLOSE,
+	ID_TIMER_TEST_FULLSCREEN,
 };
 
 enum StatusBarField {
@@ -344,6 +345,18 @@ private:
 	void OnTestCloseTimer(wxTimerEvent &event);
 
 	/**
+	 * RPCEMU_TEST_FULLSCREEN_AFTER: enter full screen, then leave it again, and
+	 * log the window's size at each step.
+	 *
+	 * Full screen needs a real display, so this cannot be driven headless, and
+	 * the dialogues and key handling cannot be driven by a script here. What it
+	 * does prove is the part that broke: that leaving full screen puts the window
+	 * back to the size of the guest's desktop rather than leaving it filling the
+	 * screen.
+	 */
+	void OnTestFullscreenTimer(wxTimerEvent &event);
+
+	/**
 	 * A frame arrived from the guest. Notices a change of desktop size and, for
 	 * ScreenSize_MatchWindow, waits for it to settle before acting.
 	 */
@@ -501,6 +514,10 @@ private:
 
 	/* RPCEMU_TEST_CLOSE_AFTER only; never started otherwise. */
 	wxTimer test_close_timer_;
+
+	/* RPCEMU_TEST_FULLSCREEN_AFTER only. */
+	wxTimer test_fullscreen_timer_;
+	int test_fullscreen_step_ = 0;
 
 	/** The size last asked of the guest, or (0,0) when nothing is outstanding. */
 	wxSize mode_requested_ = wxSize(0, 0);

@@ -221,6 +221,7 @@ wxBEGIN_EVENT_TABLE(MainFrame, wxFrame)
 	EVT_TIMER(ID_TIMER_MODE_VERIFY, MainFrame::OnModeVerifyTimer)
 	EVT_TIMER(ID_TIMER_GUEST_RESIZE, MainFrame::OnGuestResizeTimer)
 	EVT_TIMER(ID_TIMER_TEST_CLOSE, MainFrame::OnTestCloseTimer)
+	EVT_TIMER(ID_TIMER_TEST_FULLSCREEN, MainFrame::OnTestFullscreenTimer)
 	EVT_DISPLAY_CHANGED(MainFrame::OnDisplayChanged)
 wxEND_EVENT_TABLE()
 
@@ -239,6 +240,7 @@ MainFrame::MainFrame()
 	, mode_verify_timer_(this, ID_TIMER_MODE_VERIFY)
 	, guest_resize_timer_(this, ID_TIMER_GUEST_RESIZE)
 	, test_close_timer_(this, ID_TIMER_TEST_CLOSE)
+	, test_fullscreen_timer_(this, ID_TIMER_TEST_FULLSCREEN)
 {
 	config_deep_copy(&config_copy_, &config);
 	pconfig_copy = &config_copy_;
@@ -408,6 +410,14 @@ void MainFrame::StartEmulator()
 	SyncSettingsMenuChecks();
 	SyncCdromMenuChecks();
 	UpdateMachineStatus();
+
+	if (const char *after = getenv("RPCEMU_TEST_FULLSCREEN_AFTER")) {
+		const long seconds = strtol(after, nullptr, 10);
+
+		if (seconds > 0) {
+			test_fullscreen_timer_.StartOnce((int) (seconds * 1000));
+		}
+	}
 
 	if (const char *after = getenv("RPCEMU_TEST_CLOSE_AFTER")) {
 		const long seconds = strtol(after, nullptr, 10);
@@ -928,6 +938,33 @@ void MainFrame::EnterFullScreen()
 	if (panel_ != nullptr) {
 		panel_->UpdateMouseCursor();
 	}
+
+	/*
+	 * ★ Give the panel the keyboard back.
+	 *
+	 * Alt+Enter is the only way out of full screen: the menu bar and the tool bar
+	 * are both hidden, so there is no Settings > Full Screen to click. And it is
+	 * not a menu accelerator - it is handled in the frame's own key handler - so
+	 * it only arrives if the panel has the focus.
+	 *
+	 * Hiding the menu bar and the tool bar destroys or detaches the windows the
+	 * focus may have been sitting on, and ShowFullScreen() re-parents and resizes
+	 * what is left. Nothing here put the focus back afterwards, so if the platform
+	 * did not restore it by itself, no key reached the handler and full screen
+	 * became a room with no door - which is what leaving full screen doing nothing
+	 * on Windows looks like from the outside.
+	 *
+	 * Asked for on the way in rather than relied upon: the frame is mid-transition
+	 * here, so it is deferred until the layout has settled.
+	 */
+	if (panel_ != nullptr) {
+		panel_->CallAfter([this] {
+			if (panel_ != nullptr && full_screen_) {
+				panel_->FocusPanel();
+			}
+		});
+	}
+
 	if (fullscreen_menu_item_ != nullptr) {
 		fullscreen_menu_item_->Check(true);
 	}
@@ -938,6 +975,10 @@ void MainFrame::ExitFullScreen()
 	if (!full_screen_) {
 		return;
 	}
+
+	/* Cleared first: SizeWindowToGuest() below does nothing while it is set, and
+	   it is the thing that puts the window back. */
+	full_screen_ = false;
 
 	if (panel_ != nullptr) {
 		panel_->SetFullScreen(false);
@@ -952,20 +993,24 @@ void MainFrame::ExitFullScreen()
 	if (GetStatusBar() == nullptr) {
 		BuildStatusBar();
 	}
-	/* No Fit(): ShowFullScreen(false) has already restored the size, and
-	   fitting would shrink-wrap the frame to a panel that has no minimum. */
-	Layout();
-	full_screen_ = false;
 
-	/* Force a full repaint once the windowed layout has settled (see the note
-	   in EnterFullScreen). */
-	if (panel_ != nullptr) {
-		panel_->CallAfter([this] {
-			if (panel_ != nullptr) {
-				panel_->ForceRedraw();
-			}
-		});
-	}
+	/*
+	 * ★ Put the window back explicitly, rather than trusting ShowFullScreen().
+	 *
+	 * This used to be a bare Layout(), on the grounds that ShowFullScreen(false)
+	 * had already restored the size and that fitting would shrink-wrap the frame
+	 * to a panel with no minimum. Both halves of that stopped being true.
+	 *
+	 * The panel now has a minimum in windowed mode - a hard one at actual size,
+	 * where the panel IS the guest's screen - so Fit() no longer collapses
+	 * anything; and leaving the geometry to ShowFullScreen(false) meant leaving
+	 * the window full-screen-sized on Windows, where leaving full screen appeared
+	 * to do nothing at all. Reported against 1.1.14.
+	 *
+	 * Everything else that changes the window's size goes through here, so full
+	 * screen is no longer the one path with its own idea of how to get back.
+	 */
+	SizeWindowToGuest();
 
 	if (panel_ != nullptr) {
 		panel_->UpdateMouseCursor();
@@ -1391,6 +1436,38 @@ void MainFrame::OnGuestResizeTimer(wxTimerEvent &event)
 {
 	(void)event;
 	SizeWindowToGuest();
+}
+
+void MainFrame::OnTestFullscreenTimer(wxTimerEvent &event)
+{
+	(void)event;
+
+	const wxSize before = GetSize();
+	const wxSize guest = panel_ != nullptr ? panel_->GuestScreenSize()
+	                                       : wxSize(0, 0);
+
+	switch (test_fullscreen_step_++) {
+	case 0:
+		rpclog("TEST_FULLSCREEN: window %dx%d, guest %dx%d - entering\n",
+		       before.x, before.y, guest.x, guest.y);
+		/* Not through the dialogue: that would need answering. */
+		config_copy_.show_fullscreen_message = 0;
+		EnterFullScreen();
+		rpclog("TEST_FULLSCREEN: full screen, window now %dx%d\n",
+		       GetSize().x, GetSize().y);
+		test_fullscreen_timer_.StartOnce(5000);
+		break;
+
+	case 1:
+		rpclog("TEST_FULLSCREEN: window %dx%d - leaving\n", before.x, before.y);
+		ExitFullScreen();
+		rpclog("TEST_FULLSCREEN: left, window now %dx%d, guest %dx%d\n",
+		       GetSize().x, GetSize().y, guest.x, guest.y);
+		break;
+
+	default:
+		break;
+	}
 }
 
 void MainFrame::OnTestCloseTimer(wxTimerEvent &event)
