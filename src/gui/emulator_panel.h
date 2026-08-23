@@ -74,7 +74,8 @@ private:
 	void ResizeToHostDisplay();
 	void SyncMousePosition(int x, int y);
 	bool IsMouseOverPanel() const;
-	bool ShouldSuppressHostMouseWarp() const;
+	bool IsPointerButtonDown() const;
+	bool IsUserPointerActive() const;
 	int MapClickButton(const wxMouseEvent &event) const;
 	wxPoint HostPointToPanel(int host_x, int host_y) const;
 	wxPoint PanelPointToHost(int x, int y) const;

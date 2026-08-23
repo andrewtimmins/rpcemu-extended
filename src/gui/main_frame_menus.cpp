@@ -193,9 +193,25 @@ void MainFrame::BuildMenus()
 	follow_host_display_menu_item_ =
 	    settings_menu->AppendCheckItem(ID_MENU_FOLLOW_HOST_DISPLAY,
 	                                   "Follow Host Display Size");
-	/* Follow-mouse is now always on (it works windowed, scaled and full-screen),
-	   so that toggle is hidden. The mouse-capture / relative path is left in the
-	   code (OnMouseMove, mouse_captured) and can be re-exposed here if needed. */
+	/*
+	 * Follow-mouse against capture-in-window.
+	 *
+	 * Follow-mouse is the default and works windowed, scaled and full-screen, so
+	 * this was hidden for a while. It is back because the two are not
+	 * interchangeable: following means the host pointer is moved to wherever
+	 * RISC OS has put its own, which cannot represent a guest pointer that has
+	 * stopped at an edge while the mouse keeps moving, and it leaves the guest's
+	 * own mouse-speed settings with nothing to act on. Capture takes the pointer
+	 * away from the host and feeds RISC OS the movement instead, which is what
+	 * full-screen use and RISC OS mouse acceleration both want (issue #128).
+	 */
+	mouse_hack_menu_item_ =
+	    settings_menu->AppendCheckItem(ID_MENU_MOUSE_HACK,
+	                                   "Mouse Follows Host Pointer");
+	mouse_hack_menu_item_->SetHelp(
+	    "On: the RISC OS pointer follows the host pointer. Off: the pointer is "
+	    "captured in the window and RISC OS is given the movement, so its own "
+	    "mouse speed applies. Release a captured pointer with Alt+Enter.");
 	mouse_twobutton_menu_item_ =
 	    settings_menu->AppendCheckItem(ID_MENU_MOUSE_TWOBUTTON, "Two-button Mouse Mode");
 	shared_clipboard_menu_item_ =
@@ -294,6 +310,7 @@ void MainFrame::BuildMenus()
 	             &MainFrame::OnFollowHostDisplay);
 	BindMenuItem(file_menu, ID_MENU_SUSPEND_ON_EXIT, this, &MainFrame::OnSuspendOnExit);
 	BindMenuItem(settings_menu, ID_MENU_CPU_IDLE, this, &MainFrame::OnCpuIdle);
+	BindMenuItem(settings_menu, ID_MENU_MOUSE_HACK, this, &MainFrame::OnMouseHack);
 	BindMenuItem(settings_menu, ID_MENU_MOUSE_TWOBUTTON, this, &MainFrame::OnMouseTwobutton);
 	BindMenuItem(settings_menu, ID_MENU_SHARED_CLIPBOARD, this, &MainFrame::OnSharedClipboard);
 	BindMenuItem(settings_menu, ID_MENU_DEFAULT_MACHINE, this, &MainFrame::OnDefaultMachine);
