@@ -542,10 +542,30 @@ gen_native_flags(int mode26, int set_cv)
 static void
 gen_test_armirq(void)
 {
-	a64_ldr_w(A64_X9, A64_ARM, (uint32_t) offsetof(ARMState, event));
-	a64_load_imm64(A64_X10, 0x40);
-	a64_and(A64_X9, A64_X9, A64_X10);
-	a64_cbnz_w_to(A64_X9, 0);
+	/*
+	 * ★ x13/x14, NOT x9/x10.
+	 *
+	 * This is emitted between a load landing in w9 and w9 being written to the
+	 * guest register (see gen_arm_load_store, and the fallback tails of
+	 * genldr()/genldrb()), so using w9 as its own scratch destroyed the value
+	 * that had just been loaded and left the guest with arm.event & 0x40 - which
+	 * is 0 whenever no abort is pending.
+	 *
+	 * The inline TLB path branches past this, so only the C-helper path was
+	 * affected: RAM and ROM reads hit the TLB and were fine, while a device
+	 * register ALWAYS misses and so always read as zero. RISC OS then sat in the
+	 * HAL's calibrated delay loop for ever, reading the same zero from IOMD
+	 * timer 0 and never seeing it advance, which is issue #30's blank screen
+	 * with a ticking MIPS counter.
+	 *
+	 * The differential tests could not see it: they point the TLB at a host
+	 * buffer, so every access in them takes the inline path and the fallback
+	 * tail is never executed.
+	 */
+	a64_ldr_w(A64_X13, A64_ARM, (uint32_t) offsetof(ARMState, event));
+	a64_load_imm64(A64_X14, 0x40);
+	a64_and(A64_X13, A64_X13, A64_X14);
+	a64_cbnz_w_to(A64_X13, 0);
 }
 
 /* Call a memory C helper: args already staged in w0(/w1), sync and reload the
