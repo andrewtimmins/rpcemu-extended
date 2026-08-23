@@ -61,5 +61,6 @@ wxBitmap ToolbarIconPower(const wxSize &size = wxSize(24, 24), bool on = true);
 wxBitmapBundle StatusIconRunning();
 wxBitmapBundle StatusIconStarting();
 wxBitmapBundle StatusIconStopped();
+wxBitmapBundle StatusIconSuspended();
 
 #endif

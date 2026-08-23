@@ -98,6 +98,7 @@ enum {
 	kStatusIconRunning = 0,
 	kStatusIconStarting,
 	kStatusIconStopped,
+	kStatusIconSuspended,
 };
 
 /* How long a --managed child gets to publish its control-channel endpoint and
@@ -257,6 +258,7 @@ void ManagerFrame::BuildUi()
 		status_icons.push_back(StatusIconRunning());
 		status_icons.push_back(StatusIconStarting());
 		status_icons.push_back(StatusIconStopped());
+		status_icons.push_back(StatusIconSuspended());
 		machine_list_->SetSmallImages(status_icons);
 	}
 	machine_list_->InsertColumn(0, "Machine", wxLIST_FORMAT_LEFT, 170);
@@ -858,20 +860,27 @@ void ManagerFrame::RefreshMachineList()
 		/* Said in words as well as in colour. The column was left empty for a
 		   machine that is not running, so the commonest state was the one the
 		   list did not name - and a colour on its own is no use to somebody who
-		   cannot tell these two apart. */
-		int image = kStatusIconStopped;
-		wxString status = "Stopped";
+		   cannot tell these two apart.
 
+		   Suspended is told apart from stopped for the same reason: it has a
+		   state to resume from, and a list that calls them both "Stopped"
+		   makes Start look like the only thing to do with it. */
 		const auto it = running_.find(name);
-		if (it != running_.end()) {
-			if (it->second.starting) {
-				image = kStatusIconStarting;
-				status = "Starting Up";
-			} else {
-				image = kStatusIconRunning;
-				status = "Running";
-				running_count++;
-			}
+		int image;
+		wxString status;
+
+		if (it == running_.end()) {
+			const bool suspended = HasSnapshot(name);
+
+			image = suspended ? kStatusIconSuspended : kStatusIconStopped;
+			status = suspended ? "Suspended" : "Stopped";
+		} else if (it->second.starting) {
+			image = kStatusIconStarting;
+			status = "Starting Up";
+		} else {
+			image = kStatusIconRunning;
+			status = "Running";
+			running_count++;
 		}
 
 		machine_names_.push_back(name);
