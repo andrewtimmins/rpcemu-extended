@@ -29,6 +29,7 @@ set(GUI_SOURCES
     usb_dialog.cpp
     package_index.cpp
     package_install.cpp
+    package_layout.cpp
     package_sources.cpp
     package_sources_dialog.cpp
     riscos_fetch.cpp

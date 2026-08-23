@@ -1,0 +1,17 @@
+| !Boot for !Packages - the RISC OS package database.
+|
+| Copyright (C) 2026 Andy Timmins
+| Part of RPCEmu Extended Edition. GPL v2 or later; see COPYING.
+|
+| Run by the boot sequence when this directory is seen in !Boot.Resources. Its
+| job is to publish Packages$Dir, which is how PackMan, RiscPkg and RPCEmu's own
+| package manager find the database. The directory layout is the RISC OS
+| Packaging Project's, so that all three read and write the same one; this file
+| is our own.
+|
+| An existing Packages$Dir is left alone. A second copy of the database found
+| later must not take the name from the one the boot sequence already chose.
+
+If "<Packages$Dir>" = "" Then Set Packages$Dir <Obey$Dir>
+IconSprites <Obey$Dir>.!Sprites
+IfThere <Packages$Dir>.SetVars Then Run <Packages$Dir>.SetVars
