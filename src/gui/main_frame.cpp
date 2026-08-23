@@ -3268,24 +3268,32 @@ bool MainFrame::ConfirmCloseOrSwitch()
  */
 void MainFrame::AskAboutClosing()
 {
+	/* WarnOnStop is the application's preference, not the Manager's, so turning
+	   the question off there turns it off here too. On when absent. */
 	const bool running = emulator_ != nullptr && emulator_->IsRunning();
+	const bool ask = running && GetWarnOnStop() && !config_copy_.suspend_on_exit;
 
-	rpclog("MainFrame: asking about closing (running=%d)\n", running ? 1 : 0);
+	rpclog("MainFrame: asking about closing (running=%d ask=%d)\n",
+	       running ? 1 : 0, ask ? 1 : 0);
 
-	if (running) {
-		const int answer = wxMessageBox(
-		    "Are you sure you wish to shut down this machine?",
-		    wxString::Format("Shut Down %s", MachineDisplayName()),
-		    wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION, this);
+	if (ask) {
+		wxRichMessageDialog dlg(this,
+		    wxString::Format("Stop %s?", MachineDisplayName()),
+		    "RPCEmu Extended",
+		    wxYES_NO | wxNO_DEFAULT | wxICON_EXCLAMATION);
 
-		/* wxMessageBox answers with the STYLE flags - wxYES, wxNO - and not with
-		   wxID_YES and friends, which is what wxMessageDialog::ShowModal()
-		   returns. Mixing the two families up is an easy way to write a
-		   confirmation that silently always takes the same branch. */
+		dlg.SetYesNoLabels("Stop", "Cancel");
+		dlg.SetExtendedMessage(
+		    "The machine is asked to shut down, and anything RISC OS has\n"
+		    "not written to disc is lost - unless this machine is set to\n"
+		    "suspend on exit, in which case its state is saved.");
+
+		const int answer = dlg.ShowModal();
+
 		rpclog("MainFrame: shutdown question answered %d (yes=%d)\n",
-		       answer, wxYES);
+		       answer, wxID_YES);
 
-		if (answer != wxYES) {
+		if (answer != wxID_YES) {
 			return;
 		}
 	}
