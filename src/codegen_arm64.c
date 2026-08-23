@@ -184,6 +184,15 @@ a64_cbz_w_forward(int rt)
 	return pos;
 }
 
+/* CBZ Xt, <byte position within block>. 64-bit, because the value tested is a
+   host pointer returned by jit_chain_next(). */
+static inline void
+a64_cbz_x_to(int rt, int target_pos)
+{
+	int rel = target_pos - codeblockpos;
+	addword(0xB4000000u | ((((uint32_t) (rel / 4)) & 0x7ffff) << 5) | rt);
+}
+
 /* CBNZ Wt, <byte position within block> (used for backward branch to epilogue). */
 static inline void
 a64_cbnz_w_to(int rt, int target_pos)
@@ -236,7 +245,6 @@ static inline void a64_add_x(int d, int nn, int m) { addword(0x8B000000u | (m <<
 static inline void a64_sub_w_imm(int d, int nn, uint32_t imm) { addword(0x51000000u | ((imm & 0xfff) << 10) | (nn << 5) | d); }
 static inline void a64_subs_w_imm(int d, int nn, uint32_t imm) { addword(0x71000000u | ((imm & 0xfff) << 10) | (nn << 5) | d); }
 static inline void a64_br(int rn) { addword(0xD61F0000u | (rn << 5)); }
-static inline void a64_ldr_w_reg(int t, int nn, int m) { addword(0xB8607800u | (m << 16) | (nn << 5) | t); } /* LDR Wt,[Xn,Xm,LSL#2] */
 static inline void a64_ldr_x_imm(int t, int nn, unsigned off8) { addword(0xF9400000u | ((off8 >> 3) << 10) | (nn << 5) | t); } /* LDR Xt,[Xn,#off] */
 static inline void a64_ldr_x_reg(int t, int nn, int m) { addword(0xF8607800u | (m << 16) | (nn << 5) | t); } /* LDR Xt,[Xn,Xm,LSL#3] */
 
@@ -306,6 +314,54 @@ static inline void codegen_jit_executable(void) { pthread_jit_write_protect_np(1
 static inline void codegen_jit_writable(void)   { }
 static inline void codegen_jit_executable(void) { }
 #endif
+
+/*
+ * Where execution continues after this block, or NULL if it must go back to the
+ * dispatcher.
+ *
+ * ★ Deliberately C rather than generated code.
+ *
+ * The lookup used to be open-coded in the block's tail: hash the PC, compare
+ * codeblockpc[hash], load codeblocknum[hash], index codeblockaddr with it and
+ * branch to the result. Every one of those steps was hand-written machine code
+ * with no way to say "do not do this after all" once it had started, and no
+ * check that the index it read was in range. A stale or out-of-range entry
+ * therefore became a branch to whatever the load produced - which is how a
+ * recompiled boot ended up executing zeroed cache, static data, and eventually
+ * address 0 (issue #30).
+ *
+ * Written here, the decision can be checked properly and the answer is a single
+ * pointer the generated code tests against NULL before branching to it. The C
+ * ABI keeps the fixed base registers (x19-x23) safe across the call, so the
+ * successor still inherits the frame and register cache the chain was entered
+ * with, as it did before.
+ *
+ * @param r15_cached The block's cached copy of guest R15.
+ */
+const void *
+jit_chain_next(uint32_t r15_cached)
+{
+	const uint32_t pc = (r15_cached - 8) & arm.r15_mask;
+	const uint32_t hash = HASH(pc);
+	int num;
+
+	/* Budget spent, or something waiting: the dispatcher has to run. */
+	if (linecyc < 0 || (arm.event & 0xff) != 0) {
+		return NULL;
+	}
+	if (codeblockpc[hash] != pc) {
+		return NULL;
+	}
+
+	num = codeblocknum[hash];
+	/* The check the generated version never made. Invalidation writes
+	   0xffffffff here, and a hash slot can be left holding it. */
+	if (num < 0 || num >= BLOCKS) {
+		return NULL;
+	}
+
+	return (const uint8_t *) codeblockaddr[num] + block_enter;
+}
 
 /* ---- block cache management ---------------------------------------------- */
 
@@ -1377,42 +1433,30 @@ endblock(uint32_t opcode)
 	generateupdatepc();
 	generateupdateinscount();
 
-	/* Block linking: decrement the cycle budget, and unless it has run out or
-	   an event is pending, look the next block up by PC and jump straight into
-	   it (bypassing its prologue via block_enter) so the R15 cache in x20 stays
-	   live and we avoid a round-trip through the dispatcher. Any miss falls
-	   through to the epilogue, which writes x20 back and returns. */
+	/*
+	 * Block chaining: spend one unit of the cycle budget, then ask where to go
+	 * next and jump straight into that block (bypassing its prologue via
+	 * block_enter) so the R15 cache in x20 stays live and we avoid a round-trip
+	 * through the dispatcher. Anything that says "not now" falls through to the
+	 * epilogue, which writes x20 back and returns.
+	 *
+	 * The budget is decremented here rather than in jit_chain_next() so that it
+	 * is spent whether or not a successor is found, exactly as before.
+	 */
 	a64_load_imm64(A64_X9, (uintptr_t) &linecyc);
 	a64_ldr_w(A64_X10, A64_X9, 0);
 	a64_subs_w_imm(A64_X10, A64_X10, 1);
 	a64_str_w(A64_X10, A64_X9, 0);
 	a64_b_cond_to(A64_CC_MI, 0);			/* linecyc < 0 -> exit */
 
-	a64_ldr_w(A64_X10, A64_ARM, (uint32_t) offsetof(ARMState, event));
-	a64_load_imm64(A64_X11, 0xff); a64_and(A64_X10, A64_X10, A64_X11);
-	a64_cbnz_w_to(A64_X10, 0);			/* event pending -> exit */
-
-	/* next PC = (R15 - 8) & r15_mask */
-	a64_sub_w_imm(A64_X10, A64_R15, 8);
-	a64_load_imm64(A64_X11, arm.r15_mask); a64_and(A64_X9, A64_X10, A64_X11);
-
-	/* hash = (PC >> 2) & 0x7fff */
-	a64_lsr_w_imm(A64_X11, A64_X9, 2);
-	a64_load_imm64(A64_X12, 0x7fff); a64_and(A64_X11, A64_X11, A64_X12);
-
-	/* if (codeblockpc[hash] != PC) exit */
-	a64_load_imm64(A64_X12, (uintptr_t) &codeblockpc[0]);
-	a64_ldr_w_reg(A64_X13, A64_X12, A64_X11);
-	a64_subs(A64_ZR, A64_X13, A64_X9);		/* CMP */
-	a64_b_cond_to(A64_CC_NE, 0);			/* miss -> exit */
-
-	/* base = codeblockaddr[codeblocknum[hash]]; jump base + block_enter */
-	a64_load_imm64(A64_X12, (uintptr_t) &codeblocknum[0]);
-	a64_ldr_w_reg(A64_X13, A64_X12, A64_X11);
-	a64_load_imm64(A64_X12, (uintptr_t) &codeblockaddr[0]);
-	a64_ldr_x_reg(A64_X14, A64_X12, A64_X13);
-	a64_add_x_imm(A64_X14, A64_X14, (uint32_t) block_enter);
-	a64_br(A64_X14);
+	/* Ask jit_chain_next() where to go, and only branch if it says anywhere.
+	   The remaining tests - the pending-event check, the PC hash and whether the
+	   slot really holds this block - are all in there. */
+	a64_mov_w(A64_X0, A64_R15);			/* argument: cached R15 */
+	a64_load_imm64(A64_X9, (uintptr_t) jit_chain_next);
+	a64_blr(A64_X9);
+	a64_cbz_x_to(A64_X0, 0);			/* no successor -> exit */
+	a64_br(A64_X0);
 
 	/* Block complete: return the cache to executable (a no-op off Apple Silicon)
 	   before the I-cache maintenance below, matching Apple's write-then-execute
