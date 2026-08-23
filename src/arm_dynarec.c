@@ -92,6 +92,7 @@ arm_is_dynarec(void)
 void updatemode(uint32_t m)
 {
         uint32_t c, om = arm.mode;
+        const uint32_t old_r15_mask = arm.r15_mask;
 
         usrregs[15] = &arm.reg[15];
         switch (arm.mode & 0xf) { /* Store back registers */
@@ -206,6 +207,29 @@ void updatemode(uint32_t m)
                         arm.reg[15] |= ((arm.reg[16] & 0xc0) << 20);
                 }
         }
+
+	/*
+	 * ★ A 26/32-bit switch invalidates every recompiled block.
+	 *
+	 * The code generators bake arm.r15_mask into generated code as an immediate,
+	 * and in places use it at generation time to decide whether to mask R15 at
+	 * all. A block compiled while the CPU was in 32-bit mode therefore either
+	 * masks with 0xfffffffc or does not mask, and running it in 26-bit mode
+	 * leaves the PSR bits of R15 in what should be an address. Nothing else
+	 * invalidated the cache on a mode change, so those blocks were reused.
+	 *
+	 * That is issue #154: under a 26-bit OS, a PC-relative LDR aborted because
+	 * the computed address had the flags in it. It only happened with the
+	 * recompiler - the interpreter reads arm.r15_mask afresh every time - and it
+	 * went away with the debugger active, because that forces interpretation.
+	 *
+	 * A full flush is the right hammer: the mask only changes when the CPU
+	 * changes word size, which is rare, and every block in the cache is suspect
+	 * when it does. The interpreter does not need this and does not do it.
+	 */
+	if (arm.r15_mask != old_r15_mask) {
+		initcodeblocks();
+	}
 
 	/* Update memory access mode based on privilege level of ARM mode. Goes
 	   through mem_set_privilege() so the fast maps follow the privilege level;
