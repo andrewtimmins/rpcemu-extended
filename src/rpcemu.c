@@ -88,32 +88,48 @@ Machine machine; /**< The details of the current machine being emulated */
 /* Host display geometry, published by the front-end so the synthesised monitor
    EDID can advertise a native mode matching the real screen. Zero until set.
 
-   The generation counter changes whenever the geometry does, which is how the
+   Both the full geometry and the work area are kept, because they answer
+   different questions: the geometry is what the display can show, the work area
+   is what a window may occupy. See rpcemu_edid_bound(). */
+static unsigned host_display_width = 0;
+static unsigned host_display_height = 0;
+static unsigned host_display_work_width = 0;
+static unsigned host_display_work_height = 0;
+static unsigned host_display_hz = 0;
+
+/* The screen size being asked of the guest, and the generation that identifies
+   it. Separate from the host display, because the two are no longer the same
+   thing: with ScreenSize_MatchWindow this is the window's client area, and with
+   ScreenSize_Fixed it is whatever was configured.
+
+   The generation counter changes whenever the request does, which is how the
    guest support module notices it should follow: it records the generation it
    last acted on and compares. A counter rather than a flag, so a change that
    arrives while the guest is busy is not lost, and so nothing has to be
    "consumed" by a reader. */
-static unsigned host_display_width = 0;
-static unsigned host_display_height = 0;
-static unsigned host_display_hz = 0;
-static uint32_t host_display_generation = 0;
+static unsigned guest_size_width = 0;
+static unsigned guest_size_height = 0;
+static uint32_t guest_size_generation = 0;
 
 void
-rpcemu_set_host_display(unsigned width, unsigned height, unsigned hz)
+rpcemu_set_host_display(unsigned width, unsigned height, unsigned hz,
+                        unsigned work_width, unsigned work_height)
 {
 	if (width == host_display_width && height == host_display_height &&
-	    hz == host_display_hz)
+	    hz == host_display_hz && work_width == host_display_work_width &&
+	    work_height == host_display_work_height)
 	{
-		return;		/* Unchanged: leave the generation alone */
+		return;		/* Unchanged */
 	}
 
 	host_display_width = width;
 	host_display_height = height;
 	host_display_hz = hz;
-	host_display_generation++;
+	host_display_work_width = work_width;
+	host_display_work_height = work_height;
 
-	rpclog("Display: host display now %ux%u@%u (generation %u)\n",
-	       width, height, hz, (unsigned) host_display_generation);
+	rpclog("Display: host display now %ux%u@%u, work area %ux%u\n",
+	       width, height, hz, work_width, work_height);
 }
 
 int
@@ -125,6 +141,86 @@ rpcemu_get_host_display(unsigned *width, unsigned *height)
 	*width = host_display_width;
 	*height = host_display_height;
 	return 1;
+}
+
+int
+rpcemu_edid_bound(unsigned *width, unsigned *height)
+{
+	switch (config.screen_size) {
+	case ScreenSize_Fixed:
+		/* The mode asked for has to be one the monitor declares, or RISC OS
+		   will not have it however much memory there is to hold it. */
+		if (config.screen_size_x == 0 || config.screen_size_y == 0) {
+			break;
+		}
+		*width = config.screen_size_x;
+		*height = config.screen_size_y;
+		return 1;
+
+	case ScreenSize_MatchWindow:
+		/* The window may be dragged out to the whole display, so advertise all
+		   of it - including the part a window may not normally occupy, which
+		   full screen can still use. */
+		if (host_display_width == 0 || host_display_height == 0) {
+			break;
+		}
+		*width = host_display_width;
+		*height = host_display_height;
+		return 1;
+
+	case ScreenSize_Automatic:
+	default:
+		/* Bounded by the work area: this mode's window is 1:1 with the desktop
+		   under the default drawing rule, and a window taller than the work
+		   area opens with its title bar off the top of the screen, where it
+		   cannot be grabbed to move or resize the window back. Fall through to
+		   the full geometry if the front-end did not say what the work area is
+		   (--fetch-riscos and friends run with no display at all). */
+		if (host_display_work_width != 0 && host_display_work_height != 0) {
+			*width = host_display_work_width;
+			*height = host_display_work_height;
+			return 1;
+		}
+		if (host_display_width != 0 && host_display_height != 0) {
+			*width = host_display_width;
+			*height = host_display_height;
+			return 1;
+		}
+		break;
+	}
+
+	return 0;
+}
+
+void
+rpcemu_request_guest_size(unsigned width, unsigned height)
+{
+	unsigned fitted_w = 0, fitted_h = 0;
+
+	if (width == 0 || height == 0) {
+		return;
+	}
+
+	/* Quantise before comparing. A window drag walks through every intermediate
+	   width, and all but a few of those land on the same standard mode; bumping
+	   the generation for each would have the guest reflowing its desktop over
+	   and over to arrive where it already was. */
+	if (!display_mode_fit(width, height, 4, rpcemu_display_memory(),
+	                      &fitted_w, &fitted_h))
+	{
+		return;
+	}
+
+	if (fitted_w == guest_size_width && fitted_h == guest_size_height) {
+		return;
+	}
+
+	guest_size_width = fitted_w;
+	guest_size_height = fitted_h;
+	guest_size_generation++;
+
+	rpclog("Display: guest screen size requested %ux%u (from %ux%u, generation %u)\n",
+	       fitted_w, fitted_h, width, height, (unsigned) guest_size_generation);
 }
 
 /**
@@ -167,25 +263,33 @@ int
 rpcemu_guest_display_target(unsigned *width, unsigned *height, unsigned *hz,
                             uint32_t *generation)
 {
-	*generation = host_display_generation;
+	*generation = guest_size_generation;
 	*hz = host_display_hz;
 
-	/* Off by default: a mode change reflows every window on the guest desktop,
-	   so it happens only when asked for. Reporting nothing keeps the whole
-	   business out of the guest module's way - it never even takes a baseline,
-	   and so has nothing to act on if the setting is switched on later. That
-	   also gives the setting its meaning: follow changes from now on, rather
-	   than retune the mode the desktop is already in. */
-	if (!config.follow_host_display) {
+	/*
+	 * Whatever has been asked for, whoever asked. Nothing is reported until
+	 * something publishes a request, so a machine left on the default answers
+	 * "no mode" for its whole life: ScreenSize_Automatic settles the mode once
+	 * through the monitor EDID the machine boots with, and publishes nothing
+	 * afterwards. The guest module never even takes a baseline, so it has
+	 * nothing to act on - which is what makes that the safe default, since a
+	 * mode change reflows every window on the guest desktop and nobody asked for
+	 * that to happen behind their back.
+	 *
+	 * Changing the setting is asking for it, though. Selecting a screen size in
+	 * the menu or the machine editor publishes one from there, including
+	 * automatic - somebody who picks a size expects RISC OS to adopt it, not to
+	 * be told to restart the machine.
+	 */
+	if (guest_size_width == 0 || guest_size_height == 0) {
 		return 0;
 	}
 
-	if (host_display_width == 0 || host_display_height == 0) {
-		return 0;
-	}
-
-	return display_mode_fit(host_display_width, host_display_height, 4,
-	                               rpcemu_display_memory(), width, height);
+	/* Already fitted to the standard-mode list and to the display memory by
+	   rpcemu_request_guest_size(), so the guest can use it as it stands. */
+	*width = guest_size_width;
+	*height = guest_size_height;
+	return 1;
 }
 
 /** Array of details of models the emulator can emulate, must be kept in sync with
@@ -222,9 +326,10 @@ Config config = {
 	NetworkType_Off,	/* network_type */
 	0,			/* cpu_idle */
 	1,			/* show_fullscreen_message */
-	0,			/* integer_scaling */
-	0,			/* fit_to_window */
-	0,			/* follow_host_display (OFF: it reflows the guest desktop) */
+	DisplayScaling_ActualSize,	/* display_scaling */
+	ScreenSize_Automatic,	/* screen_size (the mode is settled at boot and left alone) */
+	0,			/* screen_size_x (unused unless screen_size is Fixed) */
+	0,			/* screen_size_y */
 	0,			/* gfxcard_enabled (OFF: needs its guest driver) */
 	{ UsbAttachment_None,	/* usb_port: nothing plugged into any USB port */
 	  UsbAttachment_None,

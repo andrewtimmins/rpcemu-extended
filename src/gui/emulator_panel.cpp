@@ -71,7 +71,9 @@ EmulatorPanel::EmulatorPanel(wxWindow *parent, EmulatorHost &emulator)
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
 	SetCanFocus(true);
 	if (pconfig_copy != nullptr) {
-		integer_scaling_ = pconfig_copy->integer_scaling != 0;
+		display_scaling_ = pconfig_copy->display_scaling;
+		window_free_ = display_scaling_ != DisplayScaling_ActualSize ||
+		               pconfig_copy->screen_size == ScreenSize_MatchWindow;
 	}
 #ifdef __WXGTK__
 	if (GtkWidget *widget = GTK_WIDGET(GetHandle())) {
@@ -165,17 +167,10 @@ void EmulatorPanel::SetFullScreen(bool full_screen)
 	Refresh(false);
 }
 
-void EmulatorPanel::SetIntegerScaling(bool integer_scaling)
+void EmulatorPanel::SetDisplayMode(int scaling, bool window_free)
 {
-	integer_scaling_ = integer_scaling;
-	ResizeToHostDisplay();
-	CalculateScaling();
-	Refresh(false);
-}
-
-void EmulatorPanel::SetFitToWindow(bool fit_to_window)
-{
-	fit_to_window_ = fit_to_window;
+	display_scaling_ = scaling;
+	window_free_ = window_free;
 	ResizeToHostDisplay();
 	CalculateScaling();
 	Refresh(false);
@@ -217,7 +212,7 @@ void EmulatorPanel::ReleaseMouseCapture()
 
 wxPoint EmulatorPanel::PanelPointToHost(int x, int y) const
 {
-	if (integer_scaling_ || fit_to_window_) {
+	if (Letterboxed()) {
 		const int local_x = x - offset_x_;
 		const int local_y = y - offset_y_;
 		if (local_x < 0 || local_y < 0 || local_x >= scaled_x_ || local_y >= scaled_y_) {
@@ -243,7 +238,7 @@ wxPoint EmulatorPanel::HostPointToPanel(int host_x, int host_y) const
 		panel_y *= 2;
 	}
 
-	if (integer_scaling_ || fit_to_window_) {
+	if (Letterboxed()) {
 		return wxPoint(offset_x_ + (panel_x * scaled_x_) / std::max(host_xsize_, 1),
 		               offset_y_ + (panel_y * scaled_y_) / std::max(host_ysize_, 1));
 	}
@@ -276,37 +271,66 @@ wxPoint EmulatorPanel::CaptureCentre() const
 
 void EmulatorPanel::ResizeToHostDisplay()
 {
-	if (full_screen_ || fit_to_window_ || host_xsize_ <= 0 || host_ysize_ <= 0) {
+	const wxSize host_size(host_xsize_, host_ysize_);
+	const bool have_guest_size = host_xsize_ > 0 && host_ysize_ > 0;
+
+	/* Full screen: the display sets the size and nothing here has a say. */
+	if (full_screen_ || !have_guest_size) {
 		SetMinSize(wxDefaultSize);
 		SetMaxSize(wxDefaultSize);
 		SetSizeHints(wxDefaultSize, wxDefaultSize);
 		return;
 	}
 
-	const wxSize host_size(host_xsize_, host_ysize_);
-
-	/*
-	 * Pixel-perfect scaling keeps a minimum of one host pixel per guest pixel
-	 * and is free to grow to a whole multiple of it.
-	 *
-	 * The minimum matters: this used to clear it, like the freely-resizable
-	 * modes above. Toggling from the menu was fine, because by then the window
-	 * had a size of its own, but a machine that started with the setting
-	 * already on had a panel contributing no minimum at all, so the frame's
-	 * Fit() shrink-wrapped it to just the menu and toolbar. That is issue #47:
-	 * "the main window fails to open".
-	 */
-	if (integer_scaling_) {
+	switch (display_scaling_) {
+	case DisplayScaling_WholeMultiples:
+		/*
+		 * Free to grow, but never below one host pixel per guest pixel.
+		 *
+		 * The minimum matters: this used to clear it, like scale-to-fit below.
+		 * Toggling from the menu was fine, because by then the window had a size
+		 * of its own, but a machine that started with the setting already on had
+		 * a panel contributing no minimum at all, so the frame's Fit()
+		 * shrink-wrapped it to just the menu and toolbar. That is issue #47,
+		 * "the main window fails to open".
+		 */
 		SetMinSize(host_size);
 		SetMaxSize(wxDefaultSize);
 		SetSizeHints(host_size, wxDefaultSize);
 		return;
-	}
 
-	SetMinSize(host_size);
-	SetMaxSize(host_size);
-	SetSize(host_size);
-	SetSizeHints(host_size, host_size);
+	case DisplayScaling_ScaleToFit:
+		/* Any size at all: that is the whole point of it. */
+		SetMinSize(wxDefaultSize);
+		SetMaxSize(wxDefaultSize);
+		SetSizeHints(wxDefaultSize, wxDefaultSize);
+		return;
+
+	case DisplayScaling_ActualSize:
+	default:
+		/*
+		 * Normally the window is locked to the desktop, since at 1:1 any other
+		 * size is either a border or a clipped desktop.
+		 *
+		 * Not when the screen size is following the window, though. Then the
+		 * window is the input to the guest's mode and the guest's mode is the
+		 * output, and locking one to the other closes the loop: each resize
+		 * would pick a new mode, the new mode would resize the window, and that
+		 * would pick another. So the window stays free and the small remainder
+		 * between it and the nearest standard mode is centred instead.
+		 */
+		if (window_free_) {
+			SetMinSize(wxDefaultSize);
+			SetMaxSize(wxDefaultSize);
+			SetSizeHints(wxDefaultSize, wxDefaultSize);
+			return;
+		}
+		SetMinSize(host_size);
+		SetMaxSize(host_size);
+		SetSize(host_size);
+		SetSizeHints(host_size, host_size);
+		return;
+	}
 }
 
 namespace {
@@ -402,17 +426,9 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 		recalculate_needed = true;
 	}
 
-	if (!full_screen_ && !integer_scaling_ && !fit_to_window_ &&
-	    (update.host_xsize != host_xsize_ || update.host_ysize != host_ysize_)) {
-		host_xsize_ = update.host_xsize;
-		host_ysize_ = update.host_ysize;
-		recalculate_needed = true;
-	}
-
-	/* In fit-to-window mode the guest size still drives the scaling maths, but
-	   the window is left free for the user to resize. */
-	if (fit_to_window_ &&
-	    (update.host_xsize != host_xsize_ || update.host_ysize != host_ysize_)) {
+	/* The guest's size drives the scaling maths whatever the mode; what differs
+	   is whether the window is then resized to match, below. */
+	if (update.host_xsize != host_xsize_ || update.host_ysize != host_ysize_) {
 		host_xsize_ = update.host_xsize;
 		host_ysize_ = update.host_ysize;
 		recalculate_needed = true;
@@ -421,8 +437,8 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 	if (recalculate_needed) {
 		CalculateScaling();
 
-		if (!full_screen_ && !fit_to_window_) {
-			if (integer_scaling_) {
+		if (!full_screen_ && !window_free_) {
+			if (display_scaling_ == DisplayScaling_WholeMultiples) {
 				ResizeToHostDisplay();
 			} else {
 				const wxSize host_size(update.host_xsize, update.host_ysize);
@@ -501,7 +517,7 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 		ymax *= 2;
 	}
 
-	if (full_screen_ || integer_scaling_ || fit_to_window_) {
+	if (Letterboxed()) {
 		width = (width * scaled_x_) / std::max(host_xsize_, 1);
 
 		if (ymin > 0) {
@@ -601,11 +617,17 @@ void EmulatorPanel::CalculateScaling()
 		host_ysize_ = image_height_;
 	}
 
-	if (full_screen_ || integer_scaling_ || fit_to_window_) {
+	if (Letterboxed()) {
 		const int widget_x = client.x;
 		const int widget_y = client.y;
 
-		if (integer_scaling_) {
+		if (display_scaling_ == DisplayScaling_ActualSize) {
+			/* Reached when the window leads and the guest follows: draw 1:1 and
+			   let the offsets below centre it in whatever is left over, which is
+			   at most one rung of the standard-mode ladder. */
+			scaled_x_ = host_xsize_;
+			scaled_y_ = host_ysize_;
+		} else if (display_scaling_ == DisplayScaling_WholeMultiples) {
 			const int scale_x = std::max(1, widget_x / host_xsize_);
 			const int scale_y = std::max(1, widget_y / host_ysize_);
 			const int scale = std::min(scale_x, scale_y);
@@ -840,7 +862,7 @@ void EmulatorPanel::OnPaint(wxPaintEvent &event)
 		dest = GetClientRect();
 	}
 
-	if (full_screen_ || integer_scaling_ || fit_to_window_) {
+	if (Letterboxed()) {
 		if ((dest.x < offset_x_) || (dest.y < offset_y_) ||
 		    (dest.x + dest.width > offset_x_ + scaled_x_) ||
 		    (dest.y + dest.height > offset_y_ + scaled_y_)) {
@@ -993,16 +1015,15 @@ void EmulatorPanel::OnMouseMove(wxMouseEvent &event)
 		/* The captured pointer delta is measured in host-window pixels; when the
 		   display is scaled down the guest is larger than the window, so scale
 		   the delta up to guest units or the pointer crawls. */
-		if ((integer_scaling_ || fit_to_window_ || full_screen_) &&
-		    scaled_x_ > 0 && scaled_y_ > 0) {
+		if (Letterboxed() && scaled_x_ > 0 && scaled_y_ > 0) {
 			dx = (dx * host_xsize_) / scaled_x_;
 			dy = (dy * host_ysize_) / scaled_y_;
 		}
 		if (getenv("RPCEMU_MOUSEDBG") != nullptr) {
-			rpclog("MOUSEDBG ev=%d,%d mid=%d,%d raw=%d,%d sent=%d,%d host=%dx%d scaled=%dx%d off=%d,%d full=%d fit=%d\n",
+			rpclog("MOUSEDBG ev=%d,%d mid=%d,%d raw=%d,%d sent=%d,%d host=%dx%d scaled=%dx%d off=%d,%d full=%d scaling=%d free=%d\n",
 			       event.GetX(), event.GetY(), middle.x, middle.y, rawdx, rawdy, dx, dy,
 			       host_xsize_, host_ysize_, scaled_x_, scaled_y_, offset_x_, offset_y_,
-			       full_screen_, fit_to_window_);
+			       full_screen_, display_scaling_, window_free_);
 		}
 		emulator_.MouseMoveRelative(dx, dy);
 	} else if (pconfig_copy->mousehackon) {

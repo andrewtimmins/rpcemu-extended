@@ -61,9 +61,8 @@ enum class EmuCommandType {
 	MouseHack,
 	MouseTwobutton,
 	CpuIdle,
-	IntegerScaling,
-	FitToWindow,
-	FollowHostDisplay,
+	SetDisplayScaling,
+	SetScreenSize,
 	ClipboardEnabled,
 	HostClipboardChanged,
 	ReloadIdeImages,
@@ -100,6 +99,7 @@ struct EmuCommand {
 	unsigned scan_code = 0;
 	int arg1 = 0;
 	int arg2 = 0;
+	int arg3 = 0;
 	Config *config_ptr = nullptr;
 	Model model = Model_RPCARM710;
 	std::string string_path;
@@ -188,9 +188,15 @@ public:
 	void MouseHack();
 	void MouseTwobutton();
 	void CpuIdle();
-	void IntegerScaling();
-	void FitToWindow();
-	void FollowHostDisplay();
+	/** Store the drawing rule (a DisplayScaling). */
+	void SetDisplayScaling(int scaling);
+
+	/**
+	 * Store where the guest's screen size comes from (a ScreenSize), and for
+	 * ScreenSize_Fixed the size itself. Publishes the request straight away so
+	 * a running guest follows without waiting for a restart.
+	 */
+	void SetScreenSize(int mode, unsigned width, unsigned height);
 	void SetClipboardEnabled();
 	void SwitchMachine(const std::string &config_path);
 	void Restart();

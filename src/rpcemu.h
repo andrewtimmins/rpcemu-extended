@@ -281,6 +281,65 @@ typedef enum {
 	UsbAttachment_Host = 2	/**< A real device on the host, through libusb */
 } UsbAttachment;
 
+/*
+ * The two questions the display settings answer.
+ *
+ * They used to be three independent switches - integer_scaling, fit_to_window
+ * and follow_host_display - which was the source of most of the confusion
+ * around them. Two of those scaled the same number of guest pixels and the
+ * third changed how many there were, and nothing said which was which. The
+ * default (all three off) had no name at all, and the two scaling switches
+ * silently cleared each other, so a menu of independent-looking checkboxes
+ * behaved as though clicks were being lost.
+ *
+ * So: one choice for how big the RISC OS desktop is, one for how it is drawn,
+ * and full screen left as the separate thing it actually is - a place to put
+ * the window, inside which all three drawing rules still apply.
+ */
+
+/** How many pixels the RISC OS desktop has. */
+typedef enum {
+	/**
+	 * The largest standard mode that fits this display and this machine's
+	 * display memory, chosen when the machine boots and then left alone.
+	 *
+	 * Bounded by the display's WORK area rather than its full geometry, so the
+	 * 1:1 window the default drawing mode asks for cannot come out taller than
+	 * the space a window is allowed to occupy. It could before, which put the
+	 * title bar above the top of the screen where it could not be grabbed.
+	 */
+	ScreenSize_Automatic = 0,
+
+	/**
+	 * Follow the window: resize it and the guest changes screen mode to the
+	 * largest standard mode that fits.
+	 *
+	 * This replaces the old follow_host_display, which only acted when a
+	 * monitor was attached or its resolution altered - so ticking it appeared
+	 * to do nothing at all, which is how people concluded it was broken.
+	 */
+	ScreenSize_MatchWindow = 1,
+
+	/** Exactly screen_size_x by screen_size_y, whatever the window does. */
+	ScreenSize_Fixed = 2
+} ScreenSize;
+
+/** How that desktop is drawn in the window. */
+typedef enum {
+	/**
+	 * One guest pixel per host pixel. With a fixed screen size the window is
+	 * locked to the desktop; with ScreenSize_MatchWindow the window leads and
+	 * the desktop is centred in whatever is left over.
+	 */
+	DisplayScaling_ActualSize = 0,
+
+	/** Whole-number multiples only (2x, 3x): scaled up, still sharp. */
+	DisplayScaling_WholeMultiples = 1,
+
+	/** Fill the window, keeping the aspect ratio. Smooth, and any size. */
+	DisplayScaling_ScaleToFit = 2
+} DisplayScaling;
+
 /** The user's configuration of the emulator */
 typedef struct {
 	char name[256];		/**< User-defined name for this configuration */
@@ -314,9 +373,10 @@ typedef struct {
 	NetworkType network_type;
 	int cpu_idle;		/**< Attempt to reduce CPU usage */
 	int show_fullscreen_message;	/**< Show explanation of how to leave fullscreen, on entering fullscreen */
-	int integer_scaling;	/**< Use integer scaling (2x, 3x) for sharp pixels instead of smooth scaling */
-	int fit_to_window;	/**< Scale the display to fit a freely-resizable window, preserving aspect ratio */
-	int follow_host_display;	/**< Guest changes screen mode to match the host display when it changes */
+	int display_scaling;	/**< How the guest's screen is drawn in the window (DisplayScaling) */
+	int screen_size;	/**< Where the size of the RISC OS desktop comes from (ScreenSize) */
+	unsigned screen_size_x;	/**< For ScreenSize_Fixed, the width to ask the guest for */
+	unsigned screen_size_y;	/**< For ScreenSize_Fixed, the height to ask the guest for */
 	int gfxcard_enabled;	/**< Present the graphics expansion card (its own framestore, modes beyond VRAM) */
 	int usb_port[USB_PORTS];	/**< What is plugged into each emulated USB port (UsbAttachment) */
 	char usb_host[USB_PORTS][16];	/**< For a UsbAttachment_Host port, the device's "vvvv:pppp" */
@@ -404,10 +464,42 @@ extern void fdc_activity_increment(void);
 extern const char *rpcemu_get_datadir(void);
 extern const char *rpcemu_get_resourcedir(void);
 
-/* Host display geometry, used to advertise a matching native mode via the
-   synthesised monitor EDID (see romload.c / edid.c). */
-extern void rpcemu_set_host_display(unsigned width, unsigned height, unsigned hz);
+/*
+ * Host display geometry.
+ *
+ * Two sizes, because the two callers want different ones. The full geometry is
+ * what the display can show and so what full-screen and scale-to-fit can use;
+ * the work area is what a window is allowed to occupy, which is smaller by a
+ * menu bar, a dock or a taskbar. Advertising a native mode larger than the work
+ * area gives a 1:1 window that will not fit on screen.
+ *
+ * @param work_width  Work-area width, or 0 if the caller does not know it
+ * @param work_height Work-area height, or 0 if unknown
+ */
+extern void rpcemu_set_host_display(unsigned width, unsigned height, unsigned hz,
+                                    unsigned work_width, unsigned work_height);
 extern int rpcemu_get_host_display(unsigned *width, unsigned *height);
+
+/*
+ * The bound to advertise as the monitor's native mode, from config.screen_size.
+ *
+ * Automatic bounds by the work area, so the 1:1 window it leads to fits on
+ * screen. Match-the-window bounds by the whole display, since the window may be
+ * resized to any of it. Fixed bounds by the size asked for, so that mode is
+ * certain to be one the monitor definition declares - RISC OS refuses a mode
+ * the EDID in force does not offer, however much memory there is for it.
+ *
+ * @return non-zero if a bound is known, zero to use the built-in default
+ */
+extern int rpcemu_edid_bound(unsigned *width, unsigned *height);
+
+/*
+ * Ask the guest to change screen mode, for ScreenSize_MatchWindow and
+ * ScreenSize_Fixed. Quantised through display_mode_fit() before it is stored, so
+ * dragging a window edge across pixels that land in the same standard mode does
+ * not keep telling the guest to change to the mode it is already in.
+ */
+extern void rpcemu_request_guest_size(unsigned width, unsigned height);
 
 /* How much display memory a mode has to fit in: the fitted VRAM, or the graphics
    card's own framestore when that card is present. Both the synthesised EDID and

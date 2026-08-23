@@ -51,4 +51,24 @@ extern int display_mode_fit(unsigned max_width, unsigned max_height,
                             unsigned bytes_per_pixel, size_t budget_bytes,
                             unsigned *width, unsigned *height);
 
+/**
+ * How many standard modes there are, for walking the list.
+ *
+ * The machine editor offers a fixed screen size from these, filtered by what
+ * the machine's display memory can hold. Offering a mode that will not fit
+ * would put the user back where this whole redesign started: a control that
+ * looks as though it works and then does not.
+ */
+extern size_t display_mode_count(void);
+
+/**
+ * The width and height of one standard mode. Ordered largest area first, the
+ * same order display_mode_fit() searches, so a list built from this reads from
+ * the biggest mode down.
+ *
+ * @param index Mode index, below display_mode_count()
+ * @return non-zero if the index was in range and the outputs were written
+ */
+extern int display_mode_get(size_t index, unsigned *width, unsigned *height);
+
 #endif /* DISPLAY_MODE_H */

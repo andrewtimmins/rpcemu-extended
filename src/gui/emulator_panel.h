@@ -43,8 +43,29 @@ public:
 	void ApplyMouseCursor(const wxCursor &cursor);
 	void FocusPanel();
 	void SetFullScreen(bool full_screen);
-	void SetIntegerScaling(bool integer_scaling);
-	void SetFitToWindow(bool fit_to_window);
+
+	/**
+	 * The size of the guest's desktop in guest pixels, or (0, 0) before the
+	 * first frame has arrived.
+	 *
+	 * Already doubled where VIDC is doubling, so it is the number of pixels a
+	 * 1:1 window would have to be, not the number RISC OS thinks it has.
+	 */
+	wxSize GuestScreenSize() const { return wxSize(host_xsize_, host_ysize_); }
+	/**
+	 * Set how the guest's screen is drawn here.
+	 *
+	 * @param scaling     A DisplayScaling: actual size, whole multiples, or
+	 *                    scale to fit.
+	 * @param window_free True when the window's size is not derived from the
+	 *                    guest's, so the guest image is placed inside whatever
+	 *                    the window happens to be. Whole multiples and scale to
+	 *                    fit always imply it; actual size does too when the
+	 *                    screen size is following the window, because then the
+	 *                    window leads and the desktop follows rather than the
+	 *                    other way round.
+	 */
+	void SetDisplayMode(int scaling, bool window_free);
 	void ForceRedraw();
 	bool SaveScreenshot(const wxString &path);
 
@@ -129,8 +150,18 @@ private:
 	int held_buttons_ = 0;		/**< Bitmask of buttons currently forwarded as pressed */
 	bool pointer_captured_ = false;	/**< True while we hold the wx mouse capture for a drag */
 	std::chrono::steady_clock::time_point last_press_time_{};
-	bool integer_scaling_ = false;
-	bool fit_to_window_ = false;
+	int display_scaling_ = DisplayScaling_ActualSize;
+	bool window_free_ = false;
+
+	/**
+	 * Is the guest image placed inside a panel of some other size, rather than
+	 * being the panel?
+	 *
+	 * The one predicate the drawing, hit-testing and pointer maths all turn on.
+	 * When false the panel is exactly the guest's screen at 1:1 with no offset,
+	 * which is the cheap path and the default.
+	 */
+	bool Letterboxed() const { return full_screen_ || window_free_; }
 	bool full_screen_ = false;
 	std::chrono::steady_clock::time_point user_pointer_until_{};
 

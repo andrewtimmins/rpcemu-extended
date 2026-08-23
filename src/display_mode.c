@@ -106,3 +106,21 @@ display_mode_fit(unsigned max_width, unsigned max_height,
 
 	return 0;
 }
+
+size_t
+display_mode_count(void)
+{
+	return sizeof(display_modes) / sizeof(display_modes[0]);
+}
+
+int
+display_mode_get(size_t index, unsigned *width, unsigned *height)
+{
+	if (index >= display_mode_count()) {
+		return 0;
+	}
+
+	*width = display_modes[index].width;
+	*height = display_modes[index].height;
+	return 1;
+}

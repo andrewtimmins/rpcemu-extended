@@ -882,16 +882,46 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 		config_save(&config);
 		resetrpc();
 		break;
-	case EmuCommandType::IntegerScaling:
-		config.integer_scaling ^= 1;
+	case EmuCommandType::SetDisplayScaling:
+		config.display_scaling = command.arg1;
 		config_save(&config);
 		break;
-	case EmuCommandType::FitToWindow:
-		config.fit_to_window ^= 1;
-		config_save(&config);
-		break;
-	case EmuCommandType::FollowHostDisplay:
-		config.follow_host_display ^= 1;
+	case EmuCommandType::SetScreenSize:
+		config.screen_size = command.arg1;
+		config.screen_size_x = (unsigned) command.arg2;
+		config.screen_size_y = (unsigned) command.arg3;
+		/*
+		 * The change takes effect now rather than at the next restart: somebody
+		 * who picks a screen size expects RISC OS to adopt it, and the guest
+		 * support module is polling for exactly this.
+		 *
+		 * Automatic publishes too, even though it publishes nothing at boot.
+		 * Choosing it is a request for the best mode for this display, and
+		 * having it do nothing until the machine restarted would make it look
+		 * like the option that does not work - which is the reputation the
+		 * setting it replaced had earned.
+		 *
+		 * Match-the-window is the exception: only the front end knows how big
+		 * the window is, so it publishes from there.
+		 */
+		switch (config.screen_size) {
+		case ScreenSize_Fixed:
+			rpcemu_request_guest_size(config.screen_size_x,
+			                          config.screen_size_y);
+			break;
+
+		case ScreenSize_Automatic: {
+			unsigned bound_x = 0, bound_y = 0;
+
+			if (rpcemu_edid_bound(&bound_x, &bound_y)) {
+				rpcemu_request_guest_size(bound_x, bound_y);
+			}
+			break;
+		}
+
+		default:
+			break;
+		}
 		config_save(&config);
 		break;
 	case EmuCommandType::ClipboardEnabled:
@@ -1154,19 +1184,22 @@ void EmulatorHost::CpuIdle()
 	PostCommand(MakeCommand(EmuCommandType::CpuIdle));
 }
 
-void EmulatorHost::IntegerScaling()
+void EmulatorHost::SetDisplayScaling(int scaling)
 {
-	PostCommand(MakeCommand(EmuCommandType::IntegerScaling));
+	EmuCommand cmd = MakeCommand(EmuCommandType::SetDisplayScaling);
+
+	cmd.arg1 = scaling;
+	PostCommand(cmd);
 }
 
-void EmulatorHost::FitToWindow()
+void EmulatorHost::SetScreenSize(int mode, unsigned width, unsigned height)
 {
-	PostCommand(MakeCommand(EmuCommandType::FitToWindow));
-}
+	EmuCommand cmd = MakeCommand(EmuCommandType::SetScreenSize);
 
-void EmulatorHost::FollowHostDisplay()
-{
-	PostCommand(MakeCommand(EmuCommandType::FollowHostDisplay));
+	cmd.arg1 = mode;
+	cmd.arg2 = (int) width;
+	cmd.arg3 = (int) height;
+	PostCommand(cmd);
 }
 
 void EmulatorHost::SetClipboardEnabled()

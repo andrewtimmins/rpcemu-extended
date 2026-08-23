@@ -44,6 +44,7 @@
 #include <wx/stdpaths.h>
 
 #include "about_dialog.h"
+#include "display_options.h"
 #include "config_paths.h"
 #include "gui_preferences.h"
 #include "input_helpers.h"
@@ -157,9 +158,10 @@ bool MachineNeedsRestart(const Config *before, const Config *after)
 
 	/* Flatten every Options-tab setting so it cannot register as a change. */
 	a.show_fullscreen_message = b.show_fullscreen_message = 0;
-	a.integer_scaling = b.integer_scaling = 0;
-	a.fit_to_window = b.fit_to_window = 0;
-	a.follow_host_display = b.follow_host_display = 0;
+	a.display_scaling = b.display_scaling = 0;
+	a.screen_size = b.screen_size = 0;
+	a.screen_size_x = b.screen_size_x = 0;
+	a.screen_size_y = b.screen_size_y = 0;
 	a.soundenabled = b.soundenabled = 0;
 	a.cdromenabled = b.cdromenabled = 0;
 	a.mousetwobutton = b.mousetwobutton = 0;
@@ -215,7 +217,9 @@ wxBEGIN_EVENT_TABLE(MainFrame, wxFrame)
 	EVT_TIMER(ID_TIMER_NETWORK_LED, MainFrame::OnNetworkLedTimer)
 	EVT_TIMER(ID_TIMER_CLIPBOARD, MainFrame::OnClipboardTimer)
 	EVT_TIMER(ID_TIMER_SYNTHETIC_RELEASE, MainFrame::OnSyntheticReleaseTimer)
+	EVT_TIMER(ID_TIMER_MATCH_WINDOW, MainFrame::OnMatchWindowTimer)
 	EVT_DISPLAY_CHANGED(MainFrame::OnDisplayChanged)
+	EVT_SIZE(MainFrame::OnFrameSize)
 wxEND_EVENT_TABLE()
 
 MainFrame::MainFrame()
@@ -230,6 +234,7 @@ MainFrame::MainFrame()
 	  network_led_timer_(this, ID_TIMER_NETWORK_LED),
 	  clipboard_timer_(this, ID_TIMER_CLIPBOARD)
 	, synthetic_release_timer_(this, ID_TIMER_SYNTHETIC_RELEASE)
+	, match_window_timer_(this, ID_TIMER_MATCH_WINDOW)
 {
 	config_deep_copy(&config_copy_, &config);
 	pconfig_copy = &config_copy_;
@@ -357,11 +362,31 @@ void MainFrame::StartEmulator()
 	model_copy_ = machine.model;
 	if (panel_ != nullptr) {
 		panel_->UpdateMouseCursor();
-		panel_->SetIntegerScaling(config_copy_.integer_scaling != 0);
-		panel_->SetFitToWindow(config_copy_.fit_to_window != 0);
 	}
-	if (config_copy_.fit_to_window) {
-		CallAfter([this] { ApplyFitToWindowSize(); });
+	ApplyDisplayModeToPanel();
+	/* Nothing has been seen from the guest yet, so there is no size to record.
+	   The first frame gives one, and OnMatchWindowTimer() then sizes the window
+	   to it. */
+	match_window_guest_size_ = wxSize(0, 0);
+	/*
+	 * A window that is not locked to the desktop needs an opening size, or it
+	 * keeps whatever the layout left it at.
+	 *
+	 * Not for match-the-window, though: there the opening size is the guest's
+	 * desktop, which does not exist yet. OnMatchWindowTimer() sizes the window
+	 * once the guest has settled on a mode - it boots through two or three.
+	 */
+	if (WindowSizeIsFree() &&
+	    config_copy_.screen_size != ScreenSize_MatchWindow)
+	{
+		CallAfter([this] { ApplyFreeWindowSize(); });
+	}
+	/* A fixed screen size has to be published, or the guest never hears about
+	   it: the support module polls, and until something bumps the generation
+	   there is nothing for it to act on. */
+	if (config_copy_.screen_size == ScreenSize_Fixed) {
+		rpcemu_request_guest_size(config_copy_.screen_size_x,
+		                          config_copy_.screen_size_y);
 	}
 	SyncSettingsMenuChecks();
 	SyncCdromMenuChecks();
@@ -933,88 +958,356 @@ void MainFrame::OnFullscreen(wxCommandEvent &)
 	}
 }
 
-void MainFrame::OnIntegerScaling(wxCommandEvent &event)
+/*
+ * Show In Window: which of the three drawing rules to use.
+ *
+ * Note what is NOT here any more. The two old handlers each had to notice that
+ * the other setting contradicted theirs, clear it, re-tick its menu item and
+ * tell the emulator thread about that as well - a piece of bookkeeping that
+ * existed only because two mutually exclusive settings were stored as two
+ * independent flags. One value cannot contradict itself, so a radio group needs
+ * none of it.
+ */
+void MainFrame::OnDisplayScaling(wxCommandEvent &event)
 {
-	config_copy_.integer_scaling = event.IsChecked() ? 1 : 0;
-	if (integer_scaling_menu_item_ != nullptr) {
-		integer_scaling_menu_item_->Check(config_copy_.integer_scaling != 0);
-	}
-	/* Integer scaling and fit-to-window are alternative scaling modes; turning
-	   one on turns the other off. */
-	if (config_copy_.integer_scaling && config_copy_.fit_to_window) {
-		config_copy_.fit_to_window = 0;
-		if (fit_to_window_menu_item_ != nullptr) {
-			fit_to_window_menu_item_->Check(false);
-		}
-		if (emulator_) {
-			emulator_->FitToWindow();
-		}
-	}
-	if (panel_ != nullptr) {
-		panel_->SetFitToWindow(config_copy_.fit_to_window != 0);
-		panel_->SetIntegerScaling(config_copy_.integer_scaling != 0);
-		Layout();
-	}
-	if (emulator_) {
-		emulator_->IntegerScaling();
-	}
-}
+	int scaling = DisplayScaling_ActualSize;
 
-void MainFrame::OnFitToWindow(wxCommandEvent &event)
-{
-	config_copy_.fit_to_window = event.IsChecked() ? 1 : 0;
-	if (fit_to_window_menu_item_ != nullptr) {
-		fit_to_window_menu_item_->Check(config_copy_.fit_to_window != 0);
-	}
-	/* Mutually exclusive with integer scaling. */
-	if (config_copy_.fit_to_window && config_copy_.integer_scaling) {
-		config_copy_.integer_scaling = 0;
-		if (integer_scaling_menu_item_ != nullptr) {
-			integer_scaling_menu_item_->Check(false);
-		}
-		if (emulator_) {
-			emulator_->IntegerScaling();
-		}
-	}
-	if (panel_ != nullptr) {
-		panel_->SetIntegerScaling(config_copy_.integer_scaling != 0);
-		panel_->SetFitToWindow(config_copy_.fit_to_window != 0);
-		Layout();
-	}
-	if (emulator_) {
-		emulator_->FitToWindow();
+	switch (event.GetId()) {
+	case ID_MENU_SCALING_MULTIPLES:
+		scaling = DisplayScaling_WholeMultiples;
+		break;
+	case ID_MENU_SCALING_FIT:
+		scaling = DisplayScaling_ScaleToFit;
+		break;
+	default:
+		break;
 	}
 
-	/* Give the now freely-resizable window a comfortable starting size, then
-	   force a repaint - a static guest desktop sends no fresh frame to trigger
-	   one after the resize. */
-	if (config_copy_.fit_to_window) {
-		ApplyFitToWindowSize();
-	}
-	if (panel_ != nullptr) {
-		panel_->CallAfter([this] {
-			if (panel_ != nullptr) {
-				panel_->ForceRedraw();
-			}
-		});
-	}
-}
-
-/* Size the window to a comfortable default for fit-to-window mode: no larger
-   than 80% of the display, and no smaller than a usable floor, while leaving it
-   freely resizable by the user afterwards. */
-void MainFrame::ApplyFitToWindowSize()
-{
-	if (!config_copy_.fit_to_window) {
+	if (scaling == config_copy_.display_scaling) {
 		return;
 	}
 
+	const bool was_free = WindowSizeIsFree();
+
+	config_copy_.display_scaling = scaling;
+	if (scaling_menu_items_[scaling] != nullptr) {
+		scaling_menu_items_[scaling]->Check(true);
+	}
+	if (emulator_) {
+		emulator_->SetDisplayScaling(scaling);
+	}
+	ApplyDisplayModeToPanel();
+
+	/* A window that has just stopped being locked to the desktop keeps whatever
+	   size the lock left it at, which for a 640x480 mode is a postage stamp.
+	   Give it something usable to start from. */
+	if (!was_free && WindowSizeIsFree()) {
+		ApplyFreeWindowSize();
+	}
+	ForcePanelRedraw();
+}
+
+/*
+ * RISC OS Screen Size: where the size of the guest's desktop comes from.
+ */
+void MainFrame::OnScreenSize(wxCommandEvent &event)
+{
+	const int id = event.GetId();
+	int mode = ScreenSize_Automatic;
+	unsigned fixed_x = config_copy_.screen_size_x;
+	unsigned fixed_y = config_copy_.screen_size_y;
+
+	if (id == ID_MENU_SCREEN_MATCH_WINDOW) {
+		mode = ScreenSize_MatchWindow;
+	} else if (id >= ID_MENU_SCREEN_FIXED_FIRST &&
+	           id <= ID_MENU_SCREEN_FIXED_LAST)
+	{
+		const size_t index = (size_t) (id - ID_MENU_SCREEN_FIXED_FIRST);
+
+		if (index >= fixed_mode_items_.size()) {
+			return;		/* Stale id from a menu that has since been rebuilt */
+		}
+		mode = ScreenSize_Fixed;
+		fixed_x = fixed_mode_items_[index].first;
+		fixed_y = fixed_mode_items_[index].second;
+	}
+
+	if (mode == config_copy_.screen_size &&
+	    fixed_x == config_copy_.screen_size_x &&
+	    fixed_y == config_copy_.screen_size_y)
+	{
+		return;
+	}
+
+	const bool was_free = WindowSizeIsFree();
+
+	config_copy_.screen_size = mode;
+	config_copy_.screen_size_x = fixed_x;
+	config_copy_.screen_size_y = fixed_y;
+	if (emulator_) {
+		emulator_->SetScreenSize(mode, fixed_x, fixed_y);
+	}
+	ApplyDisplayModeToPanel();
+
+	if (!was_free && WindowSizeIsFree()) {
+		ApplyFreeWindowSize();
+	}
+
+	/* Match-the-window has to say what the window currently is, or nothing
+	   happens until the user next drags an edge. Chosen from the menu the window
+	   is already up and sized, so unlike at startup there is nothing to wait
+	   for. */
+	if (mode == ScreenSize_MatchWindow) {
+		/*
+		 * Seeded with the size the desktop is NOW, not zero.
+		 *
+		 * Zero reads as "the guest has changed mode", and the timer answers that
+		 * by sizing the window to the desktop. So the first drag after switching
+		 * this on had the window snapped straight back to where it started and
+		 * nothing was ever published: dragging appeared to do nothing at all.
+		 * Recording the current size means a drag is correctly read as the
+		 * window having moved while the guest stood still.
+		 */
+		if (panel_ != nullptr) {
+			match_window_guest_size_ = panel_->GuestScreenSize();
+		}
+		PublishWindowSizeToGuest();
+	}
+
+	/* Deliberately NOT SyncSettingsMenuChecks() here: that rebuilds the fixed-
+	   size entries, and one of those is the item currently dispatching this
+	   event. The click has already moved the radio tick, and the list itself
+	   only changes with the machine's display memory, which a click on it
+	   cannot alter. */
+	ForcePanelRedraw();
+}
+
+bool MainFrame::WindowSizeIsFree() const
+{
+	return config_copy_.display_scaling != DisplayScaling_ActualSize ||
+	       config_copy_.screen_size == ScreenSize_MatchWindow;
+}
+
+void MainFrame::ApplyDisplayModeToPanel()
+{
+	if (panel_ == nullptr) {
+		return;
+	}
+	panel_->SetDisplayMode(
+	    DisplayOptions::ClampDisplayScaling(config_copy_.display_scaling),
+	    WindowSizeIsFree());
+	Layout();
+}
+
+void MainFrame::ForcePanelRedraw()
+{
+	if (panel_ == nullptr) {
+		return;
+	}
+	/* Deferred: a static guest desktop sends no fresh frame after a resize, so
+	   without this the panel keeps showing the old geometry. */
+	panel_->CallAfter([this] {
+		if (panel_ != nullptr) {
+			panel_->ForceRedraw();
+		}
+	});
+}
+
+/*
+ * The fixed screen sizes on offer, which depend on the machine.
+ *
+ * Only modes this machine's display memory can hold: offering one it cannot show
+ * would put us back where this redesign started, with a control that looks as
+ * though it works and then does not - RISC OS answers "not suitable for
+ * displaying the desktop" and the user is none the wiser.
+ */
+void MainFrame::RebuildScreenSizeMenu()
+{
+	if (screen_size_menu_ == nullptr) {
+		return;
+	}
+
+	std::vector<std::pair<unsigned, unsigned>> modes;
+	DisplayOptions::FixedModes(rpcemu_display_memory(), modes);
+
+	const size_t limit =
+	    (size_t) (ID_MENU_SCREEN_FIXED_LAST - ID_MENU_SCREEN_FIXED_FIRST) + 1;
+	if (modes.size() > limit) {
+		modes.resize(limit);
+	}
+
+	/* Rebuilt rather than patched: the list is short, and working out which
+	   entries moved is more code than throwing them away. */
+	for (size_t i = 0; i < fixed_mode_items_.size(); i++) {
+		screen_size_menu_->Delete(
+		    (int) (ID_MENU_SCREEN_FIXED_FIRST + (int) i));
+	}
+	fixed_mode_items_.clear();
+
+	for (size_t i = 0; i < modes.size(); i++) {
+		wxMenuItem *item = screen_size_menu_->AppendRadioItem(
+		    (int) (ID_MENU_SCREEN_FIXED_FIRST + (int) i),
+		    DisplayOptions::ModeLabel(modes[i].first, modes[i].second));
+
+		item->SetHelp(DisplayOptions::ScreenSizeFixedHelp());
+		fixed_mode_items_.push_back(modes[i]);
+	}
+
+	/* Tick whichever entry the configuration names, and fall back to automatic
+	   when it names one this machine can no longer show - VRAM reduced, or the
+	   graphics card taken out. */
+	const int mode = DisplayOptions::ClampScreenSize(config_copy_.screen_size);
+	if (mode == ScreenSize_Fixed) {
+		for (size_t i = 0; i < fixed_mode_items_.size(); i++) {
+			if (fixed_mode_items_[i].first == config_copy_.screen_size_x &&
+			    fixed_mode_items_[i].second == config_copy_.screen_size_y)
+			{
+				screen_size_menu_->Check(
+				    (int) (ID_MENU_SCREEN_FIXED_FIRST + (int) i), true);
+				return;
+			}
+		}
+		config_copy_.screen_size = ScreenSize_Automatic;
+	}
+
+	if (screen_size_menu_items_[config_copy_.screen_size] != nullptr) {
+		screen_size_menu_items_[config_copy_.screen_size]->Check(true);
+	}
+}
+
+/*
+ * The window was resized, and the guest is following it.
+ *
+ * Debounced, because a drag fires this continuously and each mode change reflows
+ * every window on the RISC OS desktop. Publishing every intermediate width would
+ * have the guest working its way through modes it is about to leave, which looks
+ * and feels like a fault. Only the size the drag settles on is sent.
+ */
+
+/*
+ * The window was resized. Only of interest when the guest is following it.
+ *
+ * Every resize comes through here, including the ones the emulator itself causes
+ * by locking the window to the guest's desktop; PublishWindowSizeToGuest()
+ * returns at once unless the screen size is actually following the window, so
+ * those cost nothing.
+ */
+void MainFrame::OnFrameSize(wxSizeEvent &event)
+{
+	PublishWindowSizeToGuest();
+	event.Skip();
+}
+
+/*
+ * A frame arrived from the guest.
+ *
+ * Only the desktop's size is of interest here, and only when it changes. RISC OS
+ * changes mode several times while it boots, so a change is not by itself a
+ * moment to act on; it restarts the settle timer, and OnMatchWindowTimer() acts
+ * on whatever the size has turned out to be.
+ */
+/*
+ * How long to wait for a resize drag, or a run of guest mode changes, to stop.
+ */
+static const int kMatchWindowSettleMs = 400;
+
+void MainFrame::NoteGuestFrame()
+{
+	if (panel_ == nullptr) {
+		return;
+	}
+
+	const wxSize guest = panel_->GuestScreenSize();
+
+	if (guest.x <= 0 || guest.y <= 0) {
+		return;
+	}
+
+	if (config_copy_.screen_size != ScreenSize_MatchWindow ||
+	    guest == match_window_guest_size_)
+	{
+		return;
+	}
+	match_window_timer_.StartOnce(kMatchWindowSettleMs);
+}
+
+/*
+ * The window was resized, and the guest is following it.
+ *
+ * Debounced, because a drag fires this continuously and each mode change reflows
+ * every window on the RISC OS desktop. Publishing every intermediate width would
+ * have the guest working its way through modes it is about to leave, which looks
+ * and feels like a fault. Only the size things settle at is acted on.
+ */
+void MainFrame::PublishWindowSizeToGuest()
+{
+	if (config_copy_.screen_size != ScreenSize_MatchWindow) {
+		return;
+	}
+	match_window_timer_.StartOnce(kMatchWindowSettleMs);
+}
+
+/*
+ * Things have gone quiet. Work out which way the size is meant to travel.
+ */
+void MainFrame::OnMatchWindowTimer(wxTimerEvent &event)
+{
+	(void)event;
+
+	if (config_copy_.screen_size != ScreenSize_MatchWindow || panel_ == nullptr) {
+		return;
+	}
+
+	const wxSize guest = panel_->GuestScreenSize();
+
+	if (guest.x <= 0 || guest.y <= 0) {
+		return;		/* No desktop yet: nothing to reconcile with */
+	}
+
+	if (guest != match_window_guest_size_) {
+		/*
+		 * The guest changed mode for its own reasons - it boots through two or
+		 * three - so follow it with the window rather than answering back with a
+		 * size of our own. That would be a conversation neither side started.
+		 *
+		 * Only at actual size, where the window and the desktop are meant to be
+		 * the same size and any difference is a black border or a clipped
+		 * desktop. The other two drawing rules are built to fill whatever window
+		 * they are given, so snapping one to the guest would take a size away
+		 * from the user for no gain.
+		 */
+		match_window_guest_size_ = guest;
+		if (config_copy_.display_scaling == DisplayScaling_ActualSize) {
+			SnapWindowToGuest();
+		}
+		/* Round again: the resize above, or a mode change still in flight, may
+		   leave the two out of step. */
+		match_window_timer_.StartOnce(kMatchWindowSettleMs);
+		return;
+	}
+
+	/* The guest is where it was, so it is the window that moved: the user
+	   dragged an edge. Ask the guest for a mode that fits it. */
+	const wxSize client = panel_->GetClientSize();
+
+	if (client.x > 0 && client.y > 0) {
+		rpcemu_request_guest_size((unsigned) client.x, (unsigned) client.y);
+	}
+}
+
+void MainFrame::ApplyFreeWindowSize()
+{
+	if (!WindowSizeIsFree()) {
+		return;
+	}
+
+	/* An opening size, not a limit: four fifths of the work area is a window
+	   somebody can see the edges of and drag from, which is what a freshly
+	   unlocked window wants. Nothing stops it being dragged larger afterwards. */
 	const wxRect area = wxDisplay(wxDisplay::GetFromWindow(this)).GetClientArea();
-	const int cap_w = std::max(area.width * 4 / 5, 800);
-	const int cap_h = std::max(area.height * 4 / 5, 600);
 	const wxSize cur = GetSize();
-	const int w = std::clamp(cur.x, 800, cap_w);
-	const int h = std::clamp(cur.y, 600, cap_h);
+	const int w = std::clamp(cur.x, 800, std::max(area.width * 4 / 5, 800));
+	const int h = std::clamp(cur.y, 600, std::max(area.height * 4 / 5, 600));
 
 	if (w != cur.x || h != cur.y) {
 		SetSize(wxSize(w, h));
@@ -1025,6 +1318,51 @@ void MainFrame::ApplyFitToWindowSize()
 	if (panel_ != nullptr) {
 		panel_->ForceRedraw();
 	}
+}
+
+/*
+ * Fit the window to the desktop the guest has just moved to.
+ *
+ * Only for match-the-window at actual size, where the two are meant to be the
+ * same size and any difference is a black border or a clipped desktop. The user
+ * drags an edge, the guest picks the largest standard mode that fits, and the
+ * window then closes the gap between the two - which is what makes the option
+ * feel like the window snapping to real screen modes rather than leaving a
+ * ragged margin.
+ *
+ * Bounded by the work area and NOT by the four-fifths opening size above: that
+ * one is about giving a new window somewhere sensible to start, and applying it
+ * here would cap the RISC OS desktop at four fifths of the display however large
+ * the user made the window.
+ */
+void MainFrame::SnapWindowToGuest()
+{
+	if (panel_ == nullptr) {
+		return;
+	}
+
+	const wxSize guest = panel_->GuestScreenSize();
+
+	if (guest.x <= 0 || guest.y <= 0) {
+		return;
+	}
+
+	/* The frame is larger than the panel by the menu bar, tool bar and status
+	   bar, so ask for the panel's size plus that difference rather than trying
+	   to enumerate the chrome. */
+	const wxSize cur = GetSize();
+	const wxSize panel_size = panel_->GetSize();
+	const int chrome_w = std::max(cur.x - panel_size.x, 0);
+	const int chrome_h = std::max(cur.y - panel_size.y, 0);
+	const wxRect area = wxDisplay(wxDisplay::GetFromWindow(this)).GetClientArea();
+	const int w = std::min(guest.x + chrome_w, area.width);
+	const int h = std::min(guest.y + chrome_h, area.height);
+
+	if (w != cur.x || h != cur.y) {
+		SetSize(wxSize(w, h));
+	}
+	Layout();
+	panel_->ForceRedraw();
 }
 
 void MainFrame::OnCpuIdle(wxCommandEvent &event)
@@ -1903,27 +2241,6 @@ void MainFrame::OnActivate(wxActivateEvent &event)
 	event.Skip();
 }
 
-/* Let the guest change screen mode to match the host display.
- *
- * Not mutually exclusive with the scaling options, because they answer the same
- * question differently rather than incompatibly: these two keep the guest's mode
- * and scale the picture, this changes the guest's mode. The combination worth
- * having is full-screen plus this, which gives a crisp desktop at the monitor's
- * own resolution with no scaling at all.
- *
- * Takes effect from the next display change: switching it on does not retune the
- * mode the desktop is already in, which also means ticking it never reflows
- * anyone's windows by surprise. */
-void MainFrame::OnFollowHostDisplay(wxCommandEvent &event)
-{
-	config_copy_.follow_host_display = event.IsChecked() ? 1 : 0;
-	if (follow_host_display_menu_item_ != nullptr) {
-		follow_host_display_menu_item_->Check(config_copy_.follow_host_display != 0);
-	}
-	if (emulator_) {
-		emulator_->FollowHostDisplay();
-	}
-}
 
 /* The host's displays changed: a monitor was attached or removed, or its
    resolution was altered. Republish the geometry so the guest support module can
@@ -1942,13 +2259,20 @@ void MainFrame::OnDisplayChanged(wxDisplayChangedEvent &event)
 
 	const wxDisplay display((unsigned) index);
 	const wxRect geom = display.GetGeometry();
+	const wxRect work = display.GetClientArea();
 
 	if (geom.width > 0 && geom.height > 0) {
 		const wxVideoMode mode = display.GetCurrentMode();
 
 		rpcemu_set_host_display((unsigned) geom.width, (unsigned) geom.height,
-		                        mode.refresh > 0 ? (unsigned) mode.refresh : 0);
+		                        mode.refresh > 0 ? (unsigned) mode.refresh : 0,
+		                        (unsigned) std::max(work.width, 0),
+		                        (unsigned) std::max(work.height, 0));
 	}
+
+	/* A monitor change moves the window between displays and can change how much
+	   room it has, so a guest that is following the window may need a new mode. */
+	PublishWindowSizeToGuest();
 
 	event.Skip();
 }
@@ -1983,6 +2307,7 @@ void MainFrame::PostVideoUpdate(VideoUpdate update)
 	if (wxIsMainThread()) {
 		if (panel_ != nullptr) {
 			panel_->ApplyVideoUpdate(update);
+			NoteGuestFrame();
 		}
 		return;
 	}
@@ -2016,6 +2341,7 @@ void MainFrame::PostVideoUpdate(VideoUpdate update)
 		(void) pixels; // keeps copy.buffer alive until the frame is applied
 		if (panel_ != nullptr) {
 			panel_->ApplyVideoUpdate(copy);
+			NoteGuestFrame();
 		}
 	});
 }
@@ -2088,8 +2414,8 @@ void MainFrame::PostMachineSwitched(const std::string &machine_name)
 		model_copy_ = machine.model;
 		if (panel_ != nullptr) {
 			panel_->UpdateMouseCursor();
-			panel_->SetIntegerScaling(config_copy_.integer_scaling != 0);
 		}
+		ApplyDisplayModeToPanel();
 		SyncSettingsMenuChecks();
 		SyncCdromMenuChecks();
 		UpdateMachineStatus();

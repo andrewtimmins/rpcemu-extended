@@ -47,9 +47,12 @@ extern "C" {
 extern "C" {
 #include "romload.h"
 #include "rpcemu.h"
+#include "gfxcard.h"
 #include "podules.h"
 #include "podule_config.h"
 }
+
+#include "display_options.h"
 
 namespace {
 
@@ -504,18 +507,177 @@ wxWindow *MachineEditDialog::BuildSystemPage(wxWindow *parent)
  * the machine but of which machine to open, so it lives in the host's own
  * preferences rather than in the configuration file.
  */
+/*
+ * The display memory the machine WOULD have if the dialog were accepted now.
+ *
+ * Not rpcemu_display_memory(), which answers for the running machine: the point
+ * of asking is to filter the fixed-size list, and somebody who has just fitted
+ * the graphics card should see the modes it makes possible without having to
+ * save, reopen and look again.
+ */
+size_t MachineEditDialog::PendingDisplayMemory() const
+{
+	if (gfxcard_check_ != nullptr && gfxcard_check_->GetValue()) {
+		return (size_t) GFXCARD_FB_SIZE;
+	}
+
+	/* VRAM combo: 0 = None, 1 = 2 MB, 2 = 4 MB, 3 = 8 MB, 4 = 16 MB. None means
+	   screen memory comes out of DRAM, where there is no figure to reason about,
+	   so nothing is filtered - the same rule display_mode_fit() applies. */
+	static const int vram_sizes[] = { 0, 2, 4, 8, 16 };
+	const int sel = vram_combo_ != nullptr
+	    ? std::max(0, vram_combo_->GetSelection()) : 0;
+	const int mb = vram_sizes[sel < 5 ? sel : 1];
+
+	return (size_t) mb * 1024u * 1024u;
+}
+
+void MachineEditDialog::RebuildFixedModeChoice()
+{
+	if (fixed_mode_choice_ == nullptr) {
+		return;
+	}
+
+	/* Remember the selection so changing the VRAM does not silently move the
+	   chosen mode to whatever happens to land at the same index. */
+	unsigned want_x = 0, want_y = 0;
+	const int previous = fixed_mode_choice_->GetSelection();
+	if (previous != wxNOT_FOUND && (size_t) previous < fixed_modes_.size()) {
+		want_x = fixed_modes_[(size_t) previous].first;
+		want_y = fixed_modes_[(size_t) previous].second;
+	}
+
+	DisplayOptions::FixedModes(PendingDisplayMemory(), fixed_modes_);
+
+	fixed_mode_choice_->Clear();
+	for (const auto &mode : fixed_modes_) {
+		fixed_mode_choice_->Append(
+		    DisplayOptions::ModeLabel(mode.first, mode.second));
+	}
+
+	SelectFixedMode(want_x, want_y);
+	UpdateScreenSizeEnables();
+}
+
+void MachineEditDialog::SelectFixedMode(unsigned width, unsigned height)
+{
+	if (fixed_mode_choice_ == nullptr || fixed_modes_.empty()) {
+		return;
+	}
+
+	for (size_t i = 0; i < fixed_modes_.size(); i++) {
+		if (fixed_modes_[i].first == width && fixed_modes_[i].second == height) {
+			fixed_mode_choice_->SetSelection((int) i);
+			return;
+		}
+	}
+
+	/* Not on offer, or nothing asked for: the largest the machine can hold, which
+	   is what somebody choosing a fixed size almost always wants. */
+	fixed_mode_choice_->SetSelection(0);
+}
+
+void MachineEditDialog::UpdateScreenSizeEnables()
+{
+	if (fixed_mode_choice_ == nullptr ||
+	    screen_size_radio_[ScreenSize_Fixed] == nullptr)
+	{
+		return;
+	}
+
+	fixed_mode_choice_->Enable(
+	    screen_size_radio_[ScreenSize_Fixed]->GetValue() &&
+	    !fixed_modes_.empty());
+
+	/* A machine whose display memory cannot hold any standard mode has no fixed
+	   size to offer, so the option is not a choice. */
+	screen_size_radio_[ScreenSize_Fixed]->Enable(!fixed_modes_.empty());
+}
+
+int MachineEditDialog::SelectedDisplayScaling() const
+{
+	for (int i = 0; i < 3; i++) {
+		if (scaling_radio_[i] != nullptr && scaling_radio_[i]->GetValue()) {
+			return i;
+		}
+	}
+	return DisplayScaling_ActualSize;
+}
+
+int MachineEditDialog::SelectedScreenSize(unsigned *width, unsigned *height) const
+{
+	*width = 0;
+	*height = 0;
+
+	for (int i = 0; i < 3; i++) {
+		if (screen_size_radio_[i] == nullptr ||
+		    !screen_size_radio_[i]->GetValue())
+		{
+			continue;
+		}
+		if (i != ScreenSize_Fixed) {
+			return i;
+		}
+
+		const int sel = fixed_mode_choice_ != nullptr
+		    ? fixed_mode_choice_->GetSelection() : wxNOT_FOUND;
+
+		if (sel == wxNOT_FOUND || (size_t) sel >= fixed_modes_.size()) {
+			return ScreenSize_Automatic;
+		}
+		*width = fixed_modes_[(size_t) sel].first;
+		*height = fixed_modes_[(size_t) sel].second;
+		return ScreenSize_Fixed;
+	}
+
+	return ScreenSize_Automatic;
+}
+
 wxWindow *MachineEditDialog::BuildOptionsPage(wxWindow *parent)
 {
 	auto *page = new wxPanel(parent);
 
 	fullscreen_msg_check_ = new wxCheckBox(page, wxID_ANY,
 	    "Explain how to leave full screen when entering it");
-	integer_scaling_check_ = new wxCheckBox(page, wxID_ANY,
-	    "Pixel perfect (whole-number scaling)");
-	fit_to_window_check_ = new wxCheckBox(page, wxID_ANY,
-	    "Fit the display to the window");
-	follow_host_check_ = new wxCheckBox(page, wxID_ANY,
-	    "Follow the host display size");
+
+	/*
+	 * The two display choices, worded by display_options.h.
+	 *
+	 * Every label and tooltip here is the same string the Settings menu shows,
+	 * because they are the same settings and reading two different names for one
+	 * of them is how somebody concludes there are two. That was the state of
+	 * things before: "Pixel Perfect" in the menu against "Pixel perfect
+	 * (whole-number scaling)" here, and so on down the list.
+	 */
+	screen_size_radio_[ScreenSize_Automatic] = new wxRadioButton(page, wxID_ANY,
+	    DisplayOptions::ScreenSizeAutomatic(), wxDefaultPosition, wxDefaultSize,
+	    wxRB_GROUP);
+	screen_size_radio_[ScreenSize_Automatic]->SetToolTip(
+	    DisplayOptions::ScreenSizeAutomaticHelp());
+	screen_size_radio_[ScreenSize_MatchWindow] = new wxRadioButton(page, wxID_ANY,
+	    DisplayOptions::ScreenSizeMatchWindow());
+	screen_size_radio_[ScreenSize_MatchWindow]->SetToolTip(
+	    DisplayOptions::ScreenSizeMatchWindowHelp());
+	screen_size_radio_[ScreenSize_Fixed] = new wxRadioButton(page, wxID_ANY,
+	    DisplayOptions::ScreenSizeFixed());
+	screen_size_radio_[ScreenSize_Fixed]->SetToolTip(
+	    DisplayOptions::ScreenSizeFixedHelp());
+	fixed_mode_choice_ = new wxChoice(page, wxID_ANY);
+	fixed_mode_choice_->SetToolTip(DisplayOptions::ScreenSizeFixedHelp());
+
+	scaling_radio_[DisplayScaling_ActualSize] = new wxRadioButton(page, wxID_ANY,
+	    DisplayOptions::ScalingActualSize(), wxDefaultPosition, wxDefaultSize,
+	    wxRB_GROUP);
+	scaling_radio_[DisplayScaling_ActualSize]->SetToolTip(
+	    DisplayOptions::ScalingActualSizeHelp());
+	scaling_radio_[DisplayScaling_WholeMultiples] = new wxRadioButton(page,
+	    wxID_ANY, DisplayOptions::ScalingWholeMultiples());
+	scaling_radio_[DisplayScaling_WholeMultiples]->SetToolTip(
+	    DisplayOptions::ScalingWholeMultiplesHelp());
+	scaling_radio_[DisplayScaling_ScaleToFit] = new wxRadioButton(page, wxID_ANY,
+	    DisplayOptions::ScalingScaleToFit());
+	scaling_radio_[DisplayScaling_ScaleToFit]->SetToolTip(
+	    DisplayOptions::ScalingScaleToFitHelp());
 
 	sound_check_ = new wxCheckBox(page, wxID_ANY, "Sound");
 	cdrom_check_ = new wxCheckBox(page, wxID_ANY, "CD-ROM drive");
@@ -561,20 +723,14 @@ wxWindow *MachineEditDialog::BuildOptionsPage(wxWindow *parent)
 	    "Copy and paste text and images between the host and RISC OS. Off by "
 	    "default, since it puts the host clipboard within the guest's reach.");
 
-	/* Two ways of scaling the display that contradict each other, so selecting
-	   one clears the other, exactly as the Settings menu does. */
-	integer_scaling_check_->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent &event) {
-		if (integer_scaling_check_->GetValue()) {
-			fit_to_window_check_->SetValue(false);
-		}
-		event.Skip();
-	});
-	fit_to_window_check_->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent &event) {
-		if (fit_to_window_check_->GetValue()) {
-			integer_scaling_check_->SetValue(false);
-		}
-		event.Skip();
-	});
+	/* The list of fixed sizes is only meaningful when a fixed size is what is
+	   wanted, so it follows the radio button that asks for one. */
+	for (wxRadioButton *button : screen_size_radio_) {
+		button->Bind(wxEVT_RADIOBUTTON, [this](wxCommandEvent &event) {
+			UpdateScreenSizeEnables();
+			event.Skip();
+		});
+	}
 
 	auto add_group = [page](wxSizer *into, const wxString &title,
 	                        std::initializer_list<wxCheckBox *> items) {
@@ -588,8 +744,44 @@ wxWindow *MachineEditDialog::BuildOptionsPage(wxWindow *parent)
 	};
 
 	auto *sizer = new wxBoxSizer(wxVERTICAL);
-	add_group(sizer, "Display", { fullscreen_msg_check_, integer_scaling_check_,
-	                              fit_to_window_check_, follow_host_check_ });
+
+	/* Two boxes, one question each, in the same order and with the same names as
+	   the Settings menu's two submenus. */
+	{
+		auto *box = new wxStaticBoxSizer(wxVERTICAL, page,
+		    DisplayOptions::ScreenSizeGroup());
+
+		box->Add(screen_size_radio_[ScreenSize_Automatic], 0,
+		    wxLEFT | wxRIGHT | wxTOP, 6);
+		box->Add(screen_size_radio_[ScreenSize_MatchWindow], 0,
+		    wxLEFT | wxRIGHT | wxTOP, 6);
+
+		auto *fixed_row = new wxBoxSizer(wxHORIZONTAL);
+		fixed_row->Add(screen_size_radio_[ScreenSize_Fixed], 0,
+		    wxALIGN_CENTER_VERTICAL);
+		fixed_row->Add(fixed_mode_choice_, 0,
+		    wxALIGN_CENTER_VERTICAL | wxLEFT, 8);
+		box->Add(fixed_row, 0, wxLEFT | wxRIGHT | wxTOP, 6);
+		box->AddSpacer(6);
+		sizer->Add(box, 0, wxEXPAND | wxBOTTOM, 8);
+	}
+	{
+		/* add_group() takes checkboxes alone, so this one goes in by hand. The
+		   full-screen explanation sits here because full screen is where the
+		   window goes rather than how it is drawn, so it is adjacent to these
+		   choices without being one of them. "Start this machine full screen"
+		   stays on the hardware page, with the other statement about how the
+		   machine starts. */
+		auto *box = new wxStaticBoxSizer(wxVERTICAL, page,
+		    DisplayOptions::ScalingGroup());
+
+		for (wxRadioButton *button : scaling_radio_) {
+			box->Add(button, 0, wxLEFT | wxRIGHT | wxTOP, 6);
+		}
+		box->Add(fullscreen_msg_check_, 0, wxLEFT | wxRIGHT | wxTOP, 12);
+		box->AddSpacer(6);
+		sizer->Add(box, 0, wxEXPAND | wxBOTTOM, 8);
+	}
 	add_group(sizer, "Hardware", { sound_check_, cdrom_check_,
 	                               mouse_twobutton_check_ });
 	add_group(sizer, "Behaviour", { cpu_idle_check_, suspend_on_exit_check_ });
@@ -772,6 +964,15 @@ void MachineEditDialog::BuildUi()
 	});
 	gfxcard_check_->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent &event) {
 		gfxcard_boot_check_->Enable(gfxcard_check_->GetValue());
+		/* The card carries 15MB of its own, which changes which fixed screen
+		   sizes are possible. Somebody fitting it should see the larger modes
+		   appear without saving and reopening the dialog. */
+		RebuildFixedModeChoice();
+		event.Skip();
+	});
+	/* Same for the VRAM: it is the other thing that decides what will fit. */
+	vram_combo_->Bind(wxEVT_COMBOBOX, [this](wxCommandEvent &event) {
+		RebuildFixedModeChoice();
 		event.Skip();
 	});
 	network_combo_->Bind(wxEVT_COMBOBOX, &MachineEditDialog::OnNetworkChanged, this);
@@ -1205,6 +1406,11 @@ void MachineEditDialog::UpdateRomModelCompatibility()
 	compat_label_->SetLabel(label);
 	compat_label_->SetForegroundColour(wxColour(27, 94, 32));
 	compat_label_->Wrap(kNoteWrapWidth);
+
+	/* This is also where a model change clamps the VRAM (a Kinetic to 2MB, for
+	   one), and it does that without a combo event, so the fixed screen sizes
+	   have to be recalculated from here as well. */
+	RebuildFixedModeChoice();
 	GrowToFitContents();
 }
 
@@ -1557,9 +1763,44 @@ void MachineEditDialog::LoadSettings()
 
 	fullscreen_check_->SetValue(read_flag("start_fullscreen", 0));
 	fullscreen_msg_check_->SetValue(read_flag("show_fullscreen_message", 1));
-	integer_scaling_check_->SetValue(read_flag("integer_scaling", 0));
-	fit_to_window_check_->SetValue(read_flag("fit_to_window", 0));
-	follow_host_check_->SetValue(read_flag("follow_host_display", 0));
+	/* The display choices, and the three switches they grew out of. Same
+	   conversion as settings.cpp, for the same reason: a machine written before
+	   the split has only the old keys, and opening its editor must show what it
+	   has actually been running with. */
+	{
+		long value = 0;
+		const bool old_fit = read_flag("fit_to_window", 0);
+		const bool old_integer = read_flag("integer_scaling", 0);
+		const bool old_follow = read_flag("follow_host_display", 0);
+
+		long scaling_default = DisplayScaling_ActualSize;
+		if (old_fit) {
+			scaling_default = DisplayScaling_ScaleToFit;
+		} else if (old_integer) {
+			scaling_default = DisplayScaling_WholeMultiples;
+		}
+		settings.Read("display_scaling", &value, scaling_default);
+		const int scaling = DisplayOptions::ClampDisplayScaling((int) value);
+		scaling_radio_[scaling]->SetValue(true);
+
+		settings.Read("screen_size", &value,
+		    old_follow ? (long) ScreenSize_MatchWindow
+		               : (long) ScreenSize_Automatic);
+		int screen_size = DisplayOptions::ClampScreenSize((int) value);
+
+		long fixed_x = 0, fixed_y = 0;
+		settings.Read("screen_size_x", &fixed_x, 0L);
+		settings.Read("screen_size_y", &fixed_y, 0L);
+		if (screen_size == ScreenSize_Fixed && (fixed_x <= 0 || fixed_y <= 0)) {
+			screen_size = ScreenSize_Automatic;
+		}
+
+		RebuildFixedModeChoice();
+		SelectFixedMode((unsigned) (fixed_x > 0 ? fixed_x : 0),
+		                (unsigned) (fixed_y > 0 ? fixed_y : 0));
+		screen_size_radio_[screen_size]->SetValue(true);
+		UpdateScreenSizeEnables();
+	}
 	sound_check_->SetValue(read_flag("sound_enabled", 1));
 	cdrom_check_->SetValue(read_flag("cdrom_enabled", 0));
 	mouse_twobutton_check_->SetValue(read_flag("mouse_twobutton", 0));
@@ -1761,9 +2002,20 @@ void MachineEditDialog::SaveSettings()
 
 	write_flag("start_fullscreen", fullscreen_check_->GetValue());
 	write_flag("show_fullscreen_message", fullscreen_msg_check_->GetValue());
-	write_flag("integer_scaling", integer_scaling_check_->GetValue());
-	write_flag("fit_to_window", fit_to_window_check_->GetValue());
-	write_flag("follow_host_display", follow_host_check_->GetValue());
+	settings.Write("display_scaling",
+	               static_cast<long>(SelectedDisplayScaling()));
+	{
+		unsigned fixed_x = 0, fixed_y = 0;
+		const int screen_size = SelectedScreenSize(&fixed_x, &fixed_y);
+
+		settings.Write("screen_size", static_cast<long>(screen_size));
+		settings.Write("screen_size_x", static_cast<long>(fixed_x));
+		settings.Write("screen_size_y", static_cast<long>(fixed_y));
+	}
+	/* The keys these replaced are deliberately not written any more. Leaving
+	   them behind would have an older RPCEmu and this one disagree about the same
+	   machine, each reading the set it knows and neither seeing the other's
+	   edits. Reading them (above) is enough to carry a machine forward. */
 	write_flag("sound_enabled", sound_check_->GetValue());
 	write_flag("cdrom_enabled", cdrom_check_->GetValue());
 	write_flag("mouse_twobutton", mouse_twobutton_check_->GetValue());
@@ -1856,9 +2108,33 @@ void MachineEditDialog::ApplySavedSettingsToGlobalConfig(const wxString &rom_dir
 	 * machine next starts.
 	 */
 	config.show_fullscreen_message = fullscreen_msg_check_->GetValue() ? 1 : 0;
-	config.integer_scaling = integer_scaling_check_->GetValue() ? 1 : 0;
-	config.fit_to_window = fit_to_window_check_->GetValue() ? 1 : 0;
-	config.follow_host_display = follow_host_check_->GetValue() ? 1 : 0;
+	config.display_scaling = SelectedDisplayScaling();
+	{
+		unsigned fixed_x = 0, fixed_y = 0;
+
+		config.screen_size = SelectedScreenSize(&fixed_x, &fixed_y);
+		config.screen_size_x = fixed_x;
+		config.screen_size_y = fixed_y;
+
+		/*
+		 * Ask the guest for it now, not at the next restart.
+		 *
+		 * Somebody who has just chosen a screen size here expects the RISC OS
+		 * desktop to become that size, the same as choosing it from the Settings
+		 * menu. Match-the-window is left out because only the frame knows how big
+		 * the window is; it takes effect the next time the window is resized, or
+		 * at once if it was chosen from the menu.
+		 */
+		if (config.screen_size == ScreenSize_Fixed) {
+			rpcemu_request_guest_size(fixed_x, fixed_y);
+		} else if (config.screen_size == ScreenSize_Automatic) {
+			unsigned bound_x = 0, bound_y = 0;
+
+			if (rpcemu_edid_bound(&bound_x, &bound_y)) {
+				rpcemu_request_guest_size(bound_x, bound_y);
+			}
+		}
+	}
 	config.soundenabled = sound_check_->GetValue() ? 1 : 0;
 	config.cdromenabled = cdrom_check_->GetValue() ? 1 : 0;
 	config.mousetwobutton = mouse_twobutton_check_->GetValue() ? 1 : 0;

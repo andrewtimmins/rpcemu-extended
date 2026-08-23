@@ -469,9 +469,11 @@ rom_patch_monitor_edid(size_t rom_bytes)
 		return;		/* Not a single unambiguous block: leave well alone. */
 	}
 
-	/* Bound by the host display if the front-end has published it, else by a
-	   sensible high default. Clamp to keep it sane. */
-	if (!rpcemu_get_host_display(&bound_x, &bound_y)) {
+	/* Bound by whatever the screen-size setting says the monitor should offer:
+	   the display's work area, the whole display, or the fixed size asked for.
+	   See rpcemu_edid_bound(). Falls back to a sensible high default when there
+	   is no display to ask about at all. Clamp to keep it sane. */
+	if (!rpcemu_edid_bound(&bound_x, &bound_y)) {
 		bound_x = EDID_NATIVE_DEFAULT_X;
 		bound_y = EDID_NATIVE_DEFAULT_Y;
 	}

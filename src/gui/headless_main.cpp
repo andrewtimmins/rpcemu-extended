@@ -738,6 +738,20 @@ int RunHeadless(const char *machine_name, bool resume, const char *state_file)
 
 	rpcemu_start();
 
+	/*
+	 * A fixed screen size applies here too.
+	 *
+	 * There is no window to follow and no display to be best for, so those two
+	 * choices have nothing to act on, but a machine configured for one particular
+	 * mode meant it and a VNC client is going to be shown whatever the guest
+	 * settles into. Nothing publishes it on this path otherwise - the GUI does it
+	 * from MainFrame::StartEmulator(), which does not run headless - so a fixed
+	 * size was silently ignored.
+	 */
+	if (config.screen_size == ScreenSize_Fixed) {
+		rpcemu_request_guest_size(config.screen_size_x, config.screen_size_y);
+	}
+
 	/* Load the requested state before the emulator thread starts, so state_load()
 	   runs single-threaded (as it does on the GUI path). A failure here is not
 	   fatal: report it and continue with the normal boot already set up. */

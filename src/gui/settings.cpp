@@ -35,6 +35,8 @@ extern "C" {
 
 #include <wx/arrstr.h>
 
+#include "display_options.h"
+
 static char current_config_path[512] = "";
 
 static void peripheral_config_load(wxFileConfig &settings)
@@ -666,12 +668,55 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	cfg->cpu_idle = static_cast<int>(value);
 	settings.Read("show_fullscreen_message", &value, 1L);
 	cfg->show_fullscreen_message = static_cast<int>(value);
-	settings.Read("integer_scaling", &value, 0L);
-	cfg->integer_scaling = static_cast<int>(value);
-	settings.Read("fit_to_window", &value, 0L);
-	cfg->fit_to_window = static_cast<int>(value);
-	settings.Read("follow_host_display", &value, 0L);
-	cfg->follow_host_display = static_cast<int>(value);
+	/*
+	 * The display choices, and the three switches they grew out of.
+	 *
+	 * A configuration written before the split has integer_scaling,
+	 * fit_to_window and follow_host_display and none of the keys below, so the
+	 * old keys are read as the fallback for the new ones and a machine carries
+	 * on behaving as it did. Nothing writes the old keys any more, so this is a
+	 * one-way conversion that happens the first time the machine is saved.
+	 *
+	 * follow_host_display becomes ScreenSize_MatchWindow, which is not quite
+	 * what it did - it only acted when a monitor was attached or its resolution
+	 * altered, never on the window. It is the honest successor even so: what it
+	 * was for was a RISC OS desktop that tracks the front end, and the reason it
+	 * was reported as broken is that it hardly ever fired.
+	 */
+	{
+		long old_integer = 0, old_fit = 0, old_follow = 0;
+
+		settings.Read("integer_scaling", &old_integer, 0L);
+		settings.Read("fit_to_window", &old_fit, 0L);
+		settings.Read("follow_host_display", &old_follow, 0L);
+
+		long scaling_default = DisplayScaling_ActualSize;
+		if (old_fit != 0) {
+			scaling_default = DisplayScaling_ScaleToFit;
+		} else if (old_integer != 0) {
+			scaling_default = DisplayScaling_WholeMultiples;
+		}
+		settings.Read("display_scaling", &value, scaling_default);
+		cfg->display_scaling = DisplayOptions::ClampDisplayScaling(static_cast<int>(value));
+
+		const long size_default = (old_follow != 0)
+		    ? ScreenSize_MatchWindow : ScreenSize_Automatic;
+		settings.Read("screen_size", &value, size_default);
+		cfg->screen_size = DisplayOptions::ClampScreenSize(static_cast<int>(value));
+
+		settings.Read("screen_size_x", &value, 0L);
+		cfg->screen_size_x = static_cast<unsigned>(value < 0 ? 0 : value);
+		settings.Read("screen_size_y", &value, 0L);
+		cfg->screen_size_y = static_cast<unsigned>(value < 0 ? 0 : value);
+
+		/* A fixed size with nothing to be fixed at is not a choice, it is a
+		   blank screen waiting to happen. */
+		if (cfg->screen_size == ScreenSize_Fixed &&
+		    (cfg->screen_size_x == 0 || cfg->screen_size_y == 0))
+		{
+			cfg->screen_size = ScreenSize_Automatic;
+		}
+	}
 	settings.Read("gfxcard_enabled", &value, 0L);
 	cfg->gfxcard_enabled = static_cast<int>(value);
 	settings.Read("gfxcard_boot_display", &value, 0L);
@@ -870,9 +915,10 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	settings.Write("bridgename", cfg->bridgename ? wxString(cfg->bridgename, wxConvUTF8) : wxString());
 	settings.Write("cpu_idle", static_cast<long>(cfg->cpu_idle));
 	settings.Write("show_fullscreen_message", static_cast<long>(cfg->show_fullscreen_message));
-	settings.Write("integer_scaling", static_cast<long>(cfg->integer_scaling));
-	settings.Write("fit_to_window", static_cast<long>(cfg->fit_to_window));
-	settings.Write("follow_host_display", static_cast<long>(cfg->follow_host_display));
+	settings.Write("display_scaling", static_cast<long>(cfg->display_scaling));
+	settings.Write("screen_size", static_cast<long>(cfg->screen_size));
+	settings.Write("screen_size_x", static_cast<long>(cfg->screen_size_x));
+	settings.Write("screen_size_y", static_cast<long>(cfg->screen_size_y));
 	settings.Write("gfxcard_enabled", static_cast<long>(cfg->gfxcard_enabled));
 	settings.Write("gfxcard_boot_display", static_cast<long>(cfg->gfxcard_boot_display));
 	for (int port = 0; port < USB_PORTS; port++) {

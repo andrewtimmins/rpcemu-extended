@@ -26,6 +26,7 @@
 #include <list>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <wx/wx.h>
@@ -92,9 +93,18 @@ enum MainFrameMenuId {
 	ID_MENU_NAT_LIST,
 	ID_MENU_MUTE,
 	ID_MENU_FULLSCREEN,
-	ID_MENU_INTEGER_SCALING,
-	ID_MENU_FIT_TO_WINDOW,
-	ID_MENU_FOLLOW_HOST_DISPLAY,
+	/* Show In Window: one drawing rule, in DisplayScaling order. */
+	ID_MENU_SCALING_ACTUAL,
+	ID_MENU_SCALING_MULTIPLES,
+	ID_MENU_SCALING_FIT,
+	/* RISC OS Screen Size: where the desktop's size comes from. The fixed sizes
+	   are a run of consecutive ids, since the list is built from the standard
+	   modes the machine's display memory can hold and so is not fixed at compile
+	   time. ID_MENU_SCREEN_FIXED_LAST bounds the run for the range binding. */
+	ID_MENU_SCREEN_AUTOMATIC,
+	ID_MENU_SCREEN_MATCH_WINDOW,
+	ID_MENU_SCREEN_FIXED_FIRST,
+	ID_MENU_SCREEN_FIXED_LAST = ID_MENU_SCREEN_FIXED_FIRST + 63,
 	ID_MENU_SUSPEND_ON_EXIT,
 	ID_MENU_VNC,
 	ID_MENU_SERIAL,
@@ -127,6 +137,7 @@ enum TimerId {
 	ID_TIMER_NETWORK_LED,
 	ID_TIMER_CLIPBOARD,
 	ID_TIMER_SYNTHETIC_RELEASE,
+	ID_TIMER_MATCH_WINDOW,
 };
 
 enum StatusBarField {
@@ -209,9 +220,8 @@ private:
 	void OnNatList(wxCommandEvent &event);
 	void OnMute(wxCommandEvent &event);
 	void OnFullscreen(wxCommandEvent &event);
-	void OnIntegerScaling(wxCommandEvent &event);
-	void OnFitToWindow(wxCommandEvent &event);
-	void OnFollowHostDisplay(wxCommandEvent &event);
+	void OnDisplayScaling(wxCommandEvent &event);
+	void OnScreenSize(wxCommandEvent &event);
 	void OnSuspendOnExit(wxCommandEvent &event);
 	void OnCpuIdle(wxCommandEvent &event);
 	void OnMouseHack(wxCommandEvent &event);
@@ -257,7 +267,60 @@ private:
 	void ProcessEmulatorKeyEvent(wxKeyEvent &event, bool key_down);
 	void ExitFullScreen();
 	void EnterFullScreen();
-	void ApplyFitToWindowSize();
+	/**
+	 * Give a newly-freed window a comfortable size, and re-lay-out either way.
+	 *
+	 * Called when the window stops being locked to the guest's desktop. Without
+	 * it the window keeps whatever size the lock left it at, which for a small
+	 * screen mode is a postage stamp the user then has to drag out by hand.
+	 */
+	void ApplyFreeWindowSize();
+
+	/**
+	 * Close the gap between the window and the desktop the guest just moved to.
+	 *
+	 * For ScreenSize_MatchWindow at actual size only, where the two are meant to
+	 * be the same size. Bounded by the display's work area rather than by
+	 * ApplyFreeWindowSize()'s opening size, so the desktop is not capped.
+	 */
+	void SnapWindowToGuest();
+
+	/**
+	 * Rebuild the fixed-size entries in the Screen Size menu.
+	 *
+	 * The list is what the machine's display memory can hold, so it changes when
+	 * the graphics card is fitted or the VRAM altered, not just at startup.
+	 */
+	void RebuildScreenSizeMenu();
+
+	/** True when the window's size is not derived from the guest's desktop. */
+	bool WindowSizeIsFree() const;
+
+	/** Push the current scaling and screen-size choices into the panel. */
+	void ApplyDisplayModeToPanel();
+
+	/**
+	 * Tell the guest the window's size, for ScreenSize_MatchWindow.
+	 *
+	 * Debounced: a resize drag fires continuously, and a mode change reflows
+	 * every window on the RISC OS desktop, so acting on each intermediate size
+	 * would leave the guest thrashing through modes it is about to leave. The
+	 * timer restarts on every event and only the size the drag settles on is
+	 * published.
+	 */
+	void PublishWindowSizeToGuest();
+	void OnMatchWindowTimer(wxTimerEvent &event);
+
+	/**
+	 * A frame arrived from the guest. Notices a change of desktop size and, for
+	 * ScreenSize_MatchWindow, waits for it to settle before acting.
+	 */
+	void NoteGuestFrame();
+
+	/** Repaint the panel from the retained frame, after the current event. */
+	void ForcePanelRedraw();
+
+	void OnFrameSize(wxSizeEvent &event);
 
 	/* The running machine's configuration file name, without .cfg: what the
 	   default-machine preference is keyed on. */
@@ -311,9 +374,15 @@ private:
 	wxMenu *recent_cdroms_menu_ = nullptr;
 	wxMenuItem *mute_menu_item_ = nullptr;
 	wxMenuItem *fullscreen_menu_item_ = nullptr;
-	wxMenuItem *integer_scaling_menu_item_ = nullptr;
-	wxMenuItem *fit_to_window_menu_item_ = nullptr;
-	wxMenuItem *follow_host_display_menu_item_ = nullptr;
+	/* The two radio groups. Indexed by DisplayScaling and ScreenSize, so a
+	   value straight out of the configuration selects the right item. */
+	wxMenuItem *scaling_menu_items_[3] = { nullptr, nullptr, nullptr };
+	wxMenuItem *screen_size_menu_items_[2] = { nullptr, nullptr };
+	wxMenu *screen_size_menu_ = nullptr;
+
+	/* The fixed sizes actually offered, in the order they appear in the menu, so
+	   an id can be turned back into a mode without re-deriving the list. */
+	std::vector<std::pair<unsigned, unsigned>> fixed_mode_items_;
 	wxMenuItem *suspend_on_exit_menu_item_ = nullptr;
 	wxMenuItem *cpu_idle_menu_item_ = nullptr;
 	wxMenuItem *mouse_hack_menu_item_ = nullptr;
@@ -367,6 +436,25 @@ private:
 	 */
 	wxTimer synthetic_release_timer_;
 	std::vector<unsigned> synthetic_release_pending_;
+
+	/* Waiting for a resize drag to settle, for ScreenSize_MatchWindow. See
+	   PublishWindowSizeToGuest(). */
+	wxTimer match_window_timer_;
+
+	/*
+	 * The guest's desktop size as of the last quiet moment, for
+	 * ScreenSize_MatchWindow.
+	 *
+	 * The point of remembering it is to tell the two directions apart. A change
+	 * the guest made for its own reasons - and RISC OS makes several while it
+	 * boots - means the window should follow it. A window that has moved while
+	 * the guest has stayed put means the user dragged an edge, and the guest
+	 * should follow instead. Without this the boot sequence was read as the
+	 * second case: the frame's own layout events published an intermediate
+	 * 800x520 and drove the guest to 640x480 before the desktop had appeared.
+	 */
+	wxSize match_window_guest_size_ = wxSize(0, 0);
+
 	wxString clipboard_last_seen_;	/* host text already sent to the guest */
 	std::string clipboard_image_last_seen_;	/* and the same for an image, as PNG */
 
