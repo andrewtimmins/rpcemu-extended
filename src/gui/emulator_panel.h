@@ -95,6 +95,9 @@ private:
 #if wxUSE_GLCANVAS
 	void TryCreateGlCanvas();
 	void DestroyGlCanvas(const wxString &why);
+	/* The canvas covers this panel and takes the focus with it, so its key
+	   events are raised here instead - see the definition. */
+	void ForwardKeyEvent(wxKeyEvent &event);
 	bool GlActive() const;
 	void StoreFrameForGl(const VideoUpdate &update);
 	void SupplyFrameToGl();
