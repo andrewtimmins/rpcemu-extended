@@ -144,52 +144,46 @@ rpcemu_get_host_display(unsigned *width, unsigned *height)
 }
 
 int
+rpcemu_default_screen_size(unsigned *width, unsigned *height)
+{
+	/* The work area rather than the whole display: the window ends up this size,
+	   and one taller than the work area opens with its title bar above the top of
+	   the screen, where it cannot be grabbed to move the window back. */
+	const unsigned max_w = host_display_work_width != 0
+	    ? host_display_work_width : host_display_width;
+	const unsigned max_h = host_display_work_height != 0
+	    ? host_display_work_height : host_display_height;
+
+	if (max_w == 0 || max_h == 0) {
+		return 0;
+	}
+
+	return display_mode_fit(max_w, max_h, 4, rpcemu_display_memory(),
+	                        width, height);
+}
+
+int
 rpcemu_edid_bound(unsigned *width, unsigned *height)
 {
-	switch (config.screen_size) {
-	case ScreenSize_Fixed:
-		/* The mode asked for has to be one the monitor declares, or RISC OS
-		   will not have it however much memory there is to hold it. */
-		if (config.screen_size_x == 0 || config.screen_size_y == 0) {
-			break;
-		}
+	if (config.screen_size_x != 0 && config.screen_size_y != 0) {
 		*width = config.screen_size_x;
 		*height = config.screen_size_y;
 		return 1;
-
-	case ScreenSize_MatchWindow:
-		/* The window may be dragged out to the whole display, so advertise all
-		   of it - including the part a window may not normally occupy, which
-		   full screen can still use. */
-		if (host_display_width == 0 || host_display_height == 0) {
-			break;
-		}
-		*width = host_display_width;
-		*height = host_display_height;
-		return 1;
-
-	case ScreenSize_Automatic:
-	default:
-		/* Bounded by the work area: this mode's window is 1:1 with the desktop
-		   under the default drawing rule, and a window taller than the work
-		   area opens with its title bar off the top of the screen, where it
-		   cannot be grabbed to move or resize the window back. Fall through to
-		   the full geometry if the front-end did not say what the work area is
-		   (--fetch-riscos and friends run with no display at all). */
-		if (host_display_work_width != 0 && host_display_work_height != 0) {
-			*width = host_display_work_width;
-			*height = host_display_work_height;
-			return 1;
-		}
-		if (host_display_width != 0 && host_display_height != 0) {
-			*width = host_display_width;
-			*height = host_display_height;
-			return 1;
-		}
-		break;
 	}
 
-	return 0;
+	return rpcemu_default_screen_size(width, height);
+}
+
+int
+rpcemu_guest_size_for(unsigned width, unsigned height,
+                      unsigned *fitted_width, unsigned *fitted_height)
+{
+	if (width == 0 || height == 0) {
+		return 0;
+	}
+
+	return display_mode_fit(width, height, 4, rpcemu_display_memory(),
+	                        fitted_width, fitted_height);
 }
 
 void
@@ -267,19 +261,12 @@ rpcemu_guest_display_target(unsigned *width, unsigned *height, unsigned *hz,
 	*hz = host_display_hz;
 
 	/*
-	 * Whatever has been asked for, whoever asked. Nothing is reported until
-	 * something publishes a request, so a machine left on the default answers
-	 * "no mode" for its whole life: ScreenSize_Automatic settles the mode once
-	 * through the monitor EDID the machine boots with, and publishes nothing
-	 * afterwards. The guest module never even takes a baseline, so it has
-	 * nothing to act on - which is what makes that the safe default, since a
-	 * mode change reflows every window on the guest desktop and nobody asked for
-	 * that to happen behind their back.
-	 *
-	 * Changing the setting is asking for it, though. Selecting a screen size in
-	 * the menu or the machine editor publishes one from there, including
-	 * automatic - somebody who picks a size expects RISC OS to adopt it, not to
-	 * be told to restart the machine.
+	 * Nothing is reported until a size has actually been asked for. A machine
+	 * that boots into the mode its EDID advertises and is left alone therefore
+	 * answers "no mode" for its whole life, and the guest support module never
+	 * even takes a baseline - which is what it should do, since a mode change
+	 * reflows every window on the RISC OS desktop and nobody asked for that to
+	 * happen behind their back.
 	 */
 	if (guest_size_width == 0 || guest_size_height == 0) {
 		return 0;
@@ -327,8 +314,7 @@ Config config = {
 	0,			/* cpu_idle */
 	1,			/* show_fullscreen_message */
 	DisplayScaling_ActualSize,	/* display_scaling */
-	ScreenSize_Automatic,	/* screen_size (the mode is settled at boot and left alone) */
-	0,			/* screen_size_x (unused unless screen_size is Fixed) */
+	0,			/* screen_size_x (0: chosen for this display at first start) */
 	0,			/* screen_size_y */
 	0,			/* gfxcard_enabled (OFF: needs its guest driver) */
 	{ UsbAttachment_None,	/* usb_port: nothing plugged into any USB port */

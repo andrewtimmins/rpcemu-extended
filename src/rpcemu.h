@@ -282,62 +282,46 @@ typedef enum {
 } UsbAttachment;
 
 /*
- * The two questions the display settings answer.
+ * The display settings.
  *
- * They used to be three independent switches - integer_scaling, fit_to_window
- * and follow_host_display - which was the source of most of the confusion
- * around them. Two of those scaled the same number of guest pixels and the
- * third changed how many there were, and nothing said which was which. The
- * default (all three off) had no name at all, and the two scaling switches
- * silently cleared each other, so a menu of independent-looking checkboxes
- * behaved as though clicks were being lost.
+ * These began as three independent switches - integer_scaling, fit_to_window and
+ * follow_host_display - which was the source of most of the confusion around
+ * them. They then became two choices: where the RISC OS desktop's size came from
+ * (best for this display, follow the window, or a fixed size) and how it was
+ * drawn (actual size, whole multiples, fill the window).
  *
- * So: one choice for how big the RISC OS desktop is, one for how it is drawn,
- * and full screen left as the separate thing it actually is - a place to put
- * the window, inside which all three drawing rules still apply.
+ * The automatic halves of that are gone, and what is left is a screen size and
+ * how to draw it. The reason is worth recording, because on paper "the desktop
+ * follows the window" is the nicer feature:
+ *
+ *   RISC OS will not adopt an arbitrary screen mode. It accepts only modes the
+ *   monitor definition in force declares, and on a real machine that definition
+ *   is a definition file the guest's own !Boot loads - not the EDID this
+ *   emulator synthesises. Measured on a machine with the graphics card fitted,
+ *   seven of the thirteen modes that fit its display memory were refused, and
+ *   not the ones anybody would guess: 1920x1200 accepted, 1920x1080 refused.
+ *
+ * So a desktop that follows the window can only ever land on a coarse and
+ * unpredictable set of sizes. Every intermediate window size left either a black
+ * border or a stretch, and every mode change moved and resized the window while
+ * the user was still dragging it. Chasing the window was producing worse
+ * behaviour than not chasing it.
+ *
+ * A named resolution has none of those problems. It is advertised as the
+ * monitor's native mode, so the machine boots straight into it; the window is
+ * that size and stays that size; and nothing moves on its own.
  */
 
-/** How many pixels the RISC OS desktop has. */
+/** How the RISC OS desktop is drawn in the window. */
 typedef enum {
-	/**
-	 * The largest standard mode that fits this display and this machine's
-	 * display memory, chosen when the machine boots and then left alone.
-	 *
-	 * Bounded by the display's WORK area rather than its full geometry, so the
-	 * 1:1 window the default drawing mode asks for cannot come out taller than
-	 * the space a window is allowed to occupy. It could before, which put the
-	 * title bar above the top of the screen where it could not be grabbed.
-	 */
-	ScreenSize_Automatic = 0,
-
-	/**
-	 * Follow the window: resize it and the guest changes screen mode to the
-	 * largest standard mode that fits.
-	 *
-	 * This replaces the old follow_host_display, which only acted when a
-	 * monitor was attached or its resolution altered - so ticking it appeared
-	 * to do nothing at all, which is how people concluded it was broken.
-	 */
-	ScreenSize_MatchWindow = 1,
-
-	/** Exactly screen_size_x by screen_size_y, whatever the window does. */
-	ScreenSize_Fixed = 2
-} ScreenSize;
-
-/** How that desktop is drawn in the window. */
-typedef enum {
-	/**
-	 * One guest pixel per host pixel. With a fixed screen size the window is
-	 * locked to the desktop; with ScreenSize_MatchWindow the window leads and
-	 * the desktop is centred in whatever is left over.
-	 */
+	/** One guest pixel per host pixel. The window is the size of the desktop. */
 	DisplayScaling_ActualSize = 0,
 
-	/** Whole-number multiples only (2x, 3x): scaled up, still sharp. */
-	DisplayScaling_WholeMultiples = 1,
-
-	/** Fill the window, keeping the aspect ratio. Smooth, and any size. */
-	DisplayScaling_ScaleToFit = 2
+	/**
+	 * Whole-number multiples only (2x, 3x): scaled up, still perfectly sharp.
+	 * The window may be resized, and the desktop is centred in it.
+	 */
+	DisplayScaling_WholeMultiples = 1
 } DisplayScaling;
 
 /** The user's configuration of the emulator */
@@ -374,9 +358,8 @@ typedef struct {
 	int cpu_idle;		/**< Attempt to reduce CPU usage */
 	int show_fullscreen_message;	/**< Show explanation of how to leave fullscreen, on entering fullscreen */
 	int display_scaling;	/**< How the guest's screen is drawn in the window (DisplayScaling) */
-	int screen_size;	/**< Where the size of the RISC OS desktop comes from (ScreenSize) */
-	unsigned screen_size_x;	/**< For ScreenSize_Fixed, the width to ask the guest for */
-	unsigned screen_size_y;	/**< For ScreenSize_Fixed, the height to ask the guest for */
+	unsigned screen_size_x;	/**< RISC OS screen width, or 0 to choose one at first start */
+	unsigned screen_size_y;	/**< RISC OS screen height, or 0 to choose one */
 	int gfxcard_enabled;	/**< Present the graphics expansion card (its own framestore, modes beyond VRAM) */
 	int usb_port[USB_PORTS];	/**< What is plugged into each emulated USB port (UsbAttachment) */
 	char usb_host[USB_PORTS][16];	/**< For a UsbAttachment_Host port, the device's "vvvv:pppp" */
@@ -481,25 +464,52 @@ extern void rpcemu_set_host_display(unsigned width, unsigned height, unsigned hz
 extern int rpcemu_get_host_display(unsigned *width, unsigned *height);
 
 /*
- * The bound to advertise as the monitor's native mode, from config.screen_size.
+ * The mode to advertise as the monitor's native one: the configured screen size.
  *
- * Automatic bounds by the work area, so the 1:1 window it leads to fits on
- * screen. Match-the-window bounds by the whole display, since the window may be
- * resized to any of it. Fixed bounds by the size asked for, so that mode is
- * certain to be one the monitor definition declares - RISC OS refuses a mode
- * the EDID in force does not offer, however much memory there is for it.
+ * This is what makes a named resolution reliable. RISC OS reads the monitor EDID
+ * as it boots, and the mode it comes up in is the native one that block declares,
+ * so advertising the configured size means the machine starts in it - verified
+ * against a size that the same machine refuses once it is running, because by
+ * then its own monitor definition file has replaced the EDID.
+ *
+ * Falls back to the largest standard mode that fits this display's work area and
+ * the machine's display memory, for a machine that has never been given a size.
+ * The work area rather than the whole display, because the window is this size:
+ * a taller one would open with its title bar off the top of the screen.
  *
  * @return non-zero if a bound is known, zero to use the built-in default
  */
 extern int rpcemu_edid_bound(unsigned *width, unsigned *height);
 
+/**
+ * The screen size a machine with none configured should start with.
+ *
+ * @return non-zero if one could be chosen
+ */
+extern int rpcemu_default_screen_size(unsigned *width, unsigned *height);
+
 /*
- * Ask the guest to change screen mode, for ScreenSize_MatchWindow and
- * ScreenSize_Fixed. Quantised through display_mode_fit() before it is stored, so
- * dragging a window edge across pixels that land in the same standard mode does
- * not keep telling the guest to change to the mode it is already in.
+ * Ask the guest to change to a screen mode. Quantised through display_mode_fit()
+ * before it is stored, so a size that is not a mode becomes the nearest one that
+ * is, and asking twice for the same mode says nothing the second time.
  */
 extern void rpcemu_request_guest_size(unsigned width, unsigned height);
+
+/*
+ * What rpcemu_request_guest_size() would settle on for this size, without
+ * asking for anything.
+ *
+ * The front end needs to know which mode a request will become so it can check
+ * that the guest actually adopted it: RISC OS refuses a mode its monitor
+ * definition does not declare and tells the host nothing, so the only evidence
+ * is the desktop still being its old size, and that comparison needs the fitted
+ * size rather than the raw one.
+ *
+ * @return non-zero if a mode fits, zero if nothing does
+ */
+extern int rpcemu_guest_size_for(unsigned width, unsigned height,
+                                 unsigned *fitted_width,
+                                 unsigned *fitted_height);
 
 /* How much display memory a mode has to fit in: the fitted VRAM, or the graphics
    card's own framestore when that card is present. Both the synthesised EDID and

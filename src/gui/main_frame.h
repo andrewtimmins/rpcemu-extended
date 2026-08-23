@@ -96,13 +96,10 @@ enum MainFrameMenuId {
 	/* Show In Window: one drawing rule, in DisplayScaling order. */
 	ID_MENU_SCALING_ACTUAL,
 	ID_MENU_SCALING_MULTIPLES,
-	ID_MENU_SCALING_FIT,
-	/* RISC OS Screen Size: where the desktop's size comes from. The fixed sizes
-	   are a run of consecutive ids, since the list is built from the standard
-	   modes the machine's display memory can hold and so is not fixed at compile
-	   time. ID_MENU_SCREEN_FIXED_LAST bounds the run for the range binding. */
-	ID_MENU_SCREEN_AUTOMATIC,
-	ID_MENU_SCREEN_MATCH_WINDOW,
+	/* RISC OS Screen Size: a run of consecutive ids, since the list is built from
+	   the modes this machine's display memory can hold and so is not known at
+	   compile time. ID_MENU_SCREEN_FIXED_LAST bounds the run for the range
+	   binding below. */
 	ID_MENU_SCREEN_FIXED_FIRST,
 	ID_MENU_SCREEN_FIXED_LAST = ID_MENU_SCREEN_FIXED_FIRST + 63,
 	ID_MENU_SUSPEND_ON_EXIT,
@@ -137,7 +134,9 @@ enum TimerId {
 	ID_TIMER_NETWORK_LED,
 	ID_TIMER_CLIPBOARD,
 	ID_TIMER_SYNTHETIC_RELEASE,
-	ID_TIMER_MATCH_WINDOW,
+	ID_TIMER_MODE_VERIFY,
+	ID_TIMER_GUEST_RESIZE,
+	ID_TIMER_TEST_CLOSE,
 };
 
 enum StatusBarField {
@@ -193,6 +192,24 @@ public:
 
 private:
 	void OnClose(wxCloseEvent &event);
+
+	/**
+	 * Ask before shutting a running machine down, offering the machine list as
+	 * an alternative to quitting.
+	 *
+	 * @return true to carry on closing, false to leave the machine running
+	 *         (the caller must veto the close event)
+	 */
+	bool ConfirmCloseOrSwitch();
+
+	/** Ask whether to close, then offer the machine list. */
+	void AskAboutClosing();
+
+	/** Show the machine list and switch to whatever is chosen. */
+	bool SwitchToChosenMachine();
+
+	/** This machine's name for a dialogue title, or the application's. */
+	wxString MachineDisplayName() const;
 	void OnExit(wxCommandEvent &event);
 	void OnScreenshot(wxCommandEvent &event);
 	void OnAboutRiscos(wxCommandEvent &event);
@@ -268,25 +285,18 @@ private:
 	void ExitFullScreen();
 	void EnterFullScreen();
 	/**
-	 * Give a newly-freed window a comfortable size, and re-lay-out either way.
+	 * Centre the window on its display, keeping the title bar reachable.
 	 *
-	 * Called when the window stops being locked to the guest's desktop. Without
-	 * it the window keeps whatever size the lock left it at, which for a small
-	 * screen mode is a postage stamp the user then has to drag out by hand.
+	 * Called after the window's size changes and at no other time, so the window
+	 * never moves while the guest is doing something.
 	 */
-	void ApplyFreeWindowSize();
+	void CentreWindowOnScreen();
+
+	/** Make the window the size of the guest's desktop, and centre it. */
+	void SizeWindowToGuest();
 
 	/**
-	 * Close the gap between the window and the desktop the guest just moved to.
-	 *
-	 * For ScreenSize_MatchWindow at actual size only, where the two are meant to
-	 * be the same size. Bounded by the display's work area rather than by
-	 * ApplyFreeWindowSize()'s opening size, so the desktop is not capped.
-	 */
-	void SnapWindowToGuest();
-
-	/**
-	 * Rebuild the fixed-size entries in the Screen Size menu.
+	 * Rebuild the entries in the Screen Size menu.
 	 *
 	 * The list is what the machine's display memory can hold, so it changes when
 	 * the graphics card is fitted or the VRAM altered, not just at startup.
@@ -308,8 +318,30 @@ private:
 	 * timer restarts on every event and only the size the drag settles on is
 	 * published.
 	 */
-	void PublishWindowSizeToGuest();
-	void OnMatchWindowTimer(wxTimerEvent &event);
+
+
+	/**
+	 * Ask the guest for a screen size, and check that it takes it.
+	 *
+	 * @param width    Requested width in pixels
+	 * @param height   Requested height
+	 * @param explicit_choice True when the user named this size, so a refusal
+	 *                 should be reported rather than silently worked around.
+	 */
+	void RequestGuestMode(unsigned width, unsigned height, bool explicit_choice);
+	void OnModeVerifyTimer(wxTimerEvent &event);
+	void OnGuestResizeTimer(wxTimerEvent &event);
+
+	/**
+	 * RPCEMU_TEST_CLOSE_AFTER: ask the window to close, as the close button does.
+	 *
+	 * There to make the close flow testable without a pointer. The dialogues it
+	 * raises cannot be driven by a script here (macOS accessibility refuses to see
+	 * the process), but this proves the part that was actually broken: that the
+	 * question is asked at all and waits for an answer, rather than answering
+	 * itself and shutting the machine down. See AskAboutClosing().
+	 */
+	void OnTestCloseTimer(wxTimerEvent &event);
 
 	/**
 	 * A frame arrived from the guest. Notices a change of desktop size and, for
@@ -320,7 +352,6 @@ private:
 	/** Repaint the panel from the retained frame, after the current event. */
 	void ForcePanelRedraw();
 
-	void OnFrameSize(wxSizeEvent &event);
 
 	/* The running machine's configuration file name, without .cfg: what the
 	   default-machine preference is keyed on. */
@@ -374,10 +405,9 @@ private:
 	wxMenu *recent_cdroms_menu_ = nullptr;
 	wxMenuItem *mute_menu_item_ = nullptr;
 	wxMenuItem *fullscreen_menu_item_ = nullptr;
-	/* The two radio groups. Indexed by DisplayScaling and ScreenSize, so a
-	   value straight out of the configuration selects the right item. */
-	wxMenuItem *scaling_menu_items_[3] = { nullptr, nullptr, nullptr };
-	wxMenuItem *screen_size_menu_items_[2] = { nullptr, nullptr };
+	/* Indexed by DisplayScaling, so a value out of the configuration selects the
+	   right item directly. */
+	wxMenuItem *scaling_menu_items_[2] = { nullptr, nullptr };
 	wxMenu *screen_size_menu_ = nullptr;
 
 	/* The fixed sizes actually offered, in the order they appear in the menu, so
@@ -401,6 +431,14 @@ private:
 	wxToolBarToolBase *tb_mute_tool_ = nullptr;
 
 	bool shutting_down_ = false;
+
+	/* Set once the user has confirmed closing, so the close that follows is not
+	   questioned all over again. */
+	bool close_confirmed_ = false;
+
+	/* A close question is already on screen. One click on the close button can
+	   raise more than one close event, and each was queueing another question. */
+	bool close_question_pending_ = false;
 	bool suspend_on_exit_requested_ = false;
 	/* Set when the window is closing because the process was signalled rather
 	   than because the user asked. A signal is a way out in a hurry, so the
@@ -437,23 +475,55 @@ private:
 	wxTimer synthetic_release_timer_;
 	std::vector<unsigned> synthetic_release_pending_;
 
-	/* Waiting for a resize drag to settle, for ScreenSize_MatchWindow. See
-	   PublishWindowSizeToGuest(). */
-	wxTimer match_window_timer_;
+	/*
+	 * Waiting to see whether the guest adopted the mode it was asked for.
+	 *
+	 * RISC OS refuses any mode its monitor definition does not declare, and says
+	 * so only on its own screen - the host is told nothing. So the request is
+	 * checked instead of trusted: if the desktop has not become the requested
+	 * size by the time this fires, that mode is marked unavailable and the next
+	 * one down is tried. See VerifyRequestedMode().
+	 */
+	wxTimer mode_verify_timer_;
 
 	/*
-	 * The guest's desktop size as of the last quiet moment, for
-	 * ScreenSize_MatchWindow.
+	 * Waiting for the guest's screen mode to stop changing.
 	 *
-	 * The point of remembering it is to tell the two directions apart. A change
-	 * the guest made for its own reasons - and RISC OS makes several while it
-	 * boots - means the window should follow it. A window that has moved while
-	 * the guest has stayed put means the user dragged an edge, and the guest
-	 * should follow instead. Without this the boot sequence was read as the
-	 * second case: the frame's own layout events published an intermediate
-	 * 800x520 and drove the guest to 640x480 before the desktop had appeared.
+	 * RISC OS changes mode two or three times on its way to a desktop, and on a
+	 * machine with the graphics card the display is handed over part way through
+	 * as well. The window has to end up the size of the desktop - smaller clips
+	 * it and loses the icon bar, larger leaves a border - but resizing on every
+	 * one of those changes made it jump through three sizes and positions before
+	 * settling. So each change restarts this, and the window is sized once the
+	 * changes stop.
 	 */
-	wxSize match_window_guest_size_ = wxSize(0, 0);
+	wxTimer guest_resize_timer_;
+
+	/* RPCEMU_TEST_CLOSE_AFTER only; never started otherwise. */
+	wxTimer test_close_timer_;
+
+	/** The size last asked of the guest, or (0,0) when nothing is outstanding. */
+	wxSize mode_requested_ = wxSize(0, 0);
+
+	/** True when mode_requested_ came from an explicit choice, so a refusal is
+	    worth telling the user about rather than quietly working around. */
+	bool mode_requested_explicitly_ = false;
+
+	/*
+	 * The guest desktop size this window has already reacted to.
+	 *
+	 * Two jobs. With ScreenSize_Fixed it stops the window being resized over and
+	 * over for frames that say nothing new. With ScreenSize_MatchWindow it tells
+	 * the two directions apart: a change the guest made for its own reasons - and
+	 * RISC OS makes several while it boots - means the window should follow it,
+	 * while a window that has moved with the guest standing still means the user
+	 * dragged an edge and the guest should follow instead. Without that, the boot
+	 * sequence read as the second case and the frame's own layout events
+	 * published an intermediate 800x520, driving the guest to 640x480 before the
+	 * desktop had even appeared.
+	 */
+	wxSize guest_size_seen_ = wxSize(0, 0);
+
 
 	wxString clipboard_last_seen_;	/* host text already sent to the guest */
 	std::string clipboard_image_last_seen_;	/* and the same for an image, as PNG */

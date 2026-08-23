@@ -189,41 +189,30 @@ void MainFrame::BuildMenus()
 	mute_menu_item_ = settings_menu->AppendCheckItem(ID_MENU_MUTE, "Mute Sound");
 
 	/*
-	 * The display, as two questions rather than five switches.
+	 * The display: a screen size, and how to draw it.
 	 *
-	 * How big the RISC OS desktop is, and how it is drawn in the window, are
-	 * separate things, and one submenu each says so. They were four checkboxes -
-	 * Pixel Perfect, Fit to Window, Follow Host Display Size, and an unnamed
-	 * default that was "none of the above" - where two of the four scaled the
-	 * same number of guest pixels, one changed how many there were, and the
-	 * first two silently cleared each other. Nothing in that told the user
-	 * which question they were answering.
+	 * This was four checkboxes, then two submenus of three - one for where the
+	 * desktop's size came from and one for how it was drawn. The automatic
+	 * choices in the first (best for this display, follow the window) and the
+	 * stretching one in the second are gone, because between them they produced
+	 * the behaviour they were meant to avoid: RISC OS accepts only the modes its
+	 * monitor definition declares, so a desktop chasing the window landed on a
+	 * coarse and unpredictable set of sizes, leaving a border or a stretch at
+	 * every size in between and moving the window under the user's hand each time
+	 * it changed.
 	 *
-	 * Every label and its explanation comes from display_options.h, which the
-	 * machine editor reads as well, so the two cannot drift apart.
+	 * A named resolution has none of that. It is advertised as the monitor's
+	 * native mode so the machine boots into it, the window is that size, and
+	 * nothing moves on its own.
+	 *
+	 * Every label comes from display_options.h, which the machine editor reads as
+	 * well, so the two views cannot drift apart.
 	 */
 	{
 		auto *screen_menu = new wxMenu;
 		screen_size_menu_ = screen_menu;
-
-		screen_size_menu_items_[ScreenSize_Automatic] =
-		    screen_menu->AppendRadioItem(ID_MENU_SCREEN_AUTOMATIC,
-		                                 DisplayOptions::ScreenSizeAutomatic());
-		screen_size_menu_items_[ScreenSize_Automatic]->SetHelp(
-		    DisplayOptions::ScreenSizeAutomaticHelp());
-		screen_size_menu_items_[ScreenSize_MatchWindow] =
-		    screen_menu->AppendRadioItem(ID_MENU_SCREEN_MATCH_WINDOW,
-		                                 DisplayOptions::ScreenSizeMatchWindow());
-		screen_size_menu_items_[ScreenSize_MatchWindow]->SetHelp(
-		    DisplayOptions::ScreenSizeMatchWindowHelp());
-		/* The fixed sizes go in below, and are rebuilt whenever the display
-		   memory changes.
-
-		   No separator before them, tempting though it is. A wxMenu radio group
-		   runs until the first item that is not a radio item, so a separator in
-		   the middle would make two independent groups: choosing a fixed size
-		   would leave "best for this display" still ticked, and the menu would
-		   claim two answers to a question with one. */
+		/* Filled in by RebuildScreenSizeMenu(), from the modes this machine's
+		   display memory can hold. */
 		settings_menu->AppendSubMenu(screen_menu,
 		                             DisplayOptions::ScreenSizeGroup());
 
@@ -239,11 +228,6 @@ void MainFrame::BuildMenus()
 		                                  DisplayOptions::ScalingWholeMultiples());
 		scaling_menu_items_[DisplayScaling_WholeMultiples]->SetHelp(
 		    DisplayOptions::ScalingWholeMultiplesHelp());
-		scaling_menu_items_[DisplayScaling_ScaleToFit] =
-		    scaling_menu->AppendRadioItem(ID_MENU_SCALING_FIT,
-		                                  DisplayOptions::ScalingScaleToFit());
-		scaling_menu_items_[DisplayScaling_ScaleToFit]->SetHelp(
-		    DisplayOptions::ScalingScaleToFitHelp());
 		settings_menu->AppendSubMenu(scaling_menu,
 		                             DisplayOptions::ScalingGroup());
 	}
@@ -370,10 +354,7 @@ void MainFrame::BuildMenus()
 	BindMenuItem(settings_menu, ID_MENU_CPU_IDLE, this, &MainFrame::OnCpuIdle);
 	BindMenuItem(settings_menu, ID_MENU_SCALING_ACTUAL, this, &MainFrame::OnDisplayScaling);
 	BindMenuItem(settings_menu, ID_MENU_SCALING_MULTIPLES, this, &MainFrame::OnDisplayScaling);
-	BindMenuItem(settings_menu, ID_MENU_SCALING_FIT, this, &MainFrame::OnDisplayScaling);
-	BindMenuItem(settings_menu, ID_MENU_SCREEN_AUTOMATIC, this, &MainFrame::OnScreenSize);
-	BindMenuItem(settings_menu, ID_MENU_SCREEN_MATCH_WINDOW, this, &MainFrame::OnScreenSize);
-	/* One binding for the whole run of fixed sizes: the list is built from the
+	/* One binding for the whole run of screen sizes: the list is built from the
 	   modes the machine can hold, so how many there are is not known here. */
 	Bind(wxEVT_MENU, &MainFrame::OnScreenSize, this,
 	     ID_MENU_SCREEN_FIXED_FIRST, ID_MENU_SCREEN_FIXED_LAST);

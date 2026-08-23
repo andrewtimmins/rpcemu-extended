@@ -72,8 +72,6 @@ EmulatorPanel::EmulatorPanel(wxWindow *parent, EmulatorHost &emulator)
 	SetCanFocus(true);
 	if (pconfig_copy != nullptr) {
 		display_scaling_ = pconfig_copy->display_scaling;
-		window_free_ = display_scaling_ != DisplayScaling_ActualSize ||
-		               pconfig_copy->screen_size == ScreenSize_MatchWindow;
 	}
 #ifdef __WXGTK__
 	if (GtkWidget *widget = GTK_WIDGET(GetHandle())) {
@@ -167,10 +165,16 @@ void EmulatorPanel::SetFullScreen(bool full_screen)
 	Refresh(false);
 }
 
-void EmulatorPanel::SetDisplayMode(int scaling, bool window_free)
+void EmulatorPanel::SetDisplayMode(int scaling)
 {
 	display_scaling_ = scaling;
-	window_free_ = window_free;
+	ResizeToHostDisplay();
+	CalculateScaling();
+	Refresh(false);
+}
+
+void EmulatorPanel::SizeToGuest()
+{
 	ResizeToHostDisplay();
 	CalculateScaling();
 	Refresh(false);
@@ -210,21 +214,29 @@ void EmulatorPanel::ReleaseMouseCapture()
 	UpdateMouseCursor();
 }
 
+/*
+ * One path, not two.
+ *
+ * The guest's picture is always placed within the panel - at actual size with the
+ * guest in the configured mode the offsets are zero and the scale is 1, which is
+ * the old fast path expressed as a special case of this one rather than as
+ * separate code. Having a single mapping is what keeps the pointer, the dirty
+ * rectangles and the blit agreeing with each other.
+ */
 wxPoint EmulatorPanel::PanelPointToHost(int x, int y) const
 {
-	if (Letterboxed()) {
-		const int local_x = x - offset_x_;
-		const int local_y = y - offset_y_;
-		if (local_x < 0 || local_y < 0 || local_x >= scaled_x_ || local_y >= scaled_y_) {
-			return wxPoint(-1, -1);
-		}
+	const int local_x = x - offset_x_;
+	const int local_y = y - offset_y_;
 
-		return wxPoint(local_x * host_xsize_ / scaled_x_,
-		                 local_y * host_ysize_ / scaled_y_);
+	if (scaled_x_ <= 0 || scaled_y_ <= 0) {
+		return wxPoint(-1, -1);
+	}
+	if (local_x < 0 || local_y < 0 || local_x >= scaled_x_ || local_y >= scaled_y_) {
+		return wxPoint(-1, -1);
 	}
 
-	return wxPoint(std::clamp(x, 0, std::max(host_xsize_ - 1, 0)),
-	               std::clamp(y, 0, std::max(host_ysize_ - 1, 0)));
+	return wxPoint(local_x * host_xsize_ / scaled_x_,
+	               local_y * host_ysize_ / scaled_y_);
 }
 
 wxPoint EmulatorPanel::HostPointToPanel(int host_x, int host_y) const
@@ -238,14 +250,8 @@ wxPoint EmulatorPanel::HostPointToPanel(int host_x, int host_y) const
 		panel_y *= 2;
 	}
 
-	if (Letterboxed()) {
-		return wxPoint(offset_x_ + (panel_x * scaled_x_) / std::max(host_xsize_, 1),
-		               offset_y_ + (panel_y * scaled_y_) / std::max(host_ysize_, 1));
-	}
-
-	panel_x = std::clamp(panel_x, 0, std::max(GetClientSize().x - 1, 0));
-	panel_y = std::clamp(panel_y, 0, std::max(GetClientSize().y - 1, 0));
-	return wxPoint(panel_x, panel_y);
+	return wxPoint(offset_x_ + (panel_x * scaled_x_) / std::max(host_xsize_, 1),
+	               offset_y_ + (panel_y * scaled_y_) / std::max(host_ysize_, 1));
 }
 
 void EmulatorPanel::SyncMousePosition(int x, int y)
@@ -271,66 +277,45 @@ wxPoint EmulatorPanel::CaptureCentre() const
 
 void EmulatorPanel::ResizeToHostDisplay()
 {
-	const wxSize host_size(host_xsize_, host_ysize_);
-	const bool have_guest_size = host_xsize_ > 0 && host_ysize_ > 0;
+	const wxSize guest(host_xsize_, host_ysize_);
+	const bool have_size = host_xsize_ > 0 && host_ysize_ > 0;
 
 	/* Full screen: the display sets the size and nothing here has a say. */
-	if (full_screen_ || !have_guest_size) {
+	if (full_screen_ || !have_size) {
 		SetMinSize(wxDefaultSize);
 		SetMaxSize(wxDefaultSize);
 		SetSizeHints(wxDefaultSize, wxDefaultSize);
 		return;
 	}
 
-	switch (display_scaling_) {
-	case DisplayScaling_WholeMultiples:
+	if (display_scaling_ == DisplayScaling_WholeMultiples) {
 		/*
 		 * Free to grow, but never below one host pixel per guest pixel.
 		 *
-		 * The minimum matters: this used to clear it, like scale-to-fit below.
-		 * Toggling from the menu was fine, because by then the window had a size
-		 * of its own, but a machine that started with the setting already on had
-		 * a panel contributing no minimum at all, so the frame's Fit()
-		 * shrink-wrapped it to just the menu and toolbar. That is issue #47,
-		 * "the main window fails to open".
+		 * The minimum matters: this used to be cleared. Toggling from the menu was
+		 * fine, because by then the window had a size of its own, but a machine
+		 * that started with the setting already on had a panel contributing no
+		 * minimum at all, so the frame's Fit() shrink-wrapped it to just the menu
+		 * and toolbar. That is issue #47, "the main window fails to open".
 		 */
-		SetMinSize(host_size);
+		SetMinSize(guest);
 		SetMaxSize(wxDefaultSize);
-		SetSizeHints(host_size, wxDefaultSize);
-		return;
-
-	case DisplayScaling_ScaleToFit:
-		/* Any size at all: that is the whole point of it. */
-		SetMinSize(wxDefaultSize);
-		SetMaxSize(wxDefaultSize);
-		SetSizeHints(wxDefaultSize, wxDefaultSize);
-		return;
-
-	case DisplayScaling_ActualSize:
-	default:
-		/*
-		 * Normally the window is locked to the desktop, since at 1:1 any other
-		 * size is either a border or a clipped desktop.
-		 *
-		 * Not when the screen size is following the window, though. Then the
-		 * window is the input to the guest's mode and the guest's mode is the
-		 * output, and locking one to the other closes the loop: each resize
-		 * would pick a new mode, the new mode would resize the window, and that
-		 * would pick another. So the window stays free and the small remainder
-		 * between it and the nearest standard mode is centred instead.
-		 */
-		if (window_free_) {
-			SetMinSize(wxDefaultSize);
-			SetMaxSize(wxDefaultSize);
-			SetSizeHints(wxDefaultSize, wxDefaultSize);
-			return;
-		}
-		SetMinSize(host_size);
-		SetMaxSize(host_size);
-		SetSize(host_size);
-		SetSizeHints(host_size, host_size);
+		SetSizeHints(guest, wxDefaultSize);
 		return;
 	}
+
+	/*
+	 * Actual size: the panel is exactly the guest's screen.
+	 *
+	 * Both directions matter. Smaller and the desktop is clipped, which loses the
+	 * icon bar off the bottom; larger and the difference is a black border. The
+	 * screen-size setting decides what the guest is ASKED to be; what it actually
+	 * is, is what gets shown.
+	 */
+	SetMinSize(guest);
+	SetMaxSize(guest);
+	SetSize(guest);
+	SetSizeHints(guest, guest);
 }
 
 namespace {
@@ -437,59 +422,23 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 	if (recalculate_needed) {
 		CalculateScaling();
 
-		if (!full_screen_ && !window_free_) {
-			if (display_scaling_ == DisplayScaling_WholeMultiples) {
-				ResizeToHostDisplay();
-			} else {
-				const wxSize host_size(update.host_xsize, update.host_ysize);
-				SetMinSize(host_size);
-				SetMaxSize(host_size);
-				SetSize(host_size);
-				SetSizeHints(host_size, host_size);
-			}
-
-			if (wxWindow *top = wxGetTopLevelParent(this)) {
-				top->Layout();
-				if (auto *frame = wxDynamicCast(top, wxFrame)) {
-					frame->Fit();
-					/*
-					 * Put the window somewhere it can still be reached.
-					 *
-					 * It has just changed size around a fixed top-left corner,
-					 * so a guest going from 640x480 to 1440x900 grows down and
-					 * to the right and walks off the bottom-right of the
-					 * screen. Centring fixes that - but only while the window
-					 * fits. A guest mode BIGGER than the display cannot be
-					 * fitted at all without scaling, and centring something
-					 * taller than the screen puts its title bar above the top
-					 * edge, where it cannot be dragged back into view. So
-					 * anything that does not fit is pinned to the top-left of
-					 * the work area instead, which keeps the title bar and the
-					 * menu reachable.
-					 *
-					 * Only on a resize, so a window the user has placed is left
-					 * where they put it until the mode changes again.
-					 */
-					if (!frame->IsMaximized() && !frame->IsIconized()) {
-						int index = wxDisplay::GetFromWindow(frame);
-
-						if (index == wxNOT_FOUND) {
-							index = 0;
-						}
-
-						const wxRect work =
-						    wxDisplay((unsigned) index).GetClientArea();
-						const wxSize size = frame->GetSize();
-
-						if (size.x <= work.width && size.y <= work.height) {
-							frame->Centre();
-						} else {
-							frame->SetPosition(work.GetTopLeft());
-						}
-					}
-				}
-			}
-		}
+		/*
+		 * Deliberately nothing here any more.
+		 *
+		 * The window used to be resized to the guest's new mode at this point,
+		 * and then re-centred, on every mode change. RISC OS changes mode two or
+		 * three times while it boots - and on a machine with the graphics card
+		 * the display is handed over part way through as well - so the window
+		 * jumped through three sizes and positions before settling on one. As a
+		 * startup it was indefensible.
+		 *
+		 * The window's size now comes from the configured screen size, and is set
+		 * once by the frame: when the machine starts, or when the setting is
+		 * changed. Whatever mode the guest is actually in is drawn centred inside
+		 * it, so the modes passed through on the way up cost nothing more than a
+		 * repaint. See ResizeToHostDisplay() and
+		 * MainFrame::CentreWindowOnScreen().
+		 */
 
 		if (GlActive()) {
 			/* The rectangle has just changed, so the texture is drawn against
@@ -517,7 +466,7 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 		ymax *= 2;
 	}
 
-	if (Letterboxed()) {
+	{
 		width = (width * scaled_x_) / std::max(host_xsize_, 1);
 
 		if (ymin > 0) {
@@ -532,9 +481,6 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 
 		const int height = ymax - ymin;
 		RefreshRect(wxRect(offset_x_, offset_y_ + ymin, width, height), false);
-	} else {
-		const int height = ymax - ymin;
-		RefreshRect(wxRect(0, ymin, width, height), false);
 	}
 }
 
@@ -617,40 +563,35 @@ void EmulatorPanel::CalculateScaling()
 		host_ysize_ = image_height_;
 	}
 
-	if (Letterboxed()) {
-		const int widget_x = client.x;
-		const int widget_y = client.y;
+	/*
+	 * One rule: draw the guest's picture at a whole-number scale and centre it.
+	 *
+	 * There is no aspect-ratio fitting and no stretching. Both existed to paper
+	 * over a window whose size did not match the guest's mode, and now that the
+	 * window is the configured screen size, the only times they differ are while
+	 * RISC OS is booting through other modes and when whole-multiple scaling has
+	 * been asked for. Neither wants the picture distorted - a boot message
+	 * stretched to an odd shape looks like a fault, and whole multiples exist
+	 * precisely to keep pixels square.
+	 *
+	 * Full screen scales up as far as whole multiples allow, for the same reason:
+	 * sharp and centred beats filling the screen with a soft picture.
+	 */
+	const int scale_x = host_xsize_ > 0 ? client.x / host_xsize_ : 0;
+	const int scale_y = host_ysize_ > 0 ? client.y / host_ysize_ : 0;
+	int scale = std::min(scale_x, scale_y);
 
-		if (display_scaling_ == DisplayScaling_ActualSize) {
-			/* Reached when the window leads and the guest follows: draw 1:1 and
-			   let the offsets below centre it in whatever is left over, which is
-			   at most one rung of the standard-mode ladder. */
-			scaled_x_ = host_xsize_;
-			scaled_y_ = host_ysize_;
-		} else if (display_scaling_ == DisplayScaling_WholeMultiples) {
-			const int scale_x = std::max(1, widget_x / host_xsize_);
-			const int scale_y = std::max(1, widget_y / host_ysize_);
-			const int scale = std::min(scale_x, scale_y);
-			scaled_x_ = host_xsize_ * scale;
-			scaled_y_ = host_ysize_ * scale;
-		} else {
-			if ((widget_x * host_ysize_) >= (widget_y * host_xsize_)) {
-				scaled_x_ = (widget_y * host_xsize_) / host_ysize_;
-				scaled_y_ = widget_y;
-			} else {
-				scaled_x_ = widget_x;
-				scaled_y_ = (widget_x * host_ysize_) / host_xsize_;
-			}
-		}
-
-		offset_x_ = (widget_x - scaled_x_) / 2;
-		offset_y_ = (widget_y - scaled_y_) / 2;
-	} else {
-		scaled_x_ = host_xsize_;
-		scaled_y_ = host_ysize_;
-		offset_x_ = 0;
-		offset_y_ = 0;
+	if (scale < 1) {
+		scale = 1;	/* Smaller than the picture: centre it and clip */
 	}
+	if (display_scaling_ == DisplayScaling_ActualSize && !full_screen_) {
+		scale = 1;	/* Exactly what it says */
+	}
+
+	scaled_x_ = host_xsize_ * scale;
+	scaled_y_ = host_ysize_ * scale;
+	offset_x_ = (client.x - scaled_x_) / 2;
+	offset_y_ = (client.y - scaled_y_) / 2;
 }
 
 #if wxUSE_GLCANVAS
@@ -862,7 +803,7 @@ void EmulatorPanel::OnPaint(wxPaintEvent &event)
 		dest = GetClientRect();
 	}
 
-	if (Letterboxed()) {
+	{
 		if ((dest.x < offset_x_) || (dest.y < offset_y_) ||
 		    (dest.x + dest.width > offset_x_ + scaled_x_) ||
 		    (dest.y + dest.height > offset_y_ + scaled_y_)) {
@@ -1015,7 +956,7 @@ void EmulatorPanel::OnMouseMove(wxMouseEvent &event)
 		/* The captured pointer delta is measured in host-window pixels; when the
 		   display is scaled down the guest is larger than the window, so scale
 		   the delta up to guest units or the pointer crawls. */
-		if (Letterboxed() && scaled_x_ > 0 && scaled_y_ > 0) {
+		if (scaled_x_ > 0 && scaled_y_ > 0) {
 			dx = (dx * host_xsize_) / scaled_x_;
 			dy = (dy * host_ysize_) / scaled_y_;
 		}
@@ -1023,7 +964,7 @@ void EmulatorPanel::OnMouseMove(wxMouseEvent &event)
 			rpclog("MOUSEDBG ev=%d,%d mid=%d,%d raw=%d,%d sent=%d,%d host=%dx%d scaled=%dx%d off=%d,%d full=%d scaling=%d free=%d\n",
 			       event.GetX(), event.GetY(), middle.x, middle.y, rawdx, rawdy, dx, dy,
 			       host_xsize_, host_ysize_, scaled_x_, scaled_y_, offset_x_, offset_y_,
-			       full_screen_, display_scaling_, window_free_);
+			       full_screen_, display_scaling_, 0);
 		}
 		emulator_.MouseMoveRelative(dx, dy);
 	} else if (pconfig_copy->mousehackon) {

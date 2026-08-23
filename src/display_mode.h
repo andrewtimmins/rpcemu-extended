@@ -71,4 +71,32 @@ extern size_t display_mode_count(void);
  */
 extern int display_mode_get(size_t index, unsigned *width, unsigned *height);
 
+/*
+ * Modes RISC OS has refused, so nothing offers them again.
+ *
+ * The list above is what a monitor is normally capable of, and it is NOT what
+ * the guest will accept. RISC OS validates a mode against the monitor definition
+ * in force, and that is often a monitor definition file rather than the EDID the
+ * emulator synthesises - on a machine with the graphics card fitted, measured
+ * directly, only six of the thirteen modes that fit its display memory were
+ * accepted, and the refusals were not the ones anybody would guess: 1920x1200
+ * yes, 1920x1080 no.
+ *
+ * There is no way to ask from the host side which definition is loaded or what
+ * it declares, so the answer is learned. A request whose mode the guest never
+ * adopts is marked here, and from then on display_mode_fit() steps over it and
+ * the fixed-size menu stops offering it.
+ *
+ * Marks last for the session. The monitor definition belongs to the guest and
+ * changes when it is reconfigured, so remembering refusals for ever would
+ * outlive the reason for them.
+ */
+extern void display_mode_mark_unavailable(unsigned width, unsigned height);
+
+/** Has this mode been refused by the guest? */
+extern int display_mode_is_unavailable(unsigned width, unsigned height);
+
+/** Forget every refusal, for a machine that has just restarted or switched. */
+extern void display_mode_clear_unavailable(void);
+
 #endif /* DISPLAY_MODE_H */

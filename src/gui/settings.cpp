@@ -440,6 +440,15 @@ extern "C" void config_sync_machine_edit_to_copy(Config *dest, const Config *src
 	dest->refresh = src->refresh;
 	dest->network_type = src->network_type;
 
+	/* The display choices, so the Settings menu and the window agree with what
+	   the editor was just told. Without these the editor wrote them to the
+	   configuration and to the live config, and the frame's copy - which is what
+	   the menu ticks and the drawing rule are read from - kept the old values:
+	   the two views of one setting disagreed the moment either was used. */
+	dest->display_scaling = src->display_scaling;
+	dest->screen_size_x = src->screen_size_x;
+	dest->screen_size_y = src->screen_size_y;
+
 	if (src->bridgename != nullptr) {
 		config_replace_strdup(&dest->bridgename, wxString::FromUTF8(src->bridgename));
 	} else {
@@ -669,52 +678,46 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	settings.Read("show_fullscreen_message", &value, 1L);
 	cfg->show_fullscreen_message = static_cast<int>(value);
 	/*
-	 * The display choices, and the three switches they grew out of.
+	 * The display settings, and the switches they grew out of.
 	 *
-	 * A configuration written before the split has integer_scaling,
-	 * fit_to_window and follow_host_display and none of the keys below, so the
-	 * old keys are read as the fallback for the new ones and a machine carries
-	 * on behaving as it did. Nothing writes the old keys any more, so this is a
-	 * one-way conversion that happens the first time the machine is saved.
+	 * A configuration written before any of this has integer_scaling,
+	 * fit_to_window and follow_host_display; one written between then and now may
+	 * also have a "screen_size" naming a policy - best for this display, or follow
+	 * the window. Those policies are gone: RISC OS accepts only the screen modes
+	 * its monitor definition declares, so a desktop that chased the window landed
+	 * on a coarse and unpredictable set of sizes and moved the window about while
+	 * it did it. What is left is a plain resolution.
 	 *
-	 * follow_host_display becomes ScreenSize_MatchWindow, which is not quite
-	 * what it did - it only acted when a monitor was attached or its resolution
-	 * altered, never on the window. It is the honest successor even so: what it
-	 * was for was a RISC OS desktop that tracks the front end, and the reason it
-	 * was reported as broken is that it hardly ever fired.
+	 * Anything that named a policy therefore converts to no resolution at all,
+	 * which MainFrame::StartEmulator() then fills in with the best one for this
+	 * display - the same answer the policy would have given on its first run, but
+	 * recorded once instead of re-decided behind the user's back.
 	 */
 	{
-		long old_integer = 0, old_fit = 0, old_follow = 0;
+		long old_integer = 0, old_fit = 0;
 
 		settings.Read("integer_scaling", &old_integer, 0L);
 		settings.Read("fit_to_window", &old_fit, 0L);
-		settings.Read("follow_host_display", &old_follow, 0L);
 
-		long scaling_default = DisplayScaling_ActualSize;
-		if (old_fit != 0) {
-			scaling_default = DisplayScaling_ScaleToFit;
-		} else if (old_integer != 0) {
-			scaling_default = DisplayScaling_WholeMultiples;
-		}
+		/* fit_to_window became "fill the window", which is gone too: it stretched
+		   the desktop to cover a window that did not match it, and with the window
+		   now being the desktop's size there is nothing to cover. Actual size is
+		   what it becomes. */
+		const long scaling_default = (old_integer != 0 && old_fit == 0)
+		    ? DisplayScaling_WholeMultiples : DisplayScaling_ActualSize;
+
 		settings.Read("display_scaling", &value, scaling_default);
-		cfg->display_scaling = DisplayOptions::ClampDisplayScaling(static_cast<int>(value));
-
-		const long size_default = (old_follow != 0)
-		    ? ScreenSize_MatchWindow : ScreenSize_Automatic;
-		settings.Read("screen_size", &value, size_default);
-		cfg->screen_size = DisplayOptions::ClampScreenSize(static_cast<int>(value));
+		cfg->display_scaling = DisplayOptions::ClampDisplayScaling((int) value);
 
 		settings.Read("screen_size_x", &value, 0L);
-		cfg->screen_size_x = static_cast<unsigned>(value < 0 ? 0 : value);
+		cfg->screen_size_x = (unsigned) (value < 0 ? 0 : value);
 		settings.Read("screen_size_y", &value, 0L);
-		cfg->screen_size_y = static_cast<unsigned>(value < 0 ? 0 : value);
+		cfg->screen_size_y = (unsigned) (value < 0 ? 0 : value);
 
-		/* A fixed size with nothing to be fixed at is not a choice, it is a
-		   blank screen waiting to happen. */
-		if (cfg->screen_size == ScreenSize_Fixed &&
-		    (cfg->screen_size_x == 0 || cfg->screen_size_y == 0))
-		{
-			cfg->screen_size = ScreenSize_Automatic;
+		/* A size that is not a whole mode is no size at all. */
+		if (cfg->screen_size_x == 0 || cfg->screen_size_y == 0) {
+			cfg->screen_size_x = 0;
+			cfg->screen_size_y = 0;
 		}
 	}
 	settings.Read("gfxcard_enabled", &value, 0L);
@@ -916,7 +919,6 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	settings.Write("cpu_idle", static_cast<long>(cfg->cpu_idle));
 	settings.Write("show_fullscreen_message", static_cast<long>(cfg->show_fullscreen_message));
 	settings.Write("display_scaling", static_cast<long>(cfg->display_scaling));
-	settings.Write("screen_size", static_cast<long>(cfg->screen_size));
 	settings.Write("screen_size_x", static_cast<long>(cfg->screen_size_x));
 	settings.Write("screen_size_y", static_cast<long>(cfg->screen_size_y));
 	settings.Write("gfxcard_enabled", static_cast<long>(cfg->gfxcard_enabled));

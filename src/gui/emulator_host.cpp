@@ -887,41 +887,11 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 		config_save(&config);
 		break;
 	case EmuCommandType::SetScreenSize:
-		config.screen_size = command.arg1;
-		config.screen_size_x = (unsigned) command.arg2;
-		config.screen_size_y = (unsigned) command.arg3;
-		/*
-		 * The change takes effect now rather than at the next restart: somebody
-		 * who picks a screen size expects RISC OS to adopt it, and the guest
-		 * support module is polling for exactly this.
-		 *
-		 * Automatic publishes too, even though it publishes nothing at boot.
-		 * Choosing it is a request for the best mode for this display, and
-		 * having it do nothing until the machine restarted would make it look
-		 * like the option that does not work - which is the reputation the
-		 * setting it replaced had earned.
-		 *
-		 * Match-the-window is the exception: only the front end knows how big
-		 * the window is, so it publishes from there.
-		 */
-		switch (config.screen_size) {
-		case ScreenSize_Fixed:
-			rpcemu_request_guest_size(config.screen_size_x,
-			                          config.screen_size_y);
-			break;
-
-		case ScreenSize_Automatic: {
-			unsigned bound_x = 0, bound_y = 0;
-
-			if (rpcemu_edid_bound(&bound_x, &bound_y)) {
-				rpcemu_request_guest_size(bound_x, bound_y);
-			}
-			break;
-		}
-
-		default:
-			break;
-		}
+		config.screen_size_x = (unsigned) command.arg1;
+		config.screen_size_y = (unsigned) command.arg2;
+		/* Storing only: the request itself is made by the front end, which is
+		   the only place that can then check whether the guest adopted the mode.
+		   See MainFrame::RequestGuestMode(). */
 		config_save(&config);
 		break;
 	case EmuCommandType::ClipboardEnabled:
@@ -1192,13 +1162,12 @@ void EmulatorHost::SetDisplayScaling(int scaling)
 	PostCommand(cmd);
 }
 
-void EmulatorHost::SetScreenSize(int mode, unsigned width, unsigned height)
+void EmulatorHost::SetScreenSize(unsigned width, unsigned height)
 {
 	EmuCommand cmd = MakeCommand(EmuCommandType::SetScreenSize);
 
-	cmd.arg1 = mode;
-	cmd.arg2 = (int) width;
-	cmd.arg3 = (int) height;
+	cmd.arg1 = (int) width;
+	cmd.arg2 = (int) height;
 	PostCommand(cmd);
 }
 

@@ -158,10 +158,9 @@ private:
 	/* Options page. Each maps to one per-machine configuration field, except
 	   default_machine_check_ which is a host preference. */
 	wxCheckBox *fullscreen_msg_check_ = nullptr;
-	/* The two display choices, mirroring the Settings menu. Indexed by
-	   DisplayScaling and ScreenSize so a configured value selects directly. */
-	wxRadioButton *scaling_radio_[3] = { nullptr, nullptr, nullptr };
-	wxRadioButton *screen_size_radio_[3] = { nullptr, nullptr, nullptr };
+	/* The two display choices, mirroring the Settings menu. scaling_radio_ is
+	   indexed by DisplayScaling, so a configured value selects directly. */
+	wxRadioButton *scaling_radio_[2] = { nullptr, nullptr };
 	wxChoice *fixed_mode_choice_ = nullptr;
 
 	/* The modes fixed_mode_choice_ is currently offering, in its own order. */
@@ -169,9 +168,6 @@ private:
 
 	/** Refill fixed_mode_choice_ for the VRAM and graphics card now selected. */
 	void RebuildFixedModeChoice();
-
-	/** Grey out the fixed-size list unless Fixed Size is the chosen option. */
-	void UpdateScreenSizeEnables();
 
 	/** Display memory the pending VRAM / graphics card selection would give. */
 	size_t PendingDisplayMemory() const;
@@ -183,14 +179,12 @@ private:
 	int SelectedDisplayScaling() const;
 
 	/**
-	 * Which screen-size option is selected (a ScreenSize), and for Fixed Size
-	 * the mode chosen with it.
-	 *
-	 * Falls back to automatic if Fixed Size is selected with nothing in the
-	 * list, which happens only if the machine's display memory cannot hold even
-	 * the smallest standard mode.
+	 * The screen size chosen from the list, or (0, 0) if the list is empty -
+	 * which only happens if the machine's display memory cannot hold even the
+	 * smallest standard mode. Zero means "choose one for this display", which is
+	 * what MainFrame::StartEmulator() does with it.
 	 */
-	int SelectedScreenSize(unsigned *width, unsigned *height) const;
+	void SelectedScreenSize(unsigned *width, unsigned *height) const;
 	wxCheckBox *sound_check_ = nullptr;
 	wxCheckBox *cdrom_check_ = nullptr;
 	wxCheckBox *mouse_twobutton_check_ = nullptr;

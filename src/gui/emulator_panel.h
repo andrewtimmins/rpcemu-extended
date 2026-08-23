@@ -53,19 +53,26 @@ public:
 	 */
 	wxSize GuestScreenSize() const { return wxSize(host_xsize_, host_ysize_); }
 	/**
-	 * Set how the guest's screen is drawn here.
+	 * Set how the guest's screen is drawn: a DisplayScaling.
 	 *
-	 * @param scaling     A DisplayScaling: actual size, whole multiples, or
-	 *                    scale to fit.
-	 * @param window_free True when the window's size is not derived from the
-	 *                    guest's, so the guest image is placed inside whatever
-	 *                    the window happens to be. Whole multiples and scale to
-	 *                    fit always imply it; actual size does too when the
-	 *                    screen size is following the window, because then the
-	 *                    window leads and the desktop follows rather than the
-	 *                    other way round.
+	 * The panel's SIZE is not set here. It comes from the guest's own screen mode
+	 * (see SizeToGuest()), because a window smaller than the desktop clips it -
+	 * losing the icon bar off the bottom - and a window larger than it wastes the
+	 * difference on a border.
 	 */
-	void SetDisplayMode(int scaling, bool window_free);
+	void SetDisplayMode(int scaling);
+
+	/**
+	 * Size this panel to the guest's current screen mode.
+	 *
+	 * Called by the frame, never from a video update. That is the difference that
+	 * matters: RISC OS changes mode two or three times while it boots, and on a
+	 * machine with the graphics card the display is handed over part way through
+	 * as well. Resizing on each one made the window jump through three sizes and
+	 * positions before settling, so the frame waits for the changes to stop and
+	 * then calls this once. See MainFrame::NoteGuestFrame().
+	 */
+	void SizeToGuest();
 	void ForceRedraw();
 	bool SaveScreenshot(const wxString &path);
 
@@ -151,17 +158,8 @@ private:
 	bool pointer_captured_ = false;	/**< True while we hold the wx mouse capture for a drag */
 	std::chrono::steady_clock::time_point last_press_time_{};
 	int display_scaling_ = DisplayScaling_ActualSize;
-	bool window_free_ = false;
 
-	/**
-	 * Is the guest image placed inside a panel of some other size, rather than
-	 * being the panel?
-	 *
-	 * The one predicate the drawing, hit-testing and pointer maths all turn on.
-	 * When false the panel is exactly the guest's screen at 1:1 with no offset,
-	 * which is the cheap path and the default.
-	 */
-	bool Letterboxed() const { return full_screen_ || window_free_; }
+
 	bool full_screen_ = false;
 	std::chrono::steady_clock::time_point user_pointer_until_{};
 

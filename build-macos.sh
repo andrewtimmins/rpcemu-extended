@@ -57,7 +57,7 @@ while [ $# -gt 0 ]; do
 				*) echo "error: unknown architecture '${1#--arch=}' (want x86_64 or arm64)"; exit 2 ;;
 			esac
 			;;
-		--fuse) DO_BUILD=false; DO_FUSE=true; FUSE_REQUESTED=true ;;
+		--fuse) DO_FUSE=true; FUSE_REQUESTED=true ;;
 		--help|-h) echo "Usage: $0 [--arch x86_64|arm64] [--fuse] [--zip]"; exit 0 ;;
 		*) echo "unknown option: $1"; exit 2 ;;
 	esac
@@ -67,6 +67,19 @@ done
 # already exists, which is what a CI job building each arch separately wants.
 # Given in either order, an explicit --fuse wins over --arch's default.
 [ "$FUSE_REQUESTED" = true ] && DO_FUSE=true
+
+# Bare "--fuse", with no --arch, is the only form that skips building: it means
+# "assemble a bundle from slices that already exist", which is what the CI job
+# that only downloads them wants.
+#
+# It used to skip building whenever --fuse appeared at all, whatever else was on
+# the command line. "--arch arm64 --fuse" therefore re-fused a stale slice and
+# produced a bundle with none of the current source in it - silently, since
+# everything it printed looked like a successful build. Several rounds of "this
+# is still broken" were spent on a binary that predated the fix being tested.
+if [ "$FUSE_REQUESTED" = true ] && [ -z "$ONE_ARCH" ]; then
+	DO_BUILD=false
+fi
 
 get_version() {
 	# See build.sh: number from VERSION, commit from git unless on a tag.
@@ -566,14 +579,35 @@ if [ "$DO_FUSE" = true ]; then
 	LIPO=$(command -v lipo || command -v x86_64-apple-darwin*-lipo || true)
 	[ -n "$LIPO" ] || { echo "error: lipo not found (need Apple cctools or osxcross)"; exit 1; }
 
+	# Which architectures this bundle is made of.
+	#
+	# Normally both, fused into a universal binary. With --arch it is just that
+	# one: the plist note below already accounts for a single-arch bundle, and
+	# requiring the other slice regardless meant "--arch arm64 --fuse" could not
+	# produce anything on a machine without the x86_64 Homebrew libraries - which
+	# is every Apple Silicon machine that has not gone out of its way to install
+	# them. A thin bundle is exactly what somebody testing their own build wants.
+	if [ -n "$ONE_ARCH" ]; then
+		FUSE_ARCHES="$ONE_ARCH"
+	else
+		FUSE_ARCHES="x86_64 arm64"
+	fi
+
 	# Staging normally happens in build_slice, on the machine that has that
 	# architecture's libraries installed - which matters because the CI job doing
 	# the fuse has no Homebrew dependencies of its own, only the staged slices.
 	# Stage here only if it has not been done, for a tree where the slices were
 	# built by an earlier invocation.
-	for arch in x86_64 arm64; do
-		if [ ! -f "build-mac-$arch/appstage/bin/rpcemu" ]; then
-			[ -f "build-mac-$arch/bin/$(slice_binname "$arch")" ] || {
+	for arch in $FUSE_ARCHES; do
+		built="build-mac-$arch/bin/$(slice_binname "$arch")"
+		staged="build-mac-$arch/appstage/bin/rpcemu"
+
+		# Re-stage when the staged copy is missing OR older than the binary it
+		# was taken from. Only checking for its existence meant a rebuilt slice
+		# was staged once and never again, so the bundle kept whatever had been
+		# copied the first time - a stale binary that nothing reported.
+		if [ ! -f "$staged" ] || { [ -f "$built" ] && [ "$built" -nt "$staged" ]; }; then
+			[ -f "$built" ] || {
 				echo "error: no slice for $arch (build it first, or use the CI per-arch jobs)"
 				exit 1
 			}
@@ -581,9 +615,31 @@ if [ "$DO_FUSE" = true ]; then
 		fi
 	done
 
-	for f in "$X86_STAGE/bin/rpcemu" "$ARM_STAGE/bin/rpcemu"; do
-		[ -f "$f" ] || { echo "error: missing staged slice '$f'"; exit 1; }
+	# The staged binaries to fuse, in architecture order. Named separately from
+	# the stage directories so a single-arch bundle is one entry rather than a
+	# special case at every use.
+	STAGES=""
+	for arch in $FUSE_ARCHES; do
+		f="build-mac-$arch/appstage"
+		[ -f "$f/bin/rpcemu" ] || { echo "error: missing staged slice '$f/bin/rpcemu'"; exit 1; }
+		STAGES="$STAGES $f"
 	done
+
+	# lipo the named binary from every slice that has it, or nothing if none do.
+	# One input produces a thin binary, which is what a single-arch bundle is.
+	fuse_binary() {
+		local name="$1" out="$2"
+		local -a inputs=()
+		local stage
+
+		for stage in $STAGES; do
+			[ -f "$stage/bin/$name" ] && inputs+=("$stage/bin/$name")
+		done
+		[ ${#inputs[@]} -gt 0 ] || return 1
+		"$LIPO" -create ${inputs[@]+"${inputs[@]}"} -output "$out"
+		chmod +x "$out"
+		return 0
+	}
 
 	# Assemble a proper macOS application bundle:
 	#   RPCEmu.app/Contents/MacOS/rpcemu      (universal emulator + CLI helpers)
@@ -634,31 +690,39 @@ if [ "$DO_FUSE" = true ]; then
 	# Fuse the emulator: x86_64(dynarec) + arm64(interpreter) -> universal.
 	# The staged copies are used, so the rewritten dependency paths are carried
 	# through into the bundle.
-	echo "==> lipo universal emulator binary"
-	"$LIPO" -create "$X86_STAGE/bin/rpcemu" "$ARM_STAGE/bin/rpcemu" -output "$MACOSD/rpcemu"
-	chmod +x "$MACOSD/rpcemu"
+	# What the release notes and the About box should say this bundle is.
+	case "$FUSE_ARCHES" in
+		"x86_64 arm64") BINARY_DESC="universal: x86_64 recompiler + arm64 interpreter" ;;
+		x86_64)         BINARY_DESC="x86_64 only, recompiler" ;;
+		arm64)          BINARY_DESC="arm64 only, interpreter" ;;
+		*)              BINARY_DESC="$FUSE_ARCHES" ;;
+	esac
 
-	# Fuse the HostCmd host client if both slices built it.
-	if [ -f "$X86_STAGE/bin/rpcemu-run" ] && [ -f "$ARM_STAGE/bin/rpcemu-run" ]; then
-		"$LIPO" -create "$X86_STAGE/bin/rpcemu-run" "$ARM_STAGE/bin/rpcemu-run" \
-			-output "$MACOSD/rpcemu-run"
-		chmod +x "$MACOSD/rpcemu-run"
+	# What to call the artefacts. A thin bundle called "universal" is a file
+	# somebody will hand to an Intel Mac and watch fail to open.
+	case "$FUSE_ARCHES" in
+		"x86_64 arm64") ARCHTAG=universal ;;
+		*)              ARCHTAG="$FUSE_ARCHES" ;;
+	esac
+
+	echo "==> lipo emulator binary ($FUSE_ARCHES)"
+	fuse_binary rpcemu "$MACOSD/rpcemu"
+
+	# The HostCmd host client, and rpcemu-shell which is the same binary.
+	if fuse_binary rpcemu-run "$MACOSD/rpcemu-run"; then
 		ln -sf rpcemu-run "$MACOSD/rpcemu-shell"
 	fi
 
 	# And the DebugCmd host client, the same way.
-	if [ -f "$X86_STAGE/bin/rpcemu-debug" ] && [ -f "$ARM_STAGE/bin/rpcemu-debug" ]; then
-		"$LIPO" -create "$X86_STAGE/bin/rpcemu-debug" "$ARM_STAGE/bin/rpcemu-debug" \
-			-output "$MACOSD/rpcemu-debug"
-		chmod +x "$MACOSD/rpcemu-debug"
-	fi
+	fuse_binary rpcemu-debug "$MACOSD/rpcemu-debug" || true
 
 	# Make each bundled dependency universal in the same way. A library present
 	# for only one architecture is copied through thin, which keeps that slice
 	# working rather than failing the whole build.
 	FRAMEWORKSD="$CONTENTS/Frameworks"
 	bundled=0
-	for lib in "$X86_STAGE/libs/"* "$ARM_STAGE/libs/"*; do
+	for stage in $STAGES; do
+	for lib in "$stage/libs/"*; do
 		[ -f "$lib" ] || continue
 		base=${lib##*/}
 		[ -f "$FRAMEWORKSD/$base" ] && continue
@@ -698,7 +762,12 @@ if [ "$DO_FUSE" = true ]; then
 			"$LIPO" -create "$X86_STAGE/libs/$base" "$ARM_STAGE/libs/$base" \
 				-output "$FRAMEWORKSD/$base"
 		else
-			echo "   ! $base is single-architecture (present in only one slice)"
+			# Worth saying only when the bundle is meant to be universal. In a
+			# single-arch bundle every library is thin by definition, and warning
+			# about each of twenty-one of them is noise that hides real problems.
+			if [ "$FUSE_ARCHES" = "x86_64 arm64" ]; then
+				echo "   ! $base is single-architecture (present in only one slice)"
+			fi
 			cp -f "$lib" "$FRAMEWORKSD/$base"
 		fi
 		# The thin copies were given this id before fusing, so lipo should
@@ -711,6 +780,7 @@ if [ "$DO_FUSE" = true ]; then
 				"$FRAMEWORKSD/$base" 2>/dev/null || true
 		fi
 		bundled=$((bundled + 1))
+	done
 	done
 	if [ "$bundled" -gt 0 ]; then
 		echo "==> Bundled $bundled libraries into Contents/Frameworks"
@@ -744,7 +814,7 @@ if [ "$DO_FUSE" = true ]; then
 RPCEmu (Extended Edition) $VERSION
 Built: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 Host:  $(uname -s) $(uname -m) ($MODE)
-Binary: rpcemu (universal: x86_64 recompiler + arm64 interpreter)
+Binary: rpcemu ($BINARY_DESC)
 Toolkit: wxWidgets (wxOSX/Cocoa) + CMake
 EOF
 
@@ -844,7 +914,7 @@ EOF
 	# Disk image with a drag-to-Applications shortcut - the format Mac users
 	# expect. macOS only (hdiutil); the osxcross path stops at the .app.
 	if [ "$(uname -s)" = Darwin ] && command -v hdiutil >/dev/null 2>&1; then
-		DMG="releases/macos/rpcemu_${VERSION}_macos_universal.dmg"
+		DMG="releases/macos/rpcemu_${VERSION}_macos_${ARCHTAG}.dmg"
 		echo "==> Packaging $DMG"
 		DMGSTAGE=$(mktemp -d)
 		cp -a "$APP" "$DMGSTAGE/"
@@ -889,7 +959,7 @@ EOF
 
 	# Portable archive of the bundle (optional; the DMG is the primary artifact).
 	if [ "$MAKE_ZIP" = true ]; then
-		ARCHIVE="rpcemu_${VERSION}_macos_universal.tar.gz"
+		ARCHIVE="rpcemu_${VERSION}_macos_${ARCHTAG}.tar.gz"
 		echo "==> Packaging releases/macos/$ARCHIVE"
 		( cd releases/macos && tar czf "$ARCHIVE" RPCEmu.app )
 		echo "✓ macOS archive: releases/macos/$ARCHIVE"

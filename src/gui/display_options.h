@@ -53,28 +53,11 @@ namespace DisplayOptions {
 
 inline const char *ScreenSizeGroup() { return "RISC OS Screen Size"; }
 
-inline const char *ScreenSizeAutomatic() { return "Best for This Display"; }
-inline const char *ScreenSizeAutomaticHelp()
+inline const char *ScreenSizeHelp()
 {
-	return "Pick the largest screen mode that fits this display and this "
-	       "machine's display memory, when the machine starts. The RISC OS "
-	       "desktop then stays that size.";
-}
-
-inline const char *ScreenSizeMatchWindow() { return "Match the Window"; }
-inline const char *ScreenSizeMatchWindowHelp()
-{
-	return "Resize the window and RISC OS changes screen mode to suit, so the "
-	       "desktop grows and shrinks with it. Every window on the RISC OS "
-	       "desktop is rearranged each time the mode changes.";
-}
-
-inline const char *ScreenSizeFixed() { return "Fixed Size"; }
-inline const char *ScreenSizeFixedHelp()
-{
-	return "Always use one screen mode, whatever this display or the window is "
-	       "doing. Only modes this machine's display memory can hold are "
-	       "offered; fit more VRAM or the graphics card for the larger ones.";
+	return "The size of the RISC OS desktop. Only modes this machine's display "
+	       "memory can hold are offered; fit more VRAM, or the graphics card, for "
+	       "the larger ones.";
 }
 
 /* --- how that desktop is drawn in the window ----------------------------- */
@@ -84,24 +67,16 @@ inline const char *ScalingGroup() { return "Show In Window"; }
 inline const char *ScalingActualSize() { return "Actual Size"; }
 inline const char *ScalingActualSizeHelp()
 {
-	return "One RISC OS pixel per screen pixel. The window is sized to the "
-	       "desktop and cannot be resized, unless the screen size is following "
-	       "the window.";
+	return "One RISC OS pixel per screen pixel, never scaled. The window is the "
+	       "size of the desktop.";
 }
 
 inline const char *ScalingWholeMultiples() { return "Whole Multiples Only"; }
 inline const char *ScalingWholeMultiplesHelp()
 {
 	return "Resize the window freely, but only ever draw at 2x, 3x and so on, so "
-	       "pixels stay square and sharp. Leaves a border when the window is "
-	       "between two multiples.";
-}
-
-inline const char *ScalingScaleToFit() { return "Scale to Fit"; }
-inline const char *ScalingScaleToFitHelp()
-{
-	return "Resize the window freely and stretch the desktop to fill it, keeping "
-	       "its shape. Any size, at the cost of some softness.";
+	       "pixels stay square and perfectly sharp. The desktop is centred, so a "
+	       "border appears when the window is between two multiples.";
 }
 
 /* --- and full screen, which is neither of the above --------------------- */
@@ -109,8 +84,7 @@ inline const char *ScalingScaleToFitHelp()
 inline const char *FullScreen() { return "Full Screen"; }
 inline const char *FullScreenHelp()
 {
-	return "Give the whole display to RISC OS. The screen size and drawing "
-	       "choices above still apply inside it. Alt+Enter leaves again.";
+	return "Give the whole display to RISC OS. Alt+Enter leaves again.";
 }
 
 /* --- validation ---------------------------------------------------------- */
@@ -121,24 +95,8 @@ inline const char *FullScreenHelp()
  */
 inline int ClampDisplayScaling(int value)
 {
-	switch (value) {
-	case DisplayScaling_WholeMultiples:
-	case DisplayScaling_ScaleToFit:
-		return value;
-	default:
-		return DisplayScaling_ActualSize;
-	}
-}
-
-inline int ClampScreenSize(int value)
-{
-	switch (value) {
-	case ScreenSize_MatchWindow:
-	case ScreenSize_Fixed:
-		return value;
-	default:
-		return ScreenSize_Automatic;
-	}
+	return value == DisplayScaling_WholeMultiples
+	    ? DisplayScaling_WholeMultiples : DisplayScaling_ActualSize;
 }
 
 /* --- the fixed-size list ------------------------------------------------- */
@@ -150,7 +108,7 @@ inline wxString ModeLabel(unsigned width, unsigned height)
 }
 
 /**
- * The standard modes a machine with this much display memory can show, largest
+ * The screen sizes a machine with this much display memory can show, largest
  * first.
  *
  * Budgeted at 32 bits per pixel because that is the deepest the desktop may
@@ -171,6 +129,14 @@ inline void FixedModes(size_t display_memory,
 		if (display_memory != 0 &&
 		    (size_t) w * (size_t) h * 4u > display_memory)
 		{
+			continue;
+		}
+		/* And nothing the guest has already refused. RISC OS only accepts modes
+		   the monitor definition in force declares, which is not something the
+		   host can read, so refusals are learned as they happen - see
+		   display_mode_mark_unavailable(). Offering one again would be offering a
+		   choice that is known not to work. */
+		if (display_mode_is_unavailable(w, h)) {
 			continue;
 		}
 		out.emplace_back(w, h);

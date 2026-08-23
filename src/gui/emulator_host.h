@@ -192,11 +192,14 @@ public:
 	void SetDisplayScaling(int scaling);
 
 	/**
-	 * Store where the guest's screen size comes from (a ScreenSize), and for
-	 * ScreenSize_Fixed the size itself. Publishes the request straight away so
-	 * a running guest follows without waiting for a restart.
+	 * Store the configured RISC OS screen size.
+	 *
+	 * Storing only. Asking the guest for it is the front end's job, because the
+	 * front end is the only place that can then check whether the guest actually
+	 * adopted the mode - RISC OS refuses one its monitor definition does not
+	 * declare, and reports that on its own screen rather than to the host.
 	 */
-	void SetScreenSize(int mode, unsigned width, unsigned height);
+	void SetScreenSize(unsigned width, unsigned height);
 	void SetClipboardEnabled();
 	void SwitchMachine(const std::string &config_path);
 	void Restart();
