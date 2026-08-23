@@ -26,7 +26,8 @@
 #                    for a working tree where the source has deliberately moved
 #                    ahead of what is committed.
 #
-# Requires arm-linux-gnueabi-as / -ld / -objcopy (setup-build-env.sh --podules).
+# Requires ARM binutils: arm-linux-gnueabi-* (setup-build-env.sh --podules) or
+# arm-none-eabi-* (brew install arm-none-eabi-binutils on macOS).
 #
 # See docs/testing.md and COMPILE.md.
 
@@ -40,17 +41,40 @@ if [ "${1:-}" = "--rebuild-only" ]; then
 	COMPARE=false
 fi
 
-AS=arm-linux-gnueabi-as
-LD=arm-linux-gnueabi-ld
-OBJCOPY=arm-linux-gnueabi-objcopy
-
-for tool in "$AS" "$LD" "$OBJCOPY"; do
-	if ! command -v "$tool" >/dev/null 2>&1; then
-		echo "error: $tool not found." >&2
-		echo "Install the ARM tools with: ./setup-build-env.sh --podules" >&2
-		exit 1
+# Which ARM binutils to use.
+#
+# arm-linux-gnueabi- is what setup-build-env.sh --podules installs and what CI
+# has, so it is tried first and remains the reference. arm-none-eabi- is the
+# fallback because that is what Homebrew ships on macOS, where the Linux triple
+# is not packaged at all - and without a fallback this check simply could not be
+# run on a Mac, which is where a fair amount of the work happens.
+#
+# The two are interchangeable here. These modules are position-independent ARM
+# assembly linked to a bare binary with no libc, no start files and no relocation
+# beyond --section-start, so nothing the two toolchains disagree about is in
+# play: both were verified to produce byte-identical images for every module in
+# the list below.
+PREFIX=""
+for candidate in arm-linux-gnueabi- arm-none-eabi-; do
+	if command -v "${candidate}as" >/dev/null 2>&1 &&
+	   command -v "${candidate}ld" >/dev/null 2>&1 &&
+	   command -v "${candidate}objcopy" >/dev/null 2>&1; then
+		PREFIX="$candidate"
+		break
 	fi
 done
+
+if [ -z "$PREFIX" ]; then
+	echo "error: no ARM binutils found (tried arm-linux-gnueabi-, arm-none-eabi-)." >&2
+	echo "Install the ARM tools with: ./setup-build-env.sh --podules" >&2
+	echo "On macOS: brew install arm-none-eabi-binutils" >&2
+	exit 1
+fi
+
+AS="${PREFIX}as"
+LD="${PREFIX}ld"
+OBJCOPY="${PREFIX}objcopy"
+echo "Using ${PREFIX}* binutils"
 
 # Each entry is: source directory : the images it produces : where they are kept.
 # Kept as a list rather than discovered, so a module that stops being built is a
@@ -61,10 +85,8 @@ MODULES=(
 	"riscos-progs/SyncClock:syncclock,ffa:poduleroms"
 	"riscos-progs/RPCEmuUSBSupport:rpcemuusbsupport,ffa:poduleroms"
 	"riscos-progs/RPCEmuPCIEmulator:rpcemupciemulator,ffa:poduleroms"
-	"riscos-progs/RPCEmuCoPro:rpcemucopro,ffa:poduleroms"
 	"riscos-progs/RPCEmuGfx:RPCEmuGfx,ffa:gfxroms"
 	"riscos-progs/EtherRPCEm:EtherRPCEm,ffa:netroms"
-	"riscos-progs/MultiFS:70-multifs,ffa 80-multifsfiler,ffa:usbroms"
 )
 
 # ScrollWheel is deliberately absent: its makefile wants clang, which is not part

@@ -147,14 +147,17 @@ else
 	MODE=cross
 fi
 
-# Per-arch build knobs. The x86_64 slice is the recompiler, so it is the one that
-# exercises the JIT differential tests; the arm64 slice is the interpreter.
-slice_binname() { [ "$1" = "x86_64" ] && echo rpcemu-recompiler || echo rpcemu-interpreter; }
-slice_dynarec() { [ "$1" = "x86_64" ] && echo ON || echo OFF; }
-# Tests are built for both slices. The JIT differential tests need a native
-# dynarec backend and CMake skips them by itself when RPCEMU_DYNAREC is off, so
-# on the arm64 (interpreter) slice this builds the architecture-neutral tests -
-# which is better than the slice having no test coverage at all.
+# Per-arch build knobs. Both slices are the recompiler, each with its own backend.
+#
+# The arm64 slice was the interpreter until the arm64 recompiler was made to boot:
+# an Apple Silicon Mac, which is what most people now run this on, was downloading
+# the slow one.
+slice_binname() { echo rpcemu-recompiler; }
+slice_dynarec() { echo ON; }
+# Tests are built for both slices, and with a dynarec backend on each that now
+# includes the eight JIT differential tests - so the arm64 recompiler is checked
+# against the interpreter on the architecture it generates code for, which is
+# where a code-generation fault would actually show.
 slice_tests()   { echo ON; }
 slice_deploy()  { [ "$1" = "x86_64" ] && echo 10.15 || echo 11.0; }
 

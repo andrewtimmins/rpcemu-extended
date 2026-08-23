@@ -172,8 +172,7 @@
 	WS_DISP_H	= 52
 	WS_DISP_HZ	= 56			@ 0 if the host did not report a refresh
 	WS_DISP_TICK	= 60			@ ticks remaining until the next poll
-	WS_DISP_PRIMED	= 64			@ non-zero once a baseline generation is held
-	WS_MODECMD	= 68			@ MODECMD_SIZE bytes: *WimpMode builder
+	WS_MODECMD	= 64			@ MODECMD_SIZE bytes: *WimpMode builder
 	WS_TWCMD	= WS_MODECMD + MODECMD_SIZE	@ TWCMD_SIZE bytes: TaskWindow command builder
 	WS_POLLBLK	= WS_TWCMD + TWCMD_SIZE	@ POLLBLK_SIZE bytes: Wimp poll block
 	WS_RCBUF	= WS_POLLBLK + POLLBLK_SIZE	@ RCBUF_SIZE bytes
@@ -387,10 +386,11 @@ init:
 	str	r0, [wp, #WS_TASK_HANDLE]
 	str	r0, [wp, #WS_CHILD_HANDLE]
 	str	r0, [wp, #WS_POLL_WORD]
-	@ Display following: no baseline generation held yet, and a zero countdown
-	@ so the first tick asks straight away.
+	@ Display following: no generation acted on yet, and a zero countdown so the
+	@ first tick asks straight away. Generation 0 is never reported with a mode
+	@ attached, so this reads as "nothing seen" and the first real request is
+	@ acted on.
 	str	r0, [wp, #WS_DISP_GEN]
-	str	r0, [wp, #WS_DISP_PRIMED]
 	str	r0, [wp, #WS_DISP_TICK]
 
 	@ Register the ticker (every centisecond). r2 is passed to the routine
@@ -632,15 +632,20 @@ poll_display:
 	teq	r0, #0
 	beq	pd_done			@ nothing to report yet
 
-	@ First reading after the desktop appears is the baseline.
-	ldr	r0, [wp, #WS_DISP_PRIMED]
-	teq	r0, #0
-	streq	r1, [wp, #WS_DISP_GEN]
-	moveq	r0, #1
-	streq	r0, [wp, #WS_DISP_PRIMED]
-	beq	pd_done
-
 	@ Unchanged since we last acted?
+	@
+	@ There used to be a step before this one: the first reading after the
+	@ desktop appeared was recorded as a baseline and deliberately not acted on.
+	@ That was right while the emulator reported the host display continuously,
+	@ because the first reading was simply what the display already was and
+	@ reflowing the desktop over it at boot would have been an unasked-for
+	@ surprise.
+	@
+	@ The emulator no longer reports anything until a screen size has actually
+	@ been asked for, so there is no such reading to discard - and discarding one
+	@ swallowed the first request instead. Choosing a size, or dragging a window
+	@ edge with the screen size set to follow the window, did nothing at all and
+	@ only the second attempt worked.
 	ldr	r0, [wp, #WS_DISP_GEN]
 	teq	r0, r1
 	beq	pd_done

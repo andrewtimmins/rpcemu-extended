@@ -387,8 +387,7 @@ jobs:
   # so Linux is written the same way: the graph reads alike across all three, and
   # each platform offers one check for a branch protection rule to require.
   #
-  # amd64 gets the recompiler; arm64 gets the interpreter, there being no ARM
-  # dynarec backend. Three steps run on amd64 alone and each says why where it
+  # Both architectures get the recompiler, each with its own backend. Three steps run on amd64 alone and each says why where it
   # stands.
   linux-amd64:
     needs: build-gate
@@ -534,24 +533,24 @@ jobs:
         timeout-minutes: 3
         run: bash setup-build-env.sh
 
-      - name: Build and package (arm64, interpreter)
+      - name: Build and package (arm64, recompiler)
         timeout-minutes: 3
         run: |
           set -o pipefail
           chmod +x build.sh setup-build-env.sh
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            ./build.sh --interpreter --deb --zip 2>&1 | tee build.log
+            ./build.sh --deb --zip 2>&1 | tee build.log
           else
-            ./build.sh --interpreter --zip 2>&1 | tee build.log
+            ./build.sh --zip 2>&1 | tee build.log
           fi
 
       - name: Smoke test binary
         run: |
-          file releases/linux/arm64/rpcemu-interpreter | grep -i ELF
+          file releases/linux/arm64/rpcemu-recompiler | grep -i ELF
           ls -la releases/linux/arm64/
           # See the amd64 job: runs before any wxWidgets/GTK initialisation, so
           # it needs no display and catches a binary that cannot start at all.
-          bash tests/cli_smoke.sh releases/linux/arm64/rpcemu-interpreter
+          bash tests/cli_smoke.sh releases/linux/arm64/rpcemu-recompiler
 
       # See the amd64 job for what this proves and why the ROM is fetched rather
       # than shipped.
@@ -568,7 +567,7 @@ jobs:
           mkdir -p "$RPCEMU_DATADIR" ci-rom
           cp -r default configs "$RPCEMU_DATADIR/"
           if ! ls ci-rom/ROM* >/dev/null 2>&1; then
-            releases/linux/arm64/rpcemu-interpreter --fetch-riscos --no-disc --accept-licence
+            releases/linux/arm64/rpcemu-recompiler --fetch-riscos --no-disc --accept-licence
             cp "$RPCEMU_DATADIR"/roms/ROM* ci-rom/
           fi
           mkdir -p "$RPCEMU_DATADIR/roms"
@@ -579,7 +578,7 @@ jobs:
         timeout-minutes: 3
         run: |
           python3 tests/boot_smoke.py \
-            --binary releases/linux/arm64/rpcemu-interpreter \
+            --binary releases/linux/arm64/rpcemu-recompiler \
             --datadir "$RUNNER_TEMP/rpcemu-data" \
             --abort-check require \
             --save vnc-smoke-linux-arm64.png
