@@ -192,6 +192,12 @@ rpcemu_guest_size_for(unsigned width, unsigned height,
 void
 rpcemu_request_guest_size(unsigned width, unsigned height)
 {
+	rpcemu_request_guest_size_ex(width, height, 0);
+}
+
+void
+rpcemu_request_guest_size_ex(unsigned width, unsigned height, int force)
+{
 	unsigned fitted_w = 0, fitted_h = 0;
 
 	if (width == 0 || height == 0) {
@@ -208,7 +214,16 @@ rpcemu_request_guest_size(unsigned width, unsigned height)
 		return;
 	}
 
-	if (fitted_w == guest_size_width && fitted_h == guest_size_height) {
+	/*
+	 * The same size as last time is normally nothing to do. Not when the size
+	 * was named: this records what was ASKED for, and RISC OS may have moved
+	 * since - it changes mode from its own end, and a refused size leaves this
+	 * naming one it would not take. Asking again for the size already recorded
+	 * then did nothing at all, no generation bump, so the guest was never told
+	 * and the request read as a refusal two seconds later.
+	 */
+	if (!force && fitted_w == guest_size_width &&
+	    fitted_h == guest_size_height) {
 		return;
 	}
 

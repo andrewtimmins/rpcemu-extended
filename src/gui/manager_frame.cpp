@@ -96,6 +96,13 @@ enum {
 	ID_POLL_TIMER,
 };
 
+/* Not the machine's ids for the same menu, and never sent anywhere: the chosen
+   size travels as a width and height. */
+enum {
+	ID_SCREEN_SIZE_FIRST = wxID_HIGHEST + 600,
+	ID_SCREEN_SIZE_LAST = ID_SCREEN_SIZE_FIRST + 63,
+};
+
 enum {
 	kStatusIconRunning = 0,
 	kStatusIconStarting,
@@ -109,6 +116,39 @@ enum {
    the far side of it and a machine reads as "Running" throughout them. */
 constexpr int kStartupTimeoutMs = 10000;
 constexpr int kPollIntervalMs = 200;
+
+/* "1920x1080". False rather than a partial answer: a size that did not parse is
+   one the menu must not offer. */
+bool ParseScreenSize(const wxString &text, unsigned &width, unsigned &height)
+{
+	const int x = text.Find('x');
+	long w = 0, h = 0;
+
+	if (x == wxNOT_FOUND ||
+	    !text.Left(x).ToLong(&w) || !text.Mid(x + 1).ToLong(&h) ||
+	    w <= 0 || h <= 0) {
+		return false;
+	}
+	width = (unsigned) w;
+	height = (unsigned) h;
+	return true;
+}
+
+/* "1920x1080,1600x1200,..." */
+void ParseScreenModes(const wxString &text,
+    std::vector<std::pair<unsigned, unsigned>> &out)
+{
+	wxStringTokenizer modes(text, ",");
+
+	out.clear();
+	while (modes.HasMoreTokens()) {
+		unsigned w = 0, h = 0;
+
+		if (ParseScreenSize(modes.GetNextToken(), w, h)) {
+			out.emplace_back(w, h);
+		}
+	}
+}
 } /* namespace */
 
 /*
@@ -705,14 +745,19 @@ void ManagerFrame::BuildMachineMenus(wxMenuBar *menu_bar)
 	 * flattening it out here left the Manager with a bare pair of radio items
 	 * and nothing saying what they were about.
 	 *
-	 * The screen SIZE, the other half of that window's display settings, is not
-	 * offered here. The list is learned rather than computed - RISC OS accepts
-	 * only the modes its monitor definition declares, and which those are is
-	 * found out as they are refused - so the Manager would have to be told it by
-	 * the machine rather than work it out. Until then it is set in the machine's
-	 * own Settings menu, or in the machine editor.
+	 * The screen SIZE is the other half, and the list is learned rather than
+	 * computed - RISC OS accepts only the modes its monitor definition declares,
+	 * and which those are is found out as they are refused - so it is filled in
+	 * from what the machine reports rather than worked out here. Empty, and
+	 * greyed, until it does.
 	 */
 	{
+		auto *screen_menu = new wxMenu;
+
+		screen_size_menu_ = screen_menu;
+		screen_size_parent_ = machine_settings_menu_->AppendSubMenu(screen_menu,
+		    DisplayOptions::ScreenSizeGroup());
+
 		auto *scaling_menu = new wxMenu;
 
 		scaling_menu->AppendRadioItem(ID_MENU_SCALING_ACTUAL,
@@ -779,6 +824,11 @@ void ManagerFrame::BuildMachineMenus(wxMenuBar *menu_bar)
 	Bind(wxEVT_MENU, &ManagerFrame::OnMachineMenuCommand, this,
 	    ID_MENU_SCREENSHOT, ID_MENU_CHECK_UPDATE);
 	Bind(wxEVT_MENU, &ManagerFrame::OnMachineMenuCommand, this, wxID_ABOUT);
+
+	/* Its own handler rather than the range above: these ids are the Manager's
+	   own and mean nothing to the machine, so what travels is the size. */
+	Bind(wxEVT_MENU, &ManagerFrame::OnScreenSize, this,
+	    ID_SCREEN_SIZE_FIRST, ID_SCREEN_SIZE_LAST);
 }
 
 void ManagerFrame::BuildToolBar()
@@ -1087,6 +1137,93 @@ void ManagerFrame::SetNatMenuState(bool is_nat)
 	if (netcap_item_ != nullptr) {
 		netcap_item_->Enable(is_nat);
 	}
+}
+
+/*
+ * The screen sizes the machine on show has offered, as a menu.
+ *
+ * Rebuilt rather than patched, like the machine's own: the list is short, and it
+ * changes wholesale when a different machine is shown.
+ *
+ * The submenu is greyed while the list is empty rather than left to open onto
+ * nothing. Empty is not only the no-machine case: a machine reports when asked,
+ * so there is a moment after it attaches when it is running and has not said
+ * yet. The greying loop in UpdateMachineMenuState() cannot do this one - it
+ * disables a submenu by disabling the items inside it, and there are none.
+ */
+void ManagerFrame::RebuildScreenSizeMenu()
+{
+	if (screen_size_menu_ == nullptr) {
+		return;
+	}
+
+	for (size_t i = 0; i < screen_size_items_.size(); i++) {
+		screen_size_menu_->Delete((int) (ID_SCREEN_SIZE_FIRST + (int) i));
+	}
+	screen_size_items_.clear();
+
+	auto it = running_.find(active_machine_);
+
+	if (it == running_.end()) {
+		if (screen_size_parent_ != nullptr) {
+			screen_size_parent_->Enable(false);
+		}
+		return;
+	}
+
+	const RunningMachine &machine = it->second;
+	const size_t limit =
+	    (size_t) (ID_SCREEN_SIZE_LAST - ID_SCREEN_SIZE_FIRST) + 1;
+
+	for (size_t i = 0; i < machine.screen_modes.size() && i < limit; i++) {
+		const unsigned w = machine.screen_modes[i].first;
+		const unsigned h = machine.screen_modes[i].second;
+		wxMenuItem *item = screen_size_menu_->AppendRadioItem(
+		    (int) (ID_SCREEN_SIZE_FIRST + (int) i),
+		    DisplayOptions::ModeLabel(w, h));
+
+		item->SetHelp(DisplayOptions::ScreenSizeHelp());
+		screen_size_items_.emplace_back(w, h);
+
+		/* The size the machine reports its desktop to be, which is not always
+		   the one asked for: RISC OS can change mode from its own end, and a
+		   refused size leaves it on the old one. Nothing ticked means the
+		   desktop is in a mode this list does not offer. */
+		if (w == machine.screen_size_x && h == machine.screen_size_y) {
+			item->Check(true);
+		}
+	}
+
+	if (screen_size_parent_ != nullptr) {
+		screen_size_parent_->Enable(!screen_size_items_.empty());
+	}
+}
+
+void ManagerFrame::OnScreenSize(wxCommandEvent &event)
+{
+	const size_t index = (size_t) (event.GetId() - ID_SCREEN_SIZE_FIRST);
+
+	if (index >= screen_size_items_.size()) {
+		return;		/* Stale id from a menu that has since been rebuilt */
+	}
+
+	auto it = running_.find(active_machine_);
+
+	if (it == running_.end() || it->second.panel == nullptr) {
+		return;
+	}
+
+	IpcRequest request;
+
+	request.type = IpcRequestType::SetScreenSize;
+	request.arg1 = (int32_t) screen_size_items_[index].first;
+	request.arg2 = (int32_t) screen_size_items_[index].second;
+	it->second.panel->SendRequest(request);
+
+	/* The tick is not set here. The machine reports back what it actually
+	   settled on, which is not necessarily this - RISC OS refuses sizes its
+	   monitor definition does not declare - and showing the asked-for one would
+	   claim a change that did not happen. */
 }
 
 void ManagerFrame::RefreshUiState()
@@ -2459,6 +2596,10 @@ void ManagerFrame::UpdateMachineMenuState()
 		return;
 	}
 
+	/* The list belongs to the machine on show, so it follows the switch rather
+	   than waiting for that machine's next report. */
+	RebuildScreenSizeMenu();
+
 	/*
 	 * Help stays usable with no machine running.
 	 *
@@ -2579,8 +2720,32 @@ void ManagerFrame::ApplyStateReport(const wxString &machine, const wxString &rep
 		long id = 0;
 		long value = 0;
 
-		if (!pair.Left(equals).ToLong(&id) ||
-		    !pair.Mid(equals + 1).ToLong(&value)) {
+		if (!pair.Left(equals).ToLong(&id)) {
+			continue;
+		}
+
+		/* The two whose values are sizes rather than integers, taken before the
+		   ToLong below that every other pair needs. */
+		if (id == kStateScreenModes || id == kStateScreenSize) {
+			auto it = running_.find(machine);
+
+			if (it != running_.end()) {
+				const wxString text = pair.Mid(equals + 1);
+
+				if (id == kStateScreenModes) {
+					ParseScreenModes(text, it->second.screen_modes);
+				} else {
+					ParseScreenSize(text, it->second.screen_size_x,
+					    it->second.screen_size_y);
+				}
+				if (machine == active_machine_) {
+					RebuildScreenSizeMenu();
+				}
+			}
+			continue;
+		}
+
+		if (!pair.Mid(equals + 1).ToLong(&value)) {
 			continue;
 		}
 

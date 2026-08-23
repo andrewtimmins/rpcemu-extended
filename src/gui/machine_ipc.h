@@ -257,6 +257,16 @@ enum class IpcRequestType : uint32_t {
 	 * See window_owner.h for what is and is not possible per platform.
 	 */
 	SetOwnerWindow,
+
+	/*
+	 * Set the RISC OS screen size. arg1 = width, arg2 = height.
+	 *
+	 * Its own verb rather than a MenuCommand: that works by sending an event to
+	 * the menu item owning the id, and these ids are outside the forwardable
+	 * range (main_frame.h). A size needs no id in any case - the machine's own
+	 * handler turns the id back into a width and height as its first act.
+	 */
+	SetScreenSize,		/* arg1 = width, arg2 = height */
 };
 
 /*
@@ -276,6 +286,15 @@ constexpr int kStateDebugPauseRequested = 100003;
 
 constexpr int kStateCdromSource = 100004;
 constexpr int kStateNetworkIsNat = 100005;
+
+/* The screen sizes this machine can offer, and which one it is set to. Sent
+   because the Manager cannot work the list out: which modes RISC OS has refused
+   is learned as it happens and lives in the machine's process. Sizes rather than
+   menu ids, an index meaning nothing to another process. The list is one value,
+   "1920x1080,1600x1200,...", the only non-integer in a report - which an older
+   Manager skips, as it does any id it does not know. */
+constexpr int kStateScreenModes = 100006;
+constexpr int kStateScreenSize = 100007;
 
 struct IpcRequest {
 	IpcRequestType type = IpcRequestType::RequestKeyFrame;

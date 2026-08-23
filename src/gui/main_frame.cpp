@@ -521,6 +521,14 @@ void MainFrame::HandleIpcRequest(const IpcRequest &request)
 			}
 		});
 		break;
+
+	case IpcRequestType::SetScreenSize: {
+		const unsigned width = (unsigned) request.arg1;
+		const unsigned height = (unsigned) request.arg2;
+
+		CallAfter([this, width, height] { ApplyScreenSize(width, height); });
+		break;
+	}
 	}
 }
 
@@ -723,6 +731,36 @@ void MainFrame::ReportMenuState()
 	report += wxString::Format(" %d=%d", kStateNetworkIsNat,
 	    config_copy_.network_type == NetworkType_NAT ? 1 : 0);
 
+	/* The screen sizes this machine can offer, so the Manager can show the same
+	   list. Built from the same call its own menu uses, so the two agree. */
+	{
+		std::vector<std::pair<unsigned, unsigned>> modes;
+		wxString list;
+
+		DisplayOptions::FixedModes(rpcemu_display_memory(), modes);
+		for (const auto &mode : modes) {
+			if (!list.empty()) {
+				list += ",";
+			}
+			list += wxString::Format("%ux%u", mode.first, mode.second);
+		}
+		if (!list.empty()) {
+			report += wxString::Format(" %d=%s", kStateScreenModes, list);
+		}
+		/*
+		 * What the desktop IS, not what it was configured to be. The two differ
+		 * whenever RISC OS has been given a mode from its own end - *WimpMode,
+		 * Configure, an application changing mode - and after a size it refused,
+		 * where the configured value is the one it would not take.
+		 */
+		const wxSize guest = CurrentGuestScreenSize();
+
+		if (guest.x > 0 && guest.y > 0) {
+			report += wxString::Format(" %d=%dx%d", kStateScreenSize,
+			    guest.x, guest.y);
+		}
+	}
+
 	if (emulator_ != nullptr && emulator_->IsRunning()) {
 		const MachineSnapshot snapshot = emulator_->TakeSnapshot();
 
@@ -736,9 +774,18 @@ void MainFrame::ReportMenuState()
 	event.type = IpcEventType::StateReport;
 	const wxScopedCharBuffer utf8 = report.utf8_str();
 
-	/* Truncation would only cost the Manager a tick-box it cannot see the
-	   state of, but the list is far shorter than the field, so it does not
-	   happen in practice. */
+	/*
+	 * Truncation used to cost at worst a tick-box the Manager could not see the
+	 * state of. The mode list changed that: cutting it mid-entry would offer a
+	 * size that is not a size. It still does not happen - the report is around
+	 * 280 bytes of 512 with every mode present - but it is now worth saying so
+	 * out loud rather than finding out from a menu full of nonsense.
+	 */
+	if (utf8.length() >= sizeof(event.path)) {
+		rpclog("Manager IPC: state report too long (%zu bytes), not sent\n",
+		    (size_t) utf8.length());
+		return;
+	}
 	strncpy(event.path, utf8.data(), sizeof(event.path) - 1);
 	event.path[sizeof(event.path) - 1] = '\0';
 	ipc_server_->SendEvent(event);
@@ -1561,10 +1608,30 @@ void MainFrame::OnScreenSize(wxCommandEvent &event)
 		return;		/* Stale id from a menu that has since been rebuilt */
 	}
 
-	const unsigned want_x = fixed_mode_items_[index].first;
-	const unsigned want_y = fixed_mode_items_[index].second;
+	ApplyScreenSize(fixed_mode_items_[index].first,
+	    fixed_mode_items_[index].second);
+}
 
-	if (want_x == config_copy_.screen_size_x &&
+/* The size, however it was chosen: this window's own menu, or the Manager's copy
+   of it over IPC. Shared so the two cannot come to mean different things. */
+void MainFrame::ApplyScreenSize(unsigned want_x, unsigned want_y)
+{
+	if (want_x == 0 || want_y == 0) {
+		return;
+	}
+
+	/*
+	 * Nothing to do only when the desktop is ALREADY this size, which is not the
+	 * same as the configuration naming it. RISC OS can be in a different mode
+	 * from the configured one - it changes mode from its own end, and a refused
+	 * size leaves the configuration naming one it would not take - and testing
+	 * the configuration there made picking the size shown in the menu do
+	 * nothing at all, with no way to ask for it again.
+	 */
+	const wxSize guest = CurrentGuestScreenSize();
+
+	if (guest.x == (int) want_x && guest.y == (int) want_y &&
+	    want_x == config_copy_.screen_size_x &&
 	    want_y == config_copy_.screen_size_y)
 	{
 		return;
@@ -1579,6 +1646,9 @@ void MainFrame::OnScreenSize(wxCommandEvent &event)
 	/* Named explicitly, so a refusal is reported rather than quietly turned
 	   into some other size. */
 	RequestGuestMode(want_x, want_y, true);
+
+	RebuildScreenSizeMenu();
+	ReportMenuState();
 }
 
 /*
@@ -1682,13 +1752,29 @@ void MainFrame::RebuildScreenSizeMenu()
 		fixed_mode_items_.push_back(modes[i]);
 	}
 
-	/* Tick whichever entry the configuration names. A machine whose size is no
-	   longer on offer - VRAM reduced, or the graphics card taken out - leaves
-	   nothing ticked, which is the honest display of it: the size it is
-	   configured for is not one this machine can currently show. */
+	/*
+	 * Tick the size the desktop actually is, falling back to the configured one
+	 * until a frame has said otherwise.
+	 *
+	 * The desktop rather than the configuration, because the two part company
+	 * readily: RISC OS can be given a mode from its own end (*WimpMode,
+	 * Configure, an application), and a size it refuses leaves the configuration
+	 * naming one it would not take. A tick against either would be pointing at a
+	 * mode that is not on the screen.
+	 *
+	 * Nothing ticked is a real answer and is left to happen: the desktop is in a
+	 * mode this list does not offer, which is exactly what a guest that has gone
+	 * its own way looks like, and claiming the nearest entry would be a lie.
+	 */
+	const wxSize guest = CurrentGuestScreenSize();
+	const unsigned want_x = guest.x > 0 ? (unsigned) guest.x
+	                                    : config_copy_.screen_size_x;
+	const unsigned want_y = guest.y > 0 ? (unsigned) guest.y
+	                                    : config_copy_.screen_size_y;
+
 	for (size_t i = 0; i < fixed_mode_items_.size(); i++) {
-		if (fixed_mode_items_[i].first == config_copy_.screen_size_x &&
-		    fixed_mode_items_[i].second == config_copy_.screen_size_y)
+		if (fixed_mode_items_[i].first == want_x &&
+		    fixed_mode_items_[i].second == want_y)
 		{
 			screen_size_menu_->Check(
 			    (int) (ID_MENU_SCREEN_FIXED_FIRST + (int) i), true);
@@ -1783,7 +1869,9 @@ void MainFrame::RequestGuestMode(unsigned width, unsigned height,
 		return;
 	}
 
-	rpcemu_request_guest_size(fitted_w, fitted_h);
+	/* A named size is forced through: see rpcemu_request_guest_size_ex(). A
+	   window drag is not, so its quantising still holds. */
+	rpcemu_request_guest_size_ex(fitted_w, fitted_h, explicit_choice ? 1 : 0);
 
 	/*
 	 * Only a size the user named is checked.
@@ -1817,6 +1905,24 @@ void MainFrame::RequestGuestMode(unsigned width, unsigned height,
  * in force was a definition file rather than the synthesised EDID. Nothing on the
  * host can know which modes a given definition declares, so they are learned.
  */
+/*
+ * How big the guest's desktop actually is.
+ *
+ * Two sources, because a managed machine's panel is never given a frame: its
+ * window is not shown, so PostVideoUpdate() sends the frame to the Manager and
+ * returns, and the panel is left saying 640x480 for ever. Asking it whether a
+ * mode change was taken therefore answered "refused" every time, whatever the
+ * guest had done.
+ */
+wxSize MainFrame::CurrentGuestScreenSize() const
+{
+	if (managed_mode_) {
+		return wxSize(managed_guest_x_.load(std::memory_order_relaxed),
+		    managed_guest_y_.load(std::memory_order_relaxed));
+	}
+	return panel_ != nullptr ? panel_->GuestScreenSize() : wxSize(0, 0);
+}
+
 void MainFrame::OnModeVerifyTimer(wxTimerEvent &event)
 {
 	(void)event;
@@ -1824,17 +1930,23 @@ void MainFrame::OnModeVerifyTimer(wxTimerEvent &event)
 	/* Only ever reached for a size the user named: RequestGuestMode() starts this
 	   timer for nothing else, so there is no "was this explicit" to test. */
 
-	if (panel_ == nullptr || mode_requested_ == wxSize(0, 0)) {
+	if (mode_requested_ == wxSize(0, 0)) {
 		return;
 	}
 
 	const wxSize requested = mode_requested_;
-	const wxSize guest = panel_->GuestScreenSize();
+	const wxSize guest = CurrentGuestScreenSize();
 
 	mode_requested_ = wxSize(0, 0);
 
 	if (guest == requested) {
 		return;		/* Taken */
+	}
+
+	/* Nothing has said what size the guest is yet, so there is no evidence
+	   either way and a refusal must not be inferred from the absence of it. */
+	if (guest.x <= 0 || guest.y <= 0) {
+		return;
 	}
 
 	rpclog("Display: the guest refused %dx%d\n", requested.x, requested.y);
@@ -1856,6 +1968,7 @@ void MainFrame::OnModeVerifyTimer(wxTimerEvent &event)
 	 */
 	display_mode_mark_unavailable((unsigned) requested.x, (unsigned) requested.y);
 	RebuildScreenSizeMenu();
+	ReportMenuState();
 
 	/*
 	 * Said once, plainly, with the cause and the cure.
@@ -1870,20 +1983,29 @@ void MainFrame::OnModeVerifyTimer(wxTimerEvent &event)
 	 * comes from CMOS and the monitor definition only vets it - so suggesting a
 	 * restart would be sending somebody round a loop that does not arrive.
 	 */
-	wxMessageBox(
-	    wxString::Format(
-	        "RISC OS would not switch to %d x %d, and is still using %d x %d.\n\n"
-	        "It only accepts screen modes the monitor definition it has loaded "
-	        "declares, and that one does not include this size, so it has been "
-	        "taken out of the list.\n\n"
-	        "To get the full set of sizes, stop RISC OS loading its own monitor "
-	        "definition file: in Configure, set the monitor type to Auto or EDID "
-	        "rather than a definition file, then restart the machine. The "
-	        "emulator's own monitor definition offers every size in the list.",
-	        requested.x, requested.y,
-	        guest.x > 0 ? guest.x : requested.x,
-	        guest.y > 0 ? guest.y : requested.y),
-	    "Screen Size Not Available", wxOK | wxICON_INFORMATION, this);
+	const wxString explanation = wxString::Format(
+	    "RISC OS would not switch to %d x %d, and is still using %d x %d.\n\n"
+	    "It only accepts screen modes the monitor definition it has loaded "
+	    "declares, and that one does not include this size, so it has been "
+	    "taken out of the list.\n\n"
+	    "To get the full set of sizes, stop RISC OS loading its own monitor "
+	    "definition file: in Configure, set the monitor type to Auto or EDID "
+	    "rather than a definition file, then restart the machine. The "
+	    "emulator's own monitor definition offers every size in the list.",
+	    requested.x, requested.y,
+	    guest.x > 0 ? guest.x : requested.x,
+	    guest.y > 0 ? guest.y : requested.y);
+
+	/* Through the Manager when there is one, for the reason ShowError() gives:
+	   a managed machine's window is never shown, so a box modal to it is modal
+	   to something the user cannot find. */
+	if (managed_mode_) {
+		ShowError(std::string(explanation.utf8_str()));
+		return;
+	}
+
+	wxMessageBox(explanation, "Screen Size Not Available",
+	    wxOK | wxICON_INFORMATION, this);
 }
 
 void MainFrame::NoteGuestFrame()
@@ -1910,6 +2032,10 @@ void MainFrame::NoteGuestFrame()
 	}
 	guest_size_seen_ = guest;
 	guest_resize_timer_.StartOnce(kGuestSettleMs);
+
+	/* The tick follows the desktop, so it has to move when RISC OS changes mode
+	   from its own end and not only when the change was asked for here. */
+	RebuildScreenSizeMenu();
 }
 
 void MainFrame::OnGuestResizeTimer(wxTimerEvent &event)
@@ -2846,6 +2972,23 @@ void MainFrame::PostVideoUpdate(VideoUpdate update)
 		/* No window is shown, so there is nothing for panel_ to paint: send
 		   the frame to the Manager instead of building a wxBitmap nobody
 		   will ever see. Safe from any thread - see MirrorToSharedFramebuffer. */
+		/* host_xsize/ysize rather than xsize/ysize: those are the buffer's
+		   dimensions, these are the screen's, doubling included, which is what
+		   GuestScreenSize() means and what OnModeVerifyTimer() waits for. */
+		if (update.host_xsize > 0 && update.host_ysize > 0) {
+			const int was_x = managed_guest_x_.exchange(update.host_xsize,
+			    std::memory_order_relaxed);
+			const int was_y = managed_guest_y_.exchange(update.host_ysize,
+			    std::memory_order_relaxed);
+
+			/* The desktop changed size, so the Manager's copy of the screen-size
+			   menu is out of date - including when RISC OS did it from its own
+			   end, which nothing else here would notice. Told once per change,
+			   not once per frame. */
+			if (was_x != update.host_xsize || was_y != update.host_ysize) {
+				CallAfter([this] { ReportMenuState(); });
+			}
+		}
 		MirrorToSharedFramebuffer(update);
 		return;
 	}

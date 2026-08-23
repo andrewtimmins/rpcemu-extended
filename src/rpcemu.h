@@ -543,6 +543,16 @@ extern int rpcemu_default_screen_size(unsigned *width, unsigned *height);
 extern void rpcemu_request_guest_size(unsigned width, unsigned height);
 
 /*
+ * The same, but "force" asks again even for the size already recorded.
+ *
+ * For a size the user named, where the record is of what was asked for rather
+ * than of what RISC OS is showing: it may have changed mode from its own end, or
+ * refused the recorded size, and in both cases asking again must reach it.
+ */
+extern void rpcemu_request_guest_size_ex(unsigned width, unsigned height,
+                                         int force);
+
+/*
  * What rpcemu_request_guest_size() would settle on for this size, without
  * asking for anything.
  *
