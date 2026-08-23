@@ -689,6 +689,40 @@ void EmulatorPanel::TryCreateGlCanvas()
 	gl_canvas_->Bind(wxEVT_MOUSEWHEEL, &EmulatorPanel::OnMouseWheel, this);
 	gl_canvas_->Bind(wxEVT_ENTER_WINDOW, &EmulatorPanel::OnEnterWindow, this);
 	gl_canvas_->Bind(wxEVT_LEAVE_WINDOW, &EmulatorPanel::OnLeaveWindow, this);
+
+	/*
+	 * ★ And the keyboard, which is not optional here.
+	 *
+	 * SetFocus() on this panel lands on the canvas instead: wxGTK gives focus to
+	 * the first focusable child, and a wxGLCanvas accepts it. So the panel never
+	 * holds focus once the canvas exists, and MainFrame's handlers - bound on the
+	 * panel - saw nothing at all. No typing reached RISC OS, and Alt+Enter could
+	 * not leave full screen, because that is decided in the same handler.
+	 *
+	 * Forwarded rather than handled: the frame owns what a key means, and one
+	 * place deciding that is what keeps the panel out of it.
+	 */
+	gl_canvas_->Bind(wxEVT_KEY_DOWN, &EmulatorPanel::ForwardKeyEvent, this);
+	gl_canvas_->Bind(wxEVT_KEY_UP, &EmulatorPanel::ForwardKeyEvent, this);
+
+	/* Whatever had focus, the canvas is what has it now; say so, so the first
+	   keystroke is not lost to a window that has gone. */
+	gl_canvas_->SetFocus();
+}
+
+/*
+ * Hand a key event to whoever is listening on this panel.
+ *
+ * Raised on this panel rather than left to Skip(): an unhandled event would
+ * climb to the parent anyway, but only if nothing on the canvas consumed it
+ * first, and wxGLCanvas is not required to leave it alone. Sending it here
+ * directly is what the frame's binding is waiting for.
+ */
+void EmulatorPanel::ForwardKeyEvent(wxKeyEvent &event)
+{
+	if (!GetEventHandler()->ProcessEvent(event)) {
+		event.Skip();
+	}
 }
 
 void EmulatorPanel::DestroyGlCanvas(const wxString &why)
@@ -702,6 +736,10 @@ void EmulatorPanel::DestroyGlCanvas(const wxString &why)
 
 	gl_canvas_->Destroy();
 	gl_canvas_ = nullptr;
+
+	/* The window holding the focus has just gone, so take it back: without this
+	   the keyboard dies the moment GL is given up on. */
+	SetFocus();
 
 	/* The CPU path has drawn nothing so far, so its cache is empty rather than
 	   stale: the next frame rebuilds it from scratch. */
