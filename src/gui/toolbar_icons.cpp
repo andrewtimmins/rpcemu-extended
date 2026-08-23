@@ -143,3 +143,8 @@ wxBitmapBundle StatusIconStopped()
 {
 	return SvgBundle(stopped_svg);
 }
+
+wxBitmapBundle StatusIconSuspended()
+{
+	return SvgBundle(suspended_svg);
+}
