@@ -191,6 +191,26 @@ typedef struct {
 	uint32_t answer_addr;
 	uint32_t answer_value;
 	uint32_t answer_is_write;
+
+	/**
+	 * Where the cycle stamp in a log entry comes from.
+	 *
+	 * A logged write records WHEN it happened, which is what makes a
+	 * raster-accurate display possible: the guest reads the stamp and knows
+	 * where on the screen the card was when the write landed. The number has to
+	 * come from the core's cycle counter, and this file deliberately knows
+	 * nothing about cores - that is what lets it be tested on its own, with no
+	 * core linked at all - so the core supplies it through here.
+	 *
+	 * Unset means every entry is stamped zero, which is what the whole log did
+	 * before this existed: copro_bus_write() carried a cycle argument from the
+	 * start and the only live caller, hook_write(), passed a literal 0, because
+	 * the value was simply not in scope there. Everything else was already
+	 * wired: log_push() stored it and CoPro_DrainLog delivered it, so the one
+	 * thing the log exists for was the one field that never arrived.
+	 */
+	uint32_t (*cycle_source)(void *ctx);
+	void *cycle_ctx;
 } copro_bus;
 
 /**
@@ -236,6 +256,20 @@ copro_bus_result copro_bus_write(copro_bus *bus, uint32_t addr, int is_port,
  * should see.
  */
 uint8_t copro_bus_resume(copro_bus *bus, uint8_t value);
+
+/**
+ * Tell the bus where to get the cycle stamp for a logged write.
+ *
+ * Called by whatever owns the core, since only it can read the cycle counter.
+ * Without it a logged write is stamped zero and the guest can tell that the core
+ * wrote to a logged region but not when.
+ *
+ * @param bus    the bus
+ * @param source returns the core's current cycle count, or NULL for no stamp
+ * @param ctx    passed back to source
+ */
+void copro_bus_set_cycle_source(copro_bus *bus, uint32_t (*source)(void *ctx),
+                                void *ctx);
 
 /**
  * Fill in a core's memory hook so its accesses come through this bus.

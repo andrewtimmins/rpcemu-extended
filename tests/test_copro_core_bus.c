@@ -100,6 +100,15 @@ load(uint16_t at, const uint8_t *code, size_t len)
  *
  *   LDA #&aa : STA &4000 : LDA #&bb : STA &4001 : LDA #&cc : STA &4002 : BRK
  */
+
+/* The cycle stamp for a logged write, straight off the core that made it. This is
+   what openbus_coproc.c installs for a real card. */
+static uint32_t
+cpu_cycle_source(void *ctx)
+{
+	return (uint32_t) ((const cpu6502_state *) ctx)->cycles;
+}
+
 static void
 test_6502_writes_are_logged_in_order(void)
 {
@@ -124,6 +133,7 @@ test_6502_writes_are_logged_in_order(void)
 	CHECK(copro_bus_set_map(&bus, MAP_OFF, 1), "map rejected");
 	CHECK(copro_bus_set_log(&bus, LOG_OFF, 16), "log rejected");
 	copro_bus_hook(&bus, &hook);
+	copro_bus_set_cycle_source(&bus, cpu_cycle_source, &cpu);
 	CHECK(hook.can_stall == 0, "a map with no stalling region said it can stall");
 
 	cpu6502_init(&cpu, ram, RAM_SIZE);
@@ -141,11 +151,32 @@ test_6502_writes_are_logged_in_order(void)
 	CHECK(copro_bus_log_pending(&bus) == 3, "logged %u writes, wanted 3",
 	      copro_bus_log_pending(&bus));
 
+	/*
+	 * The cycle stamp, which this suite never checked.
+	 *
+	 * It asserted address, value and info while every entry carried cycle 0,
+	 * because hook_write() passed a literal 0 - and this is the only suite that
+	 * goes through the hook, so it was the only one that could have noticed.
+	 *
+	 * Asserted as properties rather than as three exact numbers: when within an
+	 * instruction the core bumps its counter is the core's business, and a test
+	 * that pins it would fail on a cycle-timing correction that was not a fault.
+	 * A literal 0 fails all three of these.
+	 */
+	uint32_t previous = 0;
+
 	for (i = 0; i < 3; i++) {
 		CHECK(copro_bus_log_pop(&bus, &e) == 1, "nothing at %d", i);
 		CHECK(e.addr == (uint32_t) (0x4000 + i), "entry %d address %x", i, e.addr);
 		CHECK(e.value == (uint32_t) (0xaa + i * 0x11), "entry %d value %x",
 		      i, e.value);
+		CHECK(e.cycle != 0, "entry %d is unstamped", i);
+		CHECK(e.cycle >= previous, "entry %d went back in time: %u after %u",
+		      i, e.cycle, previous);
+		CHECK(e.cycle <= (uint32_t) cpu.cycles,
+		      "entry %d stamped %u, after the run ended at %llu", i, e.cycle,
+		      (unsigned long long) cpu.cycles);
+		previous = e.cycle;
 	}
 }
 

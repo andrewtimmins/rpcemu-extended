@@ -387,6 +387,25 @@ possible: the guest learns not only that the border changed but when. A full rin
 drops the newest write and marks the next entry, rather than overwriting what the
 guest has not read.
 
+What the stamp means, exactly. It is the core's cycle counter as it stands when
+the access is made, and a core charges an instruction's cycles when the
+instruction finishes - so the stamp is the count at the start of the instruction
+that wrote, not a count part way through it. For a 6502 that is at most a handful
+of cycles early, and consistently so, which is what a raster position needs.
+
+It cannot be thrown out by a retry. A stalled instruction is abandoned and
+replayed whole, so an access could in principle be stamped at the retry rather
+than the first attempt - but no logged region stalls. `ROM`, `LOG` and `LATCH` all
+log and none of them stall; `STALL` stalls and is not logged. The two sets do not
+overlap.
+
+The stamp was zero for every entry until it was wired up: `copro_bus_write()`
+carried the argument from the start and `log_push()` stored it, but the only
+caller a running core goes through passed a literal 0, because `copro_bus.c` holds
+no core and `cpu_mem_hook` carries no cycle count. The core's owner now supplies
+it through `copro_bus_set_cycle_source()`, which is what keeps this file testable
+with no core linked at all.
+
 **Present what it reads.** A `LATCH` region reads from a page in the control area
 that the guest fills in whenever it likes - a keyboard matrix, a joystick, a
 disc controller's status byte. Neither side waits for the other.

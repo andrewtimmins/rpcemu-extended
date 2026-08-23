@@ -485,11 +485,37 @@ hook_write(void *ctx, uint32_t addr, uint8_t value)
 	copro_bus *bus = (copro_bus *) ctx;
 	const int is_port = (addr & CPU_MEM_PORT) != 0;
 
-	switch (copro_bus_write(bus, addr & ~CPU_MEM_PORT, is_port, 0, value)) {
+	/*
+	 * The cycle stamp, which is the point of the log.
+	 *
+	 * This passed a literal 0 for as long as the log existed, and hook_write() is
+	 * the only caller a running core goes through - so every entry a guest drained
+	 * said the write happened at cycle zero. Nothing else was missing:
+	 * copro_bus_write() already took the argument, log_push() already stored it
+	 * and CoPro_DrainLog already delivered it.
+	 *
+	 * It could not have done otherwise from here. This file holds no core and no
+	 * cycle counter, and cpu_mem_hook does not carry one, so the value was not in
+	 * scope. It arrives through a callback the core's owner installs rather than
+	 * by this file learning what a core is, which is what keeps it testable on its
+	 * own.
+	 */
+	const uint32_t cycle = bus->cycle_source != NULL
+	    ? bus->cycle_source(bus->cycle_ctx) : 0;
+
+	switch (copro_bus_write(bus, addr & ~CPU_MEM_PORT, is_port, cycle, value)) {
 	case COPRO_BUS_OK:	return CPU_MEM_OK;
 	case COPRO_BUS_STALL:	return CPU_MEM_STALL;
 	default:		return CPU_MEM_BUSERROR;
 	}
+}
+
+void
+copro_bus_set_cycle_source(copro_bus *bus, uint32_t (*source)(void *ctx),
+                           void *ctx)
+{
+	bus->cycle_source = source;
+	bus->cycle_ctx = ctx;
 }
 
 void

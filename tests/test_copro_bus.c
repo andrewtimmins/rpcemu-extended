@@ -471,6 +471,60 @@ test_region_at_the_top_of_the_space(void)
 	      "the last address in the space did not match its region");
 }
 
+/*
+ * A logged write is stamped with the cycle the core was at.
+ *
+ * The stamp is the point of the log: it is what lets a guest know where on the
+ * screen the card was when the write landed. Every entry said zero, because
+ * hook_write() - the only path a running core takes - passed a literal 0, and no
+ * test went through that path. The tests above call copro_bus_write() directly
+ * with hand-supplied cycles, so they were asserting on numbers they had just
+ * provided themselves; this one goes through the hook, which is where the value
+ * actually has to come from.
+ */
+static uint32_t fake_cycles;
+
+static uint32_t
+fake_cycle_source(void *ctx)
+{
+	CHECK(ctx == (void *) 0x1234, "the context was not handed back");
+	return fake_cycles;
+}
+
+static void
+test_the_hook_stamps_the_cycle(void)
+{
+	copro_bus bus;
+	cpu_mem_hook hook;
+	copro_log_entry e;
+
+	fresh(&bus);
+	put_region(0, 0x4000, 0x100, COPRO_REGION_LOG, 0);
+	CHECK(copro_bus_set_map(&bus, MAP_OFF, 1), "map rejected");
+	CHECK(copro_bus_set_log(&bus, LOG_OFF, 8), "log rejected");
+	copro_bus_hook(&bus, &hook);
+
+	/* No source: zero, which is what the whole log used to report. */
+	CHECK(hook.write(hook.ctx, 0x4000, 0x11) == CPU_MEM_OK, "write failed");
+	CHECK(copro_bus_log_pop(&bus, &e) == 1, "nothing logged");
+	CHECK(e.cycle == 0, "unstamped write said cycle %u", e.cycle);
+
+	copro_bus_set_cycle_source(&bus, fake_cycle_source, (void *) 0x1234);
+
+	fake_cycles = 4242;
+	CHECK(hook.write(hook.ctx, 0x4001, 0x22) == CPU_MEM_OK, "write failed");
+	CHECK(copro_bus_log_pop(&bus, &e) == 1, "nothing logged");
+	CHECK(e.cycle == 4242, "stamped %u, wanted 4242", e.cycle);
+	CHECK(e.addr == 0x4001 && e.value == 0x22, "logged %x = %x", e.addr, e.value);
+
+	/* And it is read per write, not once: a second write at a later cycle must
+	   carry the later number. */
+	fake_cycles = 9001;
+	CHECK(hook.write(hook.ctx, 0x4002, 0x33) == CPU_MEM_OK, "write failed");
+	CHECK(copro_bus_log_pop(&bus, &e) == 1, "nothing logged");
+	CHECK(e.cycle == 9001, "stamped %u, wanted 9001", e.cycle);
+}
+
 int
 main(void)
 {
@@ -488,6 +542,7 @@ main(void)
 	test_bad_offsets_are_refused();
 	test_first_match_wins_and_zero_size_is_disabled();
 	test_region_at_the_top_of_the_space();
+	test_the_hook_stamps_the_cycle();
 
 	if (failures != 0) {
 		printf("%d failure(s)\n", failures);

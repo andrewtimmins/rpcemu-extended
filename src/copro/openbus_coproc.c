@@ -619,6 +619,25 @@ static void core_clear_stall(void)	{ core_ops()->clear_stall(); }
 static uint32_t core_pc(void)		{ return core_ops()->pc(); }
 static uint32_t core_cycles(void)	{ return core_ops()->cycles(); }
 static uint32_t core_fault_cause(void)	{ return core_ops()->fault_cause(); }
+
+/*
+ * The cycle stamp for a logged write, handed to copro_bus.
+ *
+ * copro_bus.c holds no core and cpu_mem_hook carries no cycle count, so a logged
+ * write was stamped with a literal 0 - the guest could tell that the card had
+ * written to a logged region but not when, which is the one thing the log is for.
+ * This is the value it was missing, from the only place that has it.
+ *
+ * Whichever core is fitted answers, since core_ops() dispatches on that; a card
+ * with no core running reports 0, which is the right answer for a bus that cannot
+ * have been written to by one.
+ */
+static uint32_t
+copro_cycle_source(void *ctx)
+{
+	(void) ctx;
+	return core_cycles();
+}
 static uint32_t core_fault_addr(void)	{ return core_ops()->fault_addr(); }
 static uint32_t core_exit_code(void)	{ return core_ops()->exit_code(); }
 static uint32_t core_id(void)		{ return core_ops()->id; }
@@ -1519,6 +1538,9 @@ openbus_coproc_fit(void)
 	 * before any of this: every address is plain card RAM.
 	 */
 	copro_bus_init(&cp.bus, cp.ram, cp.ram_size, cp.ctl, cp.ctl_size);
+	/* Where a logged write's cycle stamp comes from. Without this every entry the
+	   guest drains says the write happened at cycle zero. */
+	copro_bus_set_cycle_source(&cp.bus, copro_cycle_source, NULL);
 	coproc_rehook();
 
 	master.reg_read = coproc_reg_read;
