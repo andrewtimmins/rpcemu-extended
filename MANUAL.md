@@ -775,9 +775,10 @@ either the `,xxx` suffix on your side, or set the type from the filer menu.
 **macOS says it cannot open the application.** Right-click and choose Open the
 first time; the build is not notarised.
 
-**Something else.** *Help ▸ Create Support Bundle* collects the log, the
+**Something else.** *Help ▸ Create Support Bundle* collects the logs, the
 machine's settings and optionally a screenshot into one zip — that is the thing
-to attach to a report. *Help ▸ Report an Issue* opens the tracker; the template
+to attach to a report. Passwords and your home directory are taken out of
+everything in it. *Help ▸ Report an Issue* opens the tracker; the template
 asks for your operating system, which build and which RISC OS version, because
 those three answer most of what we would otherwise have to ask.
 
