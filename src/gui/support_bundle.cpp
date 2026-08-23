@@ -26,7 +26,7 @@
  * state - both are large, and a state is a whole RAM image that could hold
  * anything the guest had open.
  *
- * The two text members are redacted on the way in. This is meant to be
+ * Every text member is redacted on the way in. This is meant to be
  * attached to a public issue, and the log carries the configuration verbatim:
  * settings.cpp logs every key it reads, so the VNC password is in there in
  * plain text along with the reporter's home directory.
@@ -202,7 +202,8 @@ SupportBundleSuggestedName(const wxString &machine_name)
 SupportBundleResult
 SupportBundleWrite(const wxString &dest_path, const wxString &machine_name,
                    const wxString &machine_dir, const wxString &log_path,
-                   const wxString &screenshot_path)
+                   const wxString &screenshot_path,
+                   const wxString &manager_log_path)
 {
 	SupportBundleResult result;
 	wxFFileOutputStream out(dest_path);
@@ -218,6 +219,13 @@ SupportBundleWrite(const wxString &dest_path, const wxString &machine_name,
 
 	/* Redacted: the log repeats the configuration as it parses it. */
 	ok = ok && AddRedactedFile(zip, "rpclog.txt", log_path, &result.members);
+
+	/* Named apart from the machine's own, which it sits beside. Absent for a
+	   machine started on its own, and no loss when it is. */
+	if (!manager_log_path.empty() && manager_log_path != log_path) {
+		ok = ok && AddRedactedFile(zip, "manager-rpclog.txt", manager_log_path,
+		    &result.members);
+	}
 
 	if (!machine_name.empty()) {
 		const wxFileName cfg(ConfigPathsConfigsDir(),

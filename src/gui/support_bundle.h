@@ -64,12 +64,19 @@ struct SupportBundleResult {
  *                        machine happens to be showing, which is the one thing
  *                        here that cannot be redacted - and a machine that is
  *                        not running has no screen to show.
+ * @param manager_log_path The data directory's own rpclog.txt, written by a
+ *                        process that has not chosen a machine - which is the
+ *                        Manager, for its whole life. It records starting
+ *                        machines and attaching to them, so it is the log that
+ *                        says why a machine never got far enough to write one
+ *                        of its own. Left out when the file is not there.
  */
 SupportBundleResult SupportBundleWrite(const wxString &dest_path,
                                        const wxString &machine_name,
                                        const wxString &machine_dir,
                                        const wxString &log_path,
-                                       const wxString &screenshot_path = wxString());
+                                       const wxString &screenshot_path = wxString(),
+                                       const wxString &manager_log_path = wxString());
 
 /** Suggested leafname, e.g. "rpcemu-support-Test1-20260803.zip". */
 wxString SupportBundleSuggestedName(const wxString &machine_name);

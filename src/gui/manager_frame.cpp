@@ -2658,7 +2658,9 @@ void ManagerFrame::CreateSupportBundle()
 
 	const wxString dir = MachineDirFor(machine);
 	const SupportBundleResult result = SupportBundleWrite(dlg.GetPath(), machine,
-	    dir, wxFileName(dir, "rpclog.txt").GetFullPath(), screenshot);
+	    dir, wxFileName(dir, "rpclog.txt").GetFullPath(), screenshot,
+	    wxFileName(wxString::FromUTF8(rpcemu_get_datadir()),
+	        "rpclog.txt").GetFullPath());
 
 	if (!screenshot.empty()) {
 		wxRemoveFile(screenshot);

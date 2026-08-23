@@ -1825,7 +1825,9 @@ void MainFrame::OnSupportBundle(wxCommandEvent &)
 
 	const SupportBundleResult result = SupportBundleWrite(dlg.GetPath(), machine,
 	    wxString::FromUTF8(rpcemu_get_machine_datadir()),
-	    wxString::FromUTF8(rpcemu_get_log_path()), screenshot);
+	    wxString::FromUTF8(rpcemu_get_log_path()), screenshot,
+	    wxFileName(wxString::FromUTF8(rpcemu_get_datadir()),
+	        "rpclog.txt").GetFullPath());
 
 	if (!screenshot.empty()) {
 		wxRemoveFile(screenshot);
