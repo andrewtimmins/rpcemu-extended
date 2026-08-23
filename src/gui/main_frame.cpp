@@ -3268,6 +3268,24 @@ bool MainFrame::ConfirmCloseOrSwitch()
  */
 void MainFrame::AskAboutClosing()
 {
+	/*
+	 * ★ Drop the "a question is already up" flag on EVERY way out of here.
+	 *
+	 * ConfirmCloseOrSwitch() sets it so that one click on the close button, which
+	 * can raise more than one close event, does not queue two questions. It has to
+	 * come down again whatever the answer - and answering No returns early, so
+	 * clearing it only on the way to Close() left it set for ever. From that point
+	 * every close was vetoed with nothing asked and the window could not be closed
+	 * at all: an emulator that had to be killed from a terminal.
+	 *
+	 * A destructor rather than a line before each return, so the next person to
+	 * add a branch here does not have to notice this.
+	 */
+	struct ClearPending {
+		bool *flag;
+		~ClearPending() { *flag = false; }
+	} clear_pending{ &close_question_pending_ };
+
 	/* WarnOnStop is the application's preference, not the Manager's, so turning
 	   the question off there turns it off here too. On when absent. */
 	const bool running = emulator_ != nullptr && emulator_->IsRunning();
