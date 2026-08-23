@@ -20,6 +20,8 @@
 
 #include "emulator_panel.h"
 
+#include <wx/display.h>
+
 #include <algorithm>
 #include <numeric>
 #include <cstdlib>
@@ -84,13 +86,20 @@ void EmulatorPanel::MarkUserPointerActivity()
 	user_pointer_until_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
 }
 
-bool EmulatorPanel::ShouldSuppressHostMouseWarp() const
+/*
+ * Is the user holding a button down? Warping mid-drag drags the wrong thing, so
+ * the pointer is left alone until they let go.
+ */
+bool EmulatorPanel::IsPointerButtonDown() const
 {
 	const wxMouseState mouse = wxGetMouseState();
-	if (mouse.LeftIsDown() || mouse.RightIsDown() || mouse.MiddleIsDown()) {
-		return true;
-	}
 
+	return mouse.LeftIsDown() || mouse.RightIsDown() || mouse.MiddleIsDown();
+}
+
+/* Has the user moved the pointer in the last moment? */
+bool EmulatorPanel::IsUserPointerActive() const
+{
 	return std::chrono::steady_clock::now() < user_pointer_until_;
 }
 
@@ -467,6 +476,41 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 				top->Layout();
 				if (auto *frame = wxDynamicCast(top, wxFrame)) {
 					frame->Fit();
+					/*
+					 * Put the window somewhere it can still be reached.
+					 *
+					 * It has just changed size around a fixed top-left corner,
+					 * so a guest going from 640x480 to 1440x900 grows down and
+					 * to the right and walks off the bottom-right of the
+					 * screen. Centring fixes that - but only while the window
+					 * fits. A guest mode BIGGER than the display cannot be
+					 * fitted at all without scaling, and centring something
+					 * taller than the screen puts its title bar above the top
+					 * edge, where it cannot be dragged back into view. So
+					 * anything that does not fit is pinned to the top-left of
+					 * the work area instead, which keeps the title bar and the
+					 * menu reachable.
+					 *
+					 * Only on a resize, so a window the user has placed is left
+					 * where they put it until the mode changes again.
+					 */
+					if (!frame->IsMaximized() && !frame->IsIconized()) {
+						int index = wxDisplay::GetFromWindow(frame);
+
+						if (index == wxNOT_FOUND) {
+							index = 0;
+						}
+
+						const wxRect work =
+						    wxDisplay((unsigned) index).GetClientArea();
+						const wxSize size = frame->GetSize();
+
+						if (size.x <= work.width && size.y <= work.height) {
+							frame->Centre();
+						} else {
+							frame->SetPosition(work.GetTopLeft());
+						}
+					}
 				}
 			}
 		}
@@ -510,6 +554,30 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 
 void EmulatorPanel::HandleMoveHostMouse(const MouseMoveUpdate &update)
 {
+	/*
+	 * How far the host pointer may drift from where the guest's is before it is
+	 * put back even though the user is still moving the mouse.
+	 *
+	 * ★ Why there is a threshold at all rather than simply not warping while the
+	 * user is busy.
+	 *
+	 * The guest clamps its pointer at the edge of the screen, or at whatever
+	 * bounding box RISC OS has set. The host pointer does not: it carries on
+	 * accumulating movement against the edge of the desktop. Nothing was putting
+	 * it back, because a warp was suppressed for 500ms after any pointer motion
+	 * and moving the mouse kept renewing that - so the suppression was in force
+	 * exactly when it mattered. Push into the right or bottom edge and then
+	 * reverse, and the pointer stayed put until the mouse had travelled all the
+	 * way back: issue #128.
+	 *
+	 * Ordinary movement keeps the two within a pixel or two of each other, so a
+	 * few pixels of slack is enough to tell "the user is moving and the guest is
+	 * following" from "the guest has stopped and the host has not". Small
+	 * corrections stay suppressed, which is what stops the emulator fighting the
+	 * pointer; a drift this large only happens when something is clamped.
+	 */
+	static const int kReanchorSlack = 8;
+
 	auto *frame = wxDynamicCast(wxGetTopLevelParent(this), MainFrame);
 	if (frame != nullptr && !frame->IsWindowActive()) {
 		return;
@@ -517,7 +585,7 @@ void EmulatorPanel::HandleMoveHostMouse(const MouseMoveUpdate &update)
 	if (!IsMouseOverPanel()) {
 		return;
 	}
-	if (ShouldSuppressHostMouseWarp()) {
+	if (IsPointerButtonDown()) {
 		return;
 	}
 
@@ -525,9 +593,17 @@ void EmulatorPanel::HandleMoveHostMouse(const MouseMoveUpdate &update)
 
 	const wxMouseState mouse = wxGetMouseState();
 	const wxPoint current = ScreenToClient(wxPoint(mouse.GetX(), mouse.GetY()));
-	if (std::abs(current.x - pos.x) <= 1 && std::abs(current.y - pos.y) <= 1) {
+	const int drift_x = std::abs(current.x - pos.x);
+	const int drift_y = std::abs(current.y - pos.y);
+
+	if (drift_x <= 1 && drift_y <= 1) {
 		last_mouse_x_ = update.x;
 		last_mouse_y_ = update.y;
+		return;
+	}
+
+	if (IsUserPointerActive() &&
+	    drift_x < kReanchorSlack && drift_y < kReanchorSlack) {
 		return;
 	}
 
