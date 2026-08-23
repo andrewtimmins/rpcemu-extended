@@ -20,6 +20,9 @@
 
 #include "machine_inspector_window.h"
 
+#include <wx/settings.h>
+
+
 #include <algorithm>
 #include <vector>
 
@@ -29,9 +32,11 @@
 
 extern "C" {
 #include "arm.h"
+#include "arm_common.h"	/* ARM_MODE_32: bit 4 of the mode says 26- or 32-bit */
 }
 
 #include "arm_disasm.h"
+#include "cp15.h"
 
 namespace {
 
@@ -40,9 +45,17 @@ wxString FormatHex(uint32_t value, int width = 8)
 	return wxString::Format("0x%0*X", width, value);
 }
 
+/*
+ * arm.mode holds the mode number in its bottom FOUR bits, with bit 4 saying
+ * whether the processor is in a 32-bit mode - see ARM_MODE_32/ARM_MODE_PRIV in
+ * arm_common.h and the numbering in arm.h.
+ *
+ * Masking 0x1f instead of 0xf, as this did, made every 32-bit mode unmatchable:
+ * User came out of the emulator as 0x10 and was reported as "Unknown (0x10)".
+ */
 wxString ModeToString(uint32_t mode)
 {
-	switch (mode & 0x1f) {
+	switch (mode & 0xf) {
 	case USER: return "User";
 	case FIQ: return "FIQ";
 	case IRQ: return "IRQ";
@@ -50,7 +63,7 @@ wxString ModeToString(uint32_t mode)
 	case ABORT: return "Abort";
 	case UNDEFINED: return "Undefined";
 	case SYSTEM: return "System";
-	default: return wxString::Format("Unknown (0x%X)", mode & 0x1f);
+	default: return wxString::Format("Unknown (0x%X)", mode & 0xf);
 	}
 }
 
@@ -59,8 +72,6 @@ wxString NetworkTypeToString(NetworkType type)
 	switch (type) {
 	case NetworkType_Off: return "Off";
 	case NetworkType_NAT: return "NAT";
-	case NetworkType_EthernetBridging: return "Bridge";
-	case NetworkType_IPTunnelling: return "IP Tunnel";
 	default: return "Unknown";
 	}
 }
@@ -130,11 +141,24 @@ wxEND_EVENT_TABLE()
 
 MachineInspectorWindow::MachineInspectorWindow(wxWindow *parent, EmulatorHost &emulator)
 	: wxFrame(parent, wxID_ANY, "Machine Inspector",
-	          wxDefaultPosition, wxSize(700, 500),
+	          wxDefaultPosition, wxSize(1150, 820),
 	          wxDEFAULT_FRAME_STYLE | wxRESIZE_BORDER)
 	, emulator_(emulator)
 {
 	BuildUi();
+
+	/*
+	 * Opened at a size everything actually fits in - registers, code, memory and
+	 * the breakpoint lists at once - and floored below that. At the old 700x500
+	 * the panes were each too small to read and the notebook page overlapped
+	 * itself, since a sizer squeezed past its minimum overlaps rather than
+	 * clips. Smaller than the screen, for the laptop it may be opened on.
+	 */
+	const wxSize screen = wxGetClientDisplayRect().GetSize();
+
+	SetMinSize(wxSize(std::min(900, screen.x), std::min(640, screen.y)));
+	SetSize(wxSize(std::min(1150, screen.x), std::min(820, screen.y)));
+	CentreOnParent();
 	refresh_timer_.Start(500);
 	RefreshSnapshot();
 }
@@ -147,6 +171,76 @@ void MachineInspectorWindow::ShowAndRaise()
 	Raise();
 	SetFocus();
 	RefreshSnapshot();
+}
+
+/*
+ * The registers and the processor's state, as the left-hand column of the
+ * debugger view.
+ *
+ * Laid out rather than printed. R13/R14/R15 carry their usual names beside the
+ * number, because SP/LR/PC is what anybody reading a stack trace is looking for,
+ * and the PSR is broken out into its flags: "CPSR = 0x60000010" is a number to
+ * decode by hand, where "N. Z. C* V. I* F." can be read at a glance.
+ */
+wxWindow *MachineInspectorWindow::BuildStatePanel(wxWindow *parent)
+{
+	auto *panel = new wxPanel(parent);
+	auto *sizer = new wxBoxSizer(wxVERTICAL);
+
+	auto *regs_box = new wxStaticBoxSizer(wxVERTICAL, panel, "Registers");
+	auto *grid = new wxFlexGridSizer(8, 4, 2, 8);	/* 8 rows, R0-R7 | R8-R15 */
+
+	for (int row = 0; row < 8; row++) {
+		for (int half = 0; half < 2; half++) {
+			const int r = half * 8 + row;
+			static const char *const alias[16] = {
+				"", "", "", "", "", "", "", "", "", "", "", "", "",
+				"SP", "LR", "PC"
+			};
+			wxString name = wxString::Format("R%d", r);
+
+			if (alias[r][0] != '\0') {
+				name += wxString::Format(" %s", alias[r]);
+			}
+			reg_name_[r] = new wxStaticText(panel, wxID_ANY, name);
+			reg_value_[r] = new wxStaticText(panel, wxID_ANY, "00000000");
+			ApplyMonoFont(reg_value_[r]);
+			grid->Add(reg_name_[r], 0, wxALIGN_CENTER_VERTICAL);
+			grid->Add(reg_value_[r], 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 4);
+		}
+	}
+	regs_box->Add(grid, 0, wxALL, 4);
+	sizer->Add(regs_box, 0, wxEXPAND | wxALL, 6);
+
+	auto *psr_box = new wxStaticBoxSizer(wxVERTICAL, panel, "Status");
+	auto *flags = new wxBoxSizer(wxHORIZONTAL);
+	static const char *const flag_names[7] = { "N", "Z", "C", "V", "I", "F", "T" };
+
+	for (int i = 0; i < 7; i++) {
+		flag_label_[i] = new wxStaticText(panel, wxID_ANY, flag_names[i]);
+		ApplyMonoFont(flag_label_[i]);
+		flag_label_[i]->SetToolTip(
+		    i == 0 ? "Negative" : i == 1 ? "Zero" : i == 2 ? "Carry" :
+		    i == 3 ? "Overflow" : i == 4 ? "IRQs disabled" :
+		    i == 5 ? "FIQs disabled" : "Thumb");
+		flags->Add(flag_label_[i], 0, wxRIGHT, 6);
+	}
+	psr_box->Add(flags, 0, wxALL, 4);
+
+	cpsr_label_ = new wxStaticText(panel, wxID_ANY, "CPSR 00000000");
+	ApplyMonoFont(cpsr_label_);
+	mode_label_ = new wxStaticText(panel, wxID_ANY, "Mode");
+	mmu_label_ = new wxStaticText(panel, wxID_ANY, "MMU");
+	core_label_ = new wxStaticText(panel, wxID_ANY, "Core");
+	psr_box->Add(cpsr_label_, 0, wxLEFT | wxBOTTOM, 4);
+	psr_box->Add(mode_label_, 0, wxLEFT | wxBOTTOM, 4);
+	psr_box->Add(mmu_label_, 0, wxLEFT | wxBOTTOM, 4);
+	psr_box->Add(core_label_, 0, wxLEFT | wxBOTTOM, 4);
+	sizer->Add(psr_box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 6);
+
+	sizer->AddStretchSpacer();
+	panel->SetSizer(sizer);
+	return panel;
 }
 
 void MachineInspectorWindow::BuildUi()
@@ -164,15 +258,38 @@ void MachineInspectorWindow::BuildUi()
 	controls->Add(auto_refresh_checkbox_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
 	controls->Add(refresh_button, 0);
 
-	auto *notebook = new wxNotebook(this, wxID_ANY);
+	/*
+	 * ★ One view rather than a tab per thing.
+	 *
+	 * The registers, the code and the memory are read together - a register is
+	 * only meaningful beside the instruction that set it - so putting them on
+	 * separate pages meant switching tabs and holding values in your head. The
+	 * outer split puts the machine's state down the left with the code and
+	 * memory to the right; the inner one divides those two, and both sashes are
+	 * the user's to move.
+	 *
+	 * Trace and Peripherals stay on a notebook below: they are read on their
+	 * own, and neither wants to be a quarter of the window all the time.
+	 */
+	/*
+	 * Three sashes, because which pane matters depends on what is being looked
+	 * at: reading code wants the disassembly tall, following a trace wants the
+	 * log tall, and neither should be settled for the user by a fixed
+	 * proportion.
+	 */
+	auto *split_outer = new wxSplitterWindow(this, wxID_ANY, wxDefaultPosition,
+	    wxDefaultSize, wxSP_LIVE_UPDATE | wxSP_3DSASH);
+	auto *split_main = new wxSplitterWindow(split_outer, wxID_ANY, wxDefaultPosition,
+	    wxDefaultSize, wxSP_LIVE_UPDATE | wxSP_3DSASH);
+	auto *split_code = new wxSplitterWindow(split_main, wxID_ANY,
+	    wxDefaultPosition, wxDefaultSize, wxSP_LIVE_UPDATE | wxSP_3DSASH);
 
-	cpu_view_ = new wxTextCtrl(notebook, wxID_ANY, wxEmptyString,
-	                           wxDefaultPosition, wxDefaultSize,
-	                           wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP);
-	ApplyMonoFont(cpu_view_);
-	notebook->AddPage(cpu_view_, "CPU");
+	split_main->SetMinimumPaneSize(180);
+	split_code->SetMinimumPaneSize(120);
 
-	auto *disasm_panel = new wxPanel(notebook);
+	wxWindow *const state_panel = BuildStatePanel(split_main);
+
+	auto *disasm_panel = new wxPanel(split_code);
 	disasm_address_input_ = new wxTextCtrl(disasm_panel, wxID_ANY, wxEmptyString,
 	                                       wxDefaultPosition, wxSize(150, -1), wxTE_PROCESS_ENTER);
 	disasm_address_input_->SetHint("Address (hex)");
@@ -195,9 +312,8 @@ void MachineInspectorWindow::BuildUi()
 	disasm_sizer->Add(disasm_controls, 0, wxEXPAND | wxALL, 8);
 	disasm_sizer->Add(disasm_view_, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
 	disasm_panel->SetSizer(disasm_sizer);
-	notebook->AddPage(disasm_panel, "Disassembly");
 
-	auto *memory_panel = new wxPanel(notebook);
+	auto *memory_panel = new wxPanel(split_code);
 	memory_address_input_ = new wxTextCtrl(memory_panel, wxID_ANY, wxEmptyString,
 	                                       wxDefaultPosition, wxSize(150, -1), wxTE_PROCESS_ENTER);
 	memory_address_input_->SetHint("Address (hex)");
@@ -225,10 +341,13 @@ void MachineInspectorWindow::BuildUi()
 	memory_sizer->Add(memory_controls, 0, wxEXPAND | wxALL, 8);
 	memory_sizer->Add(memory_view_, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
 	memory_panel->SetSizer(memory_sizer);
-	notebook->AddPage(memory_panel, "Memory");
 
+	split_code->SplitHorizontally(disasm_panel, memory_panel);
+	split_main->SplitVertically(state_panel, split_code);
+
+	auto *notebook = new wxNotebook(split_outer, wxID_ANY);
 	auto *debug_panel = new wxPanel(notebook);
-	debug_status_label_ = new wxStaticText(debug_panel, wxID_ANY, "Debugger state: unknown");
+	debug_status_label_ = new wxStaticText(debug_panel, wxID_ANY, "State unknown");
 	debug_hit_label_ = new wxStaticText(debug_panel, wxID_ANY, "Last watchpoint: none");
 
 	run_button_ = new wxButton(debug_panel, ID_RUN, "Run");
@@ -238,14 +357,20 @@ void MachineInspectorWindow::BuildUi()
 	pause_button_->Enable(false);
 	step_button_->Enable(false);
 
+	/*
+	 * Transport and state on one row. This page shares the window with the code
+	 * and memory views now, so every row it does not need is a row they get.
+	 */
 	auto *debug_buttons = new wxBoxSizer(wxHORIZONTAL);
 	debug_buttons->Add(run_button_, 0, wxRIGHT, 6);
 	debug_buttons->Add(pause_button_, 0, wxRIGHT, 6);
-	debug_buttons->Add(step_button_, 0);
+	debug_buttons->Add(step_button_, 0, wxRIGHT, 12);
+	debug_buttons->Add(debug_status_label_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 12);
+	debug_buttons->Add(debug_hit_label_, 1, wxALIGN_CENTER_VERTICAL);
 
 	auto *breakpoint_box = new wxStaticBoxSizer(wxVERTICAL, debug_panel, "Breakpoints");
-	breakpoint_list_ = new wxListBox(debug_panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, 0, nullptr,
-	                                 wxLB_EXTENDED);
+	breakpoint_list_ = new wxListBox(debug_panel, wxID_ANY, wxDefaultPosition,
+	                                 wxSize(-1, 90), 0, nullptr, wxLB_EXTENDED);
 	breakpoint_input_ = new wxTextCtrl(debug_panel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize);
 	breakpoint_input_->SetHint("Address (hex)");
 	auto *breakpoint_add_button = new wxButton(debug_panel, ID_BREAKPOINT_ADD, "Add");
@@ -260,8 +385,8 @@ void MachineInspectorWindow::BuildUi()
 	breakpoint_box->Add(breakpoint_controls, 0, wxEXPAND);
 
 	auto *watchpoint_box = new wxStaticBoxSizer(wxVERTICAL, debug_panel, "Watchpoints");
-	watchpoint_list_ = new wxListBox(debug_panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, 0, nullptr,
-	                                 wxLB_EXTENDED);
+	watchpoint_list_ = new wxListBox(debug_panel, wxID_ANY, wxDefaultPosition,
+	                                 wxSize(-1, 90), 0, nullptr, wxLB_EXTENDED);
 	watchpoint_address_input_ = new wxTextCtrl(debug_panel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize);
 	watchpoint_address_input_->SetHint("Address (hex)");
 	watchpoint_size_choice_ = new wxChoice(debug_panel, wxID_ANY);
@@ -280,23 +405,32 @@ void MachineInspectorWindow::BuildUi()
 	watchpoint_remove_button_ = new wxButton(debug_panel, ID_WATCHPOINT_REMOVE, "Remove selected");
 	watchpoint_remove_button_->Enable(false);
 
-	auto *watchpoint_controls = new wxBoxSizer(wxHORIZONTAL);
-	watchpoint_controls->Add(watchpoint_address_input_, 1, wxEXPAND | wxRIGHT, 6);
-	watchpoint_controls->Add(watchpoint_size_choice_, 0, wxRIGHT, 6);
-	watchpoint_controls->Add(watchpoint_read_checkbox_, 0, wxRIGHT, 6);
-	watchpoint_controls->Add(watchpoint_write_checkbox_, 0, wxRIGHT, 6);
-	watchpoint_controls->Add(watchpoint_log_only_checkbox_, 0, wxRIGHT, 6);
-	watchpoint_controls->Add(watchpoint_add_button, 0, wxRIGHT, 6);
-	watchpoint_controls->Add(watchpoint_remove_button_, 0);
+	auto *watchpoint_entry = new wxBoxSizer(wxHORIZONTAL);
+	watchpoint_entry->Add(watchpoint_address_input_, 1, wxEXPAND | wxRIGHT, 6);
+	watchpoint_entry->Add(watchpoint_size_choice_, 0, wxRIGHT, 6);
+	watchpoint_entry->Add(watchpoint_add_button, 0);
+
+	auto *watchpoint_options = new wxBoxSizer(wxHORIZONTAL);
+	watchpoint_options->Add(watchpoint_read_checkbox_, 0,
+	    wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+	watchpoint_options->Add(watchpoint_write_checkbox_, 0,
+	    wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+	watchpoint_options->Add(watchpoint_log_only_checkbox_, 0,
+	    wxALIGN_CENTER_VERTICAL);
+	watchpoint_options->AddStretchSpacer();
+	watchpoint_options->Add(watchpoint_remove_button_, 0);
+
 	watchpoint_box->Add(watchpoint_list_, 1, wxEXPAND | wxBOTTOM, 6);
-	watchpoint_box->Add(watchpoint_controls, 0, wxEXPAND);
+	watchpoint_box->Add(watchpoint_entry, 0, wxEXPAND | wxBOTTOM, 4);
+	watchpoint_box->Add(watchpoint_options, 0, wxEXPAND);
+
+	auto *debug_lists = new wxBoxSizer(wxHORIZONTAL);
+	debug_lists->Add(breakpoint_box, 1, wxEXPAND | wxRIGHT, 8);
+	debug_lists->Add(watchpoint_box, 2, wxEXPAND);
 
 	auto *debug_sizer = new wxBoxSizer(wxVERTICAL);
-	debug_sizer->Add(debug_status_label_, 0, wxEXPAND | wxALL, 8);
-	debug_sizer->Add(debug_hit_label_, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
-	debug_sizer->Add(debug_buttons, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
-	debug_sizer->Add(breakpoint_box, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
-	debug_sizer->Add(watchpoint_box, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+	debug_sizer->Add(debug_buttons, 0, wxEXPAND | wxALL, 8);
+	debug_sizer->Add(debug_lists, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
 	debug_panel->SetSizer(debug_sizer);
 	notebook->AddPage(debug_panel, "Debugger");
 
@@ -328,8 +462,10 @@ void MachineInspectorWindow::BuildUi()
 	swi_box->Add(new wxStaticText(trace_panel, wxID_ANY, ".."), 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 2);
 	swi_box->Add(swi_filter_max_input_, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 2);
 
+	/* A floor on the log, so the tab opens showing a useful number of lines
+	   rather than three; the sash below the code views takes it further. */
 	trace_view_ = new wxTextCtrl(trace_panel, wxID_ANY, wxEmptyString,
-	                             wxDefaultPosition, wxDefaultSize,
+	                             wxDefaultPosition, wxSize(-1, 120),
 	                             wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP);
 	ApplyMonoFont(trace_view_);
 
@@ -352,16 +488,41 @@ void MachineInspectorWindow::BuildUi()
 	trace_panel->SetSizer(trace_sizer);
 	notebook->AddPage(trace_panel, "Trace");
 
+
 	peripheral_view_ = new wxTextCtrl(notebook, wxID_ANY, wxEmptyString,
 	                                  wxDefaultPosition, wxDefaultSize,
 	                                  wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP);
 	ApplyMonoFont(peripheral_view_);
 	notebook->AddPage(peripheral_view_, "Peripherals");
 
+	split_outer->SetMinimumPaneSize(120);
+	split_outer->SplitHorizontally(split_main, notebook);
+	split_outer->SetSashGravity(0.7);
+
 	auto *main = new wxBoxSizer(wxVERTICAL);
 	main->Add(controls, 0, wxEXPAND | wxALL, 8);
-	main->Add(notebook, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+	main->Add(split_outer, 1, wxEXPAND | wxALL, 8);
 	SetSizer(main);
+
+	/*
+	 * The state column is sashed to what it actually needs rather than to a
+	 * fraction of the window: at a quarter it clipped the second column of
+	 * registers and cut "privileged" off the mode. The code and memory split
+	 * goes on proportion, since both grow usefully.
+	 */
+	CallAfter([split_outer, split_main, split_code, state_panel, notebook] {
+		const int wanted = state_panel->GetBestSize().x + 12;
+		const int height = split_outer->GetClientSize().y;
+
+		/* The notebook opens at the height its own contents need, so nothing on
+		   the page is squeezed, and the code above it takes what is left. Below
+		   that it keeps a usable share and the page scrolls off, which is the
+		   right way round on a small screen. */
+		split_outer->SetSashPosition(std::max(height / 2,
+		    height - notebook->GetBestSize().y));
+		split_main->SetSashPosition(wanted);
+		split_code->SetSashPosition(split_code->GetClientSize().y * 3 / 5);
+	});
 
 	disasm_address_input_->Bind(wxEVT_TEXT_ENTER, &MachineInspectorWindow::OnDisasmGo, this);
 	memory_address_input_->Bind(wxEVT_TEXT_ENTER, &MachineInspectorWindow::OnMemoryGo, this);
@@ -412,41 +573,88 @@ void MachineInspectorWindow::ApplySnapshot(const MachineSnapshot &snapshot)
 	last_snapshot_ = snapshot;
 
 	summary_label_->SetLabel(MakeSummary(snapshot));
-	SetTextIfChanged(cpu_view_, FormatRegisters(snapshot));
+	ApplyProcessorState(snapshot);
 	SetTextIfChanged(peripheral_view_, FormatPeripheralSummary(snapshot));
 	PopulateBreakpointList(snapshot);
 	PopulateWatchpointList(snapshot);
 	UpdateDebuggerUi(snapshot);
+
+	/* Something useful in the memory pane on the first snapshot rather than an
+	   empty box: the stack is what a stopped machine is usually asked about. */
+	if (memory_current_address_ == 0 && snapshot.regs[13] != 0) {
+		memory_current_address_ = snapshot.regs[13] & ~0xfu;
+		memory_address_input_->SetValue(wxString::Format("%08X",
+		    memory_current_address_));
+		RefreshMemoryView(memory_current_address_);
+	}
 
 	if (disasm_follow_pc_checkbox_->GetValue()) {
 		RefreshDisassembly(snapshot.pc);
 	}
 }
 
-wxString MachineInspectorWindow::FormatRegisters(const MachineSnapshot &snapshot) const
+/*
+ * Fill in the registers and the processor's state.
+ *
+ * A register whose value has moved since the last refresh is coloured, which is
+ * the whole reason these are separate controls: stepping through code, what you
+ * want to see is which register the instruction just changed, and a wall of
+ * identical text will not tell you.
+ */
+void MachineInspectorWindow::ApplyProcessorState(const MachineSnapshot &snapshot)
 {
-	wxString text;
+	const wxColour changed(0xff, 0x8c, 0x00);	/* amber, readable on either theme */
+	const wxColour normal = wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT);
+	const wxColour dim = wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT);
 
-	for (int row = 0; row < 4; row++) {
-		wxString line;
-		for (int col = 0; col < 4; col++) {
-			const int reg_index = row * 4 + col;
-			line += wxString::Format("R%02d=%s  ", reg_index, FormatHex(snapshot.regs[reg_index]));
+	for (int r = 0; r < 16; r++) {
+		const uint32_t value = (r == 15) ? snapshot.pc : snapshot.regs[r];
+		const wxString text = wxString::Format("%08X", value);
+
+		if (reg_value_[r]->GetLabel() != text) {
+			reg_value_[r]->SetLabel(text);
 		}
-		text += line.Trim() + "\n";
+
+		const bool moved = have_previous_regs_ && previous_regs_[r] != value;
+
+		reg_value_[r]->SetForegroundColour(moved ? changed : normal);
+		previous_regs_[r] = value;
+	}
+	have_previous_regs_ = true;
+
+	/* The flags, lit when set and dimmed when not, rather than a hex word to
+	   decode by hand. I and F are "disabled" bits, which is how the PSR carries
+	   them - a lit I means interrupts are OFF. */
+	static const uint32_t flag_bits[7] = {
+		0x80000000u, 0x40000000u, 0x20000000u, 0x10000000u,	/* N Z C V */
+		0x08000000u, 0x04000000u, 0x00000020u			/* I F T   */
+	};
+
+	for (int i = 0; i < 7; i++) {
+		const bool set = (snapshot.cpsr & flag_bits[i]) != 0;
+
+		flag_label_[i]->SetForegroundColour(set ? changed : dim);
 	}
 
-	text += wxString::Format("PC = %s\n", FormatHex(snapshot.pc));
-	text += wxString::Format("CPSR = %s\n", FormatHex(snapshot.cpsr));
-	text += wxString::Format("Mode: %s%s | MMU: %s\n",
-	                         ModeToString(snapshot.mode),
-	                         snapshot.privileged_mode ? " (privileged)" : "",
-	                         snapshot.mmu_enabled ? "enabled" : "disabled");
-	text += wxString::Format("Core: %s | CPU idle: %s\n",
-	                         snapshot.dynarec ? "Dynarec" : "Interpreter",
-	                         snapshot.cpu_idle_enabled ? "enabled" : "disabled");
-	text += wxString::Format("Performance: MIPS=%.2f", snapshot.perf_mips);
-	return text;
+	cpsr_label_->SetLabel(wxString::Format("CPSR %08X", snapshot.cpsr));
+	mode_label_->SetLabel(wxString::Format("%s %s (%s)",
+	    ModeToString(snapshot.mode),
+	    ARM_MODE_32(snapshot.mode) ? "32-bit" : "26-bit",
+	    snapshot.privileged_mode ? "privileged" : "unprivileged"));
+	mmu_label_->SetLabel(wxString::Format("MMU %s",
+	    snapshot.mmu_enabled ? "enabled" : "disabled"));
+	core_label_->SetLabel(wxString::Format("%s, idle %s, %.0f MIPS",
+	    snapshot.dynarec ? "Dynarec" : "Interpreter",
+	    snapshot.cpu_idle_enabled ? "on" : "off",
+	    snapshot.perf_mips));
+
+	/* One refresh for the lot: colouring a label does not repaint it. */
+	for (int r = 0; r < 16; r++) {
+		reg_value_[r]->Refresh();
+	}
+	for (int i = 0; i < 7; i++) {
+		flag_label_[i]->Refresh();
+	}
 }
 
 wxString MachineInspectorWindow::FormatPeripheralSummary(const MachineSnapshot &snapshot) const
@@ -509,6 +717,8 @@ wxString MachineInspectorWindow::FormatPeripheralSummary(const MachineSnapshot &
 
 	return text;
 }
+
+
 
 wxString MachineInspectorWindow::MakeSummary(const MachineSnapshot &snapshot) const
 {
@@ -621,29 +831,28 @@ void MachineInspectorWindow::UpdateDebuggerUi(const MachineSnapshot &snapshot)
 
 	wxString status;
 	if (paused) {
-		status = wxString::Format("Debugger: Paused (%s)\nPC %s | Opcode %s",
+		status = wxString::Format("Paused: %s at PC %s, opcode %s",
 		                          reason,
 		                          FormatHex(snapshot.debug_halt_pc),
 		                          FormatHex(snapshot.debug_halt_opcode));
 	} else {
 		const wxString state = pausing ? wxString::FromUTF8("Pausing\xE2\x80\xA6") : wxString("Running");
-		status = wxString::Format("Debugger: %s\nLast PC %s | Last opcode %s",
+		status = wxString::Format("%s, last PC %s",
 		                          state,
-		                          FormatHex(snapshot.debug_last_pc),
-		                          FormatHex(snapshot.debug_last_opcode));
+		                          FormatHex(snapshot.debug_last_pc));
 	}
 	debug_status_label_->SetLabel(status);
 
 	if (snapshot.debug_hit_size > 0) {
 		const wxString access = snapshot.debug_hit_is_write ? "write" : "read";
 		const int width = std::max(2, static_cast<int>(snapshot.debug_hit_size) * 2);
-		debug_hit_label_->SetLabel(wxString::Format("Last watchpoint: %s | %u bytes %s | value %s",
+		debug_hit_label_->SetLabel(wxString::Format("Watchpoint %s: %u bytes %s, value %s",
 		                                            FormatHex(snapshot.debug_hit_address),
 		                                            snapshot.debug_hit_size,
 		                                            access,
 		                                            FormatHex(snapshot.debug_hit_value, width)));
 	} else {
-		debug_hit_label_->SetLabel("Last watchpoint: none");
+		debug_hit_label_->SetLabel("No watchpoint hit");
 	}
 
 	run_button_->Enable(paused);
@@ -742,6 +951,14 @@ void MachineInspectorWindow::DrainTraceEvents()
 			}
 			line = wxString::Format("%08u  PC=%s  EXCEPTION  %s",
 			                        ev.seq, FormatHex(ev.pc), kind);
+			/* Only a data abort carries a fault address and status; the
+			   others leave them zero on purpose (see DebugTraceEvent). */
+			if (ev.arg0 == TraceException_DataAbort) {
+				line += wxString::Format("  addr=%s  status=%02X %s",
+				                         FormatHex(ev.arg1),
+				                         ev.arg2 & 0xff,
+				                         wxString::FromUTF8(cp15_fault_status_name(ev.arg2)));
+			}
 			break;
 		}
 		case TraceEvent_Watchpoint: {
