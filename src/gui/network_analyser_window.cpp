@@ -27,6 +27,8 @@
 
 #include "network_analyser_window.h"
 
+#include "gui_resources.h"
+
 extern "C" {
 #include "net_dissect.h"
 #include "rpcemu.h"
@@ -178,6 +180,8 @@ NetworkAnalyserWindow::NetworkAnalyserWindow(wxWindow *parent)
               wxSize(1100, 680)),
       timer_(this, ID_NA_TIMER)
 {
+	SetFrameIcon(this);
+
 	auto *panel = new wxPanel(this);
 	auto *top = new wxBoxSizer(wxVERTICAL);
 
