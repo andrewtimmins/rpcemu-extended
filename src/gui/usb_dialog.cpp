@@ -171,7 +171,7 @@ void UsbDialog::RebuildChoices()
 	int found;
 
 	choices_.clear();
-	choices_.push_back({UsbAttachment_None, "", false, true, false, "Nothing"});
+	choices_.push_back({UsbAttachment_None, "", false, true, "", false, "Nothing"});
 
 	found = usb_host_enumerate(devices, kMaxHostDevices);
 
@@ -181,12 +181,13 @@ void UsbDialog::RebuildChoices()
 		wxString label;
 		wxString note = ClassName(d.device_class);
 
+		const char *why = usb_host_open_error_text(&d);
+
 		snprintf(id, sizeof(id), "%04x:%04x", d.vendor, d.product);
 
-		if (!d.openable) {
-			note = note.empty() ? "no permission"
-			                    : note + ", no permission";
-		} else if (d.in_use) {
+		if (why != nullptr) {
+			note = note.empty() ? wxString(why) : note + ", " + why;
+		} else if (d.in_use == 1) {
 			note = note.empty() ? "in use by this computer"
 			                    : note + ", in use by this computer";
 		}
@@ -197,7 +198,8 @@ void UsbDialog::RebuildChoices()
 		}
 
 		choices_.push_back({UsbAttachment_Host, id, d.in_use == 1,
-		                    d.openable != 0, d.high_speed != 0, label});
+		                    d.openable != 0, why != nullptr ? why : "",
+		                    d.high_speed != 0, label});
 	}
 
 	for (int port = 0; port < USB_PORTS; port++) {
@@ -258,6 +260,7 @@ void UsbDialog::SelectFromConfig()
 			missing.in_use = false;
 			missing.openable = true;
 			missing.high_speed = false;
+			missing.open_error.clear();
 			missing.label = wxString::Format("%s  (not plugged in)",
 			    config.usb_host[port]);
 
@@ -297,8 +300,9 @@ void UsbDialog::UpdateStatus()
 
 		host++;
 		if (!choice->openable) {
-			text = "This account cannot open that device. It needs a udev "
-			       "rule granting access; see docs/usb.md.";
+			text = wxString::Format("That device cannot be opened (%s). "
+			    "See docs/usb.md for what your platform needs.",
+			    choice->open_error);
 		} else if (choice->in_use && text.empty()) {
 			text = "That device is in use by this computer. Attaching it "
 			       "takes it away from the host until you detach it.";

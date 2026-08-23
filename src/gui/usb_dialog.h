@@ -49,7 +49,8 @@ private:
 		int kind;		/**< A UsbAttachment */
 		std::string host_id;	/**< "vvvv:pppp" for a host device */
 		bool in_use;		/**< The host has its own driver bound to it */
-		bool openable;		/**< Permissions allow it to be taken at all */
+		bool openable;		/**< It can be taken at all */
+		wxString open_error;	/**< Why not, when it cannot */
 		bool high_speed;	/**< Faster than the emulated controller can be */
 		wxString label;
 	};

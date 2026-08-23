@@ -73,6 +73,14 @@ usb_host_unavailable_reason(void)
 	       "the host's USB devices.";
 }
 
+const char *
+usb_host_open_error_text(const UsbHostDeviceInfo *device)
+{
+	(void) device;
+
+	return NULL;
+}
+
 int
 usb_host_enumerate(UsbHostDeviceInfo *out, int max)
 {
@@ -435,6 +443,26 @@ usb_host_unavailable_reason(void)
 	return usb_host_reason;
 }
 
+const char *
+usb_host_open_error_text(const UsbHostDeviceInfo *device)
+{
+	if (device == NULL || device->openable) {
+		return NULL;
+	}
+
+	switch (device->open_error) {
+	case LIBUSB_ERROR_ACCESS:
+		return "no permission";
+	case LIBUSB_ERROR_NOT_SUPPORTED:
+		/* Windows, for a device on one of its own class drivers. */
+		return "needs a WinUSB driver";
+	case LIBUSB_ERROR_NO_DEVICE:
+		return "unplugged";
+	default:
+		return "cannot be opened";
+	}
+}
+
 /* --- Describing what the host has ---------------------------------------- */
 
 /**
@@ -562,9 +590,18 @@ usb_host_enumerate(UsbHostDeviceInfo *out, int max)
 		                    speed == LIBUSB_SPEED_SUPER ||
 		                    speed == LIBUSB_SPEED_SUPER_PLUS);
 
-		if (libusb_open(list[i], &handle) == 0) {
+		info->open_error = libusb_open(list[i], &handle);
+		if (info->open_error == 0) {
+			int active = libusb_kernel_driver_active(handle, 0);
+
 			info->openable = 1;
-			info->in_use = libusb_kernel_driver_active(handle, 0) == 1;
+			/* Negative is an error rather than an answer, and one of them is
+			   routine: libusb has no way to ask this on Windows, which returns
+			   LIBUSB_ERROR_NOT_SUPPORTED. Left at -1, "not known", so nothing
+			   downstream reports a driver that was never checked for. */
+			if (active >= 0) {
+				info->in_use = (active == 1);
+			}
 		}
 
 		usb_host_describe(handle, &dd, info->name, sizeof(info->name));
