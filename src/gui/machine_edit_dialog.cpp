@@ -124,6 +124,26 @@ wxString FormatModifiedTime(const wxString &path)
 	return modified.Format("Modified: %d %b %Y, %H:%M");
 }
 
+/*
+ * Re-fit a wxChoice to the strings it now holds.
+ *
+ * A choice keeps the width it was measured at, so one whose list is replaced
+ * with longer strings after the dialogue was laid out shows them cut off. The
+ * best size is right for whatever is in it; this asks for it again and re-runs
+ * the layout that used the old one.
+ */
+void RefitChoice(wxChoice *choice)
+{
+	wxWindow *const parent = choice->GetParent();
+
+	choice->InvalidateBestSize();
+	choice->SetMinSize(choice->GetBestSize());
+
+	if (parent != nullptr && parent->GetSizer() != nullptr) {
+		parent->GetSizer()->Layout();
+	}
+}
+
 } // namespace
 
 enum {
@@ -1102,6 +1122,8 @@ void MachineEditDialog::RebuildCoProcessorRamChoices(unsigned keep_kb)
 		copro_ram_choice_->Enable(true);
 		copro_ram_label_->Enable(true);
 	}
+
+	RefitChoice(copro_ram_choice_);
 }
 
 /*
