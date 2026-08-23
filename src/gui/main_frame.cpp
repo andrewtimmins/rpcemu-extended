@@ -1328,6 +1328,32 @@ void MainFrame::EnterFullScreen()
 	if (panel_ != nullptr) {
 		panel_->UpdateMouseCursor();
 	}
+	/*
+	 * ★ Give the panel the keyboard back.
+	 *
+	 * Alt+Enter is the only way out of full screen: the menu bar and the tool bar
+	 * are both hidden, so there is no Settings > Full Screen to click. And it is
+	 * not a menu accelerator - it is handled in this frame's own key handler - so
+	 * it only arrives if the panel has the focus.
+	 *
+	 * Hiding the two bars destroys or detaches the windows the focus may have
+	 * been sitting on, and ShowFullScreen() re-parents and resizes what is left.
+	 * Nothing put the focus back afterwards, so if the platform did not restore
+	 * it by itself, no key reached the handler and full screen became a room with
+	 * no door - which is what leaving full screen doing nothing on Windows looks
+	 * like from the outside. Reported against 1.1.14; the code is unchanged since
+	 * 1.1.13, so it is not new.
+	 *
+	 * Deferred, because the frame is mid-transition here.
+	 */
+	if (panel_ != nullptr) {
+		panel_->CallAfter([this] {
+			if (panel_ != nullptr && full_screen_) {
+				panel_->FocusPanel();
+			}
+		});
+	}
+
 	if (fullscreen_menu_item_ != nullptr) {
 		fullscreen_menu_item_->Check(true);
 	}
@@ -1353,10 +1379,40 @@ void MainFrame::ExitFullScreen()
 	if (!minimal_ui_ && GetStatusBar() == nullptr) {
 		BuildStatusBar();
 	}
-	/* No Fit(): ShowFullScreen(false) has already restored the size, and
-	   fitting would shrink-wrap the frame to a panel that has no minimum. */
-	Layout();
+	/*
+	 * ★ Put the window back rather than trusting ShowFullScreen() to have done it.
+	 *
+	 * This was a bare Layout(), on the grounds that ShowFullScreen(false) had
+	 * already restored the size and that fitting would shrink-wrap the frame to a
+	 * panel with no minimum. The second half is not true: SetFullScreen(false)
+	 * above calls ResizeToHostDisplay(), which gives the panel the guest's screen
+	 * size as both its minimum and its maximum. And the first half is exactly the
+	 * sort of thing a platform may not do - leaving the window full-screen-sized
+	 * on Windows, where leaving full screen appeared to do nothing at all.
+	 */
 	full_screen_ = false;
+	Layout();
+	Fit();
+
+	/* Sized around a fixed top-left corner, so centre it - but only while it
+	   fits, since centring something taller than the work area puts its title bar
+	   above the top of the screen where it cannot be grabbed. */
+	if (!IsMaximized() && !IsIconized()) {
+		int index = wxDisplay::GetFromWindow(this);
+
+		if (index == wxNOT_FOUND) {
+			index = 0;
+		}
+
+		const wxRect work = wxDisplay((unsigned) index).GetClientArea();
+		const wxSize size = GetSize();
+
+		if (size.x <= work.width && size.y <= work.height) {
+			Centre();
+		} else {
+			SetPosition(work.GetTopLeft());
+		}
+	}
 
 	/* Force a full repaint once the windowed layout has settled (see the note
 	   in EnterFullScreen). */
