@@ -31,6 +31,7 @@ extern "C" {
 }
 
 #include "display_options.h"
+#include "settings_labels.h"
 
 namespace {
 
@@ -189,7 +190,9 @@ void MainFrame::BuildMenus()
 	    ->SetHelp("Choose what is plugged into the emulated USB ports.");
 	settings_menu->AppendSeparator();
 
-	mute_menu_item_ = settings_menu->AppendCheckItem(ID_MENU_MUTE, "Mute Sound");
+	mute_menu_item_ = settings_menu->AppendCheckItem(ID_MENU_MUTE,
+	                                                 SettingsLabels::MuteSound());
+	mute_menu_item_->SetHelp(SettingsLabels::MuteSoundHelp());
 
 	/*
 	 * The display: a screen size, and how to draw it.
@@ -256,25 +259,24 @@ void MainFrame::BuildMenus()
 	 */
 	mouse_hack_menu_item_ =
 	    settings_menu->AppendCheckItem(ID_MENU_MOUSE_HACK,
-	                                   "Mouse Follows Host Pointer");
-	mouse_hack_menu_item_->SetHelp(
-	    "On, the RISC OS pointer goes wherever the host one is. Off, a click "
-	    "captures the mouse and RISC OS is sent movements instead, which is what "
-	    "games that drive the pointer themselves need. Alt+Enter gives it back.");
+	                                   SettingsLabels::MouseFollows());
+	mouse_hack_menu_item_->SetHelp(SettingsLabels::MouseFollowsHelp());
 	mouse_twobutton_menu_item_ =
-	    settings_menu->AppendCheckItem(ID_MENU_MOUSE_TWOBUTTON, "Two-button Mouse Mode");
+	    settings_menu->AppendCheckItem(ID_MENU_MOUSE_TWOBUTTON,
+	                                   SettingsLabels::TwoButtonMouse());
+	mouse_twobutton_menu_item_->SetHelp(SettingsLabels::TwoButtonMouseHelp());
 	shared_clipboard_menu_item_ =
-	    settings_menu->AppendCheckItem(ID_MENU_SHARED_CLIPBOARD, "Share Clipboard with RISC OS");
-	shared_clipboard_menu_item_->SetHelp(
-	    "Copy and paste text between the host and RISC OS. Needs the "
-	    "SharedClipboard module, which loads itself in the guest.");
-	cpu_idle_menu_item_ = settings_menu->AppendCheckItem(ID_MENU_CPU_IDLE, "Reduce CPU Usage");
+	    settings_menu->AppendCheckItem(ID_MENU_SHARED_CLIPBOARD,
+	                                   SettingsLabels::SharedClipboard());
+	shared_clipboard_menu_item_->SetHelp(SettingsLabels::SharedClipboardHelp());
+	cpu_idle_menu_item_ =
+	    settings_menu->AppendCheckItem(ID_MENU_CPU_IDLE,
+	                                   SettingsLabels::ReduceCpu());
+	cpu_idle_menu_item_->SetHelp(SettingsLabels::ReduceCpuHelp());
 	default_machine_menu_item_ =
 	    settings_menu->AppendCheckItem(ID_MENU_DEFAULT_MACHINE,
-	                                   "Open This Machine Automatically");
-	default_machine_menu_item_->SetHelp(
-	    "Start RPCEmu straight into this machine, without showing the machine "
-	    "list. Hold Shift while starting to get the list back.");
+	                                   SettingsLabels::DefaultMachine());
+	default_machine_menu_item_->SetHelp(SettingsLabels::DefaultMachineHelp());
 
 	/* Tools: things that act on the running machine rather than configure it,
 	   which is why this is not under Settings. */
