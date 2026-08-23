@@ -56,8 +56,12 @@ typedef struct {
 	/** The host has a driver of its own bound to it: -1 if that is unknown. */
 	int in_use;
 
-	/** It can be opened at all. Zero usually means permissions. */
+	/** It can be opened at all. */
 	int openable;
+
+	/* The libusb_open() return code, when openable is zero: the reason differs
+	   per platform and so does the remedy. */
+	int open_error;
 
 	/** True for a device faster than the emulated controller can be. */
 	int high_speed;
@@ -75,6 +79,9 @@ int usb_host_available(void);
 
 /** Why it is not available, for an interface to show. Never NULL. */
 const char *usb_host_unavailable_reason(void);
+
+/** Why a listed device could not be opened, in words, or NULL if it could. */
+const char *usb_host_open_error_text(const UsbHostDeviceInfo *device);
 
 /**
  * List what is plugged into the host, for a user to choose from.
