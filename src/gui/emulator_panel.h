@@ -135,6 +135,13 @@ private:
 	 */
 	struct captured_pointer captured_pointer_{};
 	std::chrono::steady_clock::time_point last_press_time_{};
+	/* The last position the host pointer was warped to, and how many times the
+	   guest has asked for it since. A guest holding its pointer in one place -
+	   RISC OS does this for an error box - must not drag the host pointer along
+	   with it. See HandleMoveHostMouse(). */
+	wxPoint warp_target_ = wxPoint(-1, -1);
+	int warp_repeats_ = 0;
+
 	bool integer_scaling_ = false;
 	bool fit_to_window_ = false;
 	bool full_screen_ = false;

@@ -607,6 +607,44 @@ void EmulatorPanel::HandleMoveHostMouse(const MouseMoveUpdate &update)
 		return;
 	}
 
+	/*
+	 * ★ A pointer the guest is holding in one place must not trap the host's.
+	 *
+	 * RISC OS sets a mouse bounding box for some of its own windows - an error
+	 * box being the one people meet - and while that is up it pins its pointer
+	 * inside it. Every frame it asks for the same position back. Re-anchoring on
+	 * each of those requests, which is what the drift rule above does once the
+	 * user has moved more than a few pixels away, drags the host pointer back
+	 * into the box over and over: it cannot be moved off the error window, or out
+	 * of the emulator window at all. That is issue #140, and it was introduced by
+	 * the fix for #128 - one asks for the pointer to be put back more often, the
+	 * other for it to be left alone.
+	 *
+	 * What separates them is repetition. A genuine re-anchor is the guest moving
+	 * its pointer somewhere new and the host's needing to catch up, which happens
+	 * once. A bounding box is the same position asked for again and again while
+	 * the user is trying to move away. So a few requests for a position already
+	 * warped to, with the user actively moving, are taken as a clamp and ignored
+	 * until the guest asks for somewhere different - at which point the count
+	 * resets and re-anchoring works as it did.
+	 */
+	static const int kRepeatedWarpsBeforeRelease = 3;
+
+	if (pos == warp_target_) {
+		if (warp_repeats_ < kRepeatedWarpsBeforeRelease) {
+			warp_repeats_++;
+		} else if (IsUserPointerActive()) {
+			/* Held in one place while the user moves: let them go. The guest
+			   keeps its pointer where RISC OS wants it, which is the behaviour
+			   RISC OS is asking for; it is only the host pointer that must not
+			   be dragged along with it. */
+			return;
+		}
+	} else {
+		warp_target_ = pos;
+		warp_repeats_ = 0;
+	}
+
 	WarpPointer(pos.x, pos.y);
 	last_mouse_x_ = update.x;
 	last_mouse_y_ = update.y;
