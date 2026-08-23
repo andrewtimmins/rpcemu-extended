@@ -358,6 +358,8 @@ private:
 	 * the graphics card is fitted or the VRAM altered, not just at startup.
 	 */
 	void RebuildScreenSizeMenu();
+	void ApplyScreenSize(unsigned want_x, unsigned want_y);
+	wxSize CurrentGuestScreenSize() const;
 
 	/** True when the window's size is not derived from the guest's desktop. */
 	bool WindowSizeIsFree() const;
@@ -589,6 +591,12 @@ private:
 	   Guards the save-on-exit so it never blocks trying to snapshot a machine
 	   that has already failed. */
 	std::atomic<bool> fatal_occurred_{false};
+
+	/* The guest's screen size, as the frames say it is. Only kept for a managed
+	   machine, whose panel is never given a frame to learn it from, and written
+	   on the VIDC thread - hence atomic. */
+	std::atomic<int> managed_guest_x_{0};
+	std::atomic<int> managed_guest_y_{0};
 	bool menu_open_ = false;
 	bool window_active_ = false;
 	bool full_screen_ = false;

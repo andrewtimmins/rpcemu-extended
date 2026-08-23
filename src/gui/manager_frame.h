@@ -22,6 +22,7 @@
 #define MANAGER_FRAME_H
 
 #include <map>
+#include <utility>
 #include <vector>
 
 #include <wx/wx.h>
@@ -78,6 +79,10 @@ private:
 		bool debug_pause_requested = false;
 		int cdrom_source = 0;		/* 0 disabled, 1 empty, 2 an image */
 		bool network_is_nat = false;
+		/* Empty until the machine has reported, which greys the submenu. */
+		std::vector<std::pair<unsigned, unsigned>> screen_modes;
+		unsigned screen_size_x = 0;
+		unsigned screen_size_y = 0;
 	};
 
 	void BuildUi();
@@ -202,6 +207,11 @@ private:
 
 	wxMenu *machine_disc_menu_ = nullptr;
 	wxMenu *machine_settings_menu_ = nullptr;
+	wxMenu *screen_size_menu_ = nullptr;
+	wxMenuItem *screen_size_parent_ = nullptr;
+	std::vector<std::pair<unsigned, unsigned>> screen_size_items_;
+	void RebuildScreenSizeMenu();
+	void OnScreenSize(wxCommandEvent &event);
 	wxMenu *machine_tools_menu_ = nullptr;
 	wxMenu *machine_debug_menu_ = nullptr;
 	wxMenu *machine_help_menu_ = nullptr;
