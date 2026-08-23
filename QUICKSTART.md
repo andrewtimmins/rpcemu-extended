@@ -73,7 +73,7 @@ applications, games, fonts and libraries from the same repositories a real
 RISC OS machine uses.
 
 **To leave full-screen**, press **Alt+Enter**. The same key gets you into it
-from **Settings ▸ Full-screen Mode**.
+from **Settings ▸ Fullscreen**.
 
 ## If something is not right
 

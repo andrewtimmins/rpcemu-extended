@@ -188,7 +188,7 @@ void MainFrame::BuildMenus()
 	settings_menu->AppendSeparator();
 
 	mute_menu_item_ = settings_menu->AppendCheckItem(ID_MENU_MUTE, "Mute Sound");
-	fullscreen_menu_item_ = settings_menu->AppendCheckItem(ID_MENU_FULLSCREEN, "Full-screen Mode");
+	fullscreen_menu_item_ = settings_menu->AppendCheckItem(ID_MENU_FULLSCREEN, "Fullscreen");
 	integer_scaling_menu_item_ =
 	    settings_menu->AppendCheckItem(ID_MENU_INTEGER_SCALING, "Pixel Perfect");
 	fit_to_window_menu_item_ =

@@ -419,7 +419,7 @@ Both keep a list of what you have used recently.
 | **VNC Server...** | Serve this machine's screen over the network |
 | **Serial... / Parallel... / USB...** | The ports, described below |
 | **Mute Sound** | Silence without changing the machine |
-| **Full-screen Mode** | Also **Alt+Enter**, which is how you get back |
+| **Fullscreen** | Also **Alt+Enter**, which is how you get back |
 | **Pixel Perfect** | Scale only in whole multiples, so pixels stay square |
 | **Fit to Window** | Scale the picture to whatever size you drag the window |
 | **Mouse Follows Host Pointer** | On by default. Turn it off for games (see below) |
@@ -460,7 +460,7 @@ keeping the proportions right and putting black bars where they do not match.
 stay sharp squares. Better for games and anything pixel-art; costs you black
 borders when the window is not an exact multiple.
 
-**Full-screen Mode**, or **Alt+Enter**. The same key leaves.
+**Fullscreen**, or **Alt+Enter**. The same key leaves.
 
 **Follow the host display size** (in the machine's Options) tells the guest what
 your monitor can do, so RISC OS offers sensible modes rather than 1980s ones.
