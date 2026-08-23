@@ -253,6 +253,7 @@ NetworkAnalyserWindow::NetworkAnalyserWindow(wxWindow *parent)
 	 * a memcpy per frame for no reason.
 	 */
 	capture_->SetValue(true);
+	capture_->SetLabel("Capturing");
 	netcap_ring_enable(1);
 	timer_.Start(400);
 }
@@ -273,7 +274,10 @@ NetworkAnalyserWindow::ShowAndRaise()
 void
 NetworkAnalyserWindow::OnCapture(wxCommandEvent &)
 {
-	netcap_ring_enable(capture_->GetValue() ? 1 : 0);
+	const bool on = capture_->GetValue();
+
+	netcap_ring_enable(on ? 1 : 0);
+	capture_->SetLabel(on ? "Capturing" : "Capture");
 }
 
 void
@@ -362,6 +366,9 @@ NetworkAnalyserWindow::OnTimer(wxTimerEvent &)
 		    static_cast<unsigned long long>(st.frames_tx),
 		    static_cast<unsigned long long>(st.frames_rx));
 
+		if (!capture_->GetValue()) {
+			label += "   capture stopped";
+		}
 		if (st.file_active) {
 			label += "   writing to a file";
 		}
