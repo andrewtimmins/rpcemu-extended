@@ -87,6 +87,7 @@ enum {
 	ID_RESET,
 	ID_RESTART,
 	ID_RESUME,
+	ID_DISCARD_STATE,
 	ID_SHORTCUT,
 	ID_MINIMAL_UI,
 	ID_MACHINE_LIST,
@@ -153,6 +154,7 @@ wxBEGIN_EVENT_TABLE(ManagerFrame, wxFrame)
 	EVT_MENU(ID_DELETE, ManagerFrame::OnDelete)
 	EVT_MENU(ID_START, ManagerFrame::OnStart)
 	EVT_MENU(ID_RESUME, ManagerFrame::OnResume)
+	EVT_MENU(ID_DISCARD_STATE, ManagerFrame::OnDiscardState)
 	EVT_MENU(ID_DATA_FOLDER, ManagerFrame::OnDataFolder)
 	EVT_MENU(wxID_PREFERENCES, ManagerFrame::OnSettings)
 	EVT_MENU(ID_STOP, ManagerFrame::OnStop)
@@ -604,6 +606,10 @@ void ManagerFrame::BuildMenus()
 	resume_item_ = machine_menu->Append(ID_RESUME, "Res&ume");
 	resume_item_->SetHelp(
 	    "Start this machine from the state it was suspended in");
+	discard_state_item_ = machine_menu->Append(ID_DISCARD_STATE,
+	    "&Discard Suspended State");
+	discard_state_item_->SetHelp(
+	    "Throw away the saved state, so this machine starts fresh");
 	stop_item_ = machine_menu->Append(ID_STOP, "S&top");
 	machine_menu->AppendSeparator();
 	reset_item_ = machine_menu->Append(ID_RESET, "&Reset");
@@ -1103,6 +1109,9 @@ void ManagerFrame::UpdateButtons()
 	if (resume_item_ != nullptr) {
 		resume_item_->Enable(can_resume);
 	}
+	if (discard_state_item_ != nullptr) {
+		discard_state_item_->Enable(can_resume);
+	}
 	if (stop_item_ != nullptr) stop_item_->Enable(is_running);
 	if (reset_item_ != nullptr) reset_item_->Enable(is_live);
 	if (restart_item_ != nullptr) restart_item_->Enable(is_live);
@@ -1553,14 +1562,18 @@ void ManagerFrame::OnMachineRightClick(wxListEvent &event)
 	}
 
 	const bool is_running = running_.count(name) != 0;
+	const bool can_resume = !is_running && HasSnapshot(name);
 	wxMenu menu;
 
 	menu.Append(ID_START, "Start");
 	menu.Append(ID_RESUME, "Resume");
 	menu.Append(ID_STOP, "Stop");
 	menu.Enable(ID_START, !is_running);
-	menu.Enable(ID_RESUME, !is_running && HasSnapshot(name));
+	menu.Enable(ID_RESUME, can_resume);
 	menu.Enable(ID_STOP, is_running);
+	menu.AppendSeparator();
+	menu.Append(ID_DISCARD_STATE, "Discard Suspended State");
+	menu.Enable(ID_DISCARD_STATE, can_resume);
 	menu.AppendSeparator();
 	menu.Append(ID_EDIT, "Edit...");
 	/* Greyed while the machine runs, to match the Edit button and the Machine
@@ -1752,6 +1765,49 @@ void ManagerFrame::OnResume(wxCommandEvent & /*event*/)
 	StartMachine(name, true);
 }
 
+/*
+ * Throw the suspended state away, so the machine boots fresh next time.
+ *
+ * Asked about rather than done: this is the only way to lose a suspended
+ * session outright, everything else having left it where it was. The file goes
+ * to .bak, which is where resuming puts it too, so the same one undo exists
+ * either way.
+ */
+void ManagerFrame::OnDiscardState(wxCommandEvent & /*event*/)
+{
+	const wxString name = SelectedMachineName();
+	const wxString snapshot = SnapshotPathFor(name);
+
+	if (snapshot.empty() || !wxFileExists(snapshot)) {
+		return;
+	}
+
+	wxRichMessageDialog dlg(this,
+	    wxString::Format("Discard the suspended state of %s?", name),
+	    "RPCEmu Extended Manager", wxYES_NO | wxNO_DEFAULT | wxICON_EXCLAMATION);
+
+	dlg.SetYesNoLabels("Discard", "Cancel");
+	dlg.SetExtendedMessage(
+	    "The machine will start fresh instead of carrying on from where\n"
+	    "it was suspended. Whatever RISC OS had open at the time is lost.");
+
+	if (dlg.ShowModal() != wxID_YES) {
+		return;
+	}
+
+	const wxString bak = snapshot + ".bak";
+
+	if (wxFileExists(bak)) {
+		wxRemoveFile(bak);
+	}
+	if (!wxRenameFile(snapshot, bak)) {
+		wxMessageBox("Could not discard the suspended state.",
+		    "RPCEmu Extended Manager", wxOK | wxICON_ERROR, this);
+		return;
+	}
+
+	RefreshMachineList();
+}
 
 /*
  * Is any machine in this data folder being used by a running RPCEmu?
@@ -1958,15 +2014,20 @@ bool ManagerFrame::WillAskBeforeStopping(const wxString &name) const
 	    !running->second.suspend_on_exit;
 }
 
-bool ManagerFrame::HasSnapshot(const wxString &name) const
+wxString ManagerFrame::SnapshotPathFor(const wxString &name) const
 {
 	if (name.empty()) {
-		return false;
+		return wxEmptyString;
 	}
 
-	const wxString snapshot = ConfigPathsSnapshotForConfig(
+	return ConfigPathsSnapshotForConfig(
 	    ConfigPathsConfigsDir() + wxFileName::GetPathSeparator() +
 	    name + ".cfg");
+}
+
+bool ManagerFrame::HasSnapshot(const wxString &name) const
+{
+	const wxString snapshot = SnapshotPathFor(name);
 
 	return !snapshot.empty() && wxFileExists(snapshot);
 }

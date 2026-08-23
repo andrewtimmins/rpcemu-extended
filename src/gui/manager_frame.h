@@ -116,6 +116,7 @@ private:
 
 	/* Has this machine a suspended state to start from? */
 	bool HasSnapshot(const wxString &name) const;
+	wxString SnapshotPathFor(const wxString &name) const;
 	void ShowMachinePanel(const wxString &name);
 	void RemoveRunningEntry(const wxString &name);
 	void AttachPanelFor(const wxString &name, const wxString &shared_fb_name,
@@ -150,6 +151,7 @@ private:
 	void OnDelete(wxCommandEvent &event);
 	void OnStart(wxCommandEvent &event);
 	void OnResume(wxCommandEvent &event);
+	void OnDiscardState(wxCommandEvent &event);
 	void OnDataFolder(wxCommandEvent &event);
 
 	/* RPCEmu's own settings - the data folder and how a machine is drawn.
@@ -229,6 +231,7 @@ private:
 	wxMenuItem *reset_item_ = nullptr;
 	wxMenuItem *restart_item_ = nullptr;
 	wxMenuItem *resume_item_ = nullptr;
+	wxMenuItem *discard_state_item_ = nullptr;
 	wxMenuItem *shortcut_item_ = nullptr;
 	wxMenuItem *minimal_ui_item_ = nullptr;
 	wxMenuItem *cdrom_disabled_item_ = nullptr;
