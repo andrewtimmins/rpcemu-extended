@@ -518,7 +518,7 @@ void MachineInspectorWindow::BuildUi()
 	 * registers and cut "privileged" off the mode. The code and memory split
 	 * goes on proportion, since both grow usefully.
 	 */
-	CallAfter([this, split_outer, split_main, split_code, state_panel, notebook] {
+	CallAfter([split_outer, split_main, split_code, state_panel, notebook] {
 		const int wanted = state_panel->GetBestSize().x + 12;
 		const int height = split_outer->GetClientSize().y;
 
