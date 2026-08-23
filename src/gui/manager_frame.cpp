@@ -22,6 +22,7 @@
 #include "manager_frame.h"
 
 #include "display_options.h"
+#include "settings_labels.h"
 
 #include "window_owner.h"
 
@@ -694,28 +695,50 @@ void ManagerFrame::BuildMachineMenus(wxMenuBar *menu_bar)
 	machine_settings_menu_->Append(ID_MENU_PARALLEL, "Parallel Port...");
 	machine_settings_menu_->Append(ID_MENU_USB, "USB Devices...");
 	machine_settings_menu_->AppendSeparator();
-	machine_settings_menu_->AppendCheckItem(ID_MENU_MUTE, "Mute Sound");
-	machine_settings_menu_->AppendCheckItem(ID_MENU_FULLSCREEN, "Fullscreen");
+	machine_settings_menu_->AppendCheckItem(ID_MENU_MUTE,
+	    SettingsLabels::MuteSound())->SetHelp(SettingsLabels::MuteSoundHelp());
+	machine_settings_menu_->AppendCheckItem(ID_MENU_FULLSCREEN,
+	    DisplayOptions::FullScreen())->SetHelp(DisplayOptions::FullScreenHelp());
 	/*
-	 * How the machine draws its screen, as the radio pair it now is rather than
-	 * three checkboxes that contradicted each other.
+	 * How the machine draws its screen, in the submenu the machine's own window
+	 * puts it in. The group's name is the question the two answers answer, so
+	 * flattening it out here left the Manager with a bare pair of radio items
+	 * and nothing saying what they were about.
 	 *
-	 * The screen SIZE is deliberately not offered here. Which id means which
-	 * resolution depends on how much display memory that machine has, so it is
-	 * not something the Manager can decide on the machine's behalf - it is set in
-	 * the machine's own Settings menu, or in the machine editor.
+	 * The screen SIZE, the other half of that window's display settings, is not
+	 * offered here. The list is learned rather than computed - RISC OS accepts
+	 * only the modes its monitor definition declares, and which those are is
+	 * found out as they are refused - so the Manager would have to be told it by
+	 * the machine rather than work it out. Until then it is set in the machine's
+	 * own Settings menu, or in the machine editor.
 	 */
-	machine_settings_menu_->AppendRadioItem(ID_MENU_SCALING_ACTUAL,
-	    DisplayOptions::ScalingActualSize());
-	machine_settings_menu_->AppendRadioItem(ID_MENU_SCALING_MULTIPLES,
-	    DisplayOptions::ScalingWholeMultiples());
+	{
+		auto *scaling_menu = new wxMenu;
+
+		scaling_menu->AppendRadioItem(ID_MENU_SCALING_ACTUAL,
+		    DisplayOptions::ScalingActualSize())
+		    ->SetHelp(DisplayOptions::ScalingActualSizeHelp());
+		scaling_menu->AppendRadioItem(ID_MENU_SCALING_MULTIPLES,
+		    DisplayOptions::ScalingWholeMultiples())
+		    ->SetHelp(DisplayOptions::ScalingWholeMultiplesHelp());
+		machine_settings_menu_->AppendSubMenu(scaling_menu,
+		    DisplayOptions::ScalingGroup());
+	}
 	machine_settings_menu_->AppendSeparator();
 	machine_settings_menu_->AppendCheckItem(ID_MENU_MOUSE_HACK,
-	    "Mouse Follows Host Pointer");
-	machine_settings_menu_->AppendCheckItem(ID_MENU_MOUSE_TWOBUTTON, "Two-Button Mouse");
-	machine_settings_menu_->AppendCheckItem(ID_MENU_SHARED_CLIPBOARD, "Shared Clipboard");
-	machine_settings_menu_->AppendCheckItem(ID_MENU_CPU_IDLE, "Reduce CPU Usage");
-	machine_settings_menu_->AppendCheckItem(ID_MENU_DEFAULT_MACHINE, "Default Machine");
+	    SettingsLabels::MouseFollows())
+	    ->SetHelp(SettingsLabels::MouseFollowsHelp());
+	machine_settings_menu_->AppendCheckItem(ID_MENU_MOUSE_TWOBUTTON,
+	    SettingsLabels::TwoButtonMouse())
+	    ->SetHelp(SettingsLabels::TwoButtonMouseHelp());
+	machine_settings_menu_->AppendCheckItem(ID_MENU_SHARED_CLIPBOARD,
+	    SettingsLabels::SharedClipboard())
+	    ->SetHelp(SettingsLabels::SharedClipboardHelp());
+	machine_settings_menu_->AppendCheckItem(ID_MENU_CPU_IDLE,
+	    SettingsLabels::ReduceCpu())->SetHelp(SettingsLabels::ReduceCpuHelp());
+	machine_settings_menu_->AppendCheckItem(ID_MENU_DEFAULT_MACHINE,
+	    SettingsLabels::DefaultMachine())
+	    ->SetHelp(SettingsLabels::DefaultMachineHelp());
 
 	machine_tools_menu_ = new wxMenu();
 	machine_tools_menu_->Append(ID_MENU_PACKAGES, "Package Manager...");
