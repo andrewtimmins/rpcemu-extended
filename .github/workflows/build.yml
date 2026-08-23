@@ -45,7 +45,10 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    # 1.x is the maintenance branch for the 1.1.x series, which is still
+    # supported, so a push there has to build and test exactly as main does.
+    # Without it named here a fix on that branch would be published untested.
+    branches: [main, 1.x]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
