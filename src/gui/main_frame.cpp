@@ -1881,6 +1881,8 @@ void MainFrame::OnVnc(wxCommandEvent &)
 		return;
 	}
 	VncDialog dlg(this, vnc_server_, wxString::FromUTF8(config_copy_.vnc_password), &config_copy_);
+
+	PrepareMachineWindow(&dlg, "VNC Server");
 	if (dlg.ShowModal() == wxID_OK) {
 		config.vnc_enabled = config_copy_.vnc_enabled;
 		config.vnc_port = config_copy_.vnc_port;
@@ -1916,12 +1918,15 @@ void MainFrame::OnUsb(wxCommandEvent &)
 {
 	UsbDialog dialog(this);
 
+	PrepareMachineWindow(&dialog, "USB Devices");
 	dialog.ShowModal();
 }
 
 void MainFrame::OnSerial(wxCommandEvent &)
 {
 	SerialDialog dlg(this);
+
+	PrepareMachineWindow(&dlg, "Serial Port");
 	dlg.ShowModal();
 }
 
