@@ -104,6 +104,36 @@ gen_x86_mov_stack_reg32(int x86reg, int offset)
 	}
 }
 
+/*
+ * Where execution continues after this block, or NULL if it must go back to the
+ * dispatcher. The same function, with the same reasoning, as in the amd64 and
+ * arm64 backends - see the comment there.
+ *
+ * @param r15_cached The block's cached copy of guest R15.
+ */
+const void *
+jit_chain_next(uint32_t r15_cached)
+{
+	const uint32_t pc = (r15_cached - 8) & arm.r15_mask;
+	const uint32_t hash = HASH(pc);
+	int num;
+
+	if (linecyc < 0 || (arm.event & 0xff) != 0) {
+		return NULL;
+	}
+	if (codeblockpc[hash] != pc) {
+		return NULL;
+	}
+
+	num = codeblocknum[hash];
+	/* The check the generated version never made. */
+	if (num < 0 || num >= BLOCKS) {
+		return NULL;
+	}
+
+	return (const uint8_t *) codeblockaddr[num] + block_enter;
+}
+
 void
 initcodeblocks(void)
 {
@@ -2126,18 +2156,18 @@ endblock(uint32_t opcode)
 		gen_x86_jump(CC_E, block_enter);
 	}
 
-	addbyte(0x83); addbyte(0xe8); addbyte(8); // SUB $8,%eax
-	addbyte(0x89); addbyte(0xc2); // MOV %eax,%edx
-	addbyte(0x81); addbyte(0xe2); addlong(0x1fffc); // AND $0x1fffc,%edx
-	addbyte(0x3b); addbyte(0x82); addptr(codeblockpc); // CMP codeblockpc(%edx),%eax
-	gen_x86_jump(CC_NE, 0);
-
-	addbyte(0x8b); addbyte(0x82); addptr(codeblocknum); // MOV codeblocknum(%edx),%eax
-	addbyte(0x8b); addbyte(0x04); addbyte(0x85); addptr(codeblockaddr); // MOV codeblockaddr(,%eax,4),%eax
-
-	// Jump to next block bypassing function prologue
-	addbyte(0x83); addbyte(0xc0); addbyte(block_enter); // ADD $block_enter,%eax
-	addbyte(0xff); addbyte(0xe0); // JMP *%eax
+	/* Ask jit_chain_next() where to go, and only jump if it says anywhere. The
+	   PC hash, the slot check and the range check are all in there, and the
+	   answer already has block_enter added, so this bypasses the successor's
+	   prologue exactly as the open-coded version did. The cached R15 is passed
+	   unmasked: the helper applies r15_mask itself, so all three backends now
+	   agree on how the next PC is worked out. */
+	gen_load_reg(15, EAX);
+	gen_x86_mov_reg32_stack(EAX, 0);		// arg1 on the stack (cdecl)
+	gen_x86_call(jit_chain_next);
+	addbyte(0x85); addbyte(0xc0);			// TEST %eax,%eax
+	gen_x86_jump(CC_Z, 0);				// no successor -> exit
+	addbyte(0xff); addbyte(0xe0);			// JMP *%eax
 }
 
 void

@@ -199,6 +199,50 @@ gen_x86_mov_stack_reg32(int x86reg, int offset)
 	}
 }
 
+/*
+ * Where execution continues after this block, or NULL if it must go back to the
+ * dispatcher.
+ *
+ * ★ Deliberately C rather than generated code, and identical in every backend.
+ *
+ * The lookup used to be open-coded in the block's tail: hash the PC, compare
+ * codeblockpc[hash], load codeblocknum[hash], index codeblockaddr with it and
+ * jump to the result. Nothing in that sequence checked that the index it read
+ * was in range, so a hash slot left holding an invalidated entry became a jump
+ * to whatever the load produced. On the arm64 backend that is how a recompiled
+ * boot ended up executing zeroed cache and eventually address 0 (issue #30);
+ * the same hole was here, unexercised.
+ *
+ * Written here the decision can be checked properly, and the answer is a single
+ * pointer the generated code tests against NULL before jumping to it. The fixed
+ * base registers are callee-saved in every ABI this builds for, so the successor
+ * still inherits the frame and register cache the chain was entered with.
+ *
+ * @param r15_cached The block's cached copy of guest R15.
+ */
+const void *
+jit_chain_next(uint32_t r15_cached)
+{
+	const uint32_t pc = (r15_cached - 8) & arm.r15_mask;
+	const uint32_t hash = HASH(pc);
+	int num;
+
+	if (linecyc < 0 || (arm.event & 0xff) != 0) {
+		return NULL;
+	}
+	if (codeblockpc[hash] != pc) {
+		return NULL;
+	}
+
+	num = codeblocknum[hash];
+	/* The check the generated version never made. */
+	if (num < 0 || num >= BLOCKS) {
+		return NULL;
+	}
+
+	return (const uint8_t *) codeblockaddr[num] + block_enter;
+}
+
 /**
  * Emit a call to a C helper from generated code.
  *
@@ -1958,25 +2002,15 @@ endblock(uint32_t opcode)
 	addbyte(0x41); addbyte(0xf7); addbyte(0x47); addbyte(offsetof(ARMState, event)); addlong(0xff); // TESTL $0xff,arm.event
 	gen_x86_jump(CC_NZ, 0);
 
-	addbyte(0x48); addbyte(0x8d); addbyte(0x0d); addrip(codeblockpc); // LEA codeblockpc(%rip),%rcx
-	gen_load_reg(15, EAX);
-	addbyte(0x83); addbyte(0xe8); addbyte(8); // SUB $8,%eax
-	addbyte(0x48); addbyte(0x8d); addbyte(0x1d); addrip(codeblocknum); // LEA codeblocknum(%rip),%rbx
-	addbyte(0x89); addbyte(0xc2); // MOV %eax,%edx
-	//if (arm.r15_mask != 0xfffffffc) {
-		addbyte(0x25); addlong(arm.r15_mask); // AND $arm.r15_mask,%eax
-	//}
-	addbyte(0x4c); addbyte(0x8d); addbyte(0x05); addrip(codeblockaddr); // LEA codeblockaddr(%rip),%r8
-	addbyte(0x81); addbyte(0xe2); addlong(0x1fffc); // AND $0x1fffc,%edx
-	addbyte(0x3b); addbyte(0x04); addbyte(0x11); // CMP (%rcx,%rdx),%eax
-	gen_x86_jump(CC_NE, 0);
-
-	addbyte(0x8b); addbyte(0x04); addbyte(0x13); // MOV (%rbx,%rdx),%eax
-	addbyte(0x49); addbyte(0x8b); addbyte(0x04); addbyte(0xc0); // MOV (%r8,%rax,8),%rax
-
-	// Jump to next block bypassing function prologue
-	addbyte(0x48); addbyte(0x83); addbyte(0xc0); addbyte(block_enter); // ADD $block_enter,%rax
-	addbyte(0xff); addbyte(0xe0); // JMP *%rax
+	/* Ask jit_chain_next() where to go, and only jump if it says anywhere. The
+	   PC hash, the slot check and the range check are all in there; the answer
+	   already has block_enter added, so this bypasses the successor's prologue
+	   exactly as the open-coded version did. */
+	gen_load_reg(15, EDI);				// arg1: cached R15
+	gen_call_c_function((const void *) jit_chain_next);
+	addbyte(0x48); addbyte(0x85); addbyte(0xc0);	// TEST %rax,%rax
+	gen_x86_jump(CC_Z, 0);				// no successor -> exit
+	addbyte(0xff); addbyte(0xe0);			// JMP *%rax
 }
 
 void
