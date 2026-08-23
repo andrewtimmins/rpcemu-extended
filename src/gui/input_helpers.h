@@ -66,6 +66,22 @@ bool InputIsReleaseMouseCaptureKey(const wxKeyEvent &event);
 bool InputIsThirdMouseButtonKey(const wxKeyEvent &event);
 
 /**
+ * Will the host never send a release for this press, so one has to be made up?
+ *
+ * macOS has two of these, and a key whose release never arrives is not a key
+ * that misbehaves once - it is held for ever, because nothing else will ever say
+ * otherwise. Both were reported as separate faults (issues #148 and #149) and
+ * are the same thing underneath.
+ *
+ * Always false off macOS, where a press is answered by a release.
+ *
+ * @param event     The key event as it arrived.
+ * @param scan_code What InputNativeScancodeFromKeyEvent() returned for it.
+ */
+bool InputNeedsSyntheticRelease(const wxKeyEvent &event, unsigned scan_code);
+
+
+/**
  * Log one key event to rpclog.txt when RPCEMU_KEYBOARD_DEBUG is set in the
  * environment.
  *
