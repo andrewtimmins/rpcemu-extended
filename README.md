@@ -20,7 +20,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 
 ## Highlights
 
-- **Cross-platform** — runs on **Linux** (amd64 + arm64), **Windows** (amd64 + a native arm64 build, interpreter, from CI artifacts), and **macOS** (universal — Intel + Apple Silicon). The x86-64 dynamic recompiler gives full-speed emulation on Linux, Windows and Intel Macs. A native **arm64** recompiler is also implemented and validated under emulation ([docs/arm64-dynarec.md](docs/arm64-dynarec.md)); it is not yet enabled in prebuilt releases, pending testing on real arm64 hardware. Builds from a single CMake codebase. See [Supported systems](#supported-systems).
+- **Cross-platform** — runs on **Linux** (amd64 + arm64), **Windows** (amd64 + a native arm64 build, interpreter, from CI artifacts), and **macOS** (universal — Intel + Apple Silicon). The x86-64 dynamic recompiler gives full-speed emulation on Linux, Windows and Intel Macs. A native **arm64** recompiler ships too, so an Apple Silicon Mac or an arm64 Linux machine runs recompiled code out of the box ([docs/arm64-dynarec.md](docs/arm64-dynarec.md)). Windows on ARM is the one platform still on the interpreter. Builds from a single CMake codebase. See [Supported systems](#supported-systems).
 - **Kinetic StrongARM (512MB)** — emulates the Acorn Risc PC **Kinetic** StrongARM processor card and its full **512MB** of RAM: the 256MB the motherboard IOMD can address, plus two 128MB on-card SDRAM banks. Boots RISC OS 5 straight to the desktop.
 - **Get RISC OS in one step** — RPCEmu ships no ROM, so a new installation has nothing to run. Creating a machine offers to fetch a ROM and the ready-made HardDisc4 hard disc from RISC OS Open and set them up on it. Stable 5.30 or the 5.31 nightly, with the licensing terms shown and agreed to first; also available headlessly as `--fetch-riscos`. An existing machine's hard disc is never overwritten. Needs a wxWidgets with `wxWebRequest`, which Debian 12 and Raspberry Pi OS have not got: see [COMPILE.md](COMPILE.md#wxwidgets-and-wxwebrequest). See [Getting RISC OS](#getting-risc-os).
 - **Multi-machine configuration** — create, edit, clone, and delete machine profiles from a startup selector; each machine has isolated CMOS, HostFS, and hard disc storage.
@@ -173,10 +173,10 @@ Each GitHub release ships prebuilt packages for four targets:
 | Package                                      | Platform                        | CPU core                                                                                           |
 | -------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `rpcemu_*_amd64.deb` / `_linux_amd64.tar.gz` | Linux x86-64                    | Recompiler (full speed)                                                                            |
-| `rpcemu_*_arm64.deb` / `_linux_arm64.tar.gz` | Linux arm64 (e.g. Raspberry Pi) | Interpreter (native arm64 recompiler implemented, not yet enabled in releases)                     |
+| `rpcemu_*_arm64.deb` / `_linux_arm64.tar.gz` | Linux arm64 (e.g. Raspberry Pi) | Recompiler (native AArch64 backend)                                                               |
 | `rpcemu_*_windows_amd64.zip`                 | Windows x64 (10/11)             | Recompiler (full speed)                                                                            |
 | *(CI artifact, not a release asset yet)*     | Windows on ARM (ARM64)          | Interpreter — native build; the amd64 release also runs there under emulation, with the recompiler |
-| `rpcemu_*_macos_universal.dmg`               | macOS (Intel + Apple Silicon)   | Universal app bundle — recompiler on Intel, interpreter on Apple Silicon                           |
+| `rpcemu_*_macos_universal.dmg`               | macOS (Intel + Apple Silicon)   | Universal app bundle — recompiler on both, x86-64 backend on Intel and AArch64 on Apple Silicon    |
 
 **Linux** packages are built on **Ubuntu 24.04 LTS**; being dynamically linked, they run
 on distributions whose system libraries are that version or newer:
@@ -186,7 +186,7 @@ on distributions whose system libraries are that version or newer:
 | Ubuntu 24.04 LTS (Noble) and newer (24.10, 25.04, …)                               | ✅ Yes — primary target                                 |
 | Linux Mint 22 / 22.x, Pop!_OS 24.04, Zorin 18, elementary 8, KDE neon (24.04 base) | ✅ Yes                                                  |
 | Debian 13 (Trixie) and newer                                                       | ✅ Yes                                                  |
-| arm64 / Raspberry Pi (Ubuntu 24.04+ base)                                          | ✅ Yes — `arm64` package (interpreter; slower than x86) |
+| arm64 / Raspberry Pi (Ubuntu 24.04+ base)                                          | ✅ Yes — `arm64` package (recompiler)                   |
 | Ubuntu 22.04 LTS, Debian 12 (Bookworm) and older                                   | ❌ No — system libraries too old                        |
 
 Linux minimum requirements: **glibc ≥ 2.34**, **libstdc++ from GCC 13.2+**

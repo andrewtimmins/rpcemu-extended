@@ -106,12 +106,11 @@ tear-free hand-off, and input over a side channel. VNC keeps the job it is good 
 reaching a machine that is headless or on another computer, where the alternative is
 nothing at all.
 
-## What is planned
+## The wire between machines
 
-### The wire between machines
-
-Each machine used to sit behind its own NAT, so two emulated machines could not see
-each other at all. `net_switch.c` connects them.
+Built, not planned: `net_switch.c` and `net_slot.c` are in the tree and in the
+build. Each machine used to sit behind its own NAT, so two emulated machines could
+not see each other at all; this connects them.
 
 It is a hub rather than a switch, and deliberately has no owner. Every instance
 already claims a slot of its own (`net_slot.c`); each slot gets a loopback UDP port,
@@ -143,30 +142,30 @@ demonstrated is a guest operating system using it - a ping between two RISC OS
 machines, or ShareFS finding a share on the other - because that needs a guest with
 its TCP/IP stack configured, and it is the obvious next thing to check.
 
-The Access relay still binds its ports on one instance only. Now that there is a LAN
-for the machines to sit on, the relay belongs to it - bound once on behalf of every
-machine and bridged to the real network - which is strictly better than the ownership
-claim described above, and is not done yet.
+## Decisions taken, and what is still open
 
-MAC addresses are derived from the slot (`network-nat.c`), but `macaddress` is still a
-per-machine setting and cloned machines that set it explicitly will collide.
+Three of the four questions this section used to pose have been answered by the
+implementation above, and are recorded here so the reasoning is not lost:
 
-## Decisions still open
+- **Where the switch lives:** nowhere. It is a hub with no owner, every instance
+  binding its own slot, so a machine started by hand joins by existing and an
+  instance that dies takes nothing with it.
+- **Transport:** loopback UDP, because a UNIX datagram socket is not available on
+  Windows, which is a supported platform here.
+- **Whether the uplink is shared:** it is not. Each machine keeps its own SLiRP for
+  outbound traffic and the switch carries machine-to-machine and Access only.
 
-- **Where the switch lives.** Inside the manager is convenient, since it is already
-  long-lived, but then machines started by hand cannot join. A separate small service
-  that the manager starts if it is not running follows how the relay behaves today.
-- **Transport.** A UNIX datagram socket is simplest and is not available on Windows,
-  which is a supported platform here. UDP on loopback works everywhere, provided it
-  is pinned to loopback with a zero TTL so a virtual LAN cannot leak onto the real
-  network.
-- **Whether the uplink is shared.** One SLiRP for the whole switch is the VirtualBox
-  model and means one NAT table, but it is more surgery. Leaving each machine its own
-  NAT for outbound traffic and using the switch only for machine-to-machine and
-  Access is much less work and probably indistinguishable in use.
+Still open:
+
 - **Whether emulated machines should appear to real hardware** on the network, or
   whether a private LAN between them is enough. The first keeps the relay central
   and the switch bridging; the second is considerably simpler.
+- **Where the Access relay binds.** It still binds its ports on one instance only.
+  Now that there is a LAN for the machines to sit on, the relay belongs to it -
+  bound once on behalf of every machine and bridged to the real network.
+- **Per-machine MAC addresses.** They are derived from the slot
+  (`network-nat.c`), but `macaddress` is still a per-machine setting, so cloned
+  machines that set it explicitly will collide.
 
 ## What it costs
 

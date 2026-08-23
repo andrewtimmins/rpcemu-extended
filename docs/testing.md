@@ -425,9 +425,13 @@ Said here rather than left to be discovered:
 - **The sanitiser job is Linux only.** It is the same C on all three platforms,
   so a fault it finds is a fault everywhere, but the Win32 and Cocoa paths are
   not covered by it.
-- **The arm64 builds run sixteen of the twenty-four tests.** They ship the
-  interpreter, so there is no recompiler for the eight differential tests to
-  compare against. This is expected, and the configure step says so.
+- **The arm64 builds now run the JIT differential tests too.** They used to ship
+  the interpreter, so there was no recompiler for the eight differential tests to
+  compare against, and the configure step said so. Now that macOS and arm64 Linux
+  ship the recompiler, CMake sees a native backend and builds those eight, which
+  means the AArch64 code generator is compared against the interpreter on the
+  architecture it emits code for. Windows on ARM is the remaining interpreter
+  build and still skips them - see [windows-build.md](windows-build.md) for why.
 - **A 32-bit x86 build has a recompiler backend (`codegen_x86.c`) but no
   differential tests**: `i386`/`i686` is excluded from the condition that
   compiles the JIT test hooks. No release is built for it.

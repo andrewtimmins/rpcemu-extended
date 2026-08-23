@@ -6,12 +6,43 @@ lets arm64 hosts — Apple Silicon, Raspberry Pi 4/5, arm64 Linux, Windows on AR
 first for how the recompiler is structured as a whole; this document covers only
 the arm64-specific backend.
 
-**It is in the tree but not in the releases.** The published arm64 builds, Linux
-and the arm64 slice of the macOS bundle alike, are still the interpreter: the
-backend has been validated against the interpreter under qemu (see
-[Testing](#testing)) but not proven on real arm64
-hardware, and a blank screen on arm64 Linux and the Pi 5 is unresolved. Build it
-yourself on an arm64 host and CMake selects it automatically.
+**It is in the releases.** The macOS universal binary is the recompiler on both
+slices and the arm64 Linux builds use it too, so an Apple Silicon Mac or an arm64
+Linux machine runs recompiled code out of the box.
+
+It was not, for a long time, and the reason was that it did not work: three
+separate defects, each fatal on its own, meant `--recompiler` crashed on every
+arm64 host. What was described here as "a blank screen on arm64 Linux and the Pi
+5" was those.
+
+- **The IRQ test ate the value just loaded.** `gen_test_armirq()` used x9 and x10
+  as scratch, which the load it followed had just written to, so the first
+  interrupt after a load corrupted the loaded value. It uses x13 and x14 now.
+- **A block could run past the end of its slot.** Nothing checked how much room
+  was left in the 1792-word slot while emitting, so a long block wrote into the
+  next one. `CODEBLOCK_SIZE` and `BLOCK_END_AT` bound it, and `addword()` calls
+  `fatal()` rather than overrunning silently.
+- **Chaining jumped without checking the target.** Where to chain to was decided
+  in generated code from a cached pointer, which could be stale. `jit_chain_next()`
+  is a C helper that validates the target first, and the same change went into the
+  amd64 and x86 backends, which shared the fault.
+
+**How it is proven now.** RISC OS 3.71, 4.39, 5.30 and 6.20 each boot to the
+desktop on the arm64 recompiler, measured by how much of the screen was drawn
+rather than watched once. The eight JIT differential tests build on arm64 as soon
+as CMake sees a native backend, so the generated code is compared against the
+interpreter on the architecture it is generated for - a check that did not exist
+while the arm64 releases were interpreter builds. And CI builds and boot-tests the
+arm64 Linux release on real arm64 hardware, so the Linux half is not inferred from
+the macOS half.
+
+**Windows on ARM is still the interpreter**, and the reason is now narrow rather
+than general: cache maintenance there wants `FlushInstructionCache` rather than the
+EL0 `dc cvau` / `ic ivau` this backend falls back on, and whether clang's
+`__builtin___clear_cache` lowers to something equivalent on that target has not
+been checked. The other objection has gone - x18 is reserved as the TEB pointer
+there, and `codegen_arm64.c` never uses it. Pass `--dynarec` to `build-windows.sh`
+to try it. No arm64 Windows binary is published in any case.
 
 ## Where it fits
 

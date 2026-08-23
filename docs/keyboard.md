@@ -129,6 +129,31 @@ collisions:
 | Left / right Option | Left / right Alt | |
 | Left / right Control | Left / right Ctrl | |
 
+## macOS: the releases that never arrive
+
+macOS does not send a key-up for everything it sends a key-down for, and a key
+whose release never arrives is not a key that misbehaves once. It is held down for
+ever, because nothing else will ever say otherwise. Two cases, reported separately
+and the same thing underneath:
+
+- **Caps Lock.** The host reports the state changing, not the key being pressed
+  and let go. RISC OS was left holding Caps Lock down, which is why the light and
+  the letters disagreed: the LED tracked the host while RISC OS toggled its own
+  state on a press that never ended.
+- **Any key pressed while Command is held.** Command is Ctrl to RISC OS, so
+  Cmd+L is Ctrl+L - and the L never came back up, so RISC OS saw it repeat
+  endlessly, exactly as though the key were stuck.
+
+`InputNeedsSyntheticRelease()` recognises both, and the release is **made up and
+sent late** rather than immediately. That delay is the whole of it: sending the
+release in the same breath as the press leaves no interval in which the key was
+held, and RISC OS sees nothing at all. A one-shot timer sends it 60ms later, which
+is long enough for the guest to register a press and short enough that nothing
+feels sticky. Modifier keycodes are excluded, since a modifier genuinely is held.
+
+Off macOS this returns false always: a press is answered by a release there, and
+inventing one would be inventing a fault.
+
 ## Diagnosing a keyboard fault
 
 Set `RPCEMU_KEYBOARD_DEBUG` in the environment and every key event is written to

@@ -50,12 +50,17 @@ It is native: clang there reports `aarch64-w64-windows-gnu` and `file` calls the
 result `PE32+ ... ARM64`. MSYS2's own runtime is x86-64 and runs under Windows'
 Prism emulation, so the *build* is emulated and slow while its *output* is not.
 
-**It ships the interpreter, and that is deliberate.** The AArch64 dynarec
-([arm64-dynarec.md](arm64-dynarec.md)) is not enabled in releases on any platform
-yet, and Windows on ARM adds its own questions to it: `x18` is reserved as the TEB
-pointer, and cache maintenance there wants `FlushInstructionCache` rather than the
-EL0 `dc`/`ic` sequence the backend uses. `--dynarec` will build it anyway, which is
-how it will eventually be proved. Note also that Windows on ARM runs the amd64
+**It ships the interpreter, and that is deliberate** - but for a narrower reason
+than it used to be. The AArch64 dynarec
+([arm64-dynarec.md](arm64-dynarec.md)) *is* now enabled in the macOS and arm64
+Linux releases, so "not enabled anywhere yet" is no longer the argument.
+
+What is left is specific to Windows on ARM: cache maintenance there wants
+`FlushInstructionCache` rather than the EL0 `dc cvau` / `ic ivau` sequence the
+backend falls back on, and whether clang's `__builtin___clear_cache` lowers to
+something equivalent on that target has not been checked. The other objection can
+be struck off - `x18` is reserved as the TEB pointer there, and `codegen_arm64.c`
+never uses it. `--dynarec` will build it anyway, which is how it will be proved. Note also that Windows on ARM runs the amd64
 build under emulation **with** the recompiler, so the emulated build may well be
 quicker than the native one until that changes - worth measuring rather than
 assuming either way.
