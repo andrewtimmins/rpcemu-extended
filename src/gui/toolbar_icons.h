@@ -36,6 +36,7 @@ wxBitmap ToolbarIconDebugRun(const wxSize &size = wxSize(24, 24));
 wxBitmap ToolbarIconDebugPause(const wxSize &size = wxSize(24, 24));
 wxBitmap ToolbarIconDebugStep(const wxSize &size = wxSize(24, 24));
 wxBitmap ToolbarIconInspector(const wxSize &size = wxSize(24, 24));
+wxBitmap ToolbarIconAnalyser(const wxSize &size = wxSize(24, 24));
 
 /* Starting and stopping a machine, which the Manager does and a running
    machine cannot. Deliberately not the debugger's run/pause icons: those now

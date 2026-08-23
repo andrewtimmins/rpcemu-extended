@@ -797,6 +797,8 @@ void ManagerFrame::BuildToolBar()
 	    "Single step");
 	tool_bar_->AddTool(ID_MENU_MACHINE_INSPECTOR, wxEmptyString, ToolbarIconInspector(icon_size),
 	    "Open Machine Inspector");
+	tool_bar_->AddTool(ID_MENU_NETWORK_ANALYSER, wxEmptyString, ToolbarIconAnalyser(icon_size),
+	    "Open Network Analyser");
 	tool_bar_->Realize();
 
 	tool_bar_->Bind(wxEVT_TOOL, &ManagerFrame::OnStart, this, ID_START);
@@ -2401,6 +2403,7 @@ void ManagerFrame::UpdateMachineMenuState()
 			ID_MENU_MUTE, ID_MENU_FULLSCREEN,
 			ID_MENU_MACHINE, ID_MENU_DEBUG_RUN, ID_MENU_DEBUG_PAUSE,
 			ID_MENU_DEBUG_STEP, ID_MENU_MACHINE_INSPECTOR,
+			ID_MENU_NETWORK_ANALYSER,
 		};
 
 		for (int id : forwarded_tools) {

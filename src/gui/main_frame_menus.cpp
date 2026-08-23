@@ -391,6 +391,8 @@ void MainFrame::BuildToolBar()
 	                   "Single step");
 	tool_bar_->AddTool(ID_MENU_MACHINE_INSPECTOR, wxEmptyString, ToolbarIconInspector(icon_size),
 	                   "Open Machine Inspector");
+	tool_bar_->AddTool(ID_MENU_NETWORK_ANALYSER, wxEmptyString, ToolbarIconAnalyser(icon_size),
+	                   "Open Network Analyser");
 	tool_bar_->Realize();
 
 	tool_bar_->Bind(wxEVT_TOOL, &MainFrame::OnScreenshot, this, ID_MENU_SCREENSHOT);
@@ -404,6 +406,7 @@ void MainFrame::BuildToolBar()
 	tool_bar_->Bind(wxEVT_TOOL, &MainFrame::OnFullscreen, this, ID_MENU_FULLSCREEN);
 	tool_bar_->Bind(wxEVT_TOOL, &MainFrame::OnMachine, this, ID_MENU_MACHINE);
 	tool_bar_->Bind(wxEVT_TOOL, &MainFrame::OnMachineInspector, this, ID_MENU_MACHINE_INSPECTOR);
+	tool_bar_->Bind(wxEVT_TOOL, &MainFrame::OnNetworkAnalyser, this, ID_MENU_NETWORK_ANALYSER);
 }
 
 void MainFrame::BuildStatusBar()
