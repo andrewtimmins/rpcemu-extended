@@ -776,6 +776,20 @@ if [ "$DO_FUSE" = true ]; then
 	# Fuse the emulator: x86_64(dynarec) + arm64(interpreter) -> universal.
 	# The staged copies are used, so the rewritten dependency paths are carried
 	# through into the bundle.
+	# What to call this bundle, decided once from the slices actually found rather
+	# than from a flag - which is how everything else here decides, and avoids the
+	# two names disagreeing.
+	#
+	# A one-slice bundle called "universal" is a download that fails on half the
+	# Macs that trust the name, so only a genuinely fused pair earns the word.
+	if [ ${#SLICE_ARCHES[@]} -gt 1 ]; then
+		BINARY_DESC="universal: ${SLICE_ARCHES[*]}, recompiler on both"
+		ARCHTAG=universal
+	else
+		BINARY_DESC="${SLICE_ARCHES[0]} only, recompiler"
+		ARCHTAG="${SLICE_ARCHES[0]}"
+	fi
+
 	echo "==> lipo emulator binary (${SLICE_ARCHES[*]})"
 	fuse_bin rpcemu "$MACOSD/rpcemu" || {
 		echo "error: no staged rpcemu binary to assemble"; exit 1;
@@ -1054,14 +1068,8 @@ EOF
 	# Disk image with a drag-to-Applications shortcut - the format Mac users
 	# expect. macOS only (hdiutil); the osxcross path stops at the .app.
 	if [ "$(uname -s)" = Darwin ] && command -v hdiutil >/dev/null 2>&1; then
-		# Named for what it actually contains. A one-slice bundle called
-		# "universal" is a download that fails on half the Macs that trust the
-		# name, so only a genuinely fused pair earns the word.
-		if [ ${#SLICE_ARCHES[@]} -gt 1 ]; then
-			DMG_ARCH=universal
-		else
-			DMG_ARCH="${SLICE_ARCHES[0]}"
-		fi
+		# Named for what it actually contains: see ARCHTAG above.
+		DMG_ARCH="$ARCHTAG"
 		DMG="releases/macos/rpcemu_${VERSION}_macos_${DMG_ARCH}.dmg"
 		echo "==> Packaging $DMG"
 		DMGSTAGE=$(mktemp -d)
