@@ -80,6 +80,28 @@ void window_set_owner(wxWindow *window, uint64_t owner_id);
 void window_show_in_front(wxWindow *window);
 
 /*
+ * Bring THIS process to the front, for the moment it is about to show a window
+ * the user has just asked for.
+ *
+ * macOS raises windows a whole application at a time, and a managed machine is
+ * never the active one: the click that asked for the window went to the
+ * Manager's menu or toolbar, so the Manager is active and the machine is not.
+ * Raise() then reorders the window within an application that is itself behind,
+ * which puts it exactly nowhere the user can see. Every window a managed machine
+ * opens came up behind the Manager, with nothing on screen to say anything had
+ * happened at all.
+ *
+ * Called by the process that owns the window, not by the Manager, and only when
+ * a window is actually being shown. The Manager could activate the machine by
+ * pid instead, but it forwards every menu command through one path and cannot
+ * tell which of them open a window - so it would steal focus for a checkbox.
+ *
+ * Nothing to do anywhere else: X11 and Windows raise per window, and both are
+ * handled by window_set_owner() and window_allow_foreground().
+ */
+void window_activate_self(void);
+
+/*
  * Let another process raise a window of its own, once.
  *
  * ★ Windows restricts this and the restriction is the whole difficulty: a

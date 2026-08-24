@@ -3178,6 +3178,21 @@ void MainFrame::PrepareMachineWindow(wxWindow *window, const wxString &what,
 	if (own) {
 		window_set_owner(window, owner_window_id_);
 	}
+
+	/*
+	 * And bring this process forward, for macOS, where windows are raised an
+	 * application at a time and this one is behind whenever the Manager was the
+	 * thing clicked.
+	 *
+	 * Here rather than only in window_show_in_front(), because that is reached
+	 * by the two windows which stay open - the Inspector and the Analyser - and
+	 * not by the dialogues, which are shown modally by the caller the moment
+	 * this returns. Every one of them opened behind the Manager. This runs for
+	 * both: a dialogue is prepared afresh on each use, so it lands here every
+	 * time, and the windows that persist are prepared once and then reach
+	 * window_show_in_front() on each open.
+	 */
+	window_activate_self();
 }
 
 void MainFrame::PostPointerShape(const PointerShape &shape)

@@ -178,6 +178,18 @@ if(NOT WIN32 AND NOT APPLE)
     endif()
 endif()
 
+# macOS raises windows an application at a time, so a managed machine has to
+# bring itself to the front before showing one - see window_activate_self().
+# There is no C interface for that, so this one file is compiled as
+# Objective-C++ and linked against AppKit. It is the only Objective-C in the
+# tree, which is why this is a property on the file rather than a language
+# enabled for the project.
+if(APPLE)
+    set_source_files_properties(window_owner.cpp PROPERTIES
+        COMPILE_OPTIONS "-x;objective-c++")
+    target_link_libraries(${RPCEMU_GUI_TARGET} PRIVATE "-framework AppKit")
+endif()
+
 if(RPCEMU_ENABLE_VNC)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(LIBVNCSERVER REQUIRED libvncserver)

@@ -34,6 +34,12 @@
 #include <windows.h>
 #endif
 
+#ifdef __WXOSX__
+/* Compiled as Objective-C++ on macOS - see the APPLE branch in CMakeLists.txt -
+   because bringing an application to the front has no C interface. */
+#import <AppKit/AppKit.h>
+#endif
+
 uint64_t
 window_native_id(const wxWindow *window)
 {
@@ -121,11 +127,28 @@ window_set_owner(wxWindow *window, uint64_t owner_id)
 }
 
 void
+window_activate_self(void)
+{
+#if defined(__WXOSX__)
+	/*
+	 * Ignoring other applications is the point rather than a rudeness: this one
+	 * is behind by definition, and the user has just asked for a window from it.
+	 * The alternative is the window opening where it cannot be seen.
+	 */
+	[NSApp activateIgnoringOtherApps:YES];
+#endif
+}
+
+void
 window_show_in_front(wxWindow *window)
 {
 	if (window == nullptr) {
 		return;
 	}
+
+	/* Before the raise: on macOS the raise only orders windows within an
+	   application, so the application has to be the front one first. */
+	window_activate_self();
 
 	if (!window->IsShown()) {
 		window->Show();
