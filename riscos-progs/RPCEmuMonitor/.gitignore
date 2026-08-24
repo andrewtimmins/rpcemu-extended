@@ -1,0 +1,4 @@
+version.inc
+mdf.inc
+*.o
+*.elf

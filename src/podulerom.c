@@ -32,12 +32,15 @@
 #include "rpcemu.h"
 #include "podules.h"
 #include "podulerom.h"
+#include "romload.h"
 
 #define MAXROMS 16
 static char romfns[MAXROMS + 1][256];
 
 static uint8_t *podulerom = NULL;
 static uint32_t poduleromsize = 0;
+
+static int podulerom_skip_module(const char *name);
 static uint32_t chunkbase;
 static uint32_t filebase;
 
@@ -187,6 +190,9 @@ initpodulerom(void)
 			if (stat(filepath, &buf) == 0) {
 				/* Skip directories or files with a .txt extension or starting with '.' */
 				if (S_ISREG(buf.st_mode) && (strcasecmp(ext, "txt") != 0) && d->d_name[0] != '.') {
+					if (podulerom_skip_module(d->d_name)) {
+						continue;
+					}
 					strcpy(romfns[file++], d->d_name);
 				}
 			}
@@ -267,6 +273,48 @@ initpodulerom(void)
 		filebase += ((uint32_t) len + 3) & ~3u;
 	}
 
+}
+
+/**
+ * Should this module be left out of the expansion card for this machine?
+ *
+ * The monitor definition module is the only one so far, and it is left out on
+ * RISC OS 5. There, the emulator describes the monitor by patching a
+ * synthesised EDID block into the video driver's own table, which is a better
+ * description than any file: RISC OS reads it directly and it tracks the host
+ * display. Loading a definition over the top would replace that with something
+ * poorer. Earlier versions have no EDID block to patch and no EDID support to
+ * read one, so they get the module and the definition it carries.
+ *
+ * Decided here rather than in the guest because the host knows the ROM's
+ * version for certain, where the module would have to guess it from an OS call
+ * and act on the guess.
+ *
+ * @param name Filename within poduleroms/
+ * @return non-zero if it should not be loaded into the card
+ */
+static int
+podulerom_skip_module(const char *name)
+{
+	int major = 0, minor = 0;
+
+	if (strcasecmp(name, "RPCEmuMonitor,ffa") != 0) {
+		return 0;
+	}
+
+	/* An unreadable version gets the module: a machine whose ROM this does not
+	   recognise is better off with a mode list than without one, and the
+	   definition only ever adds modes the screen memory can hold. */
+	if (!rom_probe_os_version(config.rom_dir, &major, &minor)) {
+		return 0;
+	}
+	if (major != 5) {
+		return 0;
+	}
+
+	rpclog("initpodulerom: RISC OS %d.%02d reads the monitor's EDID, so the "
+	       "monitor definition module is not fitted\n", major, minor);
+	return 1;
 }
 
 /**
