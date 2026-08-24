@@ -13,6 +13,8 @@ set(RPCEMU_CORE_SOURCES
     cp15.c
     edid.c
     display_mode.c
+    support_files.c
+    support_install.c
     gfxcard.c
     fdc.c
     fpa.c
@@ -117,6 +119,59 @@ if(WIN32 OR APPLE)
 else()
     list(APPEND RPCEMU_CORE_SOURCES network-tun.c cdrom-ioctl.c)
 endif()
+
+# The guest-side payload, embedded in the binary.
+#
+# These are the files an expansion card loads - the podule modules, the network
+# and graphics card drivers, the podule ROMs, the template CMOS - and they are
+# versioned with the emulator. Shipping them only as directories beside the
+# program is what lets somebody run a new emulator against old copies: on
+# Windows and Linux the release is one folder holding both the program and the
+# user's data, so a person who keeps their folder and drops the new executable
+# into it never receives the new modules at all. There is then nothing on that
+# machine to repair them from.
+#
+# Embedding removes the failure rather than compensating for it. The modules
+# cannot be out of step with the emulator because they are part of it, and
+# extracting them into the data directory needs no network and no permission.
+# It costs about 600KB in the binary.
+#
+# Generated at configure time, as the toolbar icons above are: re-run cmake
+# after changing one of these files. The directories are still staged into a
+# release, for anyone who wants them on disc.
+set(RPCEMU_PAYLOAD_DIRS poduleroms netroms gfxroms usbroms podules default)
+set(_payload_c "${CMAKE_CURRENT_BINARY_DIR}/support_payload.c")
+set(_payload_blobs "")
+set(_payload_table "")
+set(_payload_count 0)
+foreach(_dir ${RPCEMU_PAYLOAD_DIRS})
+    file(GLOB_RECURSE _found RELATIVE "${CMAKE_SOURCE_DIR}"
+         "${CMAKE_SOURCE_DIR}/${_dir}/*")
+    list(SORT _found)   # so two builds of the same tree produce the same file
+    foreach(_rel ${_found})
+        if(NOT IS_DIRECTORY "${CMAKE_SOURCE_DIR}/${_rel}")
+            string(MAKE_C_IDENTIFIER "${_rel}" _sym)
+            file(READ "${CMAKE_SOURCE_DIR}/${_rel}" _hex HEX)
+            file(MD5 "${CMAKE_SOURCE_DIR}/${_rel}" _md5)
+            string(LENGTH "${_hex}" _hexlen)
+            math(EXPR _size "${_hexlen} / 2")
+            string(REGEX REPLACE "(..)" "0x\\1," _bytes "${_hex}")
+            string(APPEND _payload_blobs
+                   "static const unsigned char blob_${_sym}[] = { ${_bytes} };\n")
+            string(APPEND _payload_table
+                   "\t{ \"${_rel}\", \"${_md5}\", blob_${_sym}, ${_size} },\n")
+            math(EXPR _payload_count "${_payload_count} + 1")
+        endif()
+    endforeach()
+endforeach()
+file(WRITE "${_payload_c}"
+     "/* Generated from the payload directories by CMake - do not edit. */\n"
+     "#include \"support_payload.h\"\n\n"
+     "${_payload_blobs}\n"
+     "const SupportPayloadFile support_payload[] = {\n${_payload_table}};\n\n"
+     "const int support_payload_count = ${_payload_count};\n")
+message(STATUS "RPCEmu: embedded ${_payload_count} guest support files")
+list(APPEND RPCEMU_CORE_SOURCES "${_payload_c}")
 
 add_library(rpcemu_core STATIC ${RPCEMU_CORE_SOURCES})
 
