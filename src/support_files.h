@@ -121,6 +121,36 @@ int support_files_plan(const SupportFile *shipped, int shipped_count,
  */
 int support_path_is_safe(const char *path);
 
+/*
+ * Reported as each file goes in, so a window can say what is happening. `path`
+ * is NULL on the final call, which says the run has finished.
+ */
+typedef void (*SupportInstallProgress)(int done, int total, const char *path,
+                                       void *ctx);
+
+/**
+ * How many files would be brought over, without bringing any.
+ *
+ * For deciding whether to put a window on screen at all: on almost every
+ * startup the answer is none, and a progress dialogue that flashes up for no
+ * work is worse than no dialogue.
+ *
+ * @param datadir Data directory, with a trailing separator
+ * @return Number of files that need copying
+ */
+int support_install_pending(const char *datadir);
+
+/**
+ * Bring the data directory's copies of the guest files up to date.
+ *
+ * @param datadir  Data directory, with a trailing separator
+ * @param progress Called as it goes, may be NULL
+ * @param ctx      Passed to `progress`
+ * @return Number of files written
+ */
+int support_install_run(const char *datadir, SupportInstallProgress progress,
+                        void *ctx);
+
 #ifdef __cplusplus
 }
 #endif
