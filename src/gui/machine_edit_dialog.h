@@ -96,6 +96,7 @@ private:
 	                                      int refresh, NetworkType network_type);
 	void PopulateRomList();
 	void UpdateRomModelCompatibility();
+	void UpdateGfxCardAvailability();
 	void SetMemoryNote(const char *text);
 	void GrowToFitContents();
 	void UpdateHdStatus();
@@ -212,6 +213,11 @@ private:
 	wxCheckBox *gfxcard_check_ = nullptr;
 	wxCheckBox *accelerators_check_ = nullptr;
 	wxCheckBox *gfxcard_boot_check_ = nullptr;
+
+	/* The tooltips these two normally carry. Kept because they are replaced by
+	   the reason the card is unavailable when the chosen ROM cannot drive it. */
+	wxString gfxcard_tooltip_;
+	wxString gfxcard_boot_tooltip_;
 	wxCheckBox *fullscreen_check_ = nullptr;
 	wxSlider *refresh_slider_ = nullptr;
 	wxStaticText *refresh_label_ = nullptr;

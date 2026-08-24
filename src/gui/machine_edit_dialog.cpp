@@ -598,16 +598,21 @@ wxWindow *MachineEditDialog::BuildSystemPage(wxWindow *parent)
 	default_machine_check_->SetToolTip(
 	    "Skip the machine selector and open this machine. Hold Shift while "
 	    "starting RPCEmu to get the selector back.");
-	gfxcard_boot_check_->SetToolTip(
+	/* Kept, because the tooltip is replaced by the reason the card is
+	   unavailable when the chosen ROM cannot drive it, and has to come back
+	   when a ROM that can is chosen again. */
+	gfxcard_boot_tooltip_ =
 	    "Hand the display to the card as the machine boots, so RISC OS comes up on "
 	    "it rather than on VIDC20 - no *GfxCardOn needed.\n\n"
 	    "The driver also selects the EDID monitor type for the session if the "
 	    "configured one would not offer the card's modes. Your configuration is "
-	    "left as it is.");
-	gfxcard_check_->SetToolTip(
+	    "left as it is.";
+	gfxcard_tooltip_ =
 	    "Fit an expansion card with 15MB of its own display memory, for modes the "
 	    "fitted VRAM cannot reach (up to 2560 x 1440 in full colour).\n\n"
-	    "RISC OS keeps using VIDC20 until you run *GfxCardOn. Needs RISC OS 5.");
+	    "RISC OS keeps using VIDC20 until you run *GfxCardOn. Needs RISC OS 5.";
+	gfxcard_boot_check_->SetToolTip(gfxcard_boot_tooltip_);
+	gfxcard_check_->SetToolTip(gfxcard_tooltip_);
 
 	auto *form = new wxFlexGridSizer(2, 14, 8);
 	form->AddGrowableCol(1, 1);
@@ -1642,11 +1647,64 @@ void MachineEditDialog::SetMemoryNote(const char *text)
 	GrowToFitContents();
 }
 
+/*
+ * Offer the graphics card only where it could work.
+ *
+ * It is a GraphicsV display driver, and GraphicsV is RISC OS 5's. On 3.71, 4.39
+ * or 6.16 the driver declines to initialise and says so in the guest, but by
+ * then the user has chosen the card, saved it, booted, and seen nothing happen -
+ * the emulator meanwhile registering a 15MB card and loading a driver into its
+ * ROM that will never run. Better not to offer it.
+ *
+ * Turned off as well as disabled: a checkbox left ticked but greyed would save
+ * gfxcard_enabled=1 for a machine that cannot use it, which is the same untruth
+ * written down. The reason goes in the tooltip, so it is there when somebody
+ * wonders why the control is dead.
+ */
+void MachineEditDialog::UpdateGfxCardAvailability()
+{
+	char msg[512] = "";
+
+	if (gfxcard_check_ == nullptr) {
+		return;
+	}
+
+	const wxString rom_dir = SelectedRomDir();
+	const wxScopedCharBuffer rom_dir_utf8 = rom_dir.utf8_str();
+	const bool supported =
+	    rom_supports_gfxcard(rom_dir_utf8.data(), msg, sizeof(msg)) != 0;
+
+	if (supported) {
+		gfxcard_check_->Enable(true);
+		gfxcard_check_->SetToolTip(gfxcard_tooltip_);
+		if (gfxcard_boot_check_ != nullptr) {
+			gfxcard_boot_check_->Enable(gfxcard_check_->GetValue());
+			gfxcard_boot_check_->SetToolTip(gfxcard_boot_tooltip_);
+		}
+		return;
+	}
+
+	gfxcard_check_->SetValue(false);
+	gfxcard_check_->Enable(false);
+	gfxcard_check_->SetToolTip(wxString::FromUTF8(msg));
+
+	if (gfxcard_boot_check_ != nullptr) {
+		gfxcard_boot_check_->SetValue(false);
+		gfxcard_boot_check_->Enable(false);
+		gfxcard_boot_check_->SetToolTip(wxString::FromUTF8(msg));
+	}
+}
+
 void MachineEditDialog::UpdateRomModelCompatibility()
 {
 	char detail[64] = "";
 	char msg[512] = "";
 	const Model model = CurrentModelSelection();
+
+	/* Before anything below can return early: the graphics card depends on the
+	   ROM, so its control has to be settled on every path through here, not just
+	   the one where the ROM turns out to be a sensible match for the model. */
+	UpdateGfxCardAvailability();
 
 	/* Constrain the RAM/VRAM selectors to what each model actually supports,
 	   mirroring the core's own clamps (settings.cpp config_load and rpcemu.c

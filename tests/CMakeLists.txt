@@ -815,6 +815,14 @@ if(NOT EXISTS "${RPCEMU_GFXROM}")
         "'git checkout -- gfxroms', or rebuild it with './build.sh --podules'. "
         "Configure with -DRPCEMU_BUILD_TESTS=OFF to build without any tests.")
 endif()
+# Which ROMs may be offered the graphics card. Compiles romload.c directly and
+# stubs the handful of symbols it wants from the rest of the emulator, so it
+# links nothing and can build ROM images of its own to probe.
+add_executable(test_rom_gfxcard test_rom_gfxcard.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/romload.c)
+target_include_directories(test_rom_gfxcard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_rom_gfxcard)
+
 add_executable(test_gfxrom test_gfxrom.c)
 target_include_directories(test_gfxrom PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 rpcemu_add_test(test_gfxrom "${RPCEMU_GFXROM}")
@@ -974,7 +982,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 61)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 62)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 10")	# JIT differential
 endif()

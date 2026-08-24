@@ -368,6 +368,73 @@ rom_probe_addressing(const char *rom_dir, char *detail, size_t detail_len)
 }
 
 int
+rom_probe_os_version(const char *rom_dir, int *major, int *minor)
+{
+	uint8_t header[ROM_PROBE_SCAN_BYTES];
+	size_t header_size = 0;
+	size_t total_size = 0;
+	int maj = 0, min = 0;
+
+	if (rom_probe_collect(rom_dir, header, sizeof(header), &header_size, &total_size) != 0) {
+		return 0;
+	}
+
+	/* Deliberately not rom_classify_addressing(): that answers "26-bit or
+	   32-bit" and gives up on the version the moment an image is 6MB or more,
+	   because size alone settles the question it was asked. Both the RISC OS
+	   4.39 and 6.16 images here are 6MB, so going through it would report no
+	   version for exactly the two this is most needed for. The scan itself
+	   reads them both correctly. */
+	if (!rom_mos_version_scan(header, header_size, &maj, &min)) {
+		return 0;
+	}
+
+	if (major != NULL) {
+		*major = maj;
+	}
+	if (minor != NULL) {
+		*minor = min;
+	}
+	return 1;
+}
+
+int
+rom_supports_gfxcard(const char *rom_dir, char *msg, size_t msg_len)
+{
+	int major = 0, minor = 0;
+
+	if (msg != NULL && msg_len > 0) {
+		msg[0] = '\0';
+	}
+
+	/* An unrecognised ROM is allowed. The card refusing to work is a smaller
+	   harm than a control the user cannot switch on for a ROM this happens not
+	   to know, and the guest-side driver declines by itself in any case. */
+	if (!rom_probe_os_version(rom_dir, &major, &minor)) {
+		return 1;
+	}
+
+	/*
+	 * RISC OS 5 exactly, and the "exactly" is the point: 6 is a higher number
+	 * and a different operating system. GraphicsV and OS_ScreenMode 64, which
+	 * are the whole basis of a card-hosted display, came from the Castle line
+	 * that 5 belongs to. RISC OS 6 is RISCOS Ltd's, descended from 4, and has
+	 * neither - VIDC20Video, the stock GraphicsV driver, is present in the 5.30
+	 * and 5.31 images and in none of 3.71, 4.39 or 6.16.
+	 */
+	if (major == 5) {
+		return 1;
+	}
+
+	if (msg != NULL && msg_len > 0) {
+		snprintf(msg, msg_len,
+		    "RISC OS %d.%02d has no display driver interface, so the graphics "
+		    "card cannot be used. It needs RISC OS 5.", major, minor);
+	}
+	return 0;
+}
+
+int
 rom_model_is_compatible(Model model, const char *rom_dir, char *msg, size_t msg_len)
 {
 	char detail[64];
