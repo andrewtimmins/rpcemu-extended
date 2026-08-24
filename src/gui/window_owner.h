@@ -79,4 +79,24 @@ void window_set_owner(wxWindow *window, uint64_t owner_id);
  */
 void window_show_in_front(wxWindow *window);
 
+/*
+ * Let another process raise a window of its own, once.
+ *
+ * ★ Windows restricts this and the restriction is the whole difficulty: a
+ * process may bring a window to the front only if it is already the foreground
+ * process or received the last input event. A machine started by the Manager is
+ * neither - the click that asks for its window went to the Manager's menu - so
+ * its Raise(), which is SetForegroundWindow() for a top-level window, is refused
+ * and Windows flashes the taskbar instead.
+ *
+ * Called by the process that DOES have the right, at the moment it is passing on
+ * a request to open a window. The grant is for one use and lapses at the next
+ * input not directed at that process, so it cannot become a standing licence to
+ * interrupt.
+ *
+ * Nothing to do anywhere else: X11 has no such restriction, and on Wayland and
+ * macOS a machine cannot raise its window across processes whatever we do.
+ */
+void window_allow_foreground(long pid);
+
 #endif /* WINDOW_OWNER_H */

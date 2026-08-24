@@ -142,3 +142,15 @@ window_show_in_front(wxWindow *window)
 		top->RequestUserAttention();
 	}
 }
+
+void
+window_allow_foreground(long pid)
+{
+#if defined(__WXMSW__)
+	if (pid > 0) {
+		AllowSetForegroundWindow((DWORD) pid);
+	}
+#else
+	(void) pid;
+#endif
+}

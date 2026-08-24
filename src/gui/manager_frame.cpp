@@ -1317,13 +1317,14 @@ void ManagerFrame::DiscoverAlreadyRunningMachines()
 			continue;	/* running, but not as a --managed child - nothing for us to attach to */
 		}
 
-		AttachPanelFor(name, wxString::FromUTF8(MachineIpcNameFor(rpcemu_get_datadir(), name.utf8_str().data(), pid)),
+		AttachPanelFor(name, pid, wxString::FromUTF8(MachineIpcNameFor(rpcemu_get_datadir(), name.utf8_str().data(), pid)),
 		    wxString::FromUTF8(endpoint), false);
 	}
 	RefreshMachineList();
 }
 
-void ManagerFrame::AttachPanelFor(const wxString &name, const wxString &shared_fb_name,
+void ManagerFrame::AttachPanelFor(const wxString &name, long pid,
+                                  const wxString &shared_fb_name,
                                   const wxString &ipc_endpoint, bool newly_started)
 {
 	auto *panel = new RemoteEmulatorPanel(display_book_, shared_fb_name.utf8_str().data(),
@@ -1394,6 +1395,12 @@ void ManagerFrame::AttachPanelFor(const wxString &name, const wxString &shared_f
 	}
 	it->second.starting = false;
 	it->second.panel = panel;
+	/* Set for a machine found already running as well as one started here,
+	   where StartMachine() has recorded it: without it the machine cannot be
+	   granted the right to raise its own windows. */
+	if (pid != 0) {
+		it->second.pid = pid;
+	}
 
 	/*
 	 * Tell the machine which window its own dialogues should sit above. Without
@@ -1538,7 +1545,7 @@ void ManagerFrame::OnPollTimer(wxTimerEvent & /*event*/)
 		    machine_lock_owner_alive(pid) &&
 		    machine_lock_read_ipc_endpoint(dir.utf8_str().data(), endpoint, sizeof(endpoint)) &&
 		    endpoint[0] != '\0') {
-			AttachPanelFor(name, wxString::FromUTF8(MachineIpcNameFor(rpcemu_get_datadir(), name.utf8_str().data(), pid)),
+			AttachPanelFor(name, pid, wxString::FromUTF8(MachineIpcNameFor(rpcemu_get_datadir(), name.utf8_str().data(), pid)),
 			    wxString::FromUTF8(endpoint), true);
 
 			/* Still starting means the attempt failed, so fall through to
@@ -2380,6 +2387,26 @@ bool ManagerFrame::SendMenuCommand(int id, bool checked, const wxString &argumen
 	}
 	strncpy(request.path, utf8.data(), sizeof(request.path) - 1);
 	request.path[sizeof(request.path) - 1] = '\0';
+
+	/*
+	 * Let the machine put its own window in front, for the command that opens
+	 * one.
+	 *
+	 * Windows only, and it has to be done from here: a process may raise a
+	 * window only while it is the foreground one, and the machine never is - the
+	 * click that asks for the window went to this menu, so this process received
+	 * the last input event and the machine's SetForegroundWindow is refused.
+	 * That is why the Machine Inspector and the Network Analyser opened behind
+	 * this window the first time and correctly after it: the second open needs
+	 * no permission, the window already being above this one.
+	 *
+	 * AllowSetForegroundWindow hands the right over for one use, and this is the
+	 * moment the system means it to be used - the user has just clicked, and the
+	 * window they asked for is about to open. The grant lapses by itself at the
+	 * next input that is not directed at the machine, so it cannot accumulate
+	 * into a licence to interrupt.
+	 */
+	window_allow_foreground(it->second.pid);
 
 	it->second.panel->SendRequest(request);
 	return true;

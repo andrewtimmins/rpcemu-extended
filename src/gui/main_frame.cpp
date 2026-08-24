@@ -2356,7 +2356,8 @@ void MainFrame::OnNetworkAnalyser(wxCommandEvent &)
 {
 	if (network_analyser_window_ == nullptr) {
 		network_analyser_window_ = new NetworkAnalyserWindow(this);
-		PrepareMachineWindow(network_analyser_window_, "Network Analyser");
+		PrepareMachineWindow(network_analyser_window_, "Network Analyser",
+		    false);
 		network_analyser_window_->Bind(wxEVT_DESTROY,
 		    [this](wxWindowDestroyEvent &) {
 			network_analyser_window_ = nullptr;
@@ -2369,7 +2370,8 @@ void MainFrame::OnMachineInspector(wxCommandEvent &)
 {
 	if (machine_inspector_window_ == nullptr) {
 		machine_inspector_window_ = new MachineInspectorWindow(this, *emulator_);
-		PrepareMachineWindow(machine_inspector_window_, "Machine Inspector");
+		PrepareMachineWindow(machine_inspector_window_, "Machine Inspector",
+		    false);
 		machine_inspector_window_->Bind(wxEVT_DESTROY, [this](wxWindowDestroyEvent &) {
 			machine_inspector_window_ = nullptr;
 		});
@@ -3140,8 +3142,18 @@ void MainFrame::PostVideoUpdate(VideoUpdate update)
  *
  * Only for a managed machine: one running in its own window has that window as a
  * visible parent, and its title already says which machine it is.
+ *
+ * `own` is false for the windows that stay open while the machine is used. An
+ * owned window is a dialogue of its owner as far as the window manager is
+ * concerned, and it keeps the keyboard: with the Machine Inspector open, typing
+ * went into the Inspector's own fields even after the Manager was clicked, and
+ * the machine could not be typed at until it was closed. That is right for a
+ * modal dialogue, which is holding the keyboard on purpose, and wrong for a
+ * window meant to sit beside the machine while it runs. They still open in front
+ * - window_show_in_front() does that - they simply do not stay there.
  */
-void MainFrame::PrepareMachineWindow(wxWindow *window, const wxString &what)
+void MainFrame::PrepareMachineWindow(wxWindow *window, const wxString &what,
+                                     bool own)
 {
 	if (!managed_mode_ || window == nullptr) {
 		return;
@@ -3163,7 +3175,9 @@ void MainFrame::PrepareMachineWindow(wxWindow *window, const wxString &what)
 	/* Before it is shown: X11 keeps the hint across a map, and Windows wants the
 	   owner set while the window is still unmapped to place it correctly first
 	   time. */
-	window_set_owner(window, owner_window_id_);
+	if (own) {
+		window_set_owner(window, owner_window_id_);
+	}
 }
 
 void MainFrame::PostPointerShape(const PointerShape &shape)
