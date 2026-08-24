@@ -40,7 +40,7 @@ Linux, reached through `wxConfig`.
 | 5 | `configs/` in the current directory | No |
 | 6 | A macOS `.app` bundle: payload inside, data outside | No |
 | 7 | `configs/` in the install prefix or `/usr/share/rpcemu` | No |
-| 8 | `RPCEMU_RESOURCE_DIR` (settles the payload only) | No |
+| 8 | `RPCEMU_RESOURCE_DIR` is set, so data goes to the default location | No |
 | 9 | An existing default location that is already set up | **No** |
 | 10 | Nothing to go on, and a GUI to ask with: **ask** | Yes |
 | 11 | Nothing to go on and no GUI: the default, silently | No |
@@ -125,6 +125,20 @@ directory, not the data directory. So the resource directory follows the
 **payload**, wherever that is, independently of where the user keeps their
 machines: bundle, beside the binary, current directory, install prefix,
 `/usr/share/rpcemu`, and only then the data directory as a last resort.
+
+**`RPCEMU_RESOURCE_DIR` overrides all of that**, whatever the data directory
+turned out to be and whether or not that folder carries a payload of its own. It
+is the way to say where the payload is when it is not where RPCEmu would look,
+and it combines with `--datadir` or `RPCEMU_DATADIR` to place the two
+directories independently:
+
+```
+RPCEMU_DATADIR=~/my-machines RPCEMU_RESOURCE_DIR=/opt/rpcemu rpcemu
+```
+
+Note that row 8 of the table above is a different question — it is about where
+the *data* goes when the variable is the only thing set — and does not limit
+when the payload override applies.
 
 Pointing it at the data directory instead is what broke a real machine: none of
 that payload is in a folder the user picked for their machines, and `poduleroms`

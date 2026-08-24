@@ -81,6 +81,12 @@ static bool HasPayloadDir(const wxString &base)
 /* Where the payload is, independently of where the user keeps their data. */
 static ResourceDirSource g_resource_source = RESOURCE_DIR_SAME_AS_DATA;
 
+/* RPCEMU_RESOURCE_DIR, read once by InitRpcemuPaths(). Empty when unset. It is
+   the answer rather than one of the places searched, so it is held here instead
+   of being an input to data_dir_resource_decide(). */
+static wxString g_env_resource_dir;
+static bool g_env_resource_used = false;
+
 static wxString FindResourceDir(const wxString &bundle_dir, const wxString &exe_dir,
                                 const wxString &cwd, const wxString &install_dir,
                                 const wxString &user_dir)
@@ -130,6 +136,9 @@ static wxString FindResourceDir(const wxString &bundle_dir, const wxString &exe_
  * and the machine came up with no HostFS, no card ROMs and no CMOS template.
  * Then it is looked for wherever it actually is, as for a remembered or default
  * data directory.
+ *
+ * RPCEMU_RESOURCE_DIR outranks even a self-contained tree, and is applied by
+ * InitRpcemuPaths() once the switch has run rather than here.
  */
 static wxString ResourceDirForGivenDataDir(const wxString &bundle_dir,
                                           const wxString &exe_dir,
@@ -213,14 +222,6 @@ static std::string DirPathForCore(const wxString &dir)
 	return std::string(NormalizeDirPath(dir).utf8_str().data());
 }
 
-static void SeedFileIfMissing(const wxString &src, const wxString &dst)
-{
-	if (!wxFileExists(src) || wxFileExists(dst)) {
-		return;
-	}
-	wxCopyFile(src, dst, false);
-}
-
 /* Copy every file under src into dst, but only those not already present, so
  * user-added files are never clobbered on subsequent launches. */
 static void SeedDirIfMissing(const wxString &src, const wxString &dst)
@@ -296,15 +297,8 @@ static bool SeedUserDataDir(const wxString &resource_dir, const wxString &user_d
 	 * index, so a packaged install can boot out of the box. */
 	SeedDirIfMissing(resource + "roms", user_roms);
 
-	const wxString user_netroms = user + "netroms";
-	const wxString resource_netroms = resource + "netroms";
-	if (wxDirExists(resource_netroms)) {
-		if (!wxDir::Make(user_netroms, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL)) {
-			return false;
-		}
-		SeedFileIfMissing(resource_netroms + wxFileName::GetPathSeparator() + "EtherRPCEm,ffa",
-		                  user_netroms + wxFileName::GetPathSeparator() + "EtherRPCEm,ffa");
-	}
+	/* netroms/, poduleroms/, gfxroms/ and usbroms/ are not seeded: they are
+	   loaded from the resource directory, which is not this one. */
 
 	return ConfigPathsEnsureDataLayout();
 }
@@ -380,10 +374,10 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 
 	const DataDirDecision decision = data_dir_decide(&inputs);
 
-	/* RPCEMU_RESOURCE_DIR has no ResourceDirSource of its own - it is not one of
-	   the places that get searched, it is the answer - so the log line says so
-	   from here, as the headless resolver already did. */
-	bool env_resource_used = false;
+	/* Applied after the switch below. Reset as well as set, so a second call in
+	   one process does not inherit the first one's environment. */
+	g_env_resource_dir = env_resource;
+	g_env_resource_used = false;
 
 	switch (decision.source) {
 	/*
@@ -426,7 +420,7 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 	case DATA_DIR_FROM_ENV_RESOURCE:
 		resource_dir = NormalizeDirPath(env_resource);
 		user_dir = UserDataRoot();
-		env_resource_used = true;
+		g_env_resource_used = true;
 		break;
 
 	case DATA_DIR_FROM_BUNDLE:
@@ -485,6 +479,23 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 		break;
 	}
 
+	/*
+	 * RPCEMU_RESOURCE_DIR is the user saying outright where the payload is, so
+	 * it beats every answer above - including the branches that never search
+	 * because their layout already implied one.
+	 *
+	 * Applied here rather than inside the switch because data_dir_decide() only
+	 * reaches its own RPCEMU_RESOURCE_DIR case at rank 8, below --datadir and
+	 * RPCEMU_DATADIR at ranks 1 and 2. Setting the variable alongside either of
+	 * those therefore did nothing at all, and the two are exactly the
+	 * combination somebody needs when their data and their payload are in
+	 * different places.
+	 */
+	if (!g_env_resource_dir.empty()) {
+		resource_dir = NormalizeDirPath(g_env_resource_dir);
+		g_env_resource_used = true;
+	}
+
 	if (decision.should_remember && !user_dir.empty()) {
 		SetDataDir(user_dir.utf8_string());
 	}
@@ -512,8 +523,8 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 	       data_dir_source_name(decision.source),
 	       user_dir.utf8_str().data());
 	rpclog("Paths: resource directory from %s: %s\n",
-	       env_resource_used ? "RPCEMU_RESOURCE_DIR"
-	                         : data_dir_resource_source_name(g_resource_source),
+	       g_env_resource_used ? "RPCEMU_RESOURCE_DIR"
+	                           : data_dir_resource_source_name(g_resource_source),
 	       resource_dir.utf8_str().data());
 
 	if (!SeedUserDataDir(resource_dir, user_dir)) {
