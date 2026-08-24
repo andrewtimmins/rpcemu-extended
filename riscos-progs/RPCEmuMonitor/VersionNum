@@ -1,0 +1,7 @@
+# RPCEmuMonitor module version, in the RISC OS VersionNum style.
+#
+# The Makefile turns this into version.inc, which supplies the module's help
+# string. Bump both fields together when the module changes.
+
+Module_MajorVersion	0.01
+Module_Date		24 Aug 2026
