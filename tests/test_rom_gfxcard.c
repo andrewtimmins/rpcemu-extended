@@ -38,6 +38,9 @@
 #include <unistd.h>
 
 #include "rpcemu.h"
+/* For mkdir(): the Windows CRT's _mkdir() takes no permission mode, and this is
+   where the core's shim for that lives. */
+#include "rpcemu-win.h"
 #include "romload.h"
 
 static int failures;
