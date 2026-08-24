@@ -301,18 +301,30 @@ check_edid_advertises_every_mode(void)
 		{ 3840, 2160, 1 },
 		{ 3440, 1440, 1 },
 		{ 2560, 1440, 1 },
+		{ 1920, 1440, 0 },
+		{ 1856, 1392, 0 },
+		{ 1792, 1344, 0 },
 		{ 1920, 1200, 0 },
 		{ 1920, 1080, 0 },
 		{ 1600, 1200, 0 },
 		{ 1680, 1050, 0 },
+		{ 1400, 1050, 0 },
 		{ 1280, 1024, 0 },
 		{ 1440,  900, 0 },
 		{ 1280,  960, 0 },
+		{ 1360,  768, 0 },
+		{ 1152,  870, 0 },
 		{ 1152,  864, 0 },
+		{ 1280,  768, 0 },
 		{ 1280,  720, 0 },
 		{ 1024,  768, 0 },
+		{  832,  624, 0 },
 		{  800,  600, 0 },
+		{  848,  480, 0 },
 		{  640,  480, 0 },
+		{  720,  400, 0 },
+		{  640,  400, 0 },
+		{  640,  350, 0 },
 	};
 	uint8_t base[EDID_BLOCK_SIZE];
 	uint8_t block[EDID_BLOCK_SIZE];
@@ -333,9 +345,40 @@ check_edid_advertises_every_mode(void)
 
 	printf("\nevery mode the chooser can pick is one the EDID advertises\n");
 
+	/*
+	 * The table above says what is expected; this says what is actually there.
+	 * Both, because listing the modes by hand is how the two files came apart in
+	 * the first place: edid.c grew the descriptor that declares forty-four DMT
+	 * modes, display_mode.c kept the thirteen the old standard timings could
+	 * express, and nothing failed - RISC OS offered twenty-five sizes while the
+	 * emulator's own menus offered thirteen. A count taken from the real table
+	 * is what notices that.
+	 */
+	if (display_mode_count() != sizeof(modes) / sizeof(modes[0])) {
+		printf("  %-44s FAIL (table has %zu, this test lists %zu - a mode was "
+		       "added or removed without updating both)\n",
+		       "table and test agree on the mode count",
+		       display_mode_count(), sizeof(modes) / sizeof(modes[0]));
+		failures++;
+	} else {
+		printf("  %-44s ok (%zu modes)\n", "table and test agree on the count",
+		       display_mode_count());
+	}
+
 	for (i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
 		const unsigned w = modes[i].w, h = modes[i].h;
 		char label[64];
+		unsigned tw = 0, th = 0;
+
+		/* In the table, in this order: the order is what makes "largest that
+		   fits" work, so a mode arriving in the wrong place is a real fault even
+		   though every mode is still present. */
+		if (display_mode_get(i, &tw, &th) && (tw != w || th != h)) {
+			printf("  %ux%u: FAIL (table has %ux%u at this position)\n",
+			       w, h, tw, th);
+			failures++;
+			continue;
+		}
 
 		snprintf(label, sizeof(label), "%ux%u%s", w, h,
 		         modes[i].preferred_only ? " (preferred timing only)" : "");
@@ -361,8 +404,8 @@ main(void)
 	printf("mode selection bounded by VRAM, budgeting 32bpp\n");
 
 	/* A Kinetic is clamped to 2MB, so 1600x1200 at 32bpp (7.68MB) is out of
-	   reach and the biggest standard mode that fits is 800x600 (1.83MB). */
-	expect_mode("Kinetic, 2MB, 1080p host", 1920, 1080, 4, 2, 800, 600);
+	   reach and the biggest standard mode that fits is 832x624 (1.98MB). */
+	expect_mode("Kinetic, 2MB, 1080p host", 1920, 1080, 4, 2, 832, 624);
 
 	/* 1920x1080 at 32bpp is 7.91MB, which just fits 8MB. */
 	expect_mode("stock 8MB, 1080p host", 1920, 1080, 4, 8, 1920, 1080);
@@ -385,19 +428,22 @@ main(void)
 	   inside its width rather than one that overhangs it. */
 	expect_mode("15MB, ultrawide host", 3440, 1440, 4, 15, 2560, 1440);
 
-	/* Bounded by an unusually short display rather than by VRAM. */
-	expect_mode("2MB, 1920x515 host", 1920, 515, 4, 2, 640, 480);
+	/* Bounded by an unusually short display rather than by VRAM: the widest
+	   mode no taller than 515 lines, which is 848x480. */
+	expect_mode("2MB, 1920x515 host", 1920, 515, 4, 2, 848, 480);
 
-	/* Nothing standard fits 1MB at 32bpp; the caller must leave well alone
-	   rather than advertise something undisplayable. */
-	expect_nothing("1MB, nothing fits", 1920, 1080, 4, 1);
+	/* 1MB at 32bpp reaches the bottom of the ladder and no further: 640x400 is
+	   1000KB and fits, 640x480 at 1200KB does not. It used to fit nothing at
+	   all, before the small DMT modes were added to match what the EDID
+	   declares. */
+	expect_mode("1MB, only the bottom rung fits", 1920, 1080, 4, 1, 640, 400);
 
 	/* A machine with no VRAM fitted takes screen memory from DRAM, so there is
 	   no figure to reason about: budget 0 means the limit does not apply. */
 	expect_mode("no VRAM figure, budget skipped", 1920, 1080, 4, 0, 1920, 1080);
 
 	printf("\nthe same machines were the desktop 16bpp\n");
-	expect_mode("Kinetic 2MB at 16bpp", 1920, 1080, 2, 2, 1152, 864);
+	expect_mode("Kinetic 2MB at 16bpp", 1920, 1080, 2, 2, 1360, 768);
 	expect_mode("8MB at 16bpp", 1920, 1080, 2, 8, 1920, 1080);
 
 	printf("\nbounds are respected exactly\n");
