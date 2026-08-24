@@ -112,16 +112,34 @@ rpcemu_file_get_extension(const char *filename)
 static int
 write_rom(const char *name, const char *title, size_t size)
 {
-	char dir[512];
-	char path[1024];
+	/* Generously bigger than the data directory, so that what is appended here
+	   - "roms/", a ROM name, "/rom" - demonstrably fits whatever length that
+	   directory turns out to be. GCC reasons about exactly this and warned
+	   that "roms" might not fit when the two buffers were the same size; clang
+	   did not, so it took CI to find it.
+
+	   Checked as well as sized. A truncated path would create a directory
+	   somewhere other than intended and the test would then be probing a ROM
+	   it had not written, which is a worse failure than not running. */
+	char dir[sizeof(datadir) + 512];
+	char path[sizeof(dir) + 64];
 	FILE *f;
 	size_t written;
 
-	snprintf(dir, sizeof(dir), "%sroms", datadir);
+	if (snprintf(dir, sizeof(dir), "%sroms", datadir) >= (int) sizeof(dir)) {
+		printf("  data directory path too long\n");
+		return 0;
+	}
 	mkdir(dir, 0755);
-	snprintf(dir, sizeof(dir), "%sroms/%s", datadir, name);
+	if (snprintf(dir, sizeof(dir), "%sroms/%s", datadir, name) >= (int) sizeof(dir)) {
+		printf("  ROM directory path too long\n");
+		return 0;
+	}
 	mkdir(dir, 0755);
-	snprintf(path, sizeof(path), "%s/rom", dir);
+	if (snprintf(path, sizeof(path), "%s/rom", dir) >= (int) sizeof(path)) {
+		printf("  ROM file path too long\n");
+		return 0;
+	}
 
 	f = fopen(path, "wb");
 	if (f == NULL) {
