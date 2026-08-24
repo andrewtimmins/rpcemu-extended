@@ -207,6 +207,12 @@ wxBEGIN_EVENT_TABLE(ManagerFrame, wxFrame)
 	EVT_MENU(wxID_EXIT, ManagerFrame::OnExit)
 	EVT_CLOSE(ManagerFrame::OnClose)
 	EVT_TIMER(ID_POLL_TIMER, ManagerFrame::OnPollTimer)
+	/* Both, and neither implies the other: ICONIZE covers minimise and restore,
+	   MAXIMIZE only the maximise. See RepaintBandsNow(). */
+	EVT_ICONIZE(ManagerFrame::OnIconize)
+	EVT_MAXIMIZE(ManagerFrame::OnMaximize)
+	/* Un-maximising raises no event of its own; see OnFrameSize(). */
+	EVT_SIZE(ManagerFrame::OnFrameSize)
 wxEND_EVENT_TABLE()
 
 ManagerFrame::ManagerFrame()
@@ -537,6 +543,98 @@ void ManagerFrame::RelayoutAroundToolBar()
 	Refresh();
 	Update();
 	PositionCollapseButton();
+}
+
+/*
+ * Draw the toolbar and the status bar now, rather than waiting for Windows to
+ * get round to it.
+ *
+ * ★ Restoring or maximising this window leaves both bands blank until something
+ * unrelated repaints them - a menu being opened is the usual accident. Measured
+ * on Windows with GetUpdateRect: after a restore both bands report an update
+ * region covering their whole width and keep it, undelivered, for as long as the
+ * user waits. They were never drawn; the pixels are whatever was there before.
+ *
+ * The reason is the machine's own picture. Direct2D draws it at the guest's
+ * frame rate, and WM_PAINT is synthesised by Windows only when the message queue
+ * has nothing else in it, so the two bands - which paint natively and are asked
+ * for by nobody - lose the race indefinitely. Turning hardware acceleration off
+ * makes the symptom disappear entirely, which is what identified it.
+ *
+ * Refresh() alone cannot fix that: it adds to the update region and waits for
+ * the same WM_PAINT. Update() is ::UpdateWindow(), which paints synchronously
+ * and does not queue, so the band is drawn whatever else is pending.
+ *
+ * Windows only. Nothing else showed this, and a synchronous repaint of two bands
+ * is not worth spending elsewhere.
+ */
+void ManagerFrame::RepaintBandsNow()
+{
+#ifdef __WXMSW__
+	if (tool_bar_ != nullptr && tool_bar_->IsShown()) {
+		tool_bar_->Refresh();
+		tool_bar_->Update();
+	}
+	if (wxStatusBar *status = GetStatusBar()) {
+		if (status->IsShown()) {
+			status->Refresh();
+			status->Update();
+		}
+	}
+#endif
+}
+
+/*
+ * Restored, or maximised, or un-maximised.
+ *
+ * Both events are needed and neither implies the other: wxEVT_ICONIZE covers
+ * minimise and restore, wxEVT_MAXIMIZE only the maximise. Queued rather than
+ * done here, because the size that follows the event is the one the bands have
+ * to be drawn at - painting now would draw them at the old size and leave the
+ * same stale picture, one size out of date.
+ */
+void ManagerFrame::OnWindowStateChanged()
+{
+	CallAfter([this] { RepaintBandsNow(); });
+}
+
+void ManagerFrame::OnIconize(wxIconizeEvent &event)
+{
+	/* Only on the way back: nothing needs drawing while the window is gone, and
+	   a paint asked for then is one Windows discards. */
+	if (!event.IsIconized()) {
+		OnWindowStateChanged();
+	}
+	event.Skip();
+}
+
+void ManagerFrame::OnMaximize(wxMaximizeEvent &event)
+{
+	OnWindowStateChanged();
+	event.Skip();
+}
+
+/*
+ * Un-maximising raises no event of its own - wxEVT_MAXIMIZE is only the way in -
+ * and it leaves the same two blank bands, at the smaller size. The probe caught
+ * it as a plain size event still reporting a full-width update region, so the
+ * size path has to ask for the repaint too.
+ *
+ * Only when the maximised state actually changed, not on every size event: a
+ * drag of the window's edge raises one per mouse movement, and a synchronous
+ * repaint of two bands on each would be paid for in the drag feeling heavy. The
+ * bands redraw by themselves during a drag - it is the transitions that lose
+ * them.
+ */
+void ManagerFrame::OnFrameSize(wxSizeEvent &event)
+{
+	const bool maximized = IsMaximized();
+
+	if (maximized != was_maximized_) {
+		was_maximized_ = maximized;
+		OnWindowStateChanged();
+	}
+	event.Skip();
 }
 
 /* Hide the furniture and leave the machine. */
