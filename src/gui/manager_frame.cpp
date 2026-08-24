@@ -1333,6 +1333,12 @@ void ManagerFrame::RefreshUiState()
 	UpdateStatusText();
 	UpdateButtons();
 	UpdateMachineMenuState();
+
+	/* Both of those grey and ungrey tools, which on Windows are not redrawn on
+	   their own - the same withheld WM_PAINT as RepaintBandsNow(), reached by a
+	   different route. Once at the end rather than in each: they enable
+	   overlapping sets of tools. */
+	RepaintBandsNow();
 }
 
 void ManagerFrame::UpdateButtons()
