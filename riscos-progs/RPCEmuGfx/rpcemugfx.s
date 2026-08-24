@@ -93,11 +93,21 @@
 
 	@ Podule_ReadInfo items we ask for. The words come back in ascending bit
 	@ order, which is what the loads after the call assume.
+	Podule_ReadInfo_SyncBase	= 1 << 1
 	Podule_ReadInfo_EASILogical	= 1 << 9
 	Podule_ReadInfo_IntMask		= 1 << 15
 	Podule_ReadInfo_IntValue	= 1 << 16
 	Podule_ReadInfo_IntDeviceVector	= 1 << 17
 	READINFO_ITEMS = Podule_ReadInfo_EASILogical | Podule_ReadInfo_IntMask | Podule_ReadInfo_IntValue | Podule_ReadInfo_IntDeviceVector
+
+	@ For finding our own card by number when it cannot be found by address:
+	@ the two ways a card's base can be recorded, asked for together so one
+	@ call answers whichever form initialisation handed us.
+	READINFO_BASES = Podule_ReadInfo_SyncBase | Podule_ReadInfo_EASILogical
+
+	@ Expansion card slots to look through. Every machine RISC OS runs on has
+	@ eight, and asking about one that is empty is not an error.
+	PODULE_COUNT = 8
 
 	@ The monitor's EDID lives in an EEPROM at IIC address 0x50; RISC OS asks
 	@ for it as 0xa1, that address shifted up with the read bit set, in bits
@@ -1051,11 +1061,7 @@ init:
 	@ Ask the Podule manager where this card is and how its interrupt works.
 	@ Doing it this way rather than assuming an address means the card works
 	@ in whichever slot it is fitted to.
-	ldr	r0, =READINFO_ITEMS
-	add	r1, r5, #WS_SCRATCH
-	mov	r2, #16
-	mov	r3, r11
-	swi	XPodule_ReadInfo
+	bl	podule_read_info
 	bvs	init_failed
 
 	add	r1, r5, #WS_SCRATCH
@@ -1278,6 +1284,76 @@ msg_banner:
 msg_boot_failed:
 	.string	"High Resolution Graphics Card: could not take the display this early - use *GfxCardOn"
 	.align
+
+@ Where this card is and how its interrupt works, into WS_SCRATCH.
+@
+@ Asking by base address, which is the obvious thing since that is what
+@ initialisation hands us in R11, does not work at every RAM size. The Podule
+@ manager resolves an address by masking it and then ORing in &180000, promoting
+@ whatever access speed was asked for to "sync", before comparing against the
+@ card's recorded sync base (ConvertR3ToPoduleNode in HWSupport.Podule). Bits 19
+@ and 20 are that speed field, so the comparison can only succeed when the card's
+@ recorded base already has both set - and the logical address the kernel maps
+@ expansion card space at moves with the amount of RAM fitted. A 256MB machine
+@ gets an address where both bits are set and the promotion is a no-op; a 128MB
+@ machine gets one where bit 20 is clear and the promoted value can never match.
+@ The call then fails with &500, "Bad expansion card identifier", and a driver
+@ that treats that as fatal does not start at all on a machine with less RAM.
+@
+@ So fall back to asking by expansion card number, which takes the manager's
+@ list-scan path and never goes near the speed bits. Our own card is found by
+@ asking each slot for its base and looking for the one we were handed - both
+@ forms of base, because which one initialisation gives is not ours to assume.
+@ EtherRPCEm carries the same fallback, for the same reason, and Acorn's own
+@ Econet driver finds its card by number too.
+@
+@ in:  r5 = workspace, r11 = the address initialisation handed us
+@ out: WS_SCRATCH holds the four words READINFO_ITEMS asks for.
+@      V set and r0 -> error if the card could not be found at all.
+podule_read_info:
+	stmfd	sp!, {r1, r2, r3, r4, r6, lr}
+
+	ldr	r0, =READINFO_ITEMS
+	add	r1, r5, #WS_SCRATCH
+	mov	r2, #16
+	mov	r3, r11
+	swi	XPodule_ReadInfo
+	ldmvcfd	sp!, {r1, r2, r3, r4, r6, pc}	@ the direct way worked
+
+	mov	r4, #0			@ slot being tried
+1:
+	ldr	r0, =READINFO_BASES
+	add	r1, r5, #WS_SCRATCH
+	mov	r2, #8
+	mov	r3, r4
+	swi	XPodule_ReadInfo
+	bvs	2f			@ empty slot, or no such slot
+	ldr	r0, [r5, #WS_SCRATCH]		@ sync base
+	teq	r0, r11
+	ldrne	r0, [r5, #WS_SCRATCH + 4]	@ EASI base
+	teqne	r0, r11
+	bne	2f
+
+	@ This card is us: ask the same question by number.
+	ldr	r0, =READINFO_ITEMS
+	add	r1, r5, #WS_SCRATCH
+	mov	r2, #16
+	mov	r3, r4
+	swi	XPodule_ReadInfo
+	ldmfd	sp!, {r1, r2, r3, r4, r6, pc}	@ V as the SWI left it
+2:
+	add	r4, r4, #1
+	cmp	r4, #PODULE_COUNT
+	blo	1b
+
+	@ Not in the list at all, which should not be possible: this module is
+	@ running out of that card's ROM.
+	adrl	r0, err_no_card
+	cmp	r0, #NBIT		@ set V
+	cmnvc	r0, #NBIT
+	ldmfd	sp!, {r1, r2, r3, r4, r6, pc}
+
+	.ltorg
 
 	@ Failure paths. Each undoes exactly what had been done, then returns the
 	@ error it was given (or one of ours) with V set.

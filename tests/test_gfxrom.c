@@ -243,6 +243,24 @@ main(int argc, char **argv)
 		      "a 640x480 mode selector to fall back to");
 	}
 
+	/*
+	 * The card has to be found by expansion card number when it cannot be
+	 * found by the address initialisation handed us.
+	 *
+	 * Podule_ReadInfo resolves an address by ORing in &180000 to promote the
+	 * access speed to "sync" before comparing, and the address the kernel maps
+	 * expansion card space at moves with the amount of RAM fitted. Below 256MB
+	 * bit 20 of it is clear, the promoted value can never match, and the call
+	 * fails with "Bad expansion card identifier" - so a driver that asks only
+	 * by address does not start at all on a smaller machine. Issue #163.
+	 *
+	 * The mark that leaves in the image is the pair of items the fallback asks
+	 * each slot for. Nothing else in this module wants both bases at once.
+	 */
+	printf("\nthe card can be found on a machine with less RAM\n");
+	check(contains_word((1u << 1) | (1u << 9)),
+	      "asks each slot for its sync and EASI bases, to find its own");
+
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
 	       failures, failures == 1 ? "" : "s");
 
