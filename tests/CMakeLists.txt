@@ -662,6 +662,16 @@ rpcemu_add_test(test_savestate ${CMAKE_CURRENT_BINARY_DIR})
 # sixteen plausible bytes and nothing else would notice. Compiles md5.c directly;
 # it depends on nothing. Runs in the build directory, since it hashes a file it
 # writes.
+# Which shipped guest-side files to bring into the data directory. The decision
+# is the whole feature - copy too little and a new emulator runs old guest
+# modules, copy too much and somebody's own module is overwritten - and both
+# failures are silent, so the logic is kept free of the filesystem and tested
+# here on its own.
+add_executable(test_support_files test_support_files.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/support_files.c)
+target_include_directories(test_support_files PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_support_files)
+
 add_executable(test_md5 test_md5.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/md5.c)
 target_include_directories(test_md5 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
@@ -689,7 +699,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 42)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 43)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()
