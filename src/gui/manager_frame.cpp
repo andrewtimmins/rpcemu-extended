@@ -1185,7 +1185,12 @@ void ManagerFrame::SetMuteToolState(bool muted)
 	mute_tool_muted_ = muted;
 	tool_bar_->SetToolNormalBitmap(ID_MENU_MUTE, ToolbarIconMute(muted));
 
-	/* The new bitmap is not always drawn on its own. */
+	/*
+	 * The new bitmap is not always drawn on its own, and Update() is what makes
+	 * this work where a bare Refresh() would not: it paints synchronously
+	 * instead of queueing a WM_PAINT the toolbar may wait a long time for. See
+	 * RepaintBandsNow() for why that wait happens at all.
+	 */
 	tool_bar_->Refresh();
 	tool_bar_->Update();
 }
@@ -1210,7 +1215,6 @@ void ManagerFrame::SetDebugToolState(bool paused, bool pausing)
 		tool_bar_->EnableTool(ID_MENU_DEBUG_RUN, paused);
 		tool_bar_->EnableTool(ID_MENU_DEBUG_PAUSE, !paused || pausing);
 		tool_bar_->EnableTool(ID_MENU_DEBUG_STEP, paused);
-		tool_bar_->Refresh();
 	}
 }
 
@@ -1361,7 +1365,6 @@ void ManagerFrame::UpdateButtons()
 		tool_bar_->EnableTool(ID_RESUME, can_resume);
 		tool_bar_->EnableTool(ID_STOP, is_running);
 		tool_bar_->EnableTool(ID_RESET, is_live);
-		tool_bar_->Refresh();	/* see UpdateMachineMenuState */
 	}
 	if (start_item_ != nullptr) start_item_->Enable(have_selection && !is_running);
 	if (resume_item_ != nullptr) {
@@ -2794,9 +2797,6 @@ void ManagerFrame::UpdateMachineMenuState()
 		for (int id : forwarded_tools) {
 			tool_bar_->EnableTool(id, have_machine);
 		}
-
-		/* Greying a tool does not always redraw it. */
-		tool_bar_->Refresh();
 	}
 
 	/*
