@@ -124,8 +124,11 @@ private:
 	wxString SnapshotPathFor(const wxString &name) const;
 	void ShowMachinePanel(const wxString &name);
 	void RemoveRunningEntry(const wxString &name);
-	void AttachPanelFor(const wxString &name, const wxString &shared_fb_name,
-	                     const wxString &ipc_endpoint, bool newly_started);
+	/* `pid` is the machine's process, kept so it can be granted the right to
+	   raise its own windows - see window_allow_foreground(). */
+	void AttachPanelFor(const wxString &name, long pid,
+	                    const wxString &shared_fb_name,
+	                    const wxString &ipc_endpoint, bool newly_started);
 
 	void OnMachineSelected(wxListEvent &event);
 	void OnMachineActivated(wxListEvent &event);

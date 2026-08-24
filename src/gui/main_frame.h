@@ -234,7 +234,8 @@ public:
 	 * identified by that window, and its dialogues are parented to something
 	 * visible.
 	 */
-	void PrepareMachineWindow(wxWindow *window, const wxString &what);
+	void PrepareMachineWindow(wxWindow *window, const wxString &what,
+	                          bool own = true);
 	void ShowError(const std::string &message) override;
 	void ShowFatal(const std::string &message) override;
 	void PostDebuggerStateChanged() override;
