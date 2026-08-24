@@ -81,6 +81,12 @@ static bool HasPayloadDir(const wxString &base)
 /* Where the payload is, independently of where the user keeps their data. */
 static ResourceDirSource g_resource_source = RESOURCE_DIR_SAME_AS_DATA;
 
+/* RPCEMU_RESOURCE_DIR, read once by InitRpcemuPaths(). Empty when unset. It is
+   the answer rather than one of the places searched, so it is held here instead
+   of being an input to data_dir_resource_decide(). */
+static wxString g_env_resource_dir;
+static bool g_env_resource_used = false;
+
 static wxString FindResourceDir(const wxString &bundle_dir, const wxString &exe_dir,
                                 const wxString &cwd, const wxString &install_dir,
                                 const wxString &user_dir)
@@ -112,6 +118,47 @@ static wxString FindResourceDir(const wxString &bundle_dir, const wxString &exe_
 	case RESOURCE_DIR_SAME_AS_DATA:		break;
 	}
 	return user_dir;
+}
+
+/*
+ * The payload, for a data directory the user named outright (--datadir or
+ * RPCEMU_DATADIR).
+ *
+ * Such a folder holding its own payload is a self-contained tree, and it goes on
+ * providing it - that is what somebody pointing the emulator at a whole tree
+ * means, and it is what happened before this function existed.
+ *
+ * What did NOT work was the other case: naming a data directory that holds only
+ * data. Both variables used to make the payload directory the same folder
+ * regardless, so on macOS - where the payload is inside
+ * RPCEmu.app/Contents/Resources and never in the user's data folder - moving
+ * your machines with RPCEMU_DATADIR took the search for poduleroms/ with them,
+ * and the machine came up with no HostFS, no card ROMs and no CMOS template.
+ * Then it is looked for wherever it actually is, as for a remembered or default
+ * data directory.
+ *
+ * RPCEMU_RESOURCE_DIR outranks even a self-contained tree, and is applied by
+ * InitRpcemuPaths() once the switch has run rather than here.
+ */
+static wxString ResourceDirForGivenDataDir(const wxString &bundle_dir,
+                                          const wxString &exe_dir,
+                                          const wxString &cwd,
+                                          const wxString &install_dir,
+                                          const wxString &user_dir)
+{
+	/*
+	 * poduleroms/ specifically, NOT HasPayloadDir(): that also accepts configs/,
+	 * which is right when ranking candidate locations - a portable tree has both
+	 * - and wrong here. configs/ is DATA. Every data directory has one, so
+	 * asking that question of a data directory always answers yes, and the first
+	 * attempt at this fix went on sending the search into a folder holding no
+	 * podule ROMs at all.
+	 */
+	if (wxDirExists(NormalizeDirPath(user_dir) + "poduleroms")) {
+		g_resource_source = RESOURCE_DIR_SAME_AS_DATA;
+		return user_dir;
+	}
+	return FindResourceDir(bundle_dir, exe_dir, cwd, install_dir, user_dir);
 }
 
 /* Writable per-user data lives in a visible ~/RPCEmu folder (machines, configs,
@@ -173,14 +220,6 @@ static void MigrateLegacyUserData(const wxString &user_dir)
 static std::string DirPathForCore(const wxString &dir)
 {
 	return std::string(NormalizeDirPath(dir).utf8_str().data());
-}
-
-static void SeedFileIfMissing(const wxString &src, const wxString &dst)
-{
-	if (!wxFileExists(src) || wxFileExists(dst)) {
-		return;
-	}
-	wxCopyFile(src, dst, false);
 }
 
 /* Copy every file under src into dst, but only those not already present, so
@@ -258,15 +297,8 @@ static bool SeedUserDataDir(const wxString &resource_dir, const wxString &user_d
 	 * index, so a packaged install can boot out of the box. */
 	SeedDirIfMissing(resource + "roms", user_roms);
 
-	const wxString user_netroms = user + "netroms";
-	const wxString resource_netroms = resource + "netroms";
-	if (wxDirExists(resource_netroms)) {
-		if (!wxDir::Make(user_netroms, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL)) {
-			return false;
-		}
-		SeedFileIfMissing(resource_netroms + wxFileName::GetPathSeparator() + "EtherRPCEm,ffa",
-		                  user_netroms + wxFileName::GetPathSeparator() + "EtherRPCEm,ffa");
-	}
+	/* netroms/, poduleroms/, gfxroms/ and usbroms/ are not seeded: they are
+	   loaded from the resource directory, which is not this one. */
 
 	return ConfigPathsEnsureDataLayout();
 }
@@ -342,6 +374,11 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 
 	const DataDirDecision decision = data_dir_decide(&inputs);
 
+	/* Applied after the switch below. Reset as well as set, so a second call in
+	   one process does not inherit the first one's environment. */
+	g_env_resource_dir = env_resource;
+	g_env_resource_used = false;
+
 	switch (decision.source) {
 	case DATA_DIR_FROM_CLI:
 		user_dir = NormalizeDirPath(cli_datadir);
@@ -363,6 +400,7 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 	case DATA_DIR_FROM_ENV_RESOURCE:
 		resource_dir = NormalizeDirPath(env_resource);
 		user_dir = UserDataRoot();
+		g_env_resource_used = true;
 		break;
 
 	case DATA_DIR_FROM_BUNDLE:
@@ -415,6 +453,23 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 		break;
 	}
 
+	/*
+	 * RPCEMU_RESOURCE_DIR is the user saying outright where the payload is, so
+	 * it beats every answer above - including the branches that never search
+	 * because their layout already implied one.
+	 *
+	 * Applied here rather than inside the switch because data_dir_decide() only
+	 * reaches its own RPCEMU_RESOURCE_DIR case at rank 8, below --datadir and
+	 * RPCEMU_DATADIR at ranks 1 and 2. Setting the variable alongside either of
+	 * those therefore did nothing at all, and the two are exactly the
+	 * combination somebody needs when their data and their payload are in
+	 * different places.
+	 */
+	if (!g_env_resource_dir.empty()) {
+		resource_dir = NormalizeDirPath(g_env_resource_dir);
+		g_env_resource_used = true;
+	}
+
 	if (decision.should_remember && !user_dir.empty()) {
 		SetDataDir(user_dir.utf8_string());
 	}
@@ -442,7 +497,8 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 	       data_dir_source_name(decision.source),
 	       user_dir.utf8_str().data());
 	rpclog("Paths: resource directory from %s: %s\n",
-	       data_dir_resource_source_name(g_resource_source),
+	       g_env_resource_used ? "RPCEMU_RESOURCE_DIR"
+	                           : data_dir_resource_source_name(g_resource_source),
 	       resource_dir.utf8_str().data());
 
 	if (!SeedUserDataDir(resource_dir, user_dir)) {
