@@ -176,6 +176,16 @@ private:
 	/* Showing or hiding the toolbar needs both a size event and a repaint;
 	   neither implies the other. */
 	void RelayoutAroundToolBar();
+
+	/* The toolbar and status bar, drawn synchronously. See the definition for
+	   why they do not draw themselves after a restore or a maximise. */
+	void RepaintBandsNow();
+	void OnWindowStateChanged();
+	void OnIconize(wxIconizeEvent &event);
+	void OnMaximize(wxMaximizeEvent &event);
+	void OnFrameSize(wxSizeEvent &event);
+	/* What OnFrameSize compares against, so a drag does not repaint per step. */
+	bool was_maximized_ = false;
 	void OnExit(wxCommandEvent &event);
 	void OnClose(wxCloseEvent &event);
 	void OnMachineListSize(wxSizeEvent &event);
