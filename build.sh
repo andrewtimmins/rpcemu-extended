@@ -388,6 +388,21 @@ build_podules() {
 			cp -f syncclock,ffa "$SCRIPT_DIR/poduleroms/"
 		)
 	fi
+	# RPCEmuMonitor carries the monitor definition the RISC OS versions without
+	# EDID support need. Its mode list is generated from src/display_mode.c by
+	# the module's own Makefile, so it has to be rebuilt whenever that table
+	# changes or the definition will describe a different set of modes from the
+	# one the emulator offers.
+	local rpcemumonitor_dir="riscos-progs/RPCEmuMonitor"
+	if [ -d "$rpcemumonitor_dir" ]; then
+		echo "Building RPCEmuMonitor podule ROM..."
+		(
+			cd "$rpcemumonitor_dir"
+			make clean
+			make AS=arm-linux-gnueabi-as LD=arm-linux-gnueabi-ld OBJCOPY=arm-linux-gnueabi-objcopy
+			cp -f rpcemumonitor,ffa "$SCRIPT_DIR/poduleroms/"
+		)
+	fi
 	# RPCEmuUSBSupport is the harness for the emulated USB host controller. Nothing
 	# in a stock guest touches that card, there being no USB stack in the IOMD ROM,
 	# so this module is how the emulation is exercised. See docs/usb.md.

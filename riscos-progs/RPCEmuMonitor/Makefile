@@ -16,7 +16,7 @@ MODULE = rpcemumonitor
 TITLE = RPCEmuMonitor
 DISPLAY_NAME = RPCEmu Monitor
 
-ROM_IMAGE = RPCEmuMonitor,ffa
+ROM_IMAGE = rpcemumonitor,ffa
 
 MODULE_VERSION := $(shell awk '$$1 == "Module_MajorVersion" { print $$2 }' VersionNum)
 MODULE_DATE := $(shell awk '/^Module_Date/ { $$1 = ""; sub(/^[ \t]+/, ""); print }' VersionNum)
