@@ -136,20 +136,30 @@ endif()
 # extracting them into the data directory needs no network and no permission.
 # It costs about 600KB in the binary.
 #
-# Generated at configure time, as the toolbar icons above are: re-run cmake
-# after changing one of these files. The directories are still staged into a
-# release, for anyone who wants them on disc.
+# Generated at configure time, as the toolbar icons above are. The build is told
+# to depend on each file it reads, so that editing a module and building again
+# re-embeds it rather than silently keeping the copy from the last configure:
+# the whole point of this is that the emulator and its guest modules cannot be
+# out of step, and a stale embedded copy would put them back out of step in the
+# one place hardest to notice. The directories are still staged into a release,
+# for anyone who wants them on disc.
 set(RPCEMU_PAYLOAD_DIRS poduleroms netroms gfxroms usbroms podules default)
 set(_payload_c "${CMAKE_CURRENT_BINARY_DIR}/support_payload.c")
 set(_payload_blobs "")
 set(_payload_table "")
 set(_payload_count 0)
 foreach(_dir ${RPCEMU_PAYLOAD_DIRS})
-    file(GLOB_RECURSE _found RELATIVE "${CMAKE_SOURCE_DIR}"
+    # CONFIGURE_DEPENDS so that a file appearing in or vanishing from one of these
+    # directories re-runs cmake by itself.
+    file(GLOB_RECURSE _found RELATIVE "${CMAKE_SOURCE_DIR}" CONFIGURE_DEPENDS
          "${CMAKE_SOURCE_DIR}/${_dir}/*")
     list(SORT _found)   # so two builds of the same tree produce the same file
     foreach(_rel ${_found})
         if(NOT IS_DIRECTORY "${CMAKE_SOURCE_DIR}/${_rel}")
+            # ...and a dependency on the file itself, so that changing one
+            # re-runs cmake too. The glob only notices the list changing.
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                         "${CMAKE_SOURCE_DIR}/${_rel}")
             string(MAKE_C_IDENTIFIER "${_rel}" _sym)
             file(READ "${CMAKE_SOURCE_DIR}/${_rel}" _hex HEX)
             file(MD5 "${CMAKE_SOURCE_DIR}/${_rel}" _md5)
