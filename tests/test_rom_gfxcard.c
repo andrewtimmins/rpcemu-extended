@@ -166,6 +166,26 @@ write_rom(const char *name, const char *title, size_t size)
 	return 1;
 }
 
+/* Take the ROM tree away again, so a build directory does not collect one of
+   these per run. Best effort: a leftover directory is untidy, not a failure. */
+static void
+remove_tree(void)
+{
+	static const char *const names[] = { "R371", "R439", "R530", "R616", "RNONE" };
+	char path[sizeof(datadir) + 512];
+	size_t i;
+
+	for (i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+		snprintf(path, sizeof(path), "%sroms/%s/rom", datadir, names[i]);
+		remove(path);
+		snprintf(path, sizeof(path), "%sroms/%s", datadir, names[i]);
+		rmdir(path);
+	}
+	snprintf(path, sizeof(path), "%sroms", datadir);
+	rmdir(path);
+	rmdir(datadir);
+}
+
 static void
 expect(const char *what, const char *rom_dir, int want_supported,
        int want_major, int want_minor)
@@ -208,11 +228,22 @@ expect(const char *what, const char *rom_dir, int want_supported,
 int
 main(void)
 {
-	const char *tmp = getenv("TMPDIR");
-	char base[400];
+	/*
+	 * Built in the working directory, which ctest sets to the build tree and
+	 * which is therefore writable on every platform.
+	 *
+	 * Not a temporary directory. TMPDIR is unset on Windows, and the "/tmp/"
+	 * this fell back to is a path only the MSYS shell understands - the test
+	 * itself is a native Windows program, which resolved it against whatever
+	 * drive it happened to be on and could not create anything. It failed
+	 * honestly rather than silently, saying it could not write each ROM, but
+	 * it failed.
+	 *
+	 * The pid keeps two runs apart, and the tree is removed at the end.
+	 */
+	char base[64];
 
-	snprintf(base, sizeof(base), "%srpcemu-romtest-%d/",
-	         (tmp != NULL && tmp[0] != '\0') ? tmp : "/tmp/", (int) getpid());
+	snprintf(base, sizeof(base), "rpcemu-romtest-%d/", (int) getpid());
 	mkdir(base, 0755);
 	snprintf(datadir, sizeof(datadir), "%s", base);
 
@@ -235,6 +266,8 @@ main(void)
 	/* An unreadable ROM must not be locked out of a feature it might support:
 	   the guest-side driver declines by itself if it turns out it cannot. */
 	expect("unknown ROM - allowed", "RNONE", 1, 0, 0);
+
+	remove_tree();
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
 	       failures, failures == 1 ? "" : "s");
