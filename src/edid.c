@@ -50,6 +50,136 @@
 #define ASPECT_5_4	2u
 #define ASPECT_16_9	3u
 
+/* A mode this block can advertise, and where the bit that advertises it lives.
+   Both the established-timings bitmap and the Established Timings III
+   descriptor are bitmaps over a fixed list of modes, so one shape does for
+   both: the byte within the bitmap, the bit within that byte, and the size the
+   bit stands for. */
+typedef struct {
+	uint8_t		byte;	/**< Index into the bitmap */
+	uint8_t		bit;	/**< Bit within that byte */
+	uint16_t	x;	/**< Mode width, for deciding whether to set it */
+	uint16_t	y;	/**< Mode height */
+} timing_bit_t;
+
+/* The seventeen modes of the base block's established-timings bitmap (bytes
+   0x23-0x25). Only the progressive, non-Apple entries are listed: 640x480@67,
+   1024x768@87 interlaced and 720x400@88 are left out deliberately, being
+   either interlaced or for hardware this never emulates.
+
+   These are the small legacy modes. They overlap the Established Timings III
+   list below hardly at all, which is why both are worth filling in. */
+static const timing_bit_t established_timings[] = {
+	{ 0, 7,  720, 400 },	/* 720x400 @ 70 */
+	{ 0, 5,  640, 480 },	/* 640x480 @ 60 */
+	{ 0, 3,  640, 480 },	/* 640x480 @ 72 */
+	{ 0, 2,  640, 480 },	/* 640x480 @ 75 */
+	{ 0, 1,  800, 600 },	/* 800x600 @ 56 */
+	{ 0, 0,  800, 600 },	/* 800x600 @ 60 */
+	{ 1, 7,  800, 600 },	/* 800x600 @ 72 */
+	{ 1, 6,  800, 600 },	/* 800x600 @ 75 */
+	{ 1, 5,  832, 624 },	/* 832x624 @ 75 */
+	{ 1, 3, 1024, 768 },	/* 1024x768 @ 60 */
+	{ 1, 2, 1024, 768 },	/* 1024x768 @ 70 */
+	{ 1, 1, 1024, 768 },	/* 1024x768 @ 75 */
+	{ 1, 0, 1280, 1024 },	/* 1280x1024 @ 75 */
+	{ 2, 7, 1152, 870 },	/* 1152x870 @ 75 */
+};
+
+/* The Established Timings III descriptor (tag 0xF7): a six-byte bitmap over a
+   fixed list of VESA DMT modes, in one 18-byte descriptor slot.
+
+   This is where the mode list gets its size. The base block can only carry
+   eight two-byte standard timings, and those encode a width and an aspect-ratio
+   code, so a height that is not one of four ratios of a width cannot be said at
+   all - 1920x1200 has no standard-timing encoding, and there was no ninth slot
+   for it in any case. The bitmap below says forty-four modes in eighteen bytes
+   and is not bound by aspect ratio, which is what makes a full mode list
+   possible.
+
+   The order is fixed by the standard and mirrors established_timings3[] in
+   RISC OS's ScreenModes (Video/UserI/ScrModes): bit 7 of the first bitmap byte
+   is the first entry, and each bit indexes a DMT mode number. The sizes here
+   are those DMT modes, so a bit is only set when its mode is one this machine
+   could actually display.
+
+   Note 2560x1440 is absent: DMT has no such mode (it jumps from 1920x1440 to
+   2560x1600), so the card's largest mode can still only be advertised as the
+   preferred detailed timing. */
+static const timing_bit_t established_timings3[] = {
+	{ 0, 7,  640,  350 }, { 0, 6,  640,  400 },
+	{ 0, 5,  720,  400 }, { 0, 4,  640,  480 },
+	{ 0, 3,  848,  480 }, { 0, 2,  800,  600 },
+	{ 0, 1, 1024,  768 }, { 0, 0, 1152,  864 },
+	{ 1, 7, 1280,  768 }, { 1, 6, 1280,  768 },
+	{ 1, 5, 1280,  768 }, { 1, 4, 1280,  768 },
+	{ 1, 3, 1280,  960 }, { 1, 2, 1280,  960 },
+	{ 1, 1, 1280, 1024 }, { 1, 0, 1280, 1024 },
+	{ 2, 7, 1360,  768 }, { 2, 6, 1440,  900 },
+	{ 2, 5, 1440,  900 }, { 2, 4, 1440,  900 },
+	{ 2, 3, 1440,  900 }, { 2, 2, 1400, 1050 },
+	{ 2, 1, 1400, 1050 }, { 2, 0, 1400, 1050 },
+	{ 3, 7, 1400, 1050 }, { 3, 6, 1680, 1050 },
+	{ 3, 5, 1680, 1050 }, { 3, 4, 1680, 1050 },
+	{ 3, 3, 1680, 1050 }, { 3, 2, 1600, 1200 },
+	{ 3, 1, 1600, 1200 }, { 3, 0, 1600, 1200 },
+	{ 4, 7, 1600, 1200 }, { 4, 6, 1600, 1200 },
+	{ 4, 5, 1792, 1344 }, { 4, 4, 1792, 1344 },
+	{ 4, 3, 1856, 1392 }, { 4, 2, 1856, 1392 },
+	{ 4, 1, 1920, 1200 }, { 4, 0, 1920, 1200 },
+	{ 5, 7, 1920, 1200 }, { 5, 6, 1920, 1200 },
+	{ 5, 5, 1920, 1440 }, { 5, 4, 1920, 1440 },
+};
+
+/* Where the Established Timings III bitmap starts within its descriptor, and
+   the revision byte the standard requires ahead of it. */
+#define ET3_TAG			0xf7u
+#define ET3_REVISION		0x0au
+#define ET3_BITMAP_OFFSET	6u
+#define ET3_BITMAP_BYTES	6u
+
+/* Descriptor slots, as byte offsets into the block. The first carries the
+   preferred timing; the rest are dummies in every ROM block we have seen, so
+   the second is free for the mode bitmap. */
+#define DESC_PREFERRED		0x36u
+#define DESC_SECOND		0x48u
+
+/**
+ * Set the bits of a timing bitmap for every listed mode that fits.
+ *
+ * A mode is advertised when it is no larger than the preferred mode in either
+ * direction. That single test covers screen memory as well as the host display:
+ * the preferred mode has already been chosen to fit both (see
+ * display_mode_fit), and a mode no wider and no taller cannot need more
+ * framebuffer than one that does. Advertising anything else would offer the
+ * user a mode RISC OS then refuses as "not suitable for displaying the
+ * desktop".
+ *
+ * @param bitmap  Bitmap to set bits in
+ * @param bytes   Its length, so a table entry cannot write past it
+ * @param table   Modes and their bit positions
+ * @param count   Entries in that table
+ * @param x       Preferred mode width
+ * @param y       Preferred mode height
+ */
+static void
+set_timing_bits(uint8_t *bitmap, unsigned bytes,
+                const timing_bit_t *table, unsigned count,
+                unsigned x, unsigned y)
+{
+	unsigned i;
+
+	for (i = 0; i < count; i++) {
+		if (table[i].byte >= bytes) {
+			continue;
+		}
+		if (table[i].x > x || table[i].y > y) {
+			continue;
+		}
+		bitmap[table[i].byte] |= (uint8_t) (1u << table[i].bit);
+	}
+}
+
 int
 edid_block_is_valid(const uint8_t block[EDID_BLOCK_SIZE])
 {
@@ -132,44 +262,87 @@ edid_build_from_base(uint8_t out[EDID_BLOCK_SIZE],
 	out[19] = 3;			/* revision -> 1.3 */
 	out[24] |= 0x02;		/* feature byte: preferred timing is native */
 
-	/* Established timings: 640x480@60, 800x600@60, 1024x768@60, 1280x1024@75. */
-	out[0x23] = 0x21;
-	out[0x24] = 0x09;
-	out[0x25] = 0x00;
+	/* Established timings: the legacy bitmap in the base block, filled in with
+	   every one of its modes this machine can display rather than the four that
+	   used to be hard-coded here. These are the small modes - 640x480 through
+	   1152x870 - and they cost three bytes that are in the block regardless. */
+	out[0x23] = 0;
+	out[0x24] = 0;
+	out[0x25] = 0;
+	set_timing_bits(&out[0x23], 3, established_timings,
+	                (unsigned) (sizeof(established_timings) /
+	                            sizeof(established_timings[0])), x, y);
 
 	/* Standard timings: a ladder of widescreen/legacy modes.
 	 *
-	 * All eight slots are used, and deliberately: between these and the
-	 * established timings above, every mode display_mode.c can choose is
-	 * advertised here except the two largest. That matters because the guest
-	 * validates a mode against the monitor definition in force, so a mode we
-	 * might ask it to adopt later has to be one this block declares - not just
-	 * the preferred timing, which only covers whichever mode was chosen at boot.
+	 * The Established Timings III descriptor below now carries the bulk of the
+	 * list, and says most of these as well. They are kept because they cost
+	 * nothing - the eight slots are in the block whether used or not - and
+	 * because they are the older mechanism: a ScreenModes that does not read the
+	 * 0xF7 descriptor still finds a usable ladder here.
 	 *
-	 * The exceptions are 2560x1440 and 1920x1200, which appear only when they are
-	 * the preferred timing. 2560x1440 cannot be expressed as a standard timing at
-	 * all (the width field stops at 2288), and there is no ninth slot for
-	 * 1920x1200. A host display that grows to one of those mid-session therefore
-	 * cannot be followed; that needs the monitor definition reloading, which is a
-	 * bigger job than this.
+	 * This is also the only place 1920x1080 is said, DMT having no entry for it,
+	 * so the ladder is not purely redundant.
 	 *
 	 * Note a width appears more than once with different aspects: the height is
 	 * derived from the aspect code, so 1280 gives 1024 at 5:4, 960 at 4:3 and 720
-	 * at 16:9. */
-	set_standard_timing(&out[0x26], 1280, ASPECT_5_4,  60);	/* 1280x1024 */
-	set_standard_timing(&out[0x28], 1440, ASPECT_16_10, 60);	/* 1440x900  */
-	set_standard_timing(&out[0x2a], 1600, ASPECT_4_3,  60);	/* 1600x1200 */
-	set_standard_timing(&out[0x2c], 1680, ASPECT_16_10, 60);	/* 1680x1050 */
-	set_standard_timing(&out[0x2e], 1920, ASPECT_16_9,  60);	/* 1920x1080 */
-	set_standard_timing(&out[0x30], 1152, ASPECT_4_3,  60);	/* 1152x864  */
-	set_standard_timing(&out[0x32], 1280, ASPECT_4_3,  60);	/* 1280x960  */
-	set_standard_timing(&out[0x34], 1280, ASPECT_16_9,  60);	/* 1280x720  */
+	 * at 16:9.
+	 *
+	 * Only the modes this machine can display are written, on the same test the
+	 * bitmaps use. The ladder used to be written out whole regardless, which
+	 * offered a 1080-tall display 1600x1200 and a 1024x768 one 1280x1024 - modes
+	 * the chooser would list and RISC OS would then refuse. Entries left over
+	 * are filled with the "unused" code. */
+	{
+		static const struct {
+			unsigned x, y, aspect;
+		} ladder[] = {
+			{ 1280, 1024, ASPECT_5_4 },
+			{ 1440,  900, ASPECT_16_10 },
+			{ 1600, 1200, ASPECT_4_3 },
+			{ 1680, 1050, ASPECT_16_10 },
+			{ 1920, 1080, ASPECT_16_9 },
+			{ 1152,  864, ASPECT_4_3 },
+			{ 1280,  960, ASPECT_4_3 },
+			{ 1280,  720, ASPECT_16_9 },
+		};
+		const unsigned slots = 8;
+		unsigned slot = 0, e;
+
+		for (e = 0; e < sizeof(ladder) / sizeof(ladder[0]) && slot < slots; e++) {
+			if (ladder[e].x > x || ladder[e].y > y) {
+				continue;
+			}
+			set_standard_timing(&out[0x26 + slot * 2], ladder[e].x,
+			                    ladder[e].aspect, 60);
+			slot++;
+		}
+		for (; slot < slots; slot++) {
+			out[0x26 + slot * 2] = 0x01;
+			out[0x26 + slot * 2 + 1] = 0x01;
+		}
+	}
 
 	/* First detailed timing descriptor = the preferred (native) mode. */
-	build_detailed_timing(&out[0x36], x, y, hz);
+	build_detailed_timing(&out[DESC_PREFERRED], x, y, hz);
 
-	/* Descriptors 2-4 (0x48..0x7d) are inherited unchanged from the base
-	   block (harmless dummy monitor descriptors). */
+	/* Second descriptor = Established Timings III, the bitmap that carries the
+	   rest of the mode list. Every ROM block seen has all four descriptor slots
+	   filled with dummies (tag 0x10, all zero), so this displaces nothing.
+	   Descriptors 3 and 4 are still inherited unchanged. */
+	{
+		uint8_t *d = &out[DESC_SECOND];
+
+		memset(d, 0, 18);
+		d[3] = ET3_TAG;
+		/* d[4] stays zero: ScreenModes' get_extd_type() treats a non-zero
+		   byte there as an undefined descriptor and skips the whole slot. */
+		d[5] = ET3_REVISION;
+		set_timing_bits(&d[ET3_BITMAP_OFFSET], ET3_BITMAP_BYTES,
+		                established_timings3,
+		                (unsigned) (sizeof(established_timings3) /
+		                            sizeof(established_timings3[0])), x, y);
+	}
 
 	/* Recompute the checksum so the whole block sums to a multiple of 256.
 	   The driver's runtime sync-bit fixup adds to byte 0x14 and subtracts the

@@ -103,18 +103,76 @@ table_has(unsigned want_w, unsigned want_h)
 	       && w == want_w && h == want_h;
 }
 
-/* Does the synthesised EDID declare this mode as an established or standard
-   timing? Decoded from the block rather than assumed, so the two files cannot
-   drift apart unnoticed. */
+/* The Established Timings III bitmap, as RISC OS reads it: the descriptor
+   tagged 0xF7 carries six bytes of flags over a fixed list of VESA DMT modes,
+   most significant bit first. Listed here independently of edid.c so that a
+   mistake in one is not repeated by the other. */
+static const struct { unsigned w, h, byte, bit; } est3[] = {
+	{  640,  350, 0, 7 }, {  640,  400, 0, 6 },
+	{  720,  400, 0, 5 }, {  640,  480, 0, 4 },
+	{  848,  480, 0, 3 }, {  800,  600, 0, 2 },
+	{ 1024,  768, 0, 1 }, { 1152,  864, 0, 0 },
+	{ 1280,  768, 1, 7 }, { 1280,  768, 1, 6 },
+	{ 1280,  768, 1, 5 }, { 1280,  768, 1, 4 },
+	{ 1280,  960, 1, 3 }, { 1280,  960, 1, 2 },
+	{ 1280, 1024, 1, 1 }, { 1280, 1024, 1, 0 },
+	{ 1360,  768, 2, 7 }, { 1440,  900, 2, 6 },
+	{ 1440,  900, 2, 5 }, { 1440,  900, 2, 4 },
+	{ 1440,  900, 2, 3 }, { 1400, 1050, 2, 2 },
+	{ 1400, 1050, 2, 1 }, { 1400, 1050, 2, 0 },
+	{ 1400, 1050, 3, 7 }, { 1680, 1050, 3, 6 },
+	{ 1680, 1050, 3, 5 }, { 1680, 1050, 3, 4 },
+	{ 1680, 1050, 3, 3 }, { 1600, 1200, 3, 2 },
+	{ 1600, 1200, 3, 1 }, { 1600, 1200, 3, 0 },
+	{ 1600, 1200, 4, 7 }, { 1600, 1200, 4, 6 },
+	{ 1792, 1344, 4, 5 }, { 1792, 1344, 4, 4 },
+	{ 1856, 1392, 4, 3 }, { 1856, 1392, 4, 2 },
+	{ 1920, 1200, 4, 1 }, { 1920, 1200, 4, 0 },
+	{ 1920, 1200, 5, 7 }, { 1920, 1200, 5, 6 },
+	{ 1920, 1440, 5, 5 }, { 1920, 1440, 5, 4 },
+};
+
+/* Find the descriptor carrying the Established Timings III bitmap, or NULL.
+   The four 18-byte descriptors start at 0x36; one whose first three bytes are
+   zero is a display descriptor, and byte 3 is then its tag. */
+static const uint8_t *
+edid_est3_bitmap(const uint8_t *block)
+{
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		const uint8_t *d = block + 0x36 + i * 18;
+
+		if (d[0] == 0 && d[1] == 0 && d[2] == 0 && d[3] == 0xf7 && d[4] == 0) {
+			return d + 6;
+		}
+	}
+	return NULL;
+}
+
+/* Does the synthesised EDID declare this mode as an established, standard or
+   Established Timings III timing? Decoded from the block rather than assumed,
+   so the two files cannot drift apart unnoticed. */
 static int
 edid_advertises(const uint8_t *block, unsigned want_w, unsigned want_h)
 {
 	static const struct { unsigned w, h, byte, bit; } established[] = {
+		{  720, 400, 0x23, 7 },
 		{  640, 480, 0x23, 5 },
+		{  640, 480, 0x23, 3 },
+		{  640, 480, 0x23, 2 },
+		{  800, 600, 0x23, 1 },
 		{  800, 600, 0x23, 0 },
+		{  800, 600, 0x24, 7 },
+		{  800, 600, 0x24, 6 },
+		{  832, 624, 0x24, 5 },
 		{ 1024, 768, 0x24, 3 },
+		{ 1024, 768, 0x24, 2 },
+		{ 1024, 768, 0x24, 1 },
 		{ 1280, 1024, 0x24, 0 },
+		{ 1152, 870, 0x25, 7 },
 	};
+	const uint8_t *bitmap = edid_est3_bitmap(block);
 	/* Standard timings: height comes from the aspect code, not the block. */
 	static const unsigned aspect_num[4] = { 16, 4, 5, 16 };
 	static const unsigned aspect_den[4] = { 10, 3, 4,  9 };
@@ -142,13 +200,100 @@ edid_advertises(const uint8_t *block, unsigned want_w, unsigned want_h)
 		}
 	}
 
+	if (bitmap != NULL) {
+		for (i = 0; i < sizeof(est3) / sizeof(est3[0]); i++) {
+			if (est3[i].w == want_w && est3[i].h == want_h &&
+			    (bitmap[est3[i].byte] & (1u << est3[i].bit)) != 0) {
+				return 1;
+			}
+		}
+	}
+
 	return 0;
 }
 
+/* The Established Timings III descriptor is what lifts the mode list past what
+   eight standard timings can say. Two things have to hold: a mode the machine
+   can display is advertised, and one it cannot is not - a block that offered
+   everything would put the user back to picking modes RISC OS then refuses.
+
+   1920x1200 is the case worth naming. It has no standard-timing encoding at
+   all, so before this descriptor existed it could only ever be the preferred
+   timing, and a machine whose preferred mode was something else could not be
+   asked to switch to it. */
+static void
+check_edid_est3_scales_with_the_preferred_mode(void)
+{
+	static const struct {
+		unsigned pref_w, pref_h;	/* preferred (native) mode */
+		unsigned w, h;			/* mode being asked about */
+		int advertised;			/* should the block declare it? */
+	} cases[] = {
+		{ 2560, 1440, 1920, 1200, 1 },
+		{ 2560, 1440, 1920, 1440, 1 },
+		{ 2560, 1440, 1600, 1200, 1 },
+		{ 1920, 1200, 1920, 1200, 1 },
+		{ 1920, 1200, 1680, 1050, 1 },
+		{ 1920, 1200, 1920, 1440, 0 },	/* taller than the display */
+		{ 1920, 1080, 1600, 1200, 0 },	/* taller than the display */
+		{ 1920, 1080, 1680, 1050, 1 },
+		{ 1024,  768, 1280, 1024, 0 },	/* larger than the display */
+		{ 1024,  768,  800,  600, 1 },
+		{  800,  600,  848,  480, 0 },	/* wider than the display */
+	};
+	uint8_t base[EDID_BLOCK_SIZE];
+	uint8_t block[EDID_BLOCK_SIZE];
+	size_t i;
+
+	printf("\nthe mode bitmap scales with the preferred mode\n");
+
+	for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		char label[80];
+		int got;
+
+		memset(base, 0, sizeof(base));
+		memset(base + 1, 0xff, 6);
+		base[18] = 1;
+		edid_build_from_base(block, base, cases[i].pref_w, cases[i].pref_h, 60);
+
+		if (edid_est3_bitmap(block) == NULL) {
+			printf("  native %ux%u: FAIL (no 0xF7 descriptor in the block)\n",
+			       cases[i].pref_w, cases[i].pref_h);
+			failures++;
+			continue;
+		}
+		if (!edid_block_is_valid(block)) {
+			printf("  native %ux%u: FAIL (block checksum/header invalid)\n",
+			       cases[i].pref_w, cases[i].pref_h);
+			failures++;
+			continue;
+		}
+
+		snprintf(label, sizeof(label), "native %ux%u, %ux%u %s",
+		         cases[i].pref_w, cases[i].pref_h, cases[i].w, cases[i].h,
+		         cases[i].advertised ? "offered" : "withheld");
+
+		got = edid_advertises(block, cases[i].w, cases[i].h);
+		if (got != cases[i].advertised) {
+			printf("  %-44s FAIL (%s)\n", label,
+			       got ? "advertised but should not be"
+			           : "not advertised but should be");
+			failures++;
+			continue;
+		}
+		printf("  %-44s ok\n", label);
+	}
+}
+
 /* Every mode the chooser can pick has to be one the guest will accept, because
-   RISC OS validates a mode against the monitor definition in force. The four
-   largest are exempt: they appear only as the preferred timing, which covers
-   whichever mode was chosen at boot. */
+   RISC OS validates a mode against the monitor definition in force.
+
+   Three are exempt, and only because nothing in EDID short of a detailed timing
+   can say them: 3840x2160 and 3440x1440 are larger than the block is ever built
+   for, and 2560x1440 is the preferred timing itself (DMT has no such mode - it
+   goes from 1920x1440 to 2560x1600). 1920x1200 used to be exempt for the same
+   reason, having no standard-timing encoding either; the Established Timings III
+   descriptor says it now. */
 static void
 check_edid_advertises_every_mode(void)
 {
@@ -156,7 +301,7 @@ check_edid_advertises_every_mode(void)
 		{ 3840, 2160, 1 },
 		{ 3440, 1440, 1 },
 		{ 2560, 1440, 1 },
-		{ 1920, 1200, 1 },
+		{ 1920, 1200, 0 },
 		{ 1920, 1080, 0 },
 		{ 1600, 1200, 0 },
 		{ 1680, 1050, 0 },
@@ -178,7 +323,13 @@ check_edid_advertises_every_mode(void)
 	memset(base, 0, sizeof(base));
 	memset(base + 1, 0xff, 6);
 	base[18] = 1;			/* EDID version 1 */
-	edid_build_from_base(block, base, 1920, 1080, 60);
+
+	/* Built for the largest display the emulator advertises, because the block
+	   now describes one particular monitor rather than every monitor: a mode
+	   larger than the preferred one in either direction is deliberately left
+	   out. Asking at 2560x1440 is therefore asking "of everything the chooser
+	   can pick, is anything missing that would fit?". */
+	edid_build_from_base(block, base, 2560, 1440, 60);
 
 	printf("\nevery mode the chooser can pick is one the EDID advertises\n");
 
@@ -255,6 +406,7 @@ main(void)
 	expect_nothing("host smaller than any mode", 320, 200, 4, 8);
 
 	check_edid_advertises_every_mode();
+	check_edid_est3_scales_with_the_preferred_mode();
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
 	       failures, failures == 1 ? "" : "s");
