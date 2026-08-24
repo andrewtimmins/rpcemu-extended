@@ -380,14 +380,34 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 	g_env_resource_used = false;
 
 	switch (decision.source) {
+	/*
+	 * --datadir and RPCEMU_DATADIR name where the USER'S data goes. They used to
+	 * silently decide where the read-only payload was looked for as well, by
+	 * pointing both at the same folder.
+	 *
+	 * That is wrong wherever the payload is somewhere the user did not choose,
+	 * which on macOS is every ordinary install: the payload is inside
+	 * RPCEmu.app/Contents/Resources, so relocating your machines with
+	 * RPCEMU_DATADIR moved the search for poduleroms/ along with them, and the
+	 * machine came up with no HostFS, no card ROMs and no CMOS template - one
+	 * line in the log the only sign of it.
+	 *
+	 * So the payload is looked for exactly as it is for a remembered or default
+	 * data directory, with that folder still the fallback: a self-contained tree
+	 * handed over with --datadir keeps working, because nowhere else has the
+	 * payload and FindResourceDir() lands back on it. RPCEMU_RESOURCE_DIR
+	 * remains the way to say where the payload is, and still outranks this.
+	 */
 	case DATA_DIR_FROM_CLI:
 		user_dir = NormalizeDirPath(cli_datadir);
-		resource_dir = user_dir;
+		resource_dir = ResourceDirForGivenDataDir(bundle_dir, exe_dir, cwd,
+		                                         install_dir, user_dir);
 		break;
 
 	case DATA_DIR_FROM_ENV:
 		user_dir = NormalizeDirPath(env_datadir);
-		resource_dir = user_dir;
+		resource_dir = ResourceDirForGivenDataDir(bundle_dir, exe_dir, cwd,
+		                                         install_dir, user_dir);
 		break;
 
 	case DATA_DIR_FROM_STORED:
@@ -410,22 +430,27 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 		   input was guarded by HasConfigsDir(). */
 		resource_dir = bundle_dir;
 		user_dir = UserDataRoot();
+		g_resource_source = RESOURCE_DIR_BUNDLE;
 		break;
 
 	case DATA_DIR_FROM_PORTABLE:
 		resource_dir = exe_dir;
 		user_dir = exe_dir;
+		g_resource_source = RESOURCE_DIR_BESIDE_BINARY;
 		break;
 
 	case DATA_DIR_FROM_CWD:
 		resource_dir = cwd;
 		user_dir = cwd;
+		g_resource_source = RESOURCE_DIR_CWD;
 		break;
 
 	case DATA_DIR_FROM_INSTALL:
 		resource_dir = HasConfigsDir(install_dir) ? install_dir
 		                                         : wxString("/usr/share/rpcemu/");
 		user_dir = UserDataRoot();
+		g_resource_source = HasConfigsDir(install_dir) ? RESOURCE_DIR_INSTALL
+		                                              : RESOURCE_DIR_USR_SHARE;
 		break;
 
 	case DATA_DIR_FROM_EXISTING_DEFAULT:
@@ -450,6 +475,7 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 	case DATA_DIR_DEFAULT_UNASKED:
 		user_dir = UserDataRoot();
 		resource_dir = cwd.empty() ? "./" : cwd;
+		g_resource_source = RESOURCE_DIR_CWD;
 		break;
 	}
 
