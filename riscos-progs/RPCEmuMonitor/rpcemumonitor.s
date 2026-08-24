@@ -154,7 +154,17 @@ init:
 	@ Wimp$ScrapDir. Waiting for the desktop to start is therefore both the
 	@ workaround and the only moment it could work anyway.
 
+	@ Whatever happened above, this module has initialised. V is still set from
+	@ a SWI that failed - registering with ResourceFS is the one that can -
+	@ and returning with it set tells RISC OS the module would not start, so
+	@ it is thrown away. That is how this came to be missing entirely on RISC
+	@ OS 4.39 while working on 3.71: not a failure to do the work, a failure
+	@ to say the work was optional.
+	@
+	@ A machine whose mode list is merely poor is still a working machine, and
+	@ *RPCEmuMonitorStatus says what happened.
 init_done:
+	cmp	pc, #0			@ clear V
 	ldmfd	sp!, {r0-r6, pc}
 
 
@@ -254,16 +264,13 @@ final_done:
 @ chosen for themselves in the meantime.
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
-service_codetable:
-	.int	0			@ flags
-	.int	service_main
-	.int	Service_ResourceFSStarting
-	.int	Service_StartWimp
-	.int	0			@ table terminator
-
-	.int	service_codetable	@ lives at service-4
+	@ A plain handler, not the "fast" service table with its MOV R0,R0 magic and
+	@ the table pointer at service-4. RISC OS 4.39 refuses a module whose
+	@ service field is in that form - "Illegal header field in module", and the
+	@ module is discarded without ever running - where 3.71 accepts it. The
+	@ table only saves the OS a call for services we do not want, and a module
+	@ that loads everywhere is worth more than that.
 service:
-	mov	r0, r0			@ magic: "my service table is at [service-4]"
 	teq	r1, #Service_ResourceFSStarting
 	teqne	r1, #Service_StartWimp
 	movne	pc, lr
