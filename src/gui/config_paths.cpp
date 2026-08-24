@@ -29,6 +29,7 @@
 
 extern "C" {
 #include "rpcemu.h"
+#include "support_files.h"
 }
 
 void ConfigFileUseGeneralGroup(wxFileConfig &settings)
@@ -122,11 +123,13 @@ bool ConfigPathsCreateMachineDirectory(const wxString &machine_name)
 		return false;
 	}
 
-	/* Seed the new machine from the bundled "default" template so it boots with a
-	 * working CMOS and HostFS straight away. The template lives in the resource
-	 * directory (the portable tree, or <install>/default for packaged builds).
-	 * Fall back to an empty HostFS if no template is present. */
-	const wxString default_dir = ConfigPathsResourceDir() + "default";
+	/* Seed the new machine from the "default" template so it boots with a
+	 * working CMOS and HostFS straight away. The template is one of the files
+	 * this build carries and extracts into the data directory, so it is asked
+	 * for the same way the guest modules are - see support_files.h. Fall back to
+	 * an empty HostFS if no template is present. */
+	const wxString default_dir =
+	    wxString::FromUTF8(support_root_for("default")) + "default";
 	const wxString default_hostfs = default_dir + sep + "hostfs";
 	const wxString machine_hostfs = machine_dir + sep + "hostfs";
 
