@@ -298,7 +298,7 @@ podulerom_skip_module(const char *name)
 {
 	int major = 0, minor = 0;
 
-	if (strcasecmp(name, "RPCEmuMonitor,ffa") != 0) {
+	if (strcasecmp(name, "rpcemumonitor,ffa") != 0) {
 		return 0;
 	}
 
