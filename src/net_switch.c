@@ -30,12 +30,6 @@
 #include "network-nat.h"
 #include "rpcemu.h"
 
-/*
- * One port per slot, well clear of net_slot's own claim range (49180 upwards)
- * so the two cannot be confused when reading a netstat.
- */
-#define NET_SWITCH_PORT_BASE 49200
-
 /* An Ethernet frame; the guest's card will not produce anything larger. */
 #define NET_SWITCH_MAX_FRAME 1522
 

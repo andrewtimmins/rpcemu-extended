@@ -39,10 +39,17 @@ typedef int slot_socket_t;
 #include "rpcemu.h"
 
 /*
- * Chosen to sit just above the relay's own ownership port, in the dynamic range and
- * clear of anything with a registered use.
+ * One TCP port per slot, on loopback, and twenty below the switch's own range so
+ * the two cannot be confused when reading a netstat.
+ *
+ * Below 32768 deliberately, which is the lowest ephemeral range of the three
+ * platforms (Linux starts there; Windows and macOS start at 49152). These used
+ * to be at 49180, inside all of them, where the operating system is entitled to
+ * hand the same port to something else - and on Windows to have reserved it at
+ * boot before anything asks. See NET_SWITCH_PORT_BASE, which was one block up
+ * and is where it was caught.
  */
-#define NET_SLOT_PORT_BASE 49180
+#define NET_SLOT_PORT_BASE 19180
 
 static slot_socket_t slot_socket = SLOT_INVALID_SOCKET;
 static int slot = -1;

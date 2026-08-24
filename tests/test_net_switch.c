@@ -27,10 +27,6 @@
 
 #include "net_slot.h"
 
-/* Mirrors net_switch.c; the test binds these directly to stand in for other
-   machines, so it has to agree with it. */
-#define NET_SWITCH_PORT_BASE 49200
-
 static int failures;
 
 static void
@@ -42,6 +38,10 @@ check(const char *what, int ok)
 	}
 }
 
+/* Also for NET_SWITCH_PORT_BASE: the test binds those ports by hand to stand in
+   for other machines, so it takes the number from the unit rather than keeping a
+   copy of it. It used to keep a copy, with a comment saying the two had to
+   agree - which they do, right up until somebody changes one of them. */
 #include "net_switch.h"
 
 /* network_hwaddr and network_nat_inject_packet belong to the emulator; the test

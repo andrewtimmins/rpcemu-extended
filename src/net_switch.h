@@ -63,6 +63,25 @@
 extern "C" {
 #endif
 
+/*
+ * One UDP port per slot, on loopback.
+ *
+ * Below 32768 deliberately, which is the lowest ephemeral range of the three
+ * platforms (Linux starts there; Windows and macOS start at 49152). These used
+ * to be at 49200, inside all of them, and the consequence was not theoretical:
+ * Windows hands out ports from that range and, on a Hyper-V host, also reserves
+ * blocks of it at boot, so a fixed port there is sometimes simply unavailable.
+ * A CI runner refused three of these at once whilst the TCP claim ports next
+ * door were fine, which is what a per-protocol reservation looks like. A user
+ * would have seen it as a machine that quietly did not join the others.
+ *
+ * Declared here rather than in net_switch.c because the test binds these ports
+ * by hand to stand in for other machines. It used to carry its own copy of the
+ * number with a comment saying it had to agree - which is a thing that agrees
+ * until somebody changes one of them.
+ */
+#define NET_SWITCH_PORT_BASE 19200
+
 /**
  * Join the hub.
  *
