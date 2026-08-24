@@ -158,7 +158,7 @@ gfxcard_rom_init(void)
 	FILE *f;
 	size_t driver_size = 0;
 
-	snprintf(path, sizeof(path), "%s%s%s", rpcemu_get_resourcedir(),
+	snprintf(path, sizeof(path), "%s%s%s", rpcemu_get_datadir(),
 	         GFXCARD_ROM_DIR, GFXCARD_DRIVER_FILE);
 
 	f = fopen(path, "rb");

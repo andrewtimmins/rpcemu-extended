@@ -79,6 +79,10 @@ Config config;
 void rpclog(const char *format, ...) { (void) format; }
 void fatal(const char *format, ...) { (void) format; printf("fatal() called\n"); exit(2); }
 const char *rpcemu_get_resourcedir(void) { return "/nonexistent/"; }
+/* The card's driver comes out of the data directory now, extracted there from
+   the copy embedded in the binary - see support_files.h. Pointed at nothing, so
+   the card comes up without one, which is what these tests want. */
+const char *rpcemu_get_datadir(void) { return "/nonexistent/"; }
 
 /* The serialisation helpers, so the card's suspend and resume can be exercised
    without linking savestate.c - which wants the whole machine, every other

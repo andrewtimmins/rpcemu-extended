@@ -51,6 +51,7 @@ set(GUI_SOURCES
     data_dir_choice.c
     data_dir_store.c
     data_dir_dialog.cpp
+    support_files_ui.cpp
 )
 
 if(RPCEMU_ENABLE_VNC)

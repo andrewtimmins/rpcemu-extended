@@ -250,7 +250,7 @@ podule_build_list(void)
 	}
 
 	snprintf(podule_resource_path, sizeof(podule_resource_path), "%s",
-	         rpcemu_get_resourcedir());
+	         rpcemu_get_datadir());
 
 	for (c = 0; c < NR_INTERNAL_PODULES; c++) {
 		const podule_header_t *header =

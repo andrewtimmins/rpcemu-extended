@@ -120,7 +120,7 @@ usbcard_init(void)
 	int i;
 
 	snprintf(romdirectory, sizeof(romdirectory), "%susbroms/",
-	         rpcemu_get_resourcedir());
+	         rpcemu_get_datadir());
 
 	free(cardrom);
 	cardrom = NULL;
