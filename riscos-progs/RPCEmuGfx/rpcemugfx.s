@@ -62,6 +62,8 @@
 	XOS_ReadVarVal		= 0x20023
 	XOS_ReadSysInfo		= 0x20058
 	XOS_SetVarVal		= 0x20024
+	XOS_ChangeDynamicArea	= 0x2002a
+	XOS_ReadDynamicArea	= 0x2005c
 
 	@ OS_SetVarVal / OS_ReadVarVal variable types (Kernel hdr/Variables)
 	VarType_String		= 0
@@ -77,7 +79,11 @@
 	Module_Claim	= 6
 	Module_Free	= 7
 
+	@ Dynamic area numbers
+	ChangeDyn_Screen	= 2
+
 	@ OS_ScreenMode reason codes
+	ScreenMode_SelectMode		= 0
 	ScreenMode_SelectMonitorType	= 3
 	ScreenMode_SelectDevice		= 11
 	ScreenMode_RegisterDriver	= 64
@@ -137,6 +143,7 @@
 	ModeFlag_64k		= 1 << 7	@ same bit; means 565 at log2bpp 4
 
 	@ Mode variables, as OS_ReadModeVariable numbers them
+	ModeVar_ScreenSize	= 7
 	ModeVar_Log2BPP		= 9
 	ModeVar_XWindLimit	= 11
 	ModeVar_YWindLimit	= 12
@@ -1347,6 +1354,11 @@ teardown:
 	@ If the card is the display, hand back to whichever driver was there
 	@ first (VIDC20, driver 0) so the machine still has a screen. An error
 	@ here is not ours to report: we are being taken away either way.
+	@
+	@ The screen memory has to be there before the display moves onto it, for
+	@ the reasons restore_screen_memory sets out. If it cannot be had then the
+	@ switch is made anyway - refusing would leave the machine with a display
+	@ driver that is about to be unplugged, which is worse.
 	tst	r4, #FLAG_STARTED
 	beq	2f
 	mov	r0, #ScreenMode_SelectDevice
@@ -1354,9 +1366,12 @@ teardown:
 	swi	XOS_ScreenMode
 	ldr	r2, [r5, #WS_DRIVER]
 	teq	r1, r2
-	moveq	r0, #ScreenMode_SelectDevice
-	moveq	r1, #0
-	swieq	XOS_ScreenMode
+	bne	15f
+	bl	restore_screen_memory
+	mov	r0, #ScreenMode_SelectDevice
+	mov	r1, #0
+	swi	XOS_ScreenMode
+15:
 
 	mov	r0, #ScreenMode_StopDriver
 	ldr	r1, [r5, #WS_DRIVER]
@@ -1661,9 +1676,11 @@ restore_wimp_mode:
 	bvc	rwm_done
 
 	@ The desktop would not take that mode. The display has already been
-	@ switched and the card is showing whatever the OS re-initialised to, so
-	@ this is not an error - but it is the one thing the user needs told, since
-	@ otherwise they are looking at a blank screen wondering why.
+	@ switched and is showing whatever the OS re-initialised to, so this is not
+	@ an error - but it is the one thing the user needs told, since otherwise
+	@ they are looking at a screen they did not ask for wondering why. Both
+	@ directions come through here, so the message does not name one: the user
+	@ has just typed the command and knows which way they went.
 	adrl	r0, msg_mode_lost
 	swi	XOS_Write0
 	add	r0, r5, #WS_CMD
@@ -1678,10 +1695,10 @@ rwm_done:
 	ldmfd	sp!, {r0, r1, r2, r3, r4, r6, pc}
 
 msg_mode_lost:
-	.string	"Switched to the graphics card, but the desktop would not take the mode it was in: "
+	.string	"The display was switched, but the desktop would not take the mode it was in: "
 	.align
 msg_mode_hint:
-	.string	"The screen may be blank until you set a mode the card can show, e.g. *WimpMode X1280 Y1024 C256"
+	.string	"Set a mode the display can show, e.g. *WimpMode X1280 Y1024 C256"
 	.align
 
 @ copy_string - append the NUL-terminated string at r6 to r4, leaving r4 after
@@ -1718,11 +1735,34 @@ mode_c16m:
 @ is no way for the kernel to tell a driver it is no longer the one in use (see
 @ the GVTODO in ScreenMode_SelectDevice) - so a card left scanning out would keep
 @ putting its own framestore on the screen after the OS had moved on.
+@
+@ The mode is dropped to something small first, and that is not tidiness. Taking
+@ the display off a driver re-initialises the mode, and the mode the kernel picks
+@ is the configured one - which, whilst this card is the display, is the card's
+@ own preferred mode. VIDC20 cannot show it, so the mode change fails; the
+@ kernel's fallback to mode 0 does not take either; and the VDU variables are
+@ left describing a mode of the card's size whilst the screen pointer has been
+@ moved to the screen dynamic area, which is far smaller and may by then be
+@ empty. The next thing to paint the desktop - the Wimp, answering the display
+@ changed service call the switch itself issues - walks off the end of screen
+@ memory, and the machine takes a string of data aborts and stops.
+@
+@ Nothing here can make the kernel's mode change succeed. What it can do is make
+@ sure that whatever the kernel leaves behind is a mode VIDC20 can hold and that
+@ there is the memory to hold it, so that a failed mode change is merely a failed
+@ mode change. The mode in use is asked for again afterwards, which both puts the
+@ user back where they were and gives the desktop a mode change to repaint from.
 command_off:
 	stmfd	sp!, {r5, lr}
 	ldr	r5, [r12]
 	teq	r5, #0
 	beq	command_no_ws
+
+	bl	save_mode
+	bl	safe_mode
+	bl	restore_screen_memory
+	ldmvsfd	sp!, {r5, pc}		@ nowhere to move the display to: stay put
+
 	mov	r0, #ScreenMode_SelectDevice
 	mov	r1, #0
 	swi	XOS_ScreenMode
@@ -1730,7 +1770,107 @@ command_off:
 	ldr	r0, [r5, #WS_REGS]
 	mov	r1, #0
 	str	r1, [r0, #REG_CTRL]
+
+	bl	restore_wimp_mode
 	ldmfd	sp!, {r5, pc}
+
+@ A mode any display can show, asked for directly rather than through the Wimp:
+@ this is a step on the way to somewhere else, and the desktop is told where it
+@ has ended up once the display has finished moving. 640 x 480 in 256 colours is
+@ the mode every monitor definition and every EDID carries, and at 300K it is
+@ within any screen memory a machine can be configured with.
+@
+@ A mode selector rather than a mode number, because a numbered mode has to be in
+@ the list the monitor defines and a selector does not, and with the frame rate
+@ left unstated so that whatever the monitor offers at that size will do.
+@
+@ out: V clear - a display that will not take this is no worse off for having
+@      been asked, and the caller has no better answer than to carry on
+safe_mode:
+	stmfd	sp!, {r0, r1, lr}
+	mov	r0, #ScreenMode_SelectMode
+	adrl	r1, safe_mode_selector
+	swi	XOS_ScreenMode
+	cmp	pc, #0			@ clear V
+	ldmfd	sp!, {r0, r1, pc}
+
+	.align
+safe_mode_selector:
+	.int	1			@ a mode selector, with no extra variables
+	.int	640			@ pixels across
+	.int	480			@ pixels down
+	.int	3			@ log2bpp: 256 colours
+	.int	-1			@ frame rate: whatever the monitor offers
+	.int	-1			@ end of the mode variable list
+
+@ Give the screen dynamic area its configured size back, before anything is
+@ asked to display out of it.
+@
+@ Whilst the card is the display RISC OS marks the framestore as external, and
+@ the screen area's shrink handler then has no minimum left to defend: the area
+@ can be emptied to nothing and its pages handed to the free pool. That is the
+@ right thing to do with memory nothing is scanning out of, and on a machine with
+@ any memory pressure at all it is what happens. Nothing puts it back.
+@
+@ Switching to a driver that does read from it therefore arrives at an area of no
+@ size. The kernel records a total screen size of zero, every mode is then
+@ refused for want of memory - including the mode 0 it falls back on - and the
+@ VDU variables are left describing the mode the card was in whilst the screen
+@ pointer addresses an empty area. The first thing to paint the screen runs off
+@ the end of it and aborts, which is where the machine stops.
+@
+@ OS_ReadSysInfo 0 gives the size the kernel itself used when it created the area
+@ at reset, already clamped to what this machine can offer - the whole of VRAM
+@ where VRAM is not available for general use. The mode in use is asked for as
+@ well and the larger of the two taken, because the configured size is what the
+@ machine booted with and not necessarily enough for the mode it is being left
+@ in: a mode change that fails leaves its mode variables behind, and those
+@ variables addressing more memory than the area holds is the fault this exists
+@ to prevent.
+@
+@ out: V set and r0 -> error if the memory could not be had back
+restore_screen_memory:
+	stmfd	sp!, {r1, r2, r6, lr}
+
+	mov	r0, #0
+	swi	XOS_ReadSysInfo		@ out: r0 = configured screen size, bytes
+	ldmvsfd	sp!, {r1, r2, r6, pc}
+	movs	r6, r0
+	beq	rsm_done		@ configured as none: not ours to argue with
+
+	mvn	r0, #0			@ the mode in use
+	mov	r1, #ModeVar_ScreenSize
+	swi	XOS_ReadModeVariable	@ out: r2 = bytes the mode occupies
+	cmpvc	r2, r6
+	movhi	r6, r2
+
+	mov	r0, #ChangeDyn_Screen
+	swi	XOS_ReadDynamicArea	@ out: r0 = base, r1 = current size
+	ldmvsfd	sp!, {r1, r2, r6, pc}
+	subs	r1, r6, r1
+	ble	rsm_done		@ already at least that big
+
+	mov	r0, #ChangeDyn_Screen
+	swi	XOS_ChangeDynamicArea
+	ldmvsfd	sp!, {r1, r2, r6, pc}
+
+	@ A short grow leaves the same fault a failed one would, and the SWI is
+	@ within its rights to move less than it was asked for, so the size is read
+	@ back rather than assumed.
+	mov	r0, #ChangeDyn_Screen
+	swi	XOS_ReadDynamicArea
+	ldmvsfd	sp!, {r1, r2, r6, pc}
+	cmp	r1, r6
+	blo	rsm_short
+rsm_done:
+	cmp	pc, #0			@ clear V
+	ldmfd	sp!, {r1, r2, r6, pc}
+
+rsm_short:
+	adrl	r0, err_no_screen_memory
+	cmp	r0, #NBIT		@ set V
+	cmnvc	r0, #NBIT
+	ldmfd	sp!, {r1, r2, r6, pc}
 
 command_no_ws:
 	adrl	r0, err_no_workspace
@@ -1741,6 +1881,11 @@ command_no_ws:
 err_no_workspace:
 	.int	0
 	.string	"RPCEmuGfx: the driver is not initialised"
+	.align
+
+err_no_screen_memory:
+	.int	0
+	.string	"RPCEmuGfx: not enough free memory to give the display back to VIDC20"
 	.align
 
 @ Put the card's state into system variables.

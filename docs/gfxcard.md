@@ -89,6 +89,30 @@ before the kernel commits to it.
 `*GfxCardOff` returns to VIDC20, and so does killing the driver (`*RMKill
 RPCEmuGfx`), which hands the display back before it goes.
 
+Coming back is not simply `*GfxCardOn` in reverse. Taking the display off a
+driver makes RISC OS re-initialise the mode, and the mode it picks is the
+configured one - which, whilst the card is the display, is the card's own
+preferred mode. VIDC20 cannot show it. So `*GfxCardOff` drops to 640 x 480 in
+256 colours first, hands the display over in a mode VIDC20 can hold, and then
+asks for the mode you were in:
+
+```
+*GfxCardOff
+The display was switched, but the desktop would not take the mode it was in: WimpMode X2560 Y1440 C16M
+Set a mode the display can show, e.g. *WimpMode X1280 Y1024 C256
+```
+
+That message means the switch worked and the mode did not - you are on VIDC20,
+at 640 x 480, and any mode VIDC20 and your monitor definition agree on will take
+from there. A mode VIDC20 can show, such as 1280 x 1024, comes back by itself
+and the message does not appear.
+
+Use `*GfxCardOff` rather than calling `OS_ScreenMode 11,0` yourself. The SWI on
+its own does none of the above: the kernel's mode change fails, and it either
+returns the error and leaves the card as the display, or leaves the VDU
+variables describing a mode larger than the screen memory it has just moved to,
+which the next thing to paint the desktop aborts on.
+
 ## The utility in the Apps folder
 
 The card carries a small application in its ROM, registered with ResourceFS at

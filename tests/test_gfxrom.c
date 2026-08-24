@@ -94,6 +94,23 @@ contains_word(uint32_t val)
 	return 0;
 }
 
+/** Does the image contain this run of words anywhere, aligned? */
+static int
+contains_words(const uint32_t *vals, size_t count)
+{
+	size_t off, i;
+
+	for (off = 0; off + count * 4 <= rom_size; off += 4) {
+		for (i = 0; i < count && word_at(off + i * 4) == vals[i]; i++) {
+			/* keep going */
+		}
+		if (i == count) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -187,6 +204,44 @@ main(int argc, char **argv)
 	printf("\nthe driver and the card agree\n");
 	check(contains_word(GFXCARD_ID),
 	      "the card's identity is in the driver image");
+
+	/*
+	 * Handing the display back to VIDC20 is the one operation in this module
+	 * that has to prepare the machine before it acts, and none of that
+	 * preparation is visible in anything the emulator can exercise from the
+	 * host - it only shows up as a guest that data-aborts to a standstill.
+	 *
+	 * Taking the display off a driver makes the kernel re-initialise the mode,
+	 * to the configured one, which whilst this card is the display is the
+	 * card's own preferred mode. VIDC20 cannot show it, so the mode change
+	 * fails and the VDU variables are left describing a mode of the card's
+	 * size against the screen dynamic area - which is far smaller, and which
+	 * RISC OS is free to empty entirely whilst an external framestore is in
+	 * use. So *GfxCardOff drops to a mode VIDC20 can hold, and makes sure the
+	 * screen area can hold it, before it moves the display.
+	 *
+	 * These are the marks that preparation leaves in the image. They are
+	 * checked because the alternative to noticing here is noticing on somebody
+	 * else's machine.
+	 */
+	printf("\nthe display can be handed back safely\n");
+	{
+		/* SWI XOS_ReadDynamicArea / XOS_ChangeDynamicArea, unconditional. */
+		static const uint32_t selector[] = {
+			1,		/* a mode selector rather than a mode number */
+			640, 480,	/* a size every monitor definition carries */
+			3,		/* log2bpp: 256 colours */
+			0xffffffffu,	/* frame rate: whatever the monitor offers */
+			0xffffffffu	/* end of the mode variable list */
+		};
+
+		check(contains_word(0xef02005cu),
+		      "the driver reads the screen dynamic area's size");
+		check(contains_word(0xef02002au),
+		      "the driver can grow the screen dynamic area");
+		check(contains_words(selector, sizeof selector / sizeof selector[0]),
+		      "a 640x480 mode selector to fall back to");
+	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
 	       failures, failures == 1 ? "" : "s");
