@@ -38,14 +38,21 @@
 
    This list is kept in step with what edid.c advertises, because a guest
    validates a mode against the monitor definition in force: a mode we may ask it
-   to adopt later has to be one the EDID declares. Everything here is an
-   established or standard timing in that block, except the top two - those
-   appear only when chosen at boot, as the preferred timing.
+   to adopt later has to be one the EDID declares. Everything here is declared in
+   that block, except the top two - those appear only when chosen at boot, as the
+   preferred timing.
 
-   1400x1050 and 1366x768 were dropped for that reason. There is no spare
-   standard-timing slot for the first, and the second cannot be a standard timing
-   at all: the width field counts in units of 8 and 1366 is not a multiple of 8.
-   Their rungs are covered by the neighbours either side.
+   The step has to hold in BOTH directions, and for a while it only held in one.
+   The EDID grew an Established Timings III descriptor, which declares forty-four
+   DMT modes and is bound by no aspect ratio, so RISC OS began offering
+   twenty-five sizes while this list still held the thirteen that fitted - the
+   set the old eight standard timings could express. The Display Manager and the
+   emulator's own menus then disagreed about the same machine, which is worse
+   than either list being short, so the sizes that descriptor added are here now.
+
+   1366x768 is still absent and cannot be added: DMT has 1360x768 and no
+   1366x768, so there is nothing in the block to declare it. Its rung is covered
+   by the neighbours either side.
 
    The list runs above 2560 wide even though no framestore we currently offer can
    hold such a mode, because the top entry is a ceiling on everything that calls
@@ -63,18 +70,30 @@ static const struct {
 	{ 3840, 2160 },	/* 8294400 - preferred timing only */
 	{ 3440, 1440 },	/* 4953600 - preferred timing only */
 	{ 2560, 1440 },	/* 3686400 - preferred timing only */
-	{ 1920, 1200 },	/* 2304000 - preferred timing only */
+	{ 1920, 1440 },	/* 2764800 */
+	{ 1856, 1392 },	/* 2583552 */
+	{ 1792, 1344 },	/* 2408448 */
+	{ 1920, 1200 },	/* 2304000 */
 	{ 1920, 1080 },	/* 2073600 */
 	{ 1600, 1200 },	/* 1920000 */
 	{ 1680, 1050 },	/* 1764000 */
+	{ 1400, 1050 },	/* 1470000 */
 	{ 1280, 1024 },	/* 1310720 */
 	{ 1440,  900 },	/* 1296000 */
 	{ 1280,  960 },	/* 1228800 */
+	{ 1360,  768 },	/* 1044480 */
+	{ 1152,  870 },	/* 1002240 */
 	{ 1152,  864 },	/*  995328 */
+	{ 1280,  768 },	/*  983040 */
 	{ 1280,  720 },	/*  921600 */
 	{ 1024,  768 },	/*  786432 */
+	{  832,  624 },	/*  519168 */
 	{  800,  600 },	/*  480000 */
+	{  848,  480 },	/*  407040 */
 	{  640,  480 },	/*  307200 */
+	{  720,  400 },	/*  288000 */
+	{  640,  400 },	/*  256000 */
+	{  640,  350 },	/*  224000 */
 };
 
 /* One flag per entry above: set when the guest has refused that mode. Static
