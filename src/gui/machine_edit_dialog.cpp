@@ -2430,6 +2430,11 @@ void MachineEditDialog::SaveSettings()
 			}
 		}
 		settings.Write("openbus_ram_kb", ram_kb);
+
+		strncpy(config.openbus_card, name.utf8_str().data(),
+		    sizeof(config.openbus_card) - 1);
+		config.openbus_card[sizeof(config.openbus_card) - 1] = '\0';
+		config.openbus_ram_kb = (ram_kb > 0) ? (unsigned) ram_kb : 0u;
 	}
 
 	settings.Write("gfxcard_enabled",
@@ -2565,6 +2570,7 @@ void MachineEditDialog::ApplySavedSettingsToGlobalConfig(const wxString &rom_dir
 	config.vnc_password_readonly[
 	    sizeof(config.vnc_password_readonly) - 1] = '\0';
 	config.clipboard_enabled = clipboard_check_->GetValue() ? 1 : 0;
+	config.hostcmd_enabled = hostcmd_check_->GetValue() ? 1 : 0;
 	config.json_net_enabled = json_net_check_->GetValue() ? 1 : 0;
 	config.json_net_port = json_net_port_edit_->GetValue();
 	strncpy(config.json_net_host, json_net_host_edit_->GetValue().utf8_str().data(),
