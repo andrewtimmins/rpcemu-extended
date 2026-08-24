@@ -256,7 +256,7 @@ cmos_init(void)
 
 	/* Machine has no cmos.ram yet; seed from the bundled default template */
 	fprintf(stderr, "No CMOS file '%s', seeding from default template\n", fn);
-	snprintf(fn, sizeof(fn), "%sdefault/cmos.ram", rpcemu_get_resourcedir());
+	snprintf(fn, sizeof(fn), "%sdefault/cmos.ram", rpcemu_get_datadir());
 	if (cmos_load_file(fn)) {
 		cmos_seed_monitor_type();
 		return;

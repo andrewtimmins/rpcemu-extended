@@ -19,6 +19,7 @@
  */
 
 #include "headless_main.h"
+#include "support_files_ui.h"
 
 #include <algorithm>
 #include <chrono>
@@ -711,6 +712,15 @@ int RunHeadless(const char *machine_name, bool resume, const char *state_file)
 		PrintNoDataError();
 		return 2;
 	}
+
+	/*
+	 * The guest files an expansion card loads come out of the data directory,
+	 * and this build carries its own copies to put there. Done here because
+	 * headless returns before main() reaches the graphical route, and a machine
+	 * started from a script needs its modules just as much as one started from
+	 * the Manager. Silent - there is no toolkit up, and nothing to show it on.
+	 */
+	SupportFilesEnsure(nullptr);
 
 	/*
 	 * No machine named: offer the list over VNC rather than refusing. This is why

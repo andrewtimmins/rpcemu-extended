@@ -36,6 +36,7 @@
 
 #include "data_paths.h"
 #include "config_paths.h"
+#include "support_files_ui.h"
 #include "data_dir_dialog.h"
 #include "gui_preferences.h"
 #include "manager_frame.h"
@@ -403,6 +404,7 @@ public:
 		/* No prompt argument: a console entry point must never raise a
 		   dialogue, whatever else is true. --datadir still applies. */
 		InitRpcemuPaths(DataDirFromCommandLine());
+		SupportFilesEnsure(nullptr);
 
 		/* Listing the sources touches no network, so it happens before the
 		   catalogue is fetched rather than after: somebody checking why a
@@ -645,6 +647,7 @@ public:
 
 		/* As above: no prompt, because there is no GUI here. */
 		InitRpcemuPaths(DataDirFromCommandLine());
+		SupportFilesEnsure(nullptr);
 
 		/* The graphical routes put this in a dialogue with an Agree button.
 		   A script cannot click one, so the acknowledgement is the option:
@@ -744,6 +747,14 @@ bool RpcemuApp::OnInit()
 	    [](const wxString &suggested, wxString *chosen) {
 		    return AskForDataDir(nullptr, suggested, chosen);
 	    });
+
+	/*
+	 * Before anything is shown, and before any machine is started: the guest
+	 * files an expansion card loads live in the data directory, and this build
+	 * carries its own copies to put there. On all but a first run and the first
+	 * run after an upgrade it finds nothing to do and shows nothing.
+	 */
+	SupportFilesEnsure(nullptr);
 
 	wxString config_path;
 	bool resume_requested = false;
@@ -1367,6 +1378,11 @@ int main(int argc, char **argv)
 			HeadlessPrintNoDataError();
 			return 2;
 		}
+
+		/* Headless does not go through InitRpcemuPaths(), so the guest files
+		   are brought over here instead - before the machine is resolved, let
+		   alone started. Silent: wx is not up yet. */
+		SupportFilesEnsure(nullptr);
 		if (HeadlessResolveMachineConfig(machine_name).empty()) {
 			ConsoleMessage(true, "error: machine '%s' not found in %sconfigs\n",
 			               machine_name, rpcemu_get_datadir());

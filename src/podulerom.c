@@ -162,8 +162,10 @@ initpodulerom(void)
 	DIR *dir;
 	const struct dirent *d;
 
-	/* Build podulerom directory path */
-	snprintf(romdirectory, sizeof(romdirectory), "%spoduleroms/", rpcemu_get_resourcedir());
+	/* The data directory, not the resource directory: these are extracted
+	   there from the copies embedded in the binary, so they are the ones this
+	   build shipped however old the folder around it is. See support_files.h. */
+	snprintf(romdirectory, sizeof(romdirectory), "%spoduleroms/", rpcemu_get_datadir());
 
 	if (podulerom != NULL) {
 		free(podulerom);

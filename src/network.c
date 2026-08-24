@@ -85,9 +85,10 @@ network_rom_init(void)
 	filebase = chunkbase + (8 * 2) + 4; // required size for two entries
 	poduleromsize = filebase + ((sizeof(description) + 3) & ~3u); // Word align description string
 
-	/* Driver module lives alongside poduleroms in the resource directory */
+	/* Alongside poduleroms in the data directory - extracted there from the
+	   copy embedded in this binary. See support_files.h. */
 	snprintf(module_path, sizeof(module_path), "%snetroms/EtherRPCEm,ffa",
-	         rpcemu_get_resourcedir());
+	         rpcemu_get_datadir());
 
 	// Add on size for driver module if it can be opened successfully
 	f = fopen(module_path, "rb");
