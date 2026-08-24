@@ -2565,6 +2565,11 @@ void MachineEditDialog::ApplySavedSettingsToGlobalConfig(const wxString &rom_dir
 	config.vnc_password_readonly[
 	    sizeof(config.vnc_password_readonly) - 1] = '\0';
 	config.clipboard_enabled = clipboard_check_->GetValue() ? 1 : 0;
+	config.json_net_enabled = json_net_check_->GetValue() ? 1 : 0;
+	config.json_net_port = json_net_port_edit_->GetValue();
+	strncpy(config.json_net_host, json_net_host_edit_->GetValue().utf8_str().data(),
+	    sizeof(config.json_net_host) - 1);
+	config.json_net_host[sizeof(config.json_net_host) - 1] = '\0';
 }
 
 wxString MachineEditDialog::CurrentMachineNameForHd() const
