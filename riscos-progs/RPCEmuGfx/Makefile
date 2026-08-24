@@ -34,12 +34,19 @@ APP_IMAGE = gfxapp
 
 all: $(ROM_IMAGE)
 
+# The version as packed BCD, which is the form GraphicsV_ReadInfo reports: the
+# digits of "x.yz" as hex nibbles, so 0.02 becomes &002. Derived here rather
+# than written out again, so VersionNum stays the only place the version lives.
+MODULE_VERSION_BCD := $(shell echo '$(MODULE_VERSION)' | tr -d '.')
+
 # The help string, which is what *Help and *Modules show. Generated so the
 # version and date come from VersionNum alone.
 version.inc: VersionNum Makefile
 	@printf '@ Generated from VersionNum by the Makefile - do not edit.\n' > $@
 	@printf 'help:\n\t.string\t"%s\\t%s (%s)"\n\t.align\n' \
 		'$(DISPLAY_NAME)' '$(MODULE_VERSION)' '$(MODULE_DATE)' >> $@
+	@printf '\n\t@ Version as BCD, for GraphicsV_ReadInfo.\n' >> $@
+	@printf '\t.set\tVERSION_BCD, 0x%s\n' '$(MODULE_VERSION_BCD)' >> $@
 	@echo "version.inc: $(DISPLAY_NAME) $(MODULE_VERSION) ($(MODULE_DATE))"
 
 $(ROM_IMAGE): $(MODULE).elf
