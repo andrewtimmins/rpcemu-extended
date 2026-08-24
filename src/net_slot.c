@@ -39,10 +39,21 @@ typedef int slot_socket_t;
 #include "rpcemu.h"
 
 /*
- * Chosen to sit just above the relay's own ownership port, in the dynamic range and
- * clear of anything with a registered use.
+ * One TCP port per slot, on loopback.
+ *
+ * Below 32768 deliberately, which is the lowest ephemeral range of the three
+ * platforms (Linux starts there; Windows and macOS start at 49152). This used to
+ * be at 49180, inside all of them, where the operating system is entitled to
+ * hand the same port to something else - and on Windows, on a Hyper-V host, to
+ * have reserved it at boot before anything asks. A fixed port there is available
+ * most of the time, which is the worst of both worlds.
+ *
+ * The number matches the one on main, and has to: a machine from either line
+ * claims its slot here, so two lines using different numbers would both believe
+ * they were slot 0 and hand their guests the same addresses, which is the
+ * collision slots exist to prevent.
  */
-#define NET_SLOT_PORT_BASE 49180
+#define NET_SLOT_PORT_BASE 19180
 
 static slot_socket_t slot_socket = SLOT_INVALID_SOCKET;
 static int slot = -1;
