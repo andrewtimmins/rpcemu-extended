@@ -215,17 +215,13 @@ stage_linux_release() {
 
 	mkdir -p "$LINUX_RELEASE"
 	cp -a configs "$LINUX_RELEASE/"
-	cp -a poduleroms "$LINUX_RELEASE/"
-	# The graphics card driver, which lives in that card's own ROM rather
-	# than the general-purpose expansion card (see src/gfxcard.c).
-	[ -d gfxroms ] && cp -a gfxroms "$LINUX_RELEASE/" || true
-	# RISC OS's USB stack, in the USB card's ROM (see src/usbcard.c).
-	[ -d usbroms ] && cp -a usbroms "$LINUX_RELEASE/" || true
-	cp -a netroms "$LINUX_RELEASE/"
 	cp -a resources "$LINUX_RELEASE/"
 	cp -a roms "$LINUX_RELEASE/"
-	cp -a podules "$LINUX_RELEASE/"
-	cp -a default "$LINUX_RELEASE/"
+	# The guest-side payload - poduleroms, netroms, gfxroms, usbroms, podules and
+	# default - is deliberately NOT staged. It is embedded in the executable and
+	# extracted into the data directory on first run, so shipping a second copy
+	# beside the program is what let somebody keep an old one and run a new
+	# emulator against it. See src/support_files.h.
 	# Common HostFS "Shared" disc (shared across machines). Normally created on
 	# first launch by the emulator; pre-create it so a fresh release is complete.
 	mkdir -p "$LINUX_RELEASE/shared"

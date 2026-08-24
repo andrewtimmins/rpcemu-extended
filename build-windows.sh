@@ -208,7 +208,12 @@ echo "==> Staging $WIN_RELEASE"
 rm -rf "$WIN_RELEASE"
 mkdir -p "$WIN_RELEASE"
 # Shared resources - identical set to the Linux release.
-for d in configs poduleroms netroms gfxroms usbroms resources roms podules default; do
+# The guest-side payload - poduleroms, netroms, gfxroms, usbroms, podules and
+# default - is deliberately NOT staged. It is embedded in the executable and
+# extracted into the data directory on first run, so shipping a second copy
+# beside the program is what let somebody keep an old one and run a new
+# emulator against it. See src/support_files.h.
+for d in configs resources roms; do
 	cp -a "$d" "$WIN_RELEASE/"
 done
 # Common HostFS "Shared" disc (shared across machines). Normally created on

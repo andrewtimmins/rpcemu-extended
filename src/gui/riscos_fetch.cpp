@@ -59,6 +59,10 @@
 #include "riscos_fetch.h"
 
 extern "C" {
+#include "support_files.h"
+}
+
+extern "C" {
 #include "display_mode.h"
 #include "rpcemu.h"
 #include "unzip.h"
@@ -266,9 +270,8 @@ bool MachineNameTaken(const wxString &name)
  */
 bool HostfsIsPristine(const wxString &hostfs_dir)
 {
-	const wxString seed_dir = ConfigPathsResourceDir() +
-	    wxFileName::GetPathSeparator() + "default" +
-	    wxFileName::GetPathSeparator() + "hostfs";
+	const wxString seed_dir = wxString::FromUTF8(support_root_for("default")) +
+	    "default" + wxFileName::GetPathSeparator() + "hostfs";
 	wxArrayString seeded;
 	wxString name;
 

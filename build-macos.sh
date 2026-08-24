@@ -673,7 +673,12 @@ if [ "$DO_FUSE" = true ]; then
 	rm -rf "$APP"
 	mkdir -p "$MACOSD" "$RESD"
 
-	for d in configs poduleroms netroms gfxroms usbroms resources roms podules default; do
+	# The guest-side payload - poduleroms, netroms, gfxroms, usbroms, podules
+	# and default - is deliberately NOT staged. It is embedded in the executable
+	# and extracted into the data directory on first run, so shipping a second
+	# copy beside the program is what let somebody keep an old one and run a new
+	# emulator against it. See src/support_files.h.
+	for d in configs resources roms; do
 		[ -e "$d" ] && cp -a "$d" "$RESD/"
 	done
 	# No machine is shipped; see the note in build.sh. New... creates one and
