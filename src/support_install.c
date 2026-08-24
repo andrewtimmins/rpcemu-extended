@@ -266,8 +266,22 @@ support_root_for(const char *subdir)
 	struct stat st;
 
 	/*
-	 * The data directory when it holds this payload directory, and the resource
-	 * directory when it does not.
+	 * RPCEMU_RESOURCE_DIR first, when it is set. That is somebody saying
+	 * outright where the payload is, and it already outranks every other route
+	 * to it - see InitRpcemuPaths(). Preferring an extracted copy over it would
+	 * quietly undo that, and would do so for everybody, because after a first
+	 * run the data directory always has one.
+	 */
+	if (getenv("RPCEMU_RESOURCE_DIR") != NULL &&
+	    getenv("RPCEMU_RESOURCE_DIR")[0] != '\0')
+	{
+		snprintf(root, sizeof(root), "%s", rpcemu_get_resourcedir());
+		return root;
+	}
+
+	/*
+	 * Otherwise the data directory when it holds this payload directory, and
+	 * the resource directory when it does not.
 	 *
 	 * The fallback is what keeps a failed extraction from being fatal. These
 	 * files are what an expansion card loads, so a machine whose poduleroms
