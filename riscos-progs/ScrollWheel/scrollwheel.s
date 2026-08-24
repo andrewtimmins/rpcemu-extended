@@ -22,6 +22,26 @@ wp	.req	r12
 
 	XPodule_ReadInfo		= 0x6028d
 
+	@ Podule_ReadInfo items. The results come back in ascending bit order,
+	@ which is what the loads after each call assume.
+	ReadInfo_SyncBase		= 1 << 1
+	ReadInfo_EASILogical		= 1 << 9
+	ReadInfo_IntMask		= 1 << 15
+	ReadInfo_IntValue		= 1 << 16
+	READINFO_INT_ITEMS		= ReadInfo_IntMask | ReadInfo_IntValue
+
+	@ For finding our own card by number when it cannot be found by address:
+	@ the two ways a card's base can be recorded, asked for together so one
+	@ call answers whichever form initialisation handed us.
+	READINFO_BASES			= ReadInfo_SyncBase | ReadInfo_EASILogical
+
+	@ Expansion card slots to look through. Every machine RISC OS runs on has
+	@ eight, and asking about one that is empty is not an error.
+	PODULE_COUNT			= 8
+
+	@ ARM
+	NBIT				= 1 << 31
+
 
 	@ SWI Options
 	Module_Enter	= 2
@@ -80,7 +100,7 @@ title:
 	.asciz	"ScrollWheel"
 
 help:
-	.asciz	"ScrollWheel\t0.01 (19 October 2024)"
+	.asciz	"ScrollWheel\t0.02 (24 Aug 2026)"
 	.align
 
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
@@ -162,16 +182,12 @@ init:
 
 	@ Enable Podule interrupts if not currently enabled
 	sub	sp, sp, #16
-	mov	r0, #((1 << 16) | (1 << 15))
 	mov	r1, sp
-	mov	r2, #16
-	mov	r3, r11
-	swi	XPodule_ReadInfo
-	add	sp, sp, #16
+	bl	podule_int_info
+	ldrvc	r0, [sp]			@ Address of Interrupt Mask Register
+	ldrvc	r1, [sp, #4]			@ Interrupt Mask Bit Value
+	add	sp, sp, #16			@ leaves the flags alone
 	popvs	{pc}
-
-	ldr	r0, [sp, #-16]			@ Address of Interrupt Mask Register
-	ldr	r1, [sp, #-12]			@ Interrupt Mask Bit Value
 
 	@ Turn off interrupts while modifying Interrupt Mask register in I/O controller
 	swi	XOS_IntOff
@@ -229,6 +245,91 @@ final:
 	cmp	pc, #0				@ Clears V (also clears N, Z, and sets C)
 
 	pop	{pc}
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+	/*
+	 * Where this card's interrupt mask register is, and which bit in it is
+	 * ours.
+	 *
+	 * Asking by base address, which is the obvious thing since that is what
+	 * initialisation hands us in R11, does not work at every RAM size. The
+	 * Podule manager resolves an address by masking it and then ORing in
+	 * &180000, promoting whatever access speed was asked for to "sync", before
+	 * comparing against the card's recorded sync base (ConvertR3ToPoduleNode in
+	 * HWSupport.Podule). Bits 19 and 20 are that speed field, so the comparison
+	 * can only succeed when the card's recorded base already has both set - and
+	 * the logical address the kernel maps expansion card space at moves with the
+	 * amount of RAM fitted. A 256MB machine gets an address where both bits are
+	 * set and the promotion is a no-op; a 128MB machine gets one where bit 20 is
+	 * clear and the promoted value can never match. The call then fails with
+	 * &500, "Bad expansion card identifier", and this module, which treated that
+	 * as fatal, did not start at all.
+	 *
+	 * So fall back to asking by expansion card number, which takes the manager's
+	 * list-scan path and never goes near the speed bits. Our own card is found
+	 * by asking each slot for its base and looking for the one we were handed -
+	 * both forms of base, because which one initialisation gives is not ours to
+	 * assume. EtherRPCEm and RPCEmuGfx carry the same fallback, for the same
+	 * reason, and Acorn's own Econet driver finds its card by number too.
+	 *
+	 * Entry:
+	 *	r11 = the address initialisation handed us
+	 *	r1 -> a 16 byte buffer
+	 * Exit:
+	 *	the buffer holds the two words READINFO_INT_ITEMS asks for,
+	 *	or V is set and r0 -> an error
+	 */
+
+podule_int_info:
+	push	{r1, r2, r3, r4, r5, lr}
+	mov	r5, r1				@ where the answer goes
+
+	mov	r0, #READINFO_INT_ITEMS
+	mov	r2, #16
+	mov	r3, r11
+	swi	XPodule_ReadInfo
+	popvc	{r1, r2, r3, r4, r5, pc}	@ the direct way worked
+
+	mov	r4, #0				@ slot being tried
+1:
+	ldr	r0, =READINFO_BASES
+	mov	r1, r5
+	mov	r2, #8
+	mov	r3, r4
+	swi	XPodule_ReadInfo
+	bvs	2f				@ empty slot, or no such slot
+	ldr	r0, [r5]			@ sync base
+	teq	r0, r11
+	ldrne	r0, [r5, #4]			@ EASI base
+	teqne	r0, r11
+	bne	2f
+
+	@ This card is us: ask the same question by number.
+	mov	r0, #READINFO_INT_ITEMS
+	mov	r1, r5
+	mov	r2, #16
+	mov	r3, r4
+	swi	XPodule_ReadInfo
+	pop	{r1, r2, r3, r4, r5, pc}	@ V as the SWI left it
+2:
+	add	r4, r4, #1
+	cmp	r4, #PODULE_COUNT
+	blo	1b
+
+	@ Not in the list at all, which should not be possible: this module is
+	@ running out of that card's ROM.
+	adr	r0, err_no_card			@ adr, not adrl: this is built with clang
+	cmp	r0, #NBIT			@ set V
+	cmnvc	r0, #NBIT
+	pop	{r1, r2, r3, r4, r5, pc}
+
+err_no_card:
+	.int	0
+	.string	"ScrollWheel: this module's expansion card is not in the card list"
+	.align
+
+	.ltorg
 
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
