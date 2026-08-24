@@ -56,6 +56,7 @@ dlclose(void *lib)
 #endif
 
 #include "rpcemu.h"
+#include "support_files.h"
 #include "iomd.h"
 #include "podules.h"
 #include "podule_config.h"
@@ -250,7 +251,7 @@ podule_build_list(void)
 	}
 
 	snprintf(podule_resource_path, sizeof(podule_resource_path), "%s",
-	         rpcemu_get_datadir());
+	         support_root_for("podules"));
 
 	for (c = 0; c < NR_INTERNAL_PODULES; c++) {
 		const podule_header_t *header =

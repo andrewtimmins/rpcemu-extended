@@ -141,6 +141,18 @@ typedef void (*SupportInstallProgress)(int done, int total, const char *path,
 int support_install_pending(const char *datadir);
 
 /**
+ * Which root directory to read a payload directory from.
+ *
+ * The data directory when the extraction put it there, the resource directory
+ * when it did not - so a machine still starts if the copy failed, with the
+ * files it would have used before this existed.
+ *
+ * @param subdir One of the payload directories, e.g. "poduleroms"
+ * @return Root with a trailing separator, valid until the next call
+ */
+const char *support_root_for(const char *subdir);
+
+/**
  * Bring the data directory's copies of the guest files up to date.
  *
  * @param datadir  Data directory, with a trailing separator

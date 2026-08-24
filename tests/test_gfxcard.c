@@ -80,9 +80,12 @@ void rpclog(const char *format, ...) { (void) format; }
 void fatal(const char *format, ...) { (void) format; printf("fatal() called\n"); exit(2); }
 const char *rpcemu_get_resourcedir(void) { return "/nonexistent/"; }
 /* The card's driver comes out of the data directory now, extracted there from
-   the copy embedded in the binary - see support_files.h. Pointed at nothing, so
-   the card comes up without one, which is what these tests want. */
+   the copy embedded in the binary - see support_files.h. Both of these point at
+   nothing, so the card comes up without a driver, which is what these tests
+   want; support_root_for() is stubbed rather than linked because the real one
+   brings the whole embedded payload with it. */
 const char *rpcemu_get_datadir(void) { return "/nonexistent/"; }
+const char *support_root_for(const char *subdir) { (void) subdir; return "/nonexistent/"; }
 
 /* The serialisation helpers, so the card's suspend and resume can be exercised
    without linking savestate.c - which wants the whole machine, every other
