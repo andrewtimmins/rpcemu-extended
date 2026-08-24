@@ -110,6 +110,13 @@
 	GraphicsV		= 0x2a
 	GraphicsV_VSync		= 1
 
+	@ GraphicsV_ReadInfo items (r0)
+	GVReadInfo_Version		= 0
+	GVReadInfo_ModuleName		= 1
+	GVReadInfo_DriverName		= 2
+	GVReadInfo_HardwareName		= 3
+	GVReadInfo_ControlListItems	= 4
+
 	@ GraphicsV_DisplayFeatures flags
 	GVFeature_HardwareScroll	= 1 << 0
 	GVFeature_SeparateFramestore	= 1 << 3
@@ -392,7 +399,17 @@ gv_table:
 	ldmfd	sp!, {pc}	@ 15 SelectHead (one head)
 	ldmfd	sp!, {pc}	@ 16 StartupMode
 	b	gv_pixelformats	@ 17 PixelFormats
+	b	gv_readinfo	@ 18 ReadInfo
 gv_table_end:
+
+	@ 19 VetMode2 is deliberately not claimed. The kernel asks for it first and
+	@ falls back to VetMode when nobody answers, and the fallback is not a
+	@ legacy path: DoFullVetMode in the kernel rebuilds the whole VetMode2
+	@ reply from DisplayFeatures and FramestoreAddress, both of which this
+	@ driver answers, and arrives at exactly the ExtFramestore result with this
+	@ card's address and size that claiming reason 19 would have returned.
+	@ Implementing it would save two vector calls per mode vetted and change
+	@ nothing else.
 
 	@ Render: r0 = flags, r1 = operation, r2 -> its operands. Claimed by
 	@ returning r4 = 0; left alone otherwise, and the kernel does the work on the
@@ -506,6 +523,88 @@ gv_framestore:
 	ldr	r1, [ws, #WS_FB_SIZE]
 	mov	r4, #0
 	ldmfd	sp!, {pc}
+
+	@ ReadInfo: r0 = which item, r1 -> buffer, r2 = its size.
+	@
+	@ ScreenModes asks for ControlListItems every time the display driver
+	@ changes, and a driver that does not answer is recorded as supporting no
+	@ control list items at all. That matters here: it then refuses any mode
+	@ wanting ExtraBytes with "ExtraBytes wanted by user but not supported by
+	@ driver", even though this driver has always honoured ExtraBytes - see
+	@ mode_geometry, which adds it to the line length for vetting and for
+	@ setting alike. The list below is what makes that support visible.
+	@
+	@ Out: the item in the buffer, r2 = bytes of the buffer left over (negative
+	@ if it was too small, which is how the caller measures the item), r4 = 0
+	@ to claim. An item we do not know is left unclaimed.
+gv_readinfo:
+	stmfd	sp!, {r0, r1, r3, r5, r6}
+
+	cmp	r0, #(gv_ri_table_end - gv_ri_table) / 4
+	addlo	pc, pc, r0, lsl #2
+	b	gv_readinfo_pass
+gv_ri_table:
+	b	gv_ri_version		@ 0 Version
+	b	gv_ri_name		@ 1 ModuleName
+	b	gv_ri_name		@ 2 DriverName
+	b	gv_ri_name		@ 3 HardwareName
+	b	gv_ri_ctrllist		@ 4 ControlListItems
+gv_ri_table_end:
+
+gv_ri_version:
+	adrl	r3, gv_ri_version_word
+	mov	r5, #4
+	b	gv_ri_copy
+
+	@ The module, the driver and the hardware are all this one thing, so the
+	@ module title answers all three. Length includes the terminator, as the
+	@ stock driver's does.
+gv_ri_name:
+	adrl	r3, title
+	mov	r5, #0
+1:
+	ldrb	r6, [r3, r5]
+	add	r5, r5, #1
+	teq	r6, #0
+	bne	1b
+	b	gv_ri_copy
+
+gv_ri_ctrllist:
+	adrl	r3, gv_ri_ctrllist_items
+	mov	r5, #(gv_ri_ctrllist_end - gv_ri_ctrllist_items)
+
+	@ Copy min(length, buffer size) bytes, and report the space left over
+	@ before that clamp so a caller with too small a buffer learns the size.
+gv_ri_copy:
+	teq	r5, #0
+	beq	gv_readinfo_pass
+	sub	r6, r2, r5
+	cmp	r5, r2
+	movlt	r2, r5
+1:
+	subs	r2, r2, #1
+	ldrgeb	r0, [r3], #1
+	strgeb	r0, [r1], #1
+	bgt	1b
+	mov	r2, r6
+	mov	r4, #0
+	ldmfd	sp!, {r0, r1, r3, r5, r6}
+	ldmfd	sp!, {pc}
+
+gv_readinfo_pass:
+	ldmfd	sp!, {r0, r1, r3, r5, r6}
+	ldmfd	sp!, {pc}		@ r4 untouched: not ours
+
+gv_ri_version_word:
+	.int	VERSION_BCD << 8
+
+	@ Only ExtraBytes: the one control list item this driver acts on. Claiming
+	@ others would say the card honours settings it ignores. Terminated the way
+	@ the stock driver terminates its list.
+gv_ri_ctrllist_items:
+	.int	ControlList_ExtraBytes
+	.int	ControlList_Terminator
+gv_ri_ctrllist_end:
 
 	@ PixelFormats: out r0 -> list of (NColour, ModeFlags, Log2BPP), r1 = count
 gv_pixelformats:
