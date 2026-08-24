@@ -266,14 +266,25 @@ support_root_for(const char *subdir)
 	struct stat st;
 
 	/*
-	 * RPCEMU_RESOURCE_DIR first, when it is set. That is somebody saying
-	 * outright where the payload is, and it already outranks every other route
-	 * to it - see InitRpcemuPaths(). Preferring an extracted copy over it would
-	 * quietly undo that, and would do so for everybody, because after a first
-	 * run the data directory always has one.
+	 * RPCEMU_RESOURCE_DIR first, when it is set AND actually holds this
+	 * directory. That is somebody saying outright where the payload is, and it
+	 * already outranks every other route to it - see InitRpcemuPaths().
+	 * Preferring an extracted copy over it would quietly undo that, and would
+	 * do so for everybody, because after a first run the data directory always
+	 * has one.
+	 *
+	 * The "and actually holds it" is not caution for its own sake. The macOS
+	 * boot test sets the variable to the bundle's Resources, which is where the
+	 * payload used to be shipped and no longer is; honouring that blindly sent
+	 * every lookup somewhere empty, so no HostFS loaded, !Boot never ran, and
+	 * the machine came up to a black screen. A variable naming a directory
+	 * without the files in it is not an instruction worth following.
 	 */
 	if (getenv("RPCEMU_RESOURCE_DIR") != NULL &&
-	    getenv("RPCEMU_RESOURCE_DIR")[0] != '\0')
+	    getenv("RPCEMU_RESOURCE_DIR")[0] != '\0' &&
+	    snprintf(probe, sizeof(probe), "%s%s", rpcemu_get_resourcedir(), subdir)
+	        < (int) sizeof(probe) &&
+	    stat(probe, &st) == 0 && S_ISDIR(st.st_mode))
 	{
 		snprintf(root, sizeof(root), "%s", rpcemu_get_resourcedir());
 		return root;
