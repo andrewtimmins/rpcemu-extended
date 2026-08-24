@@ -52,6 +52,7 @@
 #include <string.h>
 
 #include "rpcemu.h"
+#include "support_files.h"
 #include "edid.h"
 #include "gfxcard.h"
 #include "podules.h"
@@ -158,7 +159,7 @@ gfxcard_rom_init(void)
 	FILE *f;
 	size_t driver_size = 0;
 
-	snprintf(path, sizeof(path), "%s%s%s", rpcemu_get_datadir(),
+	snprintf(path, sizeof(path), "%s%s%s", support_root_for("gfxroms"),
 	         GFXCARD_ROM_DIR, GFXCARD_DRIVER_FILE);
 
 	f = fopen(path, "rb");

@@ -30,6 +30,7 @@
 #include <sys/types.h>
 
 #include "rpcemu.h"
+#include "support_files.h"
 #include "podules.h"
 #include "podulerom.h"
 #include "romload.h"
@@ -165,7 +166,8 @@ initpodulerom(void)
 	/* The data directory, not the resource directory: these are extracted
 	   there from the copies embedded in the binary, so they are the ones this
 	   build shipped however old the folder around it is. See support_files.h. */
-	snprintf(romdirectory, sizeof(romdirectory), "%spoduleroms/", rpcemu_get_datadir());
+	snprintf(romdirectory, sizeof(romdirectory), "%spoduleroms/",
+	         support_root_for("poduleroms"));
 
 	if (podulerom != NULL) {
 		free(podulerom);

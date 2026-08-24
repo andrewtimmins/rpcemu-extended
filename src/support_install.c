@@ -62,34 +62,49 @@ make_dir(const char *path)
 }
 
 /**
- * Make every directory leading to this file.
+ * Make the directories a relative path needs, underneath the data directory.
  *
- * The paths are ours and shallow - "podules/aka16/aka16.rom" is the deepest -
- * but they are made a component at a time rather than assumed, because a user
- * who has deleted a whole directory is exactly the case this is here to fix.
+ * Only the components of `rel` are created; the data directory itself is
+ * assumed to exist, because something has already had to write a config into
+ * it to get this far.
  *
- * @param full Absolute path to the file itself
+ * Walking the whole absolute path instead is the obvious way to write this and
+ * it is wrong on Windows: the first separator there falls after the drive
+ * letter, so the first directory it tries to create is "D:", which cannot be
+ * created and stopped every file from being written. Building up from the data
+ * directory cannot meet a drive letter or a root at all.
+ *
+ * @param datadir Data directory, with a trailing separator
+ * @param rel     Relative path of the file, '/' separated
  * @return non-zero on success
  */
 static int
-make_parents(const char *full)
+make_parents(const char *datadir, const char *rel)
 {
 	char path[1024];
-	char *p;
+	size_t base_len;
+	const char *p;
 
-	if (snprintf(path, sizeof(path), "%s", full) >= (int) sizeof(path)) {
+	if (snprintf(path, sizeof(path), "%s", datadir) >= (int) sizeof(path)) {
 		return 0;
 	}
+	base_len = strlen(path);
 
-	for (p = path + 1; *p != '\0'; p++) {
-		if (*p != '/' && *p != '\\') {
+	for (p = rel; *p != '\0'; p++) {
+		if (*p != '/') {
 			continue;
 		}
-		*p = '\0';
+
+		/* The component so far, appended to the data directory. */
+		if (base_len + (size_t) (p - rel) >= sizeof(path)) {
+			return 0;
+		}
+		memcpy(path + base_len, rel, (size_t) (p - rel));
+		path[base_len + (size_t) (p - rel)] = '\0';
+
 		if (!make_dir(path)) {
 			return 0;
 		}
-		*p = '/';
 	}
 
 	return 1;
@@ -171,7 +186,7 @@ write_payload_file(const char *datadir, const SupportPayloadFile *f)
 	if (snprintf(tmp, sizeof(tmp), "%s.new", full) >= (int) sizeof(tmp)) {
 		return 0;
 	}
-	if (!make_parents(full)) {
+	if (!make_parents(datadir, f->path)) {
 		return 0;
 	}
 
@@ -241,6 +256,37 @@ write_manifest(const char *datadir)
 	}
 
 	return 1;
+}
+
+const char *
+support_root_for(const char *subdir)
+{
+	static char root[1024];
+	char probe[1024];
+	struct stat st;
+
+	/*
+	 * The data directory when it holds this payload directory, and the resource
+	 * directory when it does not.
+	 *
+	 * The fallback is what keeps a failed extraction from being fatal. These
+	 * files are what an expansion card loads, so a machine whose poduleroms
+	 * never arrived has no HostFS, does not run !Boot, and comes up to a black
+	 * screen - which is precisely what happened on Windows the first time this
+	 * shipped, because the directories could not be created there. Falling back
+	 * to where the files have always been means the worst case is the behaviour
+	 * we had before, not a machine that will not start.
+	 */
+	if (snprintf(probe, sizeof(probe), "%s%s", rpcemu_get_datadir(), subdir)
+	    < (int) sizeof(probe) &&
+	    stat(probe, &st) == 0 && S_ISDIR(st.st_mode))
+	{
+		snprintf(root, sizeof(root), "%s", rpcemu_get_datadir());
+		return root;
+	}
+
+	snprintf(root, sizeof(root), "%s", rpcemu_get_resourcedir());
+	return root;
 }
 
 int

@@ -33,6 +33,7 @@
 #include <time.h>
 
 #include "rpcemu.h"
+#include "support_files.h"
 #include "cmos.h"
 #include "ide.h"
 #include "savestate.h"
@@ -256,7 +257,7 @@ cmos_init(void)
 
 	/* Machine has no cmos.ram yet; seed from the bundled default template */
 	fprintf(stderr, "No CMOS file '%s', seeding from default template\n", fn);
-	snprintf(fn, sizeof(fn), "%sdefault/cmos.ram", rpcemu_get_datadir());
+	snprintf(fn, sizeof(fn), "%sdefault/cmos.ram", support_root_for("default"));
 	if (cmos_load_file(fn)) {
 		cmos_seed_monitor_type();
 		return;

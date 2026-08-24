@@ -29,6 +29,7 @@
 #include <string.h>
 
 #include "rpcemu.h"
+#include "support_files.h"
 #include "mem.h"
 #include "network.h"
 #include "network-nat.h"
@@ -88,7 +89,7 @@ network_rom_init(void)
 	/* Alongside poduleroms in the data directory - extracted there from the
 	   copy embedded in this binary. See support_files.h. */
 	snprintf(module_path, sizeof(module_path), "%snetroms/EtherRPCEm,ffa",
-	         rpcemu_get_datadir());
+	         support_root_for("netroms"));
 
 	// Add on size for driver module if it can be opened successfully
 	f = fopen(module_path, "rb");

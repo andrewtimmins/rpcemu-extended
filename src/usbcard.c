@@ -50,6 +50,7 @@
 #include <sys/types.h>
 
 #include "rpcemu.h"
+#include "support_files.h"
 #include "podules.h"
 #include "usbcard.h"
 #include "usb_ohci.h"
@@ -120,7 +121,7 @@ usbcard_init(void)
 	int i;
 
 	snprintf(romdirectory, sizeof(romdirectory), "%susbroms/",
-	         rpcemu_get_datadir());
+	         support_root_for("usbroms"));
 
 	free(cardrom);
 	cardrom = NULL;
