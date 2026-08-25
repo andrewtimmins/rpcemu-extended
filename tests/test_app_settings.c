@@ -156,12 +156,14 @@ main(int argc, char *argv[])
 	    "watch round trip");
 	cfg.hostcmd_enabled = 0;
 	snprintf(cfg.hostcmd_socket, sizeof(cfg.hostcmd_socket), "/tmp/hc.sock");
+	cfg.guest_subnet_b = 40;
+	cfg.guest_subnet_c = 7;
 	check("save succeeds", app_settings_save(dir, &cfg) == 0);
 	{
 		Config back;
 
 		memset(&back, 0, sizeof(back));
-		check("all six keys come back", app_settings_load(dir, &back) == 6);
+		check("all seven keys come back", app_settings_load(dir, &back) == 7);
 		check("vnc_enabled", back.vnc_enabled == 1);
 		check("vnc_port", back.vnc_port == 5910);
 		check("vnc_password", strcmp(back.vnc_password, "round trip") == 0);
@@ -170,6 +172,10 @@ main(int argc, char *argv[])
 		check("hostcmd_enabled", back.hostcmd_enabled == 0);
 		check("hostcmd_socket",
 		    strcmp(back.hostcmd_socket, "/tmp/hc.sock") == 0);
+		/* The guests' subnet, which is per installation rather than per
+		   machine: every machine here is on the one network. */
+		check("guest_subnet second octet", back.guest_subnet_b == 40);
+		check("guest_subnet third octet", back.guest_subnet_c == 7);
 	}
 
 	/*

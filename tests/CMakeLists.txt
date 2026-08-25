@@ -732,7 +732,8 @@ target_link_libraries(test_ip_reass PRIVATE ${NET_TEST_LIBS})
 rpcemu_add_test(test_ip_reass)
 
 # Relay-side reassembly of guest-originated Access+ datagrams
-add_executable(test_relay_reasm test_relay_reasm.c)
+add_executable(test_relay_reasm test_relay_reasm.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/guest_subnet.c)
 target_include_directories(test_relay_reasm PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/slirp
@@ -758,6 +759,7 @@ target_link_libraries(test_netcapture PRIVATE ${NET_TEST_LIBS})
 rpcemu_add_test(test_netcapture)
 
 add_executable(test_net_tx test_net_tx.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/guest_subnet.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/network-nat.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/netcapture.c)
 target_include_directories(test_net_tx PRIVATE
@@ -909,6 +911,14 @@ target_include_directories(test_mac_address PRIVATE
 target_link_libraries(test_mac_address PRIVATE rpcemu_core m)
 rpcemu_add_test(test_mac_address)
 
+# Which /24 the guests live on. The relay derives the same addresses
+# independently, so the arithmetic is pinned down here.
+add_executable(test_guest_subnet test_guest_subnet.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/guest_subnet.c)
+target_include_directories(test_guest_subnet PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+rpcemu_add_test(test_guest_subnet)
+
 add_executable(test_net_slot test_net_slot.c)
 target_include_directories(test_net_slot PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src)
@@ -921,7 +931,8 @@ rpcemu_add_test(test_net_slot)
 # truncated every ShareFS data datagram, and the forged source address on the
 # fragmenting path. broadcast_relay.c is included by the test rather than
 # compiled here, because both are static.
-add_executable(test_relay_datagram test_relay_datagram.c)
+add_executable(test_relay_datagram test_relay_datagram.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/guest_subnet.c)
 target_include_directories(test_relay_datagram PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 if(WIN32)
@@ -1001,7 +1012,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 64)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 65)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 10")	# JIT differential
 endif()

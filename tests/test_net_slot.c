@@ -176,12 +176,12 @@ main(void)
 	/* The derivation lives at its two call sites (network-nat.c for the NAT's
 	   DHCP address and MAC), and both are
 	   only safe because NET_SLOT_MAX is small. Raising it without looking would
-	   take the guest address out of 10.10.10.0/24 or carry the MAC's last byte
+	   take the guest address out of the /24 or carry the MAC's last byte
 	   into the next one, so the bound is checked here where it is defined.
 	   Written as run-time checks rather than #error so the numbers are visible
 	   in the output. */
-	check("the highest guest address is still in 10.10.10.0/24",
-	    (0x0a0a0a0au + (unsigned) (NET_SLOT_MAX - 1)) <= 0x0a0a0afeu);
+	check("the highest guest address stays inside the /24",
+	    (0x0au + (unsigned) (NET_SLOT_MAX - 1)) <= 0xfeu);
 	check("the highest MAC last byte does not carry",
 	    (0x06u + (unsigned) (NET_SLOT_MAX - 1)) <= 0xffu);
 

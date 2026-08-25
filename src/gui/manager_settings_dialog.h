@@ -67,6 +67,7 @@ public:
 
 private:
 	void OnChangeDataFolder(wxCommandEvent &event);
+	void OnRandomSubnet();
 	void OnOk(wxCommandEvent &event);
 
 	ChangeDataFolderFn change_data_folder_;
@@ -76,6 +77,11 @@ private:
 	wxCheckBox *warn_stop_check_ = nullptr;
 	wxCheckBox *warn_exit_check_ = nullptr;
 	wxCheckBox *update_check_ = nullptr;
+	/* The middle two octets of the guests' 10.b.c.0/24. See guest_subnet.h. */
+	wxTextCtrl *subnet_b_edit_ = nullptr;
+	wxTextCtrl *subnet_c_edit_ = nullptr;
+	unsigned subnet_was_b_ = 0;
+	unsigned subnet_was_c_ = 0;
 
 	bool acceleration_was_ = true;
 	bool acceleration_chosen_ = true;

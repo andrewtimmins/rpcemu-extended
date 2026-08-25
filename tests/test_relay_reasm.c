@@ -85,6 +85,12 @@ test_sendto(int fd, const void *buf, size_t len, int flags,
 
 /* Stubs for the rest of the emulator */
 unsigned char network_hwaddr[6] = { 0x06, 0x02, 0x03, 0x04, 0x05, 0x06 };
+/* The relay reads the guests' subnet from here (guest_subnet.h). */
+#include "rpcemu.h"
+#include "guest_subnet.h"
+Config config = { .guest_subnet_b = GUEST_SUBNET_DEFAULT_B,
+                  .guest_subnet_c = GUEST_SUBNET_DEFAULT_C };
+
 
 void
 rpclog(const char *format, ...)
@@ -120,7 +126,9 @@ network_nat_inject_space(void)
 	return 32;
 }
 
-#define GUEST_IP 0x0a0a0a0a  /* 10.10.10.10 */
+/* The guest's address on the subnet the stub config above sets, so the two
+   cannot drift apart. */
+#define GUEST_IP (guest_subnet_guest(SLIRP_NET, 0))
 #define PEER_IP  0xc0000213  /* 192.0.2.19, RFC 5737 TEST-NET-1 */
 
 static int failures;

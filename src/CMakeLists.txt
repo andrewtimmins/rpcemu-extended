@@ -1,6 +1,7 @@
 set(RPCEMU_CORE_SOURCES
     accelerators.c
     app_settings.c
+    guest_subnet.c
     machine_lock.c
     net_slot.c
     superio.c
