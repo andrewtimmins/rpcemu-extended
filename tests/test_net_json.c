@@ -288,10 +288,22 @@ test_reconnect(void)
 	}
 	config.json_net_port = (int) port;
 
-	/* The retry is due immediately after a failed init only once the interval
-	   has passed, so this drives the attempt directly rather than sleeping. */
-	check("a fresh init connects once the server is up",
-	    net_json_init() == 0 && net_json_is_connected());
+	/*
+	 * The connect is non-blocking, so init starts the handshake rather than
+	 * finishing it - that is the point: it runs on the emulator thread before
+	 * the guest boots, and a host that takes the SYN and answers nothing must
+	 * not hold the machine there. net_json_poll() completes it.
+	 */
+	check("init starts a connection when the server is up",
+	    net_json_init() == 0 && net_json_wants_connection());
+	{
+		int i;
+
+		for (i = 0; i < 100 && !net_json_is_connected(); i++) {
+			net_json_poll();
+		}
+		check("and polling completes it", net_json_is_connected());
+	}
 
 	/* The server goes away underneath a working connection. */
 	closesocket(listener);
