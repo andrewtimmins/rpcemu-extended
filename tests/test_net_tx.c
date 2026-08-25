@@ -131,9 +131,10 @@ int broadcast_relay_tx(const uint8_t *pkt, int pkt_len) { (void) pkt; (void) pkt
 /* The hub that carries frames to other emulators on this host. Stubbed rather
    than linked so the test opens no sockets: what is under test is the bounds
    on the mbuf walk, and a frame that reaches the hub has already passed them.
-   net_json_is_connected() answers no, so the switch is the branch taken - the
-   same one an ordinary machine uses. */
+   net_json_wants_connection() answers no, so the switch is the branch taken -
+   the same one an ordinary machine uses. */
 int  net_json_is_connected(void) { return 0; }
+int  net_json_wants_connection(void) { return 0; }
 void net_json_tx(const uint8_t *frame, int frame_len) { (void) frame; (void) frame_len; }
 int  net_json_init(void) { return -1; }
 void net_json_close(void) { }

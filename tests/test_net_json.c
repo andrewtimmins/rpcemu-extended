@@ -21,6 +21,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "socket-compat.h"
+
 #include "net_json.h"
 
 #include "rpcemu.h"
@@ -211,13 +213,117 @@ test_whitespace(void)
 	        "\"src\": [1,2,3,4,5,6], \"frame_type\": 2048}", out, sizeof(out)) == 19);
 }
 
+/*
+ * Reconnecting.
+ *
+ * A machine used to give up for good the moment the server was unavailable, so
+ * one started before its server, or left running across a server restart, was
+ * off the network until somebody restarted it.
+ *
+ * A real listening socket rather than a mock: what is under test is the
+ * connect/close/reconnect sequence against a real TCP stack, and the retry
+ * interval is deliberately not waited out - the point is that the attempt is
+ * made at all, and that the machine stays on the JSON wire while it waits.
+ */
+static int
+open_listener(unsigned short *port_out)
+{
+	struct sockaddr_in addr;
+	socklen_t len = sizeof(addr);
+	int fd = (int) socket(AF_INET, SOCK_STREAM, 0);
+
+	if (fd < 0) {
+		return -1;
+	}
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	addr.sin_port = 0;	/* any free port */
+
+	if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)) != 0 ||
+	    listen(fd, 4) != 0 ||
+	    getsockname(fd, (struct sockaddr *) &addr, &len) != 0) {
+		closesocket(fd);
+		return -1;
+	}
+	*port_out = ntohs(addr.sin_port);
+	return fd;
+}
+
+static void
+test_reconnect(void)
+{
+	unsigned short port = 0;
+	int listener;
+
+	printf("reconnecting\n");
+
+	listener = open_listener(&port);
+	if (listener < 0) {
+		check("a listening socket could be opened", 0);
+		return;
+	}
+
+	/* A server that is not there: the port is one nothing is listening on,
+	   which is the machine-started-before-its-server case. */
+	closesocket(listener);
+
+	config.json_net_enabled = 1;
+	snprintf(config.json_net_host, sizeof(config.json_net_host), "127.0.0.1");
+	config.json_net_port = (int) port;
+
+	check("init succeeds even though the server is not there",
+	    net_json_init() == 0);
+	check("and the machine is not connected", !net_json_is_connected());
+	/* ★ The point of the whole change: not connected, but still on this wire,
+	   so network-nat.c must not put it on the loopback wire instead. */
+	check("but it does still want the connection", net_json_wants_connection());
+
+	/* The server appears. Reopening the same port is what a server restart
+	   looks like from here. */
+	listener = open_listener(&port);
+	if (listener < 0) {
+		check("the listener could be reopened", 0);
+		return;
+	}
+	config.json_net_port = (int) port;
+
+	/* The retry is due immediately after a failed init only once the interval
+	   has passed, so this drives the attempt directly rather than sleeping. */
+	check("a fresh init connects once the server is up",
+	    net_json_init() == 0 && net_json_is_connected());
+
+	/* The server goes away underneath a working connection. */
+	closesocket(listener);
+	net_json_close();
+	check("closing gives up the connection", !net_json_is_connected());
+	check("and stops wanting one", !net_json_wants_connection());
+
+	config.json_net_enabled = 0;
+	config.json_net_host[0] = '\0';
+	check("no server configured is not wanting one",
+	    net_json_init() == -1 && !net_json_wants_connection());
+}
+
 int
 main(void)
 {
+#ifdef _WIN32
+	/* Sockets do nothing at all before this on Windows, and net_json.c is
+	   normally reached long after rpcemu.c has done it. */
+	WSADATA wsadata;
+
+	if (WSAStartup(MAKEWORD(2, 2), &wsadata) != 0) {
+		printf("FAIL: WSAStartup\n");
+		return 1;
+	}
+#endif
+
 	test_encoding();
 	test_round_trip();
 	test_bad_input();
 	test_whitespace();
+	test_reconnect();
 
 	printf("\n%s\n", failures ? "FAILED" : "All tests passed");
 	return failures != 0;
