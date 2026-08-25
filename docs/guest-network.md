@@ -4,8 +4,8 @@ Every machine RPCEmu starts sits on a private `/24` behind its own NAT. The
 machine is given an address on it by DHCP, the gateway and DNS live on it, and
 nothing on it is visible to the host's real network unless a port is forwarded.
 
-By default that network is `10.10.10.0/24`, which is what every version used
-before it could be set.
+That network is `10.10.10.0/24` unless it is changed, on every installation and
+however long it has been in use.
 
 | | |
 | --- | --- |
@@ -30,8 +30,19 @@ Two hosts arrive on one wire with distinct MAC addresses and the same IP, which
 cannot work, and nothing says why: there is no error, no warning and no clue in
 the log. Traffic simply does not arrive.
 
-So the network is a setting, and two installations that need to meet can be put
-on different ones.
+So the network is a setting. **Which way to move it depends on what the two
+installations are doing**, and the two cases pull in opposite directions:
+
+| | |
+| --- | --- |
+| They must **talk to each other** over a shared server | Keep them on the **same** network — machines can only reach each other on one subnet, and RPCEmu does not route between them |
+| They must **not collide**, and will never meet | Put them on **different** ones |
+
+Machines that share a network still have to avoid landing on the same address
+within it, which is the `.10` collision above. Until there is a way to say "start
+my machines at `.60`", that means starting them in a known order, or setting one
+installation's network apart and accepting that its machines cannot be reached
+from the other.
 
 ## Changing it
 
@@ -45,8 +56,9 @@ Only the middle two parts are yours to set, each 0 to 255. The first is fixed at
 `10` because `10.0.0.0/8` is a private range in its own right, so nothing chosen
 here can collide with a real network the host is on; the mask stays `/24`.
 
-**Random** picks a pair at random, which is the quickest way to be reasonably
-sure of not matching somebody else's.
+**Random** fills the two in for you, which is the quickest way to be reasonably
+sure of not matching somebody else's — for the case where two installations must
+not collide rather than meet.
 
 The change takes effect when a machine next starts. A machine already running
 keeps the network it started on.
@@ -63,20 +75,15 @@ It is a property of the **installation**, not of a machine: every machine here i
 on one network, so it cannot sensibly differ between them. Nothing reads a
 per-machine `guest_subnet`.
 
-## What a new installation gets
+## What every installation gets
 
-A data directory with no machines in it is a first run, and RPCEmu picks a random
-network for it and writes it down. Two people who install RPCEmu and then connect
-their machines are then unlikely to have to think about any of this.
+`10.10.10.0/24`, new or old alike, until somebody changes it. Nothing is written
+to `rpcemu.cfg` until then, and an absent `guest_subnet` means the default.
 
-**An existing installation is left alone.** A data directory that already has
-machines keeps `10.10.10.0/24`, on an upgrade and forever after, unless it is
-changed by hand: moving the guests of somebody with port forwards or firewall
-rules pointing at `10.10.10.10` would be a poor trade for a problem they may not
-have.
-
-The check is made before the data directory is seeded, so a packaged install that
-ships a machine still counts as new.
+Changing it is entirely the user's decision. RPCEmu never moves the guests of an
+installation on its own: port forwards and firewall rules pointing at
+`10.10.10.10` keep working, and two installations that need to share a network
+start out able to.
 
 ## What has to agree with it
 
