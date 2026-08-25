@@ -60,10 +60,28 @@ wxEND_EVENT_TABLE()
  * profile, because this draws one textured quad with fixed-function calls that
  * every driver from 1.1 onwards has, and a core profile would demand shaders and
  * a VAO for no gain.
+ *
+ * wxWANTS_CHARS is not cosmetic here, and its absence cost the guest Return,
+ * Tab and the arrow keys on Windows alone.
+ *
+ * This canvas is what holds the focus - the panel hands it over on creation -
+ * and the panel above it has wxTAB_TRAVERSAL, so wxMSW runs its dialog
+ * navigation over every WM_KEYDOWN and asks the FOCUSED window whether it wants
+ * the key. A window answers "all of them" only when it carries this style
+ * (wxWindowMSW::MSWWindowProc, WM_GETDLGCODE), and DLGC_WANTALLKEYS is the same
+ * bit as DLGC_WANTMESSAGE - the one the VK_RETURN arm looks for before deciding
+ * to leave the key alone. Without it Enter went to IsDialogMessage(), which ate
+ * it, and Tab and the arrows were turned into focus navigation. The message was
+ * then never dispatched, so no wxEVT_KEY_DOWN fired and there was nothing for
+ * the panel's forwarding to forward.
+ *
+ * The panel already carries the style for exactly this reason, which is why
+ * turning hardware acceleration off made those keys work again. GTK and macOS
+ * deliver them regardless and the style is a no-op there.
  */
 GlDisplayCanvas::GlDisplayCanvas(wxWindow *parent)
 	: wxGLCanvas(parent, wxID_ANY, nullptr, wxDefaultPosition, wxDefaultSize,
-	    wxFULL_REPAINT_ON_RESIZE)
+	    wxFULL_REPAINT_ON_RESIZE | wxWANTS_CHARS)
 {
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
 }
