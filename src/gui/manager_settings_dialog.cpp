@@ -23,15 +23,11 @@
 #include <wx/filename.h>
 #include <wx/settings.h>
 #include <wx/statline.h>
-#include <wx/valtext.h>
-
-#include <random>
 
 #include "gui_preferences.h"
 
 extern "C" {
 #include "app_settings.h"
-#include "guest_subnet.h"
 #include "rpcemu.h"
 }
 
@@ -71,26 +67,6 @@ AccelerationExplanation()
 	       "the alternative on Linux is Cairo, which scales in software and is "
 	       "slower than doing it by hand.";
 #endif
-}
-
-/*
- * The guests' subnet as the settings file has it.
- *
- * Straight from the file rather than from the live config, which config_load()
- * has not filled in while the Manager is sitting with no machine started.
- */
-static void
-LoadGuestSubnet(unsigned *b, unsigned *c)
-{
-	Config app;
-
-	memset(&app, 0, sizeof(app));
-	app.guest_subnet_b = GUEST_SUBNET_DEFAULT_B;
-	app.guest_subnet_c = GUEST_SUBNET_DEFAULT_C;
-	app_settings_load(rpcemu_get_datadir(), &app);
-
-	*b = app.guest_subnet_b;
-	*c = app.guest_subnet_c;
 }
 
 ManagerSettingsDialog::ManagerSettingsDialog(wxWindow *parent,
@@ -209,67 +185,6 @@ ManagerSettingsDialog::ManagerSettingsDialog(wxWindow *parent,
 		root->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 10);
 	}
 
-	/* ---- Networking ---- */
-	{
-		auto *box = new wxStaticBoxSizer(wxVERTICAL, this, "Networking");
-		wxWindow *parent_win = box->GetStaticBox();
-
-		auto *row = new wxBoxSizer(wxHORIZONTAL);
-
-		/*
-		 * ★ Read from the settings file, NOT from the live config.
-		 *
-		 * config_load() only runs when a machine starts, and the Manager can
-		 * be sitting here with none - so the global still holds its built-in
-		 * default. Showing that would report 10.10 whatever the file said, and
-		 * pressing OK would then write it back over the real setting.
-		 */
-		LoadGuestSubnet(&subnet_was_b_, &subnet_was_c_);
-
-		/* Digits only, three at most. The range is checked on OK: a
-		   wxTextValidator can refuse a character but not a value. */
-		const wxSize octet_size(
-		    GetTextExtent("000").GetWidth() + FromDIP(16), -1);
-		wxTextValidator digits(wxFILTER_DIGITS);
-
-		subnet_b_edit_ = new wxTextCtrl(parent_win, wxID_ANY,
-		    wxString::Format("%u", subnet_was_b_),
-		    wxDefaultPosition, octet_size, 0, digits);
-		subnet_b_edit_->SetMaxLength(3);
-		subnet_c_edit_ = new wxTextCtrl(parent_win, wxID_ANY,
-		    wxString::Format("%u", subnet_was_c_),
-		    wxDefaultPosition, octet_size, 0, digits);
-		subnet_c_edit_->SetMaxLength(3);
-
-		row->Add(new wxStaticText(parent_win, wxID_ANY, "Guest network:"), 0,
-		    wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
-		row->Add(new wxStaticText(parent_win, wxID_ANY, "10 ."), 0,
-		    wxALIGN_CENTER_VERTICAL);
-		row->Add(subnet_b_edit_, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, 4);
-		row->Add(new wxStaticText(parent_win, wxID_ANY, "."), 0,
-		    wxALIGN_CENTER_VERTICAL);
-		row->Add(subnet_c_edit_, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, 4);
-		row->Add(new wxStaticText(parent_win, wxID_ANY, ". 0 / 24"), 0,
-		    wxALIGN_CENTER_VERTICAL);
-
-		auto *random_button = new wxButton(parent_win, wxID_ANY, "Random");
-		random_button->SetToolTip(
-		    "Pick a subnet at random, which is what a new installation gets.");
-		random_button->Bind(wxEVT_BUTTON,
-		    [this](wxCommandEvent &) { OnRandomSubnet(); });
-		row->Add(random_button, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 12);
-
-		box->Add(row, 0, wxALL, 8);
-
-		auto *note = new wxStaticText(parent_win, wxID_ANY,
-		    "Takes effect when a machine next starts.");
-		note->SetForegroundColour(
-		    wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
-		box->Add(note, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
-
-		root->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 10);
-	}
-
 	root->Add(new wxStaticLine(this), 0, wxEXPAND | wxALL, 10);
 
 	auto *buttons = CreateStdDialogButtonSizer(wxOK | wxCANCEL);
@@ -306,64 +221,8 @@ void ManagerSettingsDialog::OnChangeDataFolder(wxCommandEvent & /*event*/)
 	}
 }
 
-/* std::random_device, not rand(): an unseeded rand() is the same sequence in
-   every process, so every installation pressing this would get one subnet. */
-void ManagerSettingsDialog::OnRandomSubnet()
-{
-	std::random_device rd;
-	std::uniform_int_distribution<unsigned> octet(0, 255);
-
-	if (subnet_b_edit_ != nullptr) {
-		subnet_b_edit_->ChangeValue(wxString::Format("%u", octet(rd)));
-	}
-	if (subnet_c_edit_ != nullptr) {
-		subnet_c_edit_->ChangeValue(wxString::Format("%u", octet(rd)));
-	}
-}
-
-/**
- * One octet from its field, or -1 if it is empty or out of range.
- *
- * The validator has already kept out everything but digits, so this is only
- * about the value: 256 is three digits and not an octet.
- */
-static int
-OctetFrom(const wxTextCtrl *field)
-{
-	long value = 0;
-
-	if (field == nullptr || !field->GetValue().ToLong(&value)) {
-		return -1;
-	}
-	return (value >= 0 && value <= 255) ? (int) value : -1;
-}
-
 void ManagerSettingsDialog::OnOk(wxCommandEvent &event)
 {
-	int subnet_b = -1;
-	int subnet_c = -1;
-
-	/*
-	 * Checked before anything is applied. Everything below this takes effect as
-	 * it is read, so refusing halfway would leave the window open with some of
-	 * its settings already saved.
-	 *
-	 * Refused rather than clamped: somebody who typed 300 meant something, and
-	 * silently making it 255 puts the guests somewhere they did not ask for.
-	 */
-	if (subnet_b_edit_ != nullptr && subnet_c_edit_ != nullptr) {
-		subnet_b = OctetFrom(subnet_b_edit_);
-		subnet_c = OctetFrom(subnet_c_edit_);
-
-		if (subnet_b < 0 || subnet_c < 0) {
-			wxMessageBox(
-			    "Each part of the guest network must be a number from 0 to 255.",
-			    "Guest Network", wxOK | wxICON_WARNING, this);
-			(subnet_b < 0 ? subnet_b_edit_ : subnet_c_edit_)->SetFocus();
-			return;	/* not Skip(), so the window stays open */
-		}
-	}
-
 	if (acceleration_check_ != nullptr) {
 		acceleration_chosen_ = acceleration_check_->GetValue();
 	}
@@ -387,32 +246,5 @@ void ManagerSettingsDialog::OnOk(wxCommandEvent &event)
 		SetCheckForUpdates(update_check_->GetValue());
 	}
 
-	if (subnet_b >= 0 && subnet_c >= 0 &&
-	    ((unsigned) subnet_b != subnet_was_b_ ||
-	     (unsigned) subnet_c != subnet_was_c_)) {
-		/* The file re-read into a Config of its own: app_settings_save() writes
-		   every key it knows, and the live one is not loaded while the Manager
-		   has no machine. */
-		Config app;
-
-		memset(&app, 0, sizeof(app));
-		app.vnc_port = 5900;
-		app.hostcmd_enabled = 1;
-		app_settings_load(rpcemu_get_datadir(), &app);
-
-		app.guest_subnet_b = (unsigned) subnet_b;
-		app.guest_subnet_c = (unsigned) subnet_c;
-
-		if (app_settings_save(rpcemu_get_datadir(), &app) != 0) {
-			wxLogWarning("RPCEmu could not save the guest network setting.");
-		} else {
-			/* The live config too, so a machine started afterwards is on the
-			   network just chosen. */
-			config.guest_subnet_b = (unsigned) subnet_b;
-			config.guest_subnet_c = (unsigned) subnet_c;
-			rpclog("Settings: guests are now on 10.%d.%d.0/24\n",
-			    subnet_b, subnet_c);
-		}
-	}
 	event.Skip();	/* let wxDialog close with wxID_OK */
 }

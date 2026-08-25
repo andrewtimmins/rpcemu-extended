@@ -22,7 +22,7 @@
 
 extern "C" {
 #include "guest_subnet.h"
-#include "net_slot.h"
+#include "network.h"
 #include "rpcemu.h"
 }
 
@@ -55,35 +55,22 @@ void NatListDialog::BuildUi()
 	 * ★ Which machine these rules belong to, and where they point.
 	 *
 	 * The rules are stored per machine and each machine forwards to its own
-	 * guest address, so a dialogue that said neither left the user to
-	 * remember which machine they had opened it from - and, with several
-	 * running, to guess which guest a rule would reach. The address is worth
-	 * stating outright because it is not fixed: it follows the slot this
-	 * machine claimed, so it depends on what else was already running.
+	 * guest address, so a dialogue that said neither left the user to remember
+	 * which machine they had opened it from - and, with several running, to
+	 * guess which guest a rule would reach.
 	 */
 	{
-		const int slot = net_slot_get();
+		const uint32_t addr = guest_subnet_guest(network_hwaddr);
+		char addr_text[16];
 		wxString where;
 
-		if (slot >= 0) {
-			const uint32_t addr = guest_subnet_guest(
-			    guest_subnet_network(config.guest_subnet_b,
-			                         config.guest_subnet_c), slot);
-
-			where = wxString::Format(
-			    "Rules for %s. Traffic arriving on the host port is sent to "
-			    "this machine at %u.%u.%u.%u.",
-			    config.name[0] != '\0' ? wxString::FromUTF8(config.name)
-			                           : wxString("this machine"),
-			    (addr >> 24) & 0xffu, (addr >> 16) & 0xffu,
-			    (addr >> 8) & 0xffu, addr & 0xffu);
-		} else {
-			where = wxString::Format(
-			    "Rules for %s. Each machine forwards to its own address, "
-			    "which is decided when it starts.",
-			    config.name[0] != '\0' ? wxString::FromUTF8(config.name)
-			                           : wxString("this machine"));
-		}
+		guest_subnet_format(addr, addr_text, sizeof(addr_text));
+		where = wxString::Format(
+		    "Rules for %s. Traffic arriving on the host port is sent to this "
+		    "machine at %s.",
+		    config.name[0] != '\0' ? wxString::FromUTF8(config.name)
+		                           : wxString("this machine"),
+		    wxString::FromUTF8(addr_text));
 
 		auto *note = new wxStaticText(this, wxID_ANY, where);
 

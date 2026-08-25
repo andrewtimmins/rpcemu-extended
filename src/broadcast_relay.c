@@ -24,7 +24,7 @@
  * Provides Access+ file sharing support over RPCEmu's NAT networking.
  * Access+ discovery uses UDP broadcasts which don't traverse NAT, so
  * this module bridges traffic between the guest's virtual network
- * (10.<b>.<c>.x - see guest_subnet.h) and the host's physical network.
+ * (100.64.0.0/10 - see guest_subnet.h) and the host's physical network.
  *
  * UDP ports handled:
  *   32770 - Discovery and share announcements (broadcast)
@@ -198,16 +198,14 @@ static const char *const relay_drop_names[RELAY_DROP_REASONS] = {
 };
 
 /*
- * The guests' network, from the configured subnet (guest_subnet.h) rather than
- * held separately: this file decides what is local traffic and what is
- * external from these, so a copy that disagreed with network-nat.c would relay
- * the wrong packets.
+ * The guests' network, from guest_subnet.h rather than held separately: this
+ * file decides what is local traffic and what is external from these, so a copy
+ * that disagreed with network-nat.c would relay the wrong packets.
  */
-#define SLIRP_MASK      0xffffff00  /* 255.255.255.0 */
-#define SLIRP_NET       (guest_subnet_network(config.guest_subnet_b, \
-                                              config.guest_subnet_c))
-#define SLIRP_BROADCAST (guest_subnet_broadcast(SLIRP_NET))
-#define SLIRP_HOST      (guest_subnet_gateway(SLIRP_NET))
+#define SLIRP_MASK      GUEST_NET_MASK
+#define SLIRP_NET       (guest_subnet_network())
+#define SLIRP_BROADCAST (guest_subnet_broadcast())
+#define SLIRP_HOST      (guest_subnet_gateway())
 
 /* Broadcast MAC address */
 static const uint8_t broadcast_mac[ETH_ALEN] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
@@ -802,7 +800,7 @@ inject_fragmented_udp(const struct sockaddr_in *from,
     int total_ip_payload;
     int max_data_per_frag;
     uint16_t cksum;
-    const uint32_t SLIRP_GUEST_DEFAULT = SLIRP_NET | 0x0fu;
+    const uint32_t SLIRP_GUEST_DEFAULT = guest_subnet_guest(network_hwaddr);
 
     /* Ethernet MTU is 1500, IP header is 20, so max IP payload per fragment is 1480 */
     /* Fragment offset must be multiple of 8, so use 1480 (divisible by 8) */
@@ -981,7 +979,7 @@ build_guest_frame(uint8_t *frame, int max_len,
     uint16_t cksum;
     uint32_t dest_ip;
     /* Default guest IP if we haven't learned it yet */
-    const uint32_t SLIRP_GUEST_DEFAULT = SLIRP_NET | 0x0fu;  /* .15 */
+    const uint32_t SLIRP_GUEST_DEFAULT = guest_subnet_guest(network_hwaddr);
 
     /* Calculate total frame size */
     total_len = ETH_HLEN + IP_HDR_LEN + 8 + payload_len;

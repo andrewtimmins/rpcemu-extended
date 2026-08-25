@@ -234,25 +234,26 @@ network_nat_open(void)
 	const char *vhostname = NULL;
 	const char *bootfile = NULL;
 
-	// Which /24 this installation's guests are on: 10.10.10.0/24 unless it has
-	// been set, and settable because every RPCEmu used the same one - two
-	// machines meeting over a JSON server, started by different RPCEmus, were
-	// both 10.10.10.10. See guest_subnet.h.
-	const uint32_t guest_net = guest_subnet_network(config.guest_subnet_b,
-	                                                config.guest_subnet_c);
+	host.s_addr = htonl(guest_subnet_gateway());
+	mask.s_addr = htonl(GUEST_NET_MASK);
+	net_addr.s_addr = htonl(guest_subnet_network());
+	dns.s_addr = htonl(guest_subnet_dns());
 
-	host.s_addr = htonl(guest_subnet_gateway(guest_net));
-	mask.s_addr = htonl(0xffffff00); // 255.255.255.0
-	net_addr.s_addr = htonl(guest_net);
-	dns.s_addr = htonl(guest_subnet_dns(guest_net));
+	// From this machine's MAC address rather than from a slot claimed on this
+	// computer: the slot only tells apart machines started by one RPCEmu, so two
+	// machines meeting over a JSON server were both given the same address. See
+	// guest_subnet.h. network_hwaddr is set by the call above.
+	dhcp.s_addr = htonl(guest_subnet_guest(network_hwaddr));
 
-	// .10 upwards, one address per emulator on this host. Every instance ran
-	// its own NAT with the same constants, so every guest believed it was
-	// 10.10.10.10: two machines could not have addressed each other whatever carried
-	// the frames between them. Slot 0 gets the original .10, leaving a single
-	// machine exactly as it was. The gateway and DNS stay put, since each machine
-	// keeps its own NAT and only the guest's own address has to differ.
-	dhcp.s_addr = htonl(guest_subnet_guest(guest_net, net_slot_acquire()));
+	{
+		char guest_text[16];
+		char net_text[16];
+
+		guest_subnet_format(ntohl(dhcp.s_addr), guest_text, sizeof(guest_text));
+		guest_subnet_format(guest_subnet_network(), net_text, sizeof(net_text));
+		rpclog("Networking: this machine is %s on %s/10\n",
+		    guest_text, net_text);
+	}
 
 	// Port Forwarding
 	nat.forward_addr.s_addr = dhcp.s_addr; // Which address to apply port forwards to (same as address given out by DHCP)

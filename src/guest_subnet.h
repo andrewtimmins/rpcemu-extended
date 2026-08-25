@@ -19,23 +19,47 @@
  */
 
 /*
- * guest_subnet - which /24 the guests on this installation live on.
+ * guest_subnet - the addresses the guests live on.
  *
- * Every emulator used the same hardcoded 10.10.10.0/24, with the guest's own
- * address 10.10.10.10 + net_slot. That is enough to tell apart machines started
- * by ONE RPCEmu on one computer, which is all it ever had to do. It is not
- * enough for a JSON server (net_json.h), where the machines meeting each other
- * were started by different RPCEmus on different computers: each hands its first
- * machine 10.10.10.10, so two machines arrive on one wire with distinct MAC
- * addresses and the same IP. They cannot talk, and nothing says why.
+ * ONE NETWORK, EVERYWHERE: 100.64.0.0/10, and a guest's address within it is a
+ * function of its MAC address. Nothing is configurable and nothing depends on
+ * the order machines were started in.
  *
- * So the subnet is a per-installation setting, in rpcemu.cfg rather than in a
- * machine's own configuration: it describes the network every machine here sits
- * on, so it cannot sensibly differ between them.
+ * ★ WHY A MACHINE'S ADDRESS COMES FROM ITS MAC.
  *
- * Only the middle two octets are settable, inside 10.0.0.0/8. That is a private
- * range in its own right, so nothing here can collide with a real network the
- * host is on; the mask stays /24 because the relay and SLiRP both assume it.
+ * The address used to be 10.10.10.10 + a slot claimed when the machine started.
+ * The slot is per-computer, so it tells apart machines started by ONE RPCEmu and
+ * nothing else. Two machines meeting over a JSON server (net_json.h) were started
+ * by different RPCEmus, each handing its first machine 10.10.10.10, so they
+ * arrived on one wire with distinct MAC addresses and the same IP - which cannot
+ * work, and says nothing about why.
+ *
+ * Making the network configurable does not fix that. Machines can only reach each
+ * other on ONE subnet, so two installations that must talk have to agree on a
+ * network anyway, and once they share it they are back to both numbering from
+ * .10. Deriving from the MAC removes the agreement instead of moving it: every
+ * machine already has a MAC of its own, generated once and kept in its
+ * configuration, so every machine everywhere computes to a different address with
+ * nothing to configure and nothing to negotiate.
+ *
+ * ★ WHY 100.64.0.0/10.
+ *
+ * It has to be one network for every installation, so it has to be somewhere a
+ * host's real LAN is unlikely to be. 10.0.0.0/8 is the obvious large private
+ * range and the wrong choice: home and office LANs live there, and SLiRP treats
+ * anything inside its own network as an alias (tcp_subr.c), so a guest could no
+ * longer reach a real 10.x machine on the host's LAN.
+ *
+ * 100.64.0.0/10 is the shared address space of RFC 6598, set aside for carrier
+ * NAT. It is routable-looking but not routed, and vanishingly rare on the LANs
+ * this runs on. Its 22 host bits are also what makes the next part work.
+ *
+ * ★ IT IS A HASH, NOT AN ENCODING.
+ *
+ * 46 usable MAC bits do not fit in 22 address bits, so two machines CAN compute
+ * to one address. The odds are small - about one in a million for two machines,
+ * and around 0.1% for a hundred on one wire - but they are not zero, which is why
+ * a duplicate has to be detected and reported rather than assumed away.
  */
 
 #ifndef GUEST_SUBNET_H
@@ -48,79 +72,64 @@
 extern "C" {
 #endif
 
-/*
- * What every installation used before this was settable, and still what one
- * that has not chosen gets. Nothing is generated behind the user's back: a
- * settings file with no subnet in it means 10.10.10.0/24, on an upgrade and on
- * a fresh install alike, so nobody's guests move under them.
- *
- * A random subnet is offered as a button in the Manager's settings, for the
- * JSON case where two installations need to differ. Choosing it is an act, and
- * what it picks is written to the settings file like any other choice.
- */
-#define GUEST_SUBNET_DEFAULT_B	10
-#define GUEST_SUBNET_DEFAULT_C	10
-
-/**
- * The network address of the /24, as a host-order 32-bit value.
- *
- * @param b Second octet
- * @param c Third octet
- * @return 10.b.c.0
- */
-uint32_t guest_subnet_network(unsigned b, unsigned c);
-
-/**
- * Are these octets usable?
- *
- * Anything 0-255 is, which is the whole of 10.0.0.0/8 - a private range, so
- * there is nothing to protect the user from. The check exists so a value read
- * from a settings file somebody edited by hand cannot put the guests somewhere
- * that is not a network at all.
- *
- * @return 1 if usable
- */
-int guest_subnet_valid(unsigned b, unsigned c);
-
-/**
- * Parse "10.b.c.0/24", or the shorter "b.c" the settings file uses.
- *
- * @param text Text to parse
- * @param b    Filled in with the second octet
- * @param c    Filled in with the third octet
- * @return 1 if parsed
- */
-int guest_subnet_parse(const char *text, unsigned *b, unsigned *c);
-
-/**
- * Render the octets as the settings file stores them: "b.c".
- *
- * @param b   Second octet
- * @param c   Third octet
- * @param out Buffer
- * @param len Size of out, at least 8
- */
-void guest_subnet_format(unsigned b, unsigned c, char *out, size_t len);
+/** 100.64.0.0/10, as a host-order 32-bit value, and its mask. */
+#define GUEST_NET_ADDR		0x64400000u	/**< 100.64.0.0 */
+#define GUEST_NET_MASK		0xffc00000u	/**< /10 */
+#define GUEST_NET_BROADCAST	0x647fffffu	/**< 100.127.255.255 */
 
 /*
- * The addresses within the chosen /24. All of them were constants before, and
- * the relay has its own copies (broadcast_relay.c) that have to agree with
- * these or it stops telling local traffic from external.
+ * The two addresses SLiRP answers for. They MUST differ: SLiRP special-cases
+ * traffic to the nameserver, resolving it through the host's own resolver
+ * rather than treating it as ordinary gateway traffic (tcp_subr.c, socket.c,
+ * ip_icmp.c), so collapsing them onto one address would break DNS.
  */
-uint32_t guest_subnet_gateway(uint32_t network);	/**< .2, the SLiRP host */
-uint32_t guest_subnet_dns(uint32_t network);		/**< .3 */
-uint32_t guest_subnet_broadcast(uint32_t network);	/**< .255 */
+#define GUEST_NET_GATEWAY	0x64400001u	/**< 100.64.0.1 */
+#define GUEST_NET_DNS		0x64400002u	/**< 100.64.0.2 */
 
 /**
- * The address handed to a guest, one per emulator on this computer.
+ * The network address, as a host-order 32-bit value.
  *
- * .10 upwards, so slot 0 keeps the .10 every single-machine installation has
- * always had.
- *
- * @param network Network address from guest_subnet_network()
- * @param slot    net_slot_acquire()
+ * Fixed, and a function only so that the callers read the same way they did
+ * when it was configurable.
  */
-uint32_t guest_subnet_guest(uint32_t network, int slot);
+uint32_t guest_subnet_network(void);
+
+/** The addresses SLiRP answers for, and the broadcast. */
+uint32_t guest_subnet_gateway(void);
+uint32_t guest_subnet_dns(void);
+uint32_t guest_subnet_broadcast(void);
+
+/**
+ * Is this address inside the guests' network?
+ *
+ * @param addr Host-order address
+ * @return 1 if it is
+ */
+int guest_subnet_contains(uint32_t addr);
+
+/**
+ * The address for a machine with this MAC address.
+ *
+ * Stable: the same MAC always gives the same address, on any computer and in
+ * any order, so a machine keeps its address across restarts and two
+ * installations never have to agree on anything.
+ *
+ * The reserved addresses are avoided - the network and broadcast of the /10,
+ * the gateway and the DNS - so the result is always usable as a host address.
+ *
+ * @param hwaddr The machine's six-byte MAC address
+ * @return Host-order address inside 100.64.0.0/10
+ */
+uint32_t guest_subnet_guest(const uint8_t hwaddr[6]);
+
+/**
+ * Render a host-order address as "a.b.c.d".
+ *
+ * @param addr Host-order address
+ * @param out  Buffer
+ * @param len  Size of out, at least 16
+ */
+void guest_subnet_format(uint32_t addr, char *out, size_t len);
 
 #ifdef __cplusplus
 }

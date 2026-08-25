@@ -32,104 +32,134 @@
 
 #include "guest_subnet.h"
 
-static int failures;
+static int failures = 0;
 
 static void
 check(const char *what, int ok)
 {
-	printf("  %-58s %s\n", what, ok ? "ok" : "FAIL");
+	printf("%s: %s\n", ok ? "ok" : "FAIL", what);
 	if (!ok) {
 		failures++;
 	}
 }
 
+/** A MAC address from six bytes, for readability below. */
+static void
+mac(uint8_t out[6], unsigned a, unsigned b, unsigned c,
+    unsigned d, unsigned e, unsigned f)
+{
+	out[0] = (uint8_t) a; out[1] = (uint8_t) b; out[2] = (uint8_t) c;
+	out[3] = (uint8_t) d; out[4] = (uint8_t) e; out[5] = (uint8_t) f;
+}
+
 int
 main(void)
 {
-	printf("the default, which an upgrade must keep\n");
-	{
-		const uint32_t net = guest_subnet_network(GUEST_SUBNET_DEFAULT_B,
-		                                          GUEST_SUBNET_DEFAULT_C);
+	printf("the network\n");
+	check("is 100.64.0.0", guest_subnet_network() == 0x64400000u);
+	check("the gateway is 100.64.0.1", guest_subnet_gateway() == 0x64400001u);
+	check("the DNS is 100.64.0.2", guest_subnet_dns() == 0x64400002u);
+	/* SLiRP special-cases traffic to the nameserver, so these must differ. */
+	check("gateway and DNS are different addresses",
+	    guest_subnet_gateway() != guest_subnet_dns());
+	check("the broadcast is 100.127.255.255",
+	    guest_subnet_broadcast() == 0x647fffffu);
 
-		check("is 10.10.10.0", net == 0x0a0a0a00u);
-		check("gateway is 10.10.10.2", guest_subnet_gateway(net) == 0x0a0a0a02u);
-		check("dns is 10.10.10.3", guest_subnet_dns(net) == 0x0a0a0a03u);
-		check("broadcast is 10.10.10.255",
-		    guest_subnet_broadcast(net) == 0x0a0a0affu);
-		/* Slot 0 is the address every single-machine installation has always
-		   had, so an upgrade does not move the guest. */
-		check("slot 0 is 10.10.10.10", guest_subnet_guest(net, 0) == 0x0a0a0a0au);
-		check("slot 1 is 10.10.10.11", guest_subnet_guest(net, 1) == 0x0a0a0a0bu);
-		check("slot 9 is 10.10.10.19", guest_subnet_guest(net, 9) == 0x0a0a0a13u);
+	printf("what is inside it\n");
+	check("the network address is", guest_subnet_contains(0x64400000u));
+	check("the broadcast is", guest_subnet_contains(0x647fffffu));
+	check("100.63.255.255 is not", !guest_subnet_contains(0x643fffffu));
+	check("100.128.0.0 is not", !guest_subnet_contains(0x64800000u));
+	check("10.10.10.10 is not", !guest_subnet_contains(0x0a0a0a0au));
+	/* The range a host LAN is most likely to be on, and the reason this is not
+	   inside 10.0.0.0/8. */
+	check("192.168.1.1 is not", !guest_subnet_contains(0xc0a80101u));
+
+	printf("a guest address\n");
+	{
+		uint8_t m[6];
+		uint32_t addr;
+		char text[16];
+
+		mac(m, 0x06, 0x02, 0x03, 0x04, 0x05, 0x06);
+		addr = guest_subnet_guest(m);
+
+		check("is inside the network", guest_subnet_contains(addr));
+		check("is not the network address", addr != guest_subnet_network());
+		check("is not the gateway", addr != guest_subnet_gateway());
+		check("is not the DNS", addr != guest_subnet_dns());
+		check("is not the broadcast", addr != guest_subnet_broadcast());
+
+		guest_subnet_format(addr, text, sizeof(text));
+		check("formats as four octets", strchr(text, '.') != NULL);
 	}
 
-	printf("\na subnet of one's own\n");
+	printf("stability\n");
 	{
-		const uint32_t net = guest_subnet_network(200, 45);
+		uint8_t m[6], n[6];
 
-		check("is 10.200.45.0", net == 0x0ac82d00u);
-		check("gateway follows it", guest_subnet_gateway(net) == 0x0ac82d02u);
-		check("dns follows it", guest_subnet_dns(net) == 0x0ac82d03u);
-		check("broadcast follows it",
-		    guest_subnet_broadcast(net) == 0x0ac82dffu);
-		check("slot 0 follows it", guest_subnet_guest(net, 0) == 0x0ac82d0au);
+		mac(m, 0x06, 0x02, 0x03, 0x04, 0x05, 0x06);
+		mac(n, 0x06, 0x02, 0x03, 0x04, 0x05, 0x06);
+		check("the same MAC always gives the same address",
+		    guest_subnet_guest(m) == guest_subnet_guest(n));
+
+		/* ★ The value itself is pinned, not just its stability. Two
+		   installations must compute the SAME address from one MAC, so a change
+		   to the hash breaks interoperability between versions and has to be a
+		   deliberate act rather than a refactor nobody noticed. */
+		check("and that address is 100.100.51.77",
+		    guest_subnet_guest(m) == 0x6464334du);
+
+		mac(n, 0x06, 0x02, 0x03, 0x04, 0x05, 0x07);
+		check("one bit of difference gives a different address",
+		    guest_subnet_guest(m) != guest_subnet_guest(n));
 	}
 
-	printf("\nthe edges of 10.0.0.0/8\n");
+	printf("the reserved addresses are avoided\n");
 	{
-		check("10.0.0.0 is usable", guest_subnet_network(0, 0) == 0x0a000000u);
-		check("10.255.255.0 is usable",
-		    guest_subnet_network(255, 255) == 0x0affff00u);
-		check("both octets are accepted anywhere in range",
-		    guest_subnet_valid(0, 0) && guest_subnet_valid(255, 255) &&
-		    guest_subnet_valid(128, 64));
-		check("above 255 is not", !guest_subnet_valid(256, 0) &&
-		    !guest_subnet_valid(0, 256));
-	}
+		/* Walked rather than reasoned about: the fold has to land clear of the
+		   four reserved values for every possible MAC, and the interesting ones
+		   are wherever the hash happens to be small. */
+		unsigned i;
+		int all_clear = 1;
 
-	printf("\nreading what the settings file holds\n");
-	{
-		unsigned b = 0, c = 0;
+		for (i = 0; i < 200000; i++) {
+			uint8_t m[6];
+			uint32_t addr;
 
-		check("\"40.7\" parses",
-		    guest_subnet_parse("40.7", &b, &c) && b == 40 && c == 7);
-		check("so does the full \"10.40.7.0\"",
-		    guest_subnet_parse("10.40.7.0", &b, &c) && b == 40 && c == 7);
-		check("and \"10.40.7.0/24\"",
-		    guest_subnet_parse("10.40.7.0/24", &b, &c) && b == 40 && c == 7);
+			m[0] = (uint8_t) (i & 0xff);
+			m[1] = (uint8_t) ((i >> 8) & 0xff);
+			m[2] = (uint8_t) ((i >> 16) & 0xff);
+			m[3] = 0x11; m[4] = 0x22; m[5] = 0x33;
 
-		/* A first octet other than 10 is not a typo to correct silently: it is
-		   somebody asking for a network this cannot give them. */
-		check("a network outside 10.0.0.0/8 is refused",
-		    !guest_subnet_parse("192.168.1.0/24", &b, &c));
-		check("an octet out of range is refused",
-		    !guest_subnet_parse("10.300.1.0", &b, &c));
-		check("nonsense is refused", !guest_subnet_parse("banana", &b, &c));
-		check("an empty string is refused", !guest_subnet_parse("", &b, &c));
-		check("NULL is refused", !guest_subnet_parse(NULL, &b, &c));
-	}
-
-	printf("\nwriting it back\n");
-	{
-		char out[16];
-
-		guest_subnet_format(40, 7, out, sizeof(out));
-		check("is stored as \"40.7\"", strcmp(out, "40.7") == 0);
-
-		guest_subnet_format(GUEST_SUBNET_DEFAULT_B, GUEST_SUBNET_DEFAULT_C,
-		    out, sizeof(out));
-		check("the default is \"10.10\"", strcmp(out, "10.10") == 0);
-
-		/* Round trip, which is what the settings file actually does. */
-		{
-			unsigned b = 0, c = 0;
-
-			guest_subnet_format(200, 45, out, sizeof(out));
-			check("what is written parses back the same",
-			    guest_subnet_parse(out, &b, &c) && b == 200 && c == 45);
+			addr = guest_subnet_guest(m);
+			if (!guest_subnet_contains(addr) ||
+			    addr == guest_subnet_network() ||
+			    addr == guest_subnet_gateway() ||
+			    addr == guest_subnet_dns() ||
+			    addr == guest_subnet_broadcast()) {
+				all_clear = 0;
+				break;
+			}
 		}
+		check("200000 MAC addresses all give usable addresses", all_clear);
 	}
 
-	printf("\n%s\n", failures ? "FAILED" : "All tests passed");
-	return failures != 0;
+	printf("formatting\n");
+	{
+		char text[16];
+
+		guest_subnet_format(0x64400001u, text, sizeof(text));
+		check("the gateway reads as 100.64.0.1", strcmp(text, "100.64.0.1") == 0);
+		guest_subnet_format(0x647fffffu, text, sizeof(text));
+		check("the broadcast reads as 100.127.255.255",
+		    strcmp(text, "100.127.255.255") == 0);
+	}
+
+	if (failures != 0) {
+		printf("\n%d check(s) failed\n", failures);
+		return 1;
+	}
+	printf("\nall checks passed\n");
+	return 0;
 }

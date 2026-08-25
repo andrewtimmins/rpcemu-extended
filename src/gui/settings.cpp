@@ -29,7 +29,6 @@
 extern "C" {
 #include "rpcemu.h"
 #include "app_settings.h"
-#include "guest_subnet.h"
 #include "peripheral_config.h"
 #include "podule_config.h"
 }
@@ -773,8 +772,6 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	cfg->vnc_password_readonly[0] = '\0';
 	cfg->hostcmd_enabled = 1;
 	cfg->hostcmd_socket[0] = '\0';
-	cfg->guest_subnet_b = GUEST_SUBNET_DEFAULT_B;
-	cfg->guest_subnet_c = GUEST_SUBNET_DEFAULT_C;
 
 	{
 		const int applied = app_settings_load(rpcemu_get_datadir(), cfg);
