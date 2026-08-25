@@ -20,16 +20,13 @@
 
 #include "data_paths.h"
 
-#include "app_settings.h"
 #include "config_paths.h"
-#include "guest_subnet.h"
 #include "data_dir_choice.h"
 #include "gui_preferences.h"
 
 #include <cstring>
 
 #include <cstdlib>
-#include <random>
 #include <string>
 
 #include <wx/dir.h>
@@ -306,57 +303,6 @@ static bool SeedUserDataDir(const wxString &resource_dir, const wxString &user_d
 	return ConfigPathsEnsureDataLayout();
 }
 
-/*
- * A subnet of this installation's own, on a genuinely new one, so that two
- * machines meeting over a JSON server are not both 10.10.10.10. An existing
- * installation is left alone: moving the guests of somebody with port forwards
- * pointing at 10.10.10.10 is a poor trade for a problem they may not have.
- */
-static void ChooseGuestSubnetOnFirstLaunch(const wxString &user_dir)
-{
-	const std::string datadir = DirPathForCore(user_dir);
-
-	if (app_settings_has(datadir.c_str(), "guest_subnet")) {
-		return;
-	}
-
-	if (wxDirExists(NormalizeDirPath(user_dir) + "configs")) {
-		wxArrayString machines;
-
-		wxDir::GetAllFiles(NormalizeDirPath(user_dir) + "configs", &machines,
-		    "*.cfg", wxDIR_FILES);
-		if (!machines.IsEmpty()) {
-			return;
-		}
-	}
-
-	{
-		/* std::random_device, not rand(): an unseeded rand() is the same
-		   sequence in every process, so every installation would choose the
-		   same subnet and the collision would be as certain as before. */
-		std::random_device rd;
-		std::uniform_int_distribution<unsigned> octet(0, 255);
-		Config seed;
-
-		/* ★ The built-in defaults first, then the file over them. Saving writes
-		   every key, so starting from a zeroed Config would write vnc_port=0 and
-		   hostcmd_enabled=0 over whatever the file already said. */
-		memset(&seed, 0, sizeof(seed));
-		seed.vnc_enabled = 0;
-		seed.vnc_port = 5900;
-		seed.hostcmd_enabled = 1;
-		app_settings_load(datadir.c_str(), &seed);
-		seed.guest_subnet_b = octet(rd);
-		seed.guest_subnet_c = octet(rd);
-
-		if (app_settings_save(datadir.c_str(), &seed) == 0) {
-			rpclog("Networking: new installation, so its guests are on "
-			       "10.%u.%u.0/24\n",
-			    seed.guest_subnet_b, seed.guest_subnet_c);
-		}
-	}
-}
-
 static wxString EnvVar(const char *name)
 {
 	const char *value = getenv(name);
@@ -580,11 +526,6 @@ void InitRpcemuPaths(const wxString &cli_datadir, DataDirPrompt prompt)
 	       g_env_resource_used ? "RPCEMU_RESOURCE_DIR"
 	                           : data_dir_resource_source_name(g_resource_source),
 	       resource_dir.utf8_str().data());
-
-	/* ★ Before SeedUserDataDir(), which may copy a Default machine in. Asked
-	   afterwards, a packaged install that ships one would never look like a
-	   first launch. */
-	ChooseGuestSubnetOnFirstLaunch(user_dir);
 
 	if (!SeedUserDataDir(resource_dir, user_dir)) {
 		wxLogWarning("RPCEmu could not fully prepare the user data directory:\n%s",
