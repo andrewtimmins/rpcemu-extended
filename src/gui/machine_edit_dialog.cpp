@@ -1035,12 +1035,14 @@ wxWindow *MachineEditDialog::BuildNetworkPage(wxWindow *parent)
 	json_form->Add(json_net_port_edit_, 0);
 
 	auto *json_note = MakeNote(json_parent,
-	    "Frames are carried to and from a tun/tap JSON server, so this machine "
-	    "shares one virtual network with every other emulator connected to it, "
-	    "RISC OS Pyromaniac included. The server can run on another computer, "
-	    "which is the point: it need not be this one. While this is on, the "
-	    "machine does not use the local wire between machines here - both carry "
-	    "every frame, and being on both would deliver everything twice. "
+	    "This machine shares one virtual network with every other emulator "
+	    "connected to the same server, RISC OS Pyromaniac included. The server "
+	    "can be on another computer, which is the point: machines on different "
+	    "computers can reach each other.\n\n"
+	    "While this is on, the server REPLACES the direct link to other "
+	    "machines started on this computer. Those machines can no longer "
+	    "be reached unless they are on this server too. NAT is unaffected: the "
+	    "machine still reaches the outside world exactly as before.\n\n"
 	    "Addresses are not handled for you: anything sharing this network needs "
 	    "an address on it that does not collide.");
 
