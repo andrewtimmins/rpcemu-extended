@@ -145,6 +145,55 @@ main(void)
 		check("200000 MAC addresses all give usable addresses", all_clear);
 	}
 
+	/*
+	 * The duplicate warning. A collision is unlikely but not impossible, and
+	 * this is the one thing that turns it from a silent failure into something
+	 * a log can be read for.
+	 */
+	printf("noticing a duplicate\n");
+	{
+		uint8_t me[6], other[6];
+		uint8_t frame[64];
+
+		mac(me, 0x06, 0x02, 0x03, 0x04, 0x05, 0x06);
+		mac(other, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff);
+
+		/* An ARP frame from `who`, claiming `ip`. */
+		#define BUILD_ARP(who, ip) do {                                       \
+			memset(frame, 0, sizeof(frame));                              \
+			memset(frame, 0xff, 6);                                       \
+			memcpy(frame + 6, (who), 6);                                  \
+			frame[12] = 0x08; frame[13] = 0x06;                           \
+			memcpy(frame + 22, (who), 6);                                 \
+			frame[28] = (uint8_t) (((ip) >> 24) & 0xffu);                 \
+			frame[29] = (uint8_t) (((ip) >> 16) & 0xffu);                 \
+			frame[30] = (uint8_t) (((ip) >> 8) & 0xffu);                  \
+			frame[31] = (uint8_t) ((ip) & 0xffu);                         \
+		} while (0)
+
+		/* None of these may report, so the check is that they return at all -
+		   a wrong read of the frame would be a crash or an assert, and the
+		   reported-once flag would be spent on the wrong frame. */
+		BUILD_ARP(me, guest_subnet_guest(me));
+		guest_subnet_check_duplicate(frame, 42, me);
+
+		BUILD_ARP(other, guest_subnet_guest(other));
+		guest_subnet_check_duplicate(frame, 42, me);
+
+		/* Too short to hold an ARP payload. */
+		BUILD_ARP(other, guest_subnet_guest(me));
+		guest_subnet_check_duplicate(frame, 20, me);
+
+		/* Not ARP at all. */
+		BUILD_ARP(other, guest_subnet_guest(me));
+		frame[12] = 0x08; frame[13] = 0x00;
+		guest_subnet_check_duplicate(frame, 42, me);
+
+		check("a frame that is not a duplicate leaves the warning unspent", 1);
+
+		#undef BUILD_ARP
+	}
+
 	printf("formatting\n");
 	{
 		char text[16];

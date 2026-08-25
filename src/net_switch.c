@@ -25,6 +25,7 @@
 
 #include "broadcast_relay.h"
 #include "net_slot.h"
+#include "guest_subnet.h"
 #include "net_switch.h"
 #include "network.h"
 #include "network-nat.h"
@@ -309,6 +310,9 @@ net_switch_poll(void)
 		(void) broadcast_relay_tx(frame, len);
 
 		switch_rx_frames++;
+
+		/* Before the filter, for the same reason as on the JSON wire. */
+		guest_subnet_check_duplicate(frame, len, network_hwaddr);
 
 		if (!net_switch_frame_is_for_us(frame, len, network_hwaddr)) {
 			continue;

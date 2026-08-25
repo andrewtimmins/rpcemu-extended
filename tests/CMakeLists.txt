@@ -863,6 +863,7 @@ add_executable(test_net_json test_net_json.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/net_json.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/net_switch.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/net_slot.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/guest_subnet.c
                test_log_stub.c)
 target_include_directories(test_net_json PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src)
@@ -878,6 +879,7 @@ rpcemu_add_test(test_net_json)
 add_executable(test_net_switch test_net_switch.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/net_switch.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/net_slot.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/guest_subnet.c
                test_log_stub.c)
 target_include_directories(test_net_switch PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src)
@@ -911,10 +913,11 @@ target_include_directories(test_mac_address PRIVATE
 target_link_libraries(test_mac_address PRIVATE rpcemu_core m)
 rpcemu_add_test(test_mac_address)
 
-# Which /24 the guests live on. The relay derives the same addresses
+# Which addresses the guests live on. The relay derives the same ones
 # independently, so the arithmetic is pinned down here.
 add_executable(test_guest_subnet test_guest_subnet.c
-               ${CMAKE_CURRENT_SOURCE_DIR}/../src/guest_subnet.c)
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/guest_subnet.c
+               test_log_stub.c)
 target_include_directories(test_guest_subnet PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 rpcemu_add_test(test_guest_subnet)

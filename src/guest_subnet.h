@@ -123,6 +123,20 @@ int guest_subnet_contains(uint32_t addr);
 uint32_t guest_subnet_guest(const uint8_t hwaddr[6]);
 
 /**
+ * Notice another machine claiming this machine's address, and say so once.
+ *
+ * Offer every frame received from the wire, not only those addressed to this
+ * machine: a machine that has computed the same address is talking to somebody
+ * else, so its frames would be filtered out before anything could notice.
+ *
+ * @param frame     Complete Ethernet frame
+ * @param frame_len Length in bytes
+ * @param hwaddr    This machine's MAC address
+ */
+void guest_subnet_check_duplicate(const uint8_t *frame, int frame_len,
+    const uint8_t hwaddr[6]);
+
+/**
  * Render a host-order address as "a.b.c.d".
  *
  * @param addr Host-order address
