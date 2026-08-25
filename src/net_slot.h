@@ -19,14 +19,16 @@
  */
 
 /*
- * net_slot - a number that is this emulator's alone, for addressing its guest.
+ * net_slot - a number that is this emulator's alone, on this computer.
  *
- * Every instance ran its own NAT with the same constants, so every guest was
- * handed 10.10.10.10 by DHCP, and a guest with no MAC address configured got the
- * same hardcoded 06:02:03:04:05:06 as every other. One machine at a time, that is
- * invisible. Two machines are then duplicate addresses on what is meant to become
- * one LAN, and no amount of carrying frames between them can fix that: they cannot
- * talk to each other because they are not distinct hosts.
+ * It exists so that several emulators running here can each bind a port of their
+ * own for the loopback wire between them (net_switch.h), with nothing to
+ * configure and no negotiation.
+ *
+ * ★ It does NOT decide a guest's IP address. It used to, and that was the
+ * mistake: a slot is claimed on one computer, so two emulators on two computers
+ * both claim slot 0 and both gave their guest the same address. Guest addresses
+ * come from the machine's MAC address now - see guest_subnet.h.
  *
  * A slot is claimed by binding a loopback TCP port, one port per slot. There is no
  * file, no registry and nothing to clean up, because the operating system drops the
@@ -37,9 +39,6 @@
  * The range is deliberately small. Every running machine costs a core and its own
  * guest RAM, so a limit of ten is far past what anyone will start, and a small fixed
  * range keeps the slot derivable from the port with no negotiation.
- *
- * Slot 0 keeps exactly the addresses that were used before, so a single machine -
- * still the ordinary case - behaves identically to older versions.
  */
 
 #ifndef NET_SLOT_H
@@ -55,9 +54,9 @@ extern "C" {
 /**
  * Claim a slot for this process, or return the one already claimed.
  *
- * @return 0 to NET_SLOT_MAX-1. Falls back to 0 if no slot could be claimed, because
- *         the addresses slot 0 produces are the ones used before slots existed:
- *         being unable to claim must not stop a machine from starting.
+ * @return 0 to NET_SLOT_MAX-1. Falls back to 0 if no slot could be claimed:
+ *         being unable to claim must not stop a machine from starting, and the
+ *         cost is sharing slot 0's loopback port with another instance.
  */
 extern int net_slot_acquire(void);
 
