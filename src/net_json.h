@@ -59,15 +59,11 @@
  * and not an interpretation of it.
  *
  * ADDRESSES. This carries frames and nothing else. Two machines that are to
- * talk IP still have to agree addresses between them: guests are given .10
- * upwards on this installation's own network by their own SLiRP, so anything
- * else joining the same wire needs an address on it that does not collide.
- *
- * The slot only tells apart machines started by ONE RPCEmu, so two installations
- * meeting here would otherwise hand their first machines the same address. Which
- * network the guests are on is therefore a setting - see guest_subnet.h. MAC
- * addresses are given to a machine when it first starts and kept in its
- * configuration, so those differ whoever started them.
+ * talk IP still have to agree addresses between them. Every machine here is on
+ * 100.64.0.0/10 with an address derived from its own MAC (guest_subnet.h), so
+ * machines from any number of installations meet on one network with addresses
+ * that differ without anything being configured or negotiated. Anything else
+ * joining the same wire needs an address on that network that does not collide.
  */
 
 #ifndef NET_JSON_H

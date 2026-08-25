@@ -24,7 +24,7 @@
  * Provides Access+ file sharing support over RPCEmu's NAT networking.
  * Access+ discovery uses UDP broadcasts which don't traverse NAT, so
  * this module bridges traffic between the guest's virtual network
- * (10.<b>.<c>.x - see guest_subnet.h) and the host's physical network.
+ * (100.64.0.0/10 - see guest_subnet.h) and the host's physical network.
  *
  * UDP ports handled:
  *   32770 - Discovery and share announcements (broadcast)

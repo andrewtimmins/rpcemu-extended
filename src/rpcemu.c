@@ -81,7 +81,6 @@
 #include "savestate.h"
 
 #ifdef RPCEMU_NETWORKING
-#include "guest_subnet.h"
 #include "network.h"
 #endif
 
@@ -319,8 +318,6 @@ Config config = {
 	0,			/* mem_size */
 	0,			/* vram_size */
 	NULL,			/* macaddress */
-	GUEST_SUBNET_DEFAULT_B,	/* guest_subnet_b */
-	GUEST_SUBNET_DEFAULT_C,	/* guest_subnet_c */
 	0,			/* refresh */
 	1,			/* soundenabled */
 	1,			/* cdromenabled */

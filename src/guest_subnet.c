@@ -18,91 +18,98 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "guest_subnet.h"
 
 uint32_t
-guest_subnet_network(unsigned b, unsigned c)
+guest_subnet_network(void)
 {
-	return 0x0a000000u | ((b & 0xffu) << 16) | ((c & 0xffu) << 8);
+	return GUEST_NET_ADDR;
+}
+
+uint32_t
+guest_subnet_gateway(void)
+{
+	return GUEST_NET_GATEWAY;
+}
+
+uint32_t
+guest_subnet_dns(void)
+{
+	return GUEST_NET_DNS;
+}
+
+uint32_t
+guest_subnet_broadcast(void)
+{
+	return GUEST_NET_BROADCAST;
 }
 
 int
-guest_subnet_valid(unsigned b, unsigned c)
+guest_subnet_contains(uint32_t addr)
 {
-	return b <= 255u && c <= 255u;
+	return (addr & GUEST_NET_MASK) == GUEST_NET_ADDR;
 }
 
-int
-guest_subnet_parse(const char *text, unsigned *b, unsigned *c)
+/*
+ * FNV-1a over the six MAC bytes.
+ *
+ * Chosen for being fixed by its own definition rather than for its statistics:
+ * two installations have to compute the SAME address from the same MAC, so the
+ * function cannot be allowed to vary with the compiler, the platform, or a
+ * library version. Anything from <stdlib.h> could; this cannot.
+ */
+static uint32_t
+mac_hash(const uint8_t hwaddr[6])
 {
-	unsigned o[4];
-	unsigned vb, vc;
+	uint32_t h = 2166136261u;	/* FNV offset basis */
+	unsigned i;
 
-	if (text == NULL || b == NULL || c == NULL) {
-		return 0;
+	for (i = 0; i < 6; i++) {
+		h ^= (uint32_t) hwaddr[i];
+		h *= 16777619u;		/* FNV prime */
+	}
+	return h;
+}
+
+uint32_t
+guest_subnet_guest(const uint8_t hwaddr[6])
+{
+	/* 22 bits of host space, less the four addresses that are already spoken
+	   for, so the hash is folded into what is actually assignable and then
+	   stepped past them. */
+	const uint32_t host_bits = ~GUEST_NET_MASK;		/* 0x003fffff */
+	uint32_t host;
+
+	assert(hwaddr != NULL);
+
+	host = mac_hash(hwaddr) & host_bits;
+
+	/*
+	 * .0 is the network, .1 the gateway, .2 the DNS and the top address the
+	 * broadcast. Moved rather than re-hashed: a second hash on collision would
+	 * make the address depend on which addresses happened to be reserved, and
+	 * this way the mapping stays a plain function of the MAC.
+	 */
+	if (host < 3) {
+		host += 3;
+	} else if (host == host_bits) {
+		host = host_bits - 1;
 	}
 
-	/* "10.b.c.0/24" and "10.b.c.0" as the dialogue and a hand-edited file might
-	   write them, with the leading 10 checked rather than assumed. */
-	if (sscanf(text, "%u.%u.%u.%u", &o[0], &o[1], &o[2], &o[3]) == 4) {
-		if (o[0] != 10u || !guest_subnet_valid(o[1], o[2])) {
-			return 0;
-		}
-		*b = o[1];
-		*c = o[2];
-		return 1;
-	}
-
-	/* "b.c", which is what the settings file holds: the 10 and the .0/24 are
-	   not the user's to change, so storing them invites someone to try. */
-	if (sscanf(text, "%u.%u", &vb, &vc) == 2) {
-		if (!guest_subnet_valid(vb, vc)) {
-			return 0;
-		}
-		*b = vb;
-		*c = vc;
-		return 1;
-	}
-
-	return 0;
+	return GUEST_NET_ADDR | host;
 }
 
 void
-guest_subnet_format(unsigned b, unsigned c, char *out, size_t len)
+guest_subnet_format(uint32_t addr, char *out, size_t len)
 {
-	if (out == NULL || len < 8) {
-		return;
-	}
-	snprintf(out, len, "%u.%u", b & 0xffu, c & 0xffu);
-}
+	assert(out != NULL);
+	assert(len >= 16);
 
-uint32_t
-guest_subnet_gateway(uint32_t network)
-{
-	return network | 0x02u;
-}
-
-uint32_t
-guest_subnet_dns(uint32_t network)
-{
-	return network | 0x03u;
-}
-
-uint32_t
-guest_subnet_broadcast(uint32_t network)
-{
-	return network | 0xffu;
-}
-
-uint32_t
-guest_subnet_guest(uint32_t network, int slot)
-{
-	if (slot < 0) {
-		slot = 0;
-	}
-	return network + 0x0au + (uint32_t) slot;
+	snprintf(out, len, "%u.%u.%u.%u",
+	    (addr >> 24) & 0xffu, (addr >> 16) & 0xffu,
+	    (addr >> 8) & 0xffu, addr & 0xffu);
 }
