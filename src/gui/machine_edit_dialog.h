@@ -79,6 +79,8 @@ private:
 	wxWindow *BuildOptionsPage(wxWindow *parent);
 	wxWindow *BuildNetworkPage(wxWindow *parent);
 	void UpdateJsonNetEnabled();
+	void OnMacAddressText(wxCommandEvent &event);
+	wxString SelectedMacAddress() const;
 	wxWindow *BuildDrivesPage(wxWindow *parent);
 	wxWindow *BuildPodulesPage(wxWindow *parent);
 	wxWindow *BuildCoProcessorPage(wxWindow *parent);
@@ -222,6 +224,10 @@ private:
 	wxSlider *refresh_slider_ = nullptr;
 	wxStaticText *refresh_label_ = nullptr;
 	wxComboBox *network_combo_ = nullptr;
+	wxTextCtrl *mac_address_edit_ = nullptr;
+	/* Set while the field is being rewritten, so the change that causes does
+	   not come back round as another edit to correct. */
+	bool in_mac_address_update_ = false;
 	/* Pyromaniac Networking: the JSON tun/tap server this machine joins. */
 	wxCheckBox *json_net_check_ = nullptr;
 	wxStaticText *json_net_host_label_ = nullptr;

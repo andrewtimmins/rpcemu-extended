@@ -265,6 +265,13 @@ void ConfigPathsPrepareClonedConfig(const wxString &config_path,
 	ConfigFileUseGeneralGroup(settings);
 	settings.Write("name", new_name);
 
+	/* Cleared so config_load() gives the clone one of its own: two machines
+	   sharing a MAC address is fatal to both the moment they meet, and a clone
+	   is the likeliest pair to end up on one network. */
+	if (settings.HasEntry("macaddress")) {
+		settings.Write("macaddress", wxEmptyString);
+	}
+
 	for (const char *key : own_channel) {
 		if (settings.HasEntry(key)) {
 			settings.Write(key, wxEmptyString);

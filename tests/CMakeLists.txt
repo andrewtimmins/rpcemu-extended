@@ -900,6 +900,15 @@ target_link_libraries(test_clone_config PRIVATE rpcemu_core m)
 rpcemu_setup_wxwidgets(test_clone_config)
 rpcemu_add_test(test_clone_config)
 
+# The MAC address field's typing rules and the generator behind them. No wx:
+# mac_address_input.h is deliberately free of it so it can be tested like this.
+add_executable(test_mac_address test_mac_address.cpp test_stubs.c)
+target_include_directories(test_mac_address PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui)
+target_link_libraries(test_mac_address PRIVATE rpcemu_core m)
+rpcemu_add_test(test_mac_address)
+
 add_executable(test_net_slot test_net_slot.c)
 target_include_directories(test_net_slot PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src)
@@ -992,7 +1001,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 63)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 64)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 10")	# JIT differential
 endif()

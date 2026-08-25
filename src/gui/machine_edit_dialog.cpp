@@ -55,6 +55,7 @@ extern "C" {
 }
 
 #include "display_options.h"
+#include "mac_address_input.h"
 
 namespace {
 
@@ -999,10 +1000,25 @@ wxWindow *MachineEditDialog::BuildNetworkPage(wxWindow *parent)
 	network_combo_->Append("Off");
 	network_combo_->Append("NAT");
 
+	mac_address_edit_ = new wxTextCtrl(page, wxID_ANY, wxEmptyString);
+	/* The shape of the answer, shown while the field is empty: without it a
+	   plain box gives no clue that the colons arrive on their own. */
+	mac_address_edit_->SetHint("xx:xx:xx:xx:xx:xx");
+	mac_address_edit_->SetToolTip(
+	    "Must be unique to this machine. The colons are added as you type. "
+	    "Leave empty for a new address to be generated.");
+
 	auto *form = new wxFlexGridSizer(2, 8, 8);
 	form->AddGrowableCol(1, 1);
 	form->Add(new wxStaticText(page, wxID_ANY, "Network:"), 0, wxALIGN_CENTER_VERTICAL);
 	form->Add(network_combo_, 1, wxEXPAND);
+	form->Add(new wxStaticText(page, wxID_ANY, "MAC address:"), 0, wxALIGN_CENTER_VERTICAL);
+	form->Add(mac_address_edit_, 1, wxEXPAND);
+
+	/* Corrected as it is typed: colons inserted, a typed separator honoured,
+	   anything that is not a hex digit refused. */
+	mac_address_edit_->Bind(wxEVT_TEXT,
+	    [this](wxCommandEvent &event) { OnMacAddressText(event); });
 
 	auto *note = MakeNote(page,
 	    "NAT needs no configuration of this computer and suits every use: the "
@@ -1059,6 +1075,85 @@ wxWindow *MachineEditDialog::BuildNetworkPage(wxWindow *parent)
 	sizer->Add(json_box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
 	page->SetSizer(sizer);
 	return page;
+}
+
+/**
+ * Keep the MAC address field in the shape of a MAC address as it is typed.
+ *
+ * The caret is put back where the same number of digits precede it, rather than
+ * at the same offset: inserting a colon in front of it would otherwise leave it
+ * one character behind, and typing the third digit of an address would put the
+ * caret in the middle of the pair the typist had just completed.
+ */
+void MachineEditDialog::OnMacAddressText(wxCommandEvent &event)
+{
+	if (mac_address_edit_ == nullptr || in_mac_address_update_) {
+		return;
+	}
+
+	const wxString before = mac_address_edit_->GetValue();
+	const std::string normalised =
+	    MacAddressInput::Normalise(std::string(before.utf8_str().data()));
+	const wxString after = wxString::FromUTF8(normalised.c_str());
+
+	if (after == before) {
+		event.Skip();
+		return;
+	}
+
+	/* How many digits are to the left of the caret; the caret belongs after
+	   that many digits once the colons have been settled. */
+	const long caret = mac_address_edit_->GetInsertionPoint();
+	size_t digits_before_caret = 0;
+	for (long i = 0; i < caret && i < (long) before.length(); i++) {
+		if (MacAddressInput::IsHexDigit((char) before[i])) {
+			digits_before_caret++;
+		}
+	}
+
+	long new_caret = 0;
+	size_t seen = 0;
+	while (new_caret < (long) after.length() && seen < digits_before_caret) {
+		if (MacAddressInput::IsHexDigit((char) after[new_caret])) {
+			seen++;
+		}
+		new_caret++;
+	}
+
+	/* Past the separator this keystroke just produced, rather than in front of
+	   it: the typist pressed it to finish the pair and the next digit belongs
+	   after it. */
+	while (new_caret < (long) after.length() &&
+	       !MacAddressInput::IsHexDigit((char) after[new_caret]) &&
+	       caret >= (long) before.length()) {
+		new_caret++;
+	}
+
+	in_mac_address_update_ = true;
+	mac_address_edit_->ChangeValue(after);
+	mac_address_edit_->SetInsertionPoint(new_caret);
+	in_mac_address_update_ = false;
+}
+
+/**
+ * The address to save, which is empty unless a whole one was typed.
+ *
+ * A half-finished address is discarded rather than written: it would not parse,
+ * and the machine would fall back to a generated one anyway without saying so.
+ * Empty is a real answer - it asks for a new address to be generated.
+ */
+wxString MachineEditDialog::SelectedMacAddress() const
+{
+	if (mac_address_edit_ == nullptr) {
+		return wxEmptyString;
+	}
+
+	const std::string text(mac_address_edit_->GetValue().utf8_str().data());
+
+	if (!MacAddressInput::IsComplete(text)) {
+		return wxEmptyString;
+	}
+	return wxString::FromUTF8(MacAddressInput::Normalise(text).c_str());
 }
 
 /** Grey the server fields when the machine is not joining one. */
@@ -2267,6 +2362,16 @@ void MachineEditDialog::LoadSettings()
 	}
 
 	{
+		wxString mac;
+
+		/* Absent and empty are the same thing here: both mean this machine has
+		   not been given an address yet. */
+		settings.Read("macaddress", &mac, wxEmptyString);
+		mac_address_edit_->ChangeValue(wxString::FromUTF8(
+		    MacAddressInput::Normalise(std::string(mac.utf8_str().data())).c_str()));
+	}
+
+	{
 		long json_on = 0, json_port = 33445;
 		wxString json_host;
 
@@ -2494,6 +2599,7 @@ void MachineEditDialog::SaveSettings()
 
 	settings.Write("refresh_rate", refresh_slider_->GetValue());
 	settings.Write("network_type", network_type);
+	settings.Write("macaddress", SelectedMacAddress());
 	settings.Write("json_net_enabled",
 	    static_cast<long>(json_net_check_->GetValue() ? 1 : 0));
 	settings.Write("json_net_host", json_net_host_edit_->GetValue());
@@ -2573,6 +2679,14 @@ void MachineEditDialog::ApplySavedSettingsToGlobalConfig(const wxString &rom_dir
 	    sizeof(config.vnc_password_readonly) - 1] = '\0';
 	config.clipboard_enabled = clipboard_check_->GetValue() ? 1 : 0;
 	config.hostcmd_enabled = hostcmd_check_->GetValue() ? 1 : 0;
+	{
+		const wxString mac = SelectedMacAddress();
+
+		if (!mac.empty()) {
+			free(config.macaddress);
+			config.macaddress = strdup(mac.utf8_str().data());
+		}
+	}
 	config.json_net_enabled = json_net_check_->GetValue() ? 1 : 0;
 	config.json_net_port = json_net_port_edit_->GetValue();
 	strncpy(config.json_net_host, json_net_host_edit_->GetValue().utf8_str().data(),
