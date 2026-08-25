@@ -374,9 +374,10 @@ typedef struct {
 	NetworkType network_type;
 
 	/*
-	 * Charles Ferguson's JSON tun/tap server, which RISC OS Pyromaniac also
-	 * speaks, so machines here and Pyromaniacs elsewhere can share one virtual
-	 * network. See net_json.h. A machine using this does not use the loopback
+	 * A JSON tun/tap server, so machines here and any other emulator speaking
+	 * the protocol can share one virtual network - RISC OS Pyromaniac, whose
+	 * author devised it (Charles Ferguson), among them. See net_json.h. A
+	 * machine using this does not use the loopback
 	 * wire between local machines: both are hubs, and being on both would
 	 * deliver every frame twice.
 	 */

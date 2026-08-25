@@ -118,7 +118,7 @@ extern void app_settings_override_debug_socket(const char *spec);
 extern void app_settings_override_relay(int enabled);
 
 /**
- * Point this run at a Pyromaniac JSON network server, whatever the machine's
+ * Point this run at a JSON network server, whatever the machine's
  * own settings say. "host", "host:port" or "off".
  *
  * Supplied afresh on each run and never remembered, like the other overrides

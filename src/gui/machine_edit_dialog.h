@@ -228,7 +228,7 @@ private:
 	/* Set while the field is being rewritten, so the change that causes does
 	   not come back round as another edit to correct. */
 	bool in_mac_address_update_ = false;
-	/* Pyromaniac Networking: the JSON tun/tap server this machine joins. */
+	/* JSON networking: the tun/tap server this machine joins. */
 	wxCheckBox *json_net_check_ = nullptr;
 	wxStaticText *json_net_host_label_ = nullptr;
 	wxTextCtrl *json_net_host_edit_ = nullptr;

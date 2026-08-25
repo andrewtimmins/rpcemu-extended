@@ -1,7 +1,9 @@
-# Pyromaniac Networking
+# JSON Networking
 
-A machine here and a RISC OS Pyromaniac elsewhere can sit on the same virtual
-network, by both connecting to Charles Ferguson's JSON tun/tap server.
+Machines here and any other emulator speaking the same protocol can sit on one
+virtual network, by all connecting to a JSON tun/tap server. The protocol is
+Charles Ferguson's, and RISC OS Pyromaniac speaks it, so a machine here and a
+Pyromaniac elsewhere can reach each other.
 
 The server is a single Python file:
 <https://github.com/gerph/tuntap-json-server>. It listens on TCP, and every
@@ -38,13 +40,13 @@ Add `--tap-enable` when the virtual network should also reach the real one; that
 is the part that needs a tap and the privileges to make one.
 
 Then point machines at it, in the machine editor under **Network**, in the
-**Pyromaniac Networking** box: tick the option, give the server's host name and
+**JSON Networking** box: tick the option, give the server's host name and
 port. Or per run, without editing the machine:
 
 ```sh
-./rpcemu-recompiler --machine os530 --pyromaniac-net myserver:33445
-./rpcemu-recompiler --machine os371 --pyromaniac-net myserver --headless
-./rpcemu-recompiler --machine os530 --pyromaniac-net off
+./rpcemu-recompiler --machine os530 --json-net myserver:33445
+./rpcemu-recompiler --machine os371 --json-net myserver --headless
+./rpcemu-recompiler --machine os530 --json-net off
 ```
 
 `off` takes a machine whose settings have it on out of the network for that run.

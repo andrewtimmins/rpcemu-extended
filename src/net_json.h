@@ -19,16 +19,14 @@
  */
 
 /*
- * net_json - Ethernet frames over Charles Ferguson's JSON tun/tap server, so a
- * machine here and a RISC OS Pyromaniac can sit on the same virtual network.
+ * net_json - Ethernet frames over a JSON tun/tap server, so machines here and
+ * any other emulator speaking the protocol sit on one virtual network.
  *
- * Pyromaniac has had this for years (its `etherdriverjson` configuration group)
- * and the server is a single Python file:
+ * The protocol is Charles Ferguson's, and RISC OS Pyromaniac has spoken it for
+ * years (its `etherdriverjson` configuration group).
  *
- *     https://github.com/gerph/tuntap-json-server
- *
- * It listens on TCP, replicates every frame it is given to every other client,
- * and optionally to a real tap interface. That last part is the reason to
+ * A server listens on TCP, replicates every frame it is given to every other
+ * client, and optionally to a real tap interface. That last part is the reason to
  * support it rather than only our own loopback wire: the server can run on a
  * Linux box where creating a tap is straightforward, and Windows and macOS
  * emulators can join it over the network without any of them needing a tap of

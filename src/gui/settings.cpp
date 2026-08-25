@@ -437,7 +437,7 @@ extern "C" void config_sync_machine_edit_to_copy(Config *dest, const Config *src
 	dest->openbus_card[sizeof(dest->openbus_card) - 1] = '\0';
 	dest->openbus_ram_kb = src->openbus_ram_kb;
 
-	/* Pyromaniac networking travels with the rest of the machine's networking:
+	/* JSON networking travels with the rest of the machine's networking:
 	   the editor writes it, and this is what carries it to the running copy. */
 	dest->json_net_enabled = src->json_net_enabled;
 	dest->json_net_port = src->json_net_port;
@@ -838,7 +838,7 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	strncpy(cfg->debug_socket, sText.utf8_str().data(), sizeof(cfg->debug_socket) - 1);
 	cfg->debug_socket[sizeof(cfg->debug_socket) - 1] = '\0';
 
-	/* Pyromaniac networking: the JSON tun/tap server this machine joins, if
+	/* JSON networking: the tun/tap server this machine joins, if
 	   any. See net_json.h. */
 	settings.Read("json_net_enabled", &value, 0L);
 	cfg->json_net_enabled = static_cast<int>(value);

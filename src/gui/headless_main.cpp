@@ -597,7 +597,7 @@ void HeadlessPrintUsage(const char *argv0)
 	    "                        licensing terms of what is downloaded, which are\n"
 	    "                        printed before the transfer starts. The graphical\n"
 	    "                        routes ask the same thing in a dialogue.\n"
-	    "  --pyromaniac-net <host[:port]>\n"
+	    "  --json-net <host[:port]>\n"
 	    "                        Join a JSON tun/tap server, so this machine\n"
 	    "                        shares a virtual network with other emulators\n"
 	    "                        on it, RISC OS Pyromaniac included. Port\n"
