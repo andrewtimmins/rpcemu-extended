@@ -183,6 +183,7 @@ test_fragmented_injection_is_faithful(int payload_len)
 		int off;
 		int mf;
 		uint32_t src;
+		uint32_t dst;
 
 		checkf(captured[i].len >= 34, "fragment %d is only %d bytes", i,
 		    captured[i].len);
@@ -194,12 +195,24 @@ test_fragmented_injection_is_faithful(int payload_len)
 		mf = (((ip[6] << 8) | ip[7]) & 0x2000) != 0;
 		src = ((uint32_t) ip[12] << 24) | ((uint32_t) ip[13] << 16) |
 		      ((uint32_t) ip[14] << 8) | (uint32_t) ip[15];
+		dst = ((uint32_t) ip[16] << 24) | ((uint32_t) ip[17] << 16) |
+		      ((uint32_t) ip[18] << 8) | (uint32_t) ip[19];
 
 		checkf(src == peer,
 		    "fragment %d claims source %u.%u.%u.%u, not the peer that sent it; "
 		    "a guest replying to that address never reaches the peer",
 		    i, (src >> 24) & 0xff, (src >> 16) & 0xff, (src >> 8) & 0xff,
 		    src & 0xff);
+
+		/* The guest's own address, on the guests' network. A relay that
+		   addressed these anywhere else would deliver nothing, and the
+		   addresses move whenever guest_subnet.h does. */
+		checkf(dst == relay.guest_ip,
+		    "fragment %d is addressed to %u.%u.%u.%u, not to the guest",
+		    i, (dst >> 24) & 0xff, (dst >> 16) & 0xff, (dst >> 8) & 0xff,
+		    dst & 0xff);
+		check(guest_subnet_contains(dst),
+		    "the guest's address is not on the guests' network");
 
 		checkf(off == expect_offset,
 		    "fragment %d is at offset %d, expected %d", i, off, expect_offset);
@@ -263,6 +276,51 @@ test_partial_datagram_is_not_delivered(void)
 	    captured_count);
 }
 
+/*
+ * A broadcast goes to the guests' broadcast address, not to one guest.
+ *
+ * This is the path Access+ discovery takes inbound, and it is the one the
+ * addressing change could break quietly: the guest accepts the frame only if
+ * the address matches the broadcast for the netmask its DHCP lease gave it.
+ */
+static void
+test_broadcast_is_addressed_to_the_broadcast_address(void)
+{
+	struct sockaddr_in from;
+	unsigned char payload[64];
+	int frags;
+
+	captured_count = 0;
+	inject_space = MAX_CAPTURED;
+	relay.enabled = 1;
+	relay.guest_ip = guest_subnet_guest(network_hwaddr);
+
+	memset(payload, 0xa5, sizeof(payload));
+	memset(&from, 0, sizeof(from));
+	from.sin_family = AF_INET;
+	from.sin_addr.s_addr = htonl(0xc0a80132u);	/* 192.168.1.50, a real peer */
+	from.sin_port = htons(32770);
+
+	frags = inject_fragmented_udp(&from, 32770, payload, sizeof(payload), 1);
+
+	checkf(frags == 1, "a 64-byte broadcast should be one fragment, got %d",
+	    frags);
+	if (captured_count > 0) {
+		const unsigned char *ip = captured[0].data + 14;
+		const uint32_t dst = ((uint32_t) ip[16] << 24) |
+		                     ((uint32_t) ip[17] << 16) |
+		                     ((uint32_t) ip[18] << 8) | (uint32_t) ip[19];
+
+		checkf(dst == guest_subnet_broadcast(),
+		    "a broadcast went to %u.%u.%u.%u, not the guests' broadcast "
+		    "address; inbound Access+ discovery would not be delivered",
+		    (dst >> 24) & 0xff, (dst >> 16) & 0xff, (dst >> 8) & 0xff,
+		    dst & 0xff);
+		check(memcmp(captured[0].data, "\xff\xff\xff\xff\xff\xff", 6) == 0,
+		    "a broadcast was not sent to the broadcast MAC address");
+	}
+}
+
 int
 main(void)
 {
@@ -284,6 +342,8 @@ main(void)
 	test_fragmented_injection_is_faithful(8200);
 	test_fragmented_injection_is_faithful(1473);
 	test_fragmented_injection_is_faithful(MAX_LEGAL_UDP_PAYLOAD);
+
+	test_broadcast_is_addressed_to_the_broadcast_address();
 
 	test_partial_datagram_is_not_delivered();
 
