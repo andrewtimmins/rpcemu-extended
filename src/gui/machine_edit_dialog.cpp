@@ -1026,17 +1026,17 @@ wxWindow *MachineEditDialog::BuildNetworkPage(wxWindow *parent)
 	    "to it. Changes take effect after reset.");
 
 	/*
-	 * Pyromaniac Networking: Charles Ferguson's JSON tun/tap server, which
-	 * RISC OS Pyromaniac speaks. Its own block rather than another entry in the
+	 * JSON Networking: a JSON tun/tap server, the protocol and original server
+	 * being Charles Ferguson's. Its own block rather than another entry in the
 	 * Network combo, because it is not an alternative to NAT - the machine
 	 * keeps whatever it has for reaching the outside world and this decides
 	 * which other emulators it can see.
 	 */
-	auto *json_box = new wxStaticBoxSizer(wxVERTICAL, page, "Pyromaniac Networking");
+	auto *json_box = new wxStaticBoxSizer(wxVERTICAL, page, "JSON Networking");
 	wxWindow *json_parent = json_box->GetStaticBox();
 
 	json_net_check_ = new wxCheckBox(json_parent, wxID_ANY,
-	    "Enable Pyromaniac Networking Support");
+	    "Enable JSON networking");
 	json_net_host_label_ = new wxStaticText(json_parent, wxID_ANY, "Server:");
 	json_net_host_edit_ = new wxTextCtrl(json_parent, wxID_ANY, "localhost");
 	json_net_port_label_ = new wxStaticText(json_parent, wxID_ANY, "Port:");
@@ -1051,16 +1051,10 @@ wxWindow *MachineEditDialog::BuildNetworkPage(wxWindow *parent)
 	json_form->Add(json_net_port_edit_, 0);
 
 	auto *json_note = MakeNote(json_parent,
-	    "This machine shares one virtual network with every other emulator "
-	    "connected to the same server, RISC OS Pyromaniac included. The server "
-	    "can be on another computer, which is the point: machines on different "
-	    "computers can reach each other.\n\n"
-	    "While this is on, the server REPLACES the direct link to other "
-	    "machines started on this computer. Those machines can no longer "
-	    "be reached unless they are on this server too. NAT is unaffected: the "
-	    "machine still reaches the outside world exactly as before.\n\n"
-	    "Addresses are not handled for you: anything sharing this network needs "
-	    "an address on it that does not collide.");
+	    "Shares one virtual network with every other emulator on the same "
+	    "server, wherever they are running. This replaces the direct link to "
+	    "machines started on this computer, which are then reachable only if "
+	    "they are on the server too. NAT is unaffected.");
 
 	json_box->Add(json_net_check_, 0, wxALL, 6);
 	json_box->Add(json_form, 0, wxEXPAND | wxLEFT | wxRIGHT, 6);

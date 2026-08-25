@@ -1,5 +1,5 @@
 /*
- * The wire format RPCEmu and RISC OS Pyromaniac share.
+ * The JSON wire format, shared with every other emulator that speaks it.
  *
  * WHY THIS EXISTS. This is an interoperability format owned by somebody else:
  * https://github.com/gerph/tuntap-json-server decides what it is, and if we

@@ -856,7 +856,7 @@ rpcemu_add_test(test_machine_lock ${CMAKE_CURRENT_BINARY_DIR})
 # linked, so the test can bind the same loopback ports the unit does and check the
 # claim is really exclusive. Needs the socket libraries on Windows, which
 # rpcemu_core would otherwise have supplied.
-# The wire format shared with RISC OS Pyromaniac, which is somebody else's
+# The JSON wire format, which is somebody else's
 # format: if we disagree with it there is nobody on our side to notice. Compiles
 # net_json.c directly with stubs for the emulator it would otherwise reach.
 add_executable(test_net_json test_net_json.c

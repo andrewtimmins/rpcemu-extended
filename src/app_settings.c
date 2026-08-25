@@ -387,7 +387,7 @@ app_settings_apply_overrides(Config *cfg)
 		    overrides.hostcmd_socket);
 	}
 	/*
-	 * The Pyromaniac network for this run. "off" turns it off for a machine
+	 * The JSON network for this run. "off" turns it off for a machine
 	 * whose configuration has it on, which is how you take one machine out of
 	 * a shared network without editing it.
 	 */

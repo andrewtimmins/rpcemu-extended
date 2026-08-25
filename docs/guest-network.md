@@ -24,7 +24,7 @@ had to do.
 
 It is not enough once machines on different computers share a network — over a
 JSON tun/tap server, for instance (see
-[pyromaniac-networking.md](pyromaniac-networking.md)). Those machines were
+[json-networking.md](json-networking.md)). Those machines were
 started by different RPCEmus, and each hands its first machine the same address.
 Two hosts arrive on one wire with distinct MAC addresses and the same IP, which
 cannot work, and nothing says why: there is no error, no warning and no clue in
