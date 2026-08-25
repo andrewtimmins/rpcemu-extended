@@ -107,6 +107,30 @@ main(void)
 	check("an empty field is not", !IsComplete(""));
 	check("eleven digits are not enough", !IsComplete("06:02:03:04:05:0"));
 
+	/*
+	 * What a configuration can say that is not an address. Networking refuses to
+	 * start on any of these rather than inventing one to carry on with, so the
+	 * parser saying no is what makes that guard work.
+	 */
+	std::printf("what the parser refuses\n");
+	{
+		uint8_t parsed[6];
+		static const char *const bad[] = {
+			"", "not-a-mac-addr", "06:02:03:04:05", "06:02:03:04:05:06:07",
+			"zz:zz:zz:zz:zz:zz", "06-02-03-04-05-06", "060203040506",
+			"06:02:03:04:05:6", " 06:02:03:04:05:06"
+		};
+
+		for (const char *s : bad) {
+			char what[80];
+
+			std::snprintf(what, sizeof(what), "\"%s\" is refused", s);
+			check(what, network_macaddress_parse(s, parsed) == 0);
+		}
+		check("a good one is still accepted",
+		    network_macaddress_parse("06:02:03:04:05:06", parsed) == 1);
+	}
+
 	std::printf("a generated address\n");
 	{
 		const std::string generated = Generate();

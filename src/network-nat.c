@@ -195,27 +195,29 @@ slirp_can_output(void *opaque)
 
 /**
  */
-static void
+/**
+ * This machine's MAC address, from its configuration.
+ *
+ * Every machine has one by the time this runs: config_load() gives a machine
+ * whose macaddress is missing or empty a random locally administered address
+ * and writes it back. So the only way to arrive here without a usable address
+ * is a configuration that says something impossible, and this does not invent
+ * one to carry on with - an address made up here could not be written back, and
+ * anything derived from this host would collide with another installation's.
+ *
+ * @return 1 if network_hwaddr is now this machine's address
+ */
+static int
 network_nat_init_mac_address(void)
 {
-	if (config.macaddress != NULL) {
-		// Parse supplied MAC address
-		if (network_macaddress_parse(config.macaddress, network_hwaddr)) {
-			return;
-		}
-		error("Unable to parse '%s' as a MAC address", config.macaddress);
+	if (!network_macaddress_parse(config.macaddress, network_hwaddr)) {
+		error("Unable to parse '%s' as a MAC address. Correct it in Machine "
+		      "Settings, or clear the field there to be given one.",
+		    config.macaddress);
+		return 0;
 	}
 
-	// Generate MAC address. The last byte follows this emulator's slot, because the
-	// address was otherwise the same constant in every instance and two machines
-	// with one MAC address on one network is fatal to both. Slot 0 keeps the
-	// original value, so a single machine is unchanged.
-	network_hwaddr[0] = 0x06;
-	network_hwaddr[1] = 0x02;
-	network_hwaddr[2] = 0x03;
-	network_hwaddr[3] = 0x04;
-	network_hwaddr[4] = 0x05;
-	network_hwaddr[5] = (unsigned char) (0x06 + net_slot_acquire());
+	return 1;
 }
 
 /**
@@ -284,7 +286,9 @@ network_nat_init(void)
 	nat.pkt_queue_count = 0;
 
 	// MAC address
-	network_nat_init_mac_address();
+	if (!network_nat_init_mac_address()) {
+		return 0;
+	}
 
 	network_nat_open();
 
