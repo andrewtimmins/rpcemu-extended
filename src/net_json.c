@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "socket-compat.h"
 
@@ -44,7 +45,20 @@
    loop running instead of the emulator. */
 #define NET_JSON_POLL_MAX	64
 
+/* Longer when the server has never answered - usually one that is not running
+   yet - and shorter after a working one went away, which is more often a
+   restart than a decision. */
+#define NET_JSON_RETRY_COLD_SECONDS	10
+#define NET_JSON_RETRY_WARM_SECONDS	5
+
 static int json_fd = -1;
+
+/* Retrying, so a machine started before its server, or left running across a
+   server restart, joins the network by itself. */
+static int json_want_connection;	/* configured for a server at startup */
+static int json_ever_connected;		/* which of the two intervals applies */
+static time_t json_next_attempt;
+static int json_failure_logged;		/* so it is said once, not every attempt */
 
 /* Partial line left over from the last read: TCP gives no message boundaries,
    so a frame can arrive in pieces or several can arrive together. */
@@ -299,17 +313,31 @@ net_json_is_connected(void)
 }
 
 int
-net_json_init(void)
+net_json_wants_connection(void)
+{
+	return json_want_connection;
+}
+
+/** Arrange for the next attempt, at whichever interval now applies. */
+static void
+net_json_schedule_retry(void)
+{
+	json_next_attempt = time(NULL) +
+	    (json_ever_connected ? NET_JSON_RETRY_WARM_SECONDS
+	                         : NET_JSON_RETRY_COLD_SECONDS);
+}
+
+/**
+ * One attempt at the server.
+ *
+ * @return 0 if the connection is up
+ */
+static int
+net_json_try_connect(void)
 {
 	struct addrinfo hints;
 	struct addrinfo *res = NULL, *rp;
 	char port[16];
-
-	net_json_close();
-
-	if (!config.json_net_enabled || config.json_net_host[0] == '\0') {
-		return -1;
-	}
 
 	snprintf(port, sizeof(port), "%d",
 	    config.json_net_port > 0 ? config.json_net_port : 33445);
@@ -319,8 +347,12 @@ net_json_init(void)
 	hints.ai_socktype = SOCK_STREAM;
 
 	if (getaddrinfo(config.json_net_host, port, &hints, &res) != 0) {
-		rpclog("net_json: cannot resolve %s:%s, this machine is not on that "
-		       "network\n", config.json_net_host, port);
+		if (!json_failure_logged) {
+			rpclog("net_json: cannot resolve %s:%s, retrying every %d "
+			       "seconds\n", config.json_net_host, port,
+			    NET_JSON_RETRY_COLD_SECONDS);
+			json_failure_logged = 1;
+		}
 		return -1;
 	}
 
@@ -338,17 +370,79 @@ net_json_init(void)
 	freeaddrinfo(res);
 
 	if (json_fd < 0) {
-		rpclog("net_json: cannot reach %s:%s, this machine is not on that "
-		       "network\n", config.json_net_host, port);
+		if (!json_failure_logged) {
+			rpclog("net_json: cannot reach %s:%s, retrying every %d "
+			       "seconds\n", config.json_net_host, port,
+			    json_ever_connected ? NET_JSON_RETRY_WARM_SECONDS
+			                        : NET_JSON_RETRY_COLD_SECONDS);
+			json_failure_logged = 1;
+		}
 		return -1;
 	}
 
 	socket_set_nonblocking(json_fd);
+	/* One frame per line, each written on its own: Nagle would hold each back
+	   waiting for company and add its delay to every frame on the wire. */
+	socket_set_nodelay(json_fd);
 	json_in_len = 0;
 
-	rpclog("net_json: on %s:%s; frames go there rather than to the loopback "
-	       "wire\n", config.json_net_host, port);
+	if (json_ever_connected) {
+		rpclog("net_json: reconnected to %s:%s\n", config.json_net_host, port);
+	} else {
+		rpclog("net_json: on %s:%s; frames go there rather than to the "
+		       "loopback wire\n", config.json_net_host, port);
+	}
+	json_ever_connected = 1;
+	json_failure_logged = 0;
 	return 0;
+}
+
+int
+net_json_init(void)
+{
+	net_json_close();
+
+	json_want_connection = 0;
+	json_ever_connected = 0;
+	json_failure_logged = 0;
+	json_next_attempt = 0;
+
+	if (!config.json_net_enabled || config.json_net_host[0] == '\0') {
+		return -1;
+	}
+
+	/*
+	 * From here this machine belongs to the JSON wire whether or not the server
+	 * answers, so the caller must not put it on the loopback wire instead: the
+	 * two are alternatives, and a machine on both receives every frame twice.
+	 * A first attempt that fails is therefore still success as far as the
+	 * caller is concerned - net_json_poll() keeps trying.
+	 */
+	json_want_connection = 1;
+
+	rpclog("net_json: this machine is on the %s:%d server's network; the "
+	       "direct link to machines started on this computer is off, and they "
+	       "are unreachable unless they are on that server too. NAT is "
+	       "unaffected.\n",
+	    config.json_net_host,
+	    config.json_net_port > 0 ? config.json_net_port : 33445);
+
+	if (net_json_try_connect() != 0) {
+		net_json_schedule_retry();
+	}
+	return 0;
+}
+
+/** Give up the connection, but keep wanting one. */
+static void
+net_json_drop(void)
+{
+	if (json_fd >= 0) {
+		closesocket(json_fd);
+		json_fd = -1;
+	}
+	json_in_len = 0;
+	net_json_schedule_retry();
 }
 
 void
@@ -359,6 +453,7 @@ net_json_close(void)
 		json_fd = -1;
 	}
 	json_in_len = 0;
+	json_want_connection = 0;
 }
 
 void
@@ -395,9 +490,9 @@ net_json_tx(const uint8_t *frame, int frame_len)
 		              sock_errno() == SOCK_EINTR)) {
 			continue;
 		}
-		rpclog("net_json: the server has gone; this machine is off that "
-		       "network\n");
-		net_json_close();
+		rpclog("net_json: the server has gone; retrying every %d seconds\n",
+		    NET_JSON_RETRY_WARM_SECONDS);
+		net_json_drop();
 		return;
 	}
 }
@@ -410,6 +505,13 @@ net_json_poll(void)
 	int lines = 0;
 
 	if (json_fd < 0) {
+		/* Waiting for a server to answer. Nothing is logged per attempt: the
+		   one failure message has already been written. */
+		if (json_want_connection && time(NULL) >= json_next_attempt) {
+			if (net_json_try_connect() != 0) {
+				net_json_schedule_retry();
+			}
+		}
 		return 0;
 	}
 
@@ -424,8 +526,10 @@ net_json_poll(void)
 			if (n > 0) {
 				json_in_len += (size_t) n;
 			} else if (n == 0) {
-				rpclog("net_json: the server closed the connection\n");
-				net_json_close();
+				rpclog("net_json: the server closed the connection; "
+				       "retrying every %d seconds\n",
+				    NET_JSON_RETRY_WARM_SECONDS);
+				net_json_drop();
 				return delivered;
 			}
 		}

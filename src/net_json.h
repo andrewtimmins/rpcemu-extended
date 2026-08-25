@@ -40,7 +40,14 @@
  * Both are hubs. An instance on both would send each frame to its loopback
  * peers AND to the server, which replicates it to the same peers if they are
  * also connected, and every frame would arrive twice. So a machine configured
- * with a server uses that and nothing else; network-nat.c enforces it.
+ * with a server uses that as its ONLY machine-to-machine wire, and machines
+ * started on this computer are unreachable unless they are on the same server;
+ * network-nat.c enforces it, from net_json_wants_connection() rather than from
+ * whether the server is currently answering.
+ *
+ * This is the local wire only. NAT is untouched - slirp_input() is called for
+ * every frame whatever wire it went to - so the machine reaches the outside
+ * world exactly as it would otherwise.
  *
  * WIRE FORMAT. One JSON object per line, and the Ethernet header is taken
  * apart rather than sent whole:
@@ -75,15 +82,16 @@ extern "C" {
  *
  * Does nothing and reports failure when the machine has no server configured,
  * which is how network-nat.c decides whether to use the loopback wire instead.
- * A server that is configured but cannot be reached is reported and the machine
- * carries on without it.
+ * A server that is configured but cannot be reached is reported, and
+ * net_json_poll() keeps trying for it.
  *
- * @return 0 if connected, -1 otherwise
+ * @return 0 if this machine is on the JSON wire, connected or waiting to be;
+ *         -1 if no server is configured
  */
 extern int net_json_init(void);
 
 /**
- * Disconnect and release the socket.
+ * Disconnect, release the socket, and stop wanting a connection.
  */
 extern void net_json_close(void);
 
@@ -93,6 +101,17 @@ extern void net_json_close(void);
  * @return 1 if connected, 0 if not
  */
 extern int net_json_is_connected(void);
+
+/**
+ * Whether this machine belongs to a JSON server, connected or not.
+ *
+ * The two wires are alternatives, so a machine waiting for its server must not
+ * be put on the loopback wire in the meantime: it would be on both when the
+ * server came back and receive every frame twice.
+ *
+ * @return 1 if a server is configured for this machine
+ */
+extern int net_json_wants_connection(void);
 
 /**
  * Send a frame the guest has transmitted.

@@ -299,7 +299,9 @@ network_nat_init(void)
 	 * hubs that flood every frame. A machine on both would send each frame to
 	 * its local peers and to the server, which replicates it to those same
 	 * peers if they are connected too, and everything would arrive twice. So a
-	 * machine that names a server uses it, and the loopback wire stays off.
+	 * machine that names a server uses it, and the loopback wire stays off -
+	 * including while that server is unreachable and being retried, which is
+	 * why this asks whether one is configured rather than whether it answered.
 	 */
 	if (net_json_init() != 0) {
 		net_switch_init();
@@ -334,7 +336,8 @@ network_nat_reset(void)
 static void
 poll_local_wire(void)
 {
-	if (net_json_is_connected()) {
+	/* Polled while disconnected too: that is what retries the server. */
+	if (net_json_wants_connection()) {
 		net_json_poll();
 	} else {
 		net_switch_poll();
@@ -513,8 +516,13 @@ network_nat_tx(uint32_t errbuf, uint32_t mbufs, uint32_t dest, uint32_t src, uin
 	 * arp_input() in slirp/slirp.c), so it does not answer for another guest
 	 * and cannot hijack a conversation between two of them.
 	 */
-	if (net_json_is_connected()) {
-		net_json_tx(nat.tx_buffer, packet_length);
+	/* Dropped rather than sent to the loopback wire while the server is away:
+	   this machine is not on that wire, and the frame would reach machines
+	   that are not its peers. */
+	if (net_json_wants_connection()) {
+		if (net_json_is_connected()) {
+			net_json_tx(nat.tx_buffer, packet_length);
+		}
 	} else {
 		net_switch_tx(nat.tx_buffer, packet_length);
 	}
