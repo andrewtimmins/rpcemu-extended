@@ -51,6 +51,10 @@
 #define NET_JSON_RETRY_COLD_SECONDS	10
 #define NET_JSON_RETRY_WARM_SECONDS	5
 
+/* How long to let a handshake run before giving up on it, well under the TCP
+   timeout an unanswering address would otherwise take. */
+#define NET_JSON_CONNECT_SECONDS	5
+
 static int json_fd = -1;
 
 /* Retrying, so a machine started before its server, or left running across a
@@ -59,6 +63,8 @@ static int json_want_connection;	/* configured for a server at startup */
 static int json_ever_connected;		/* which of the two intervals applies */
 static time_t json_next_attempt;
 static int json_failure_logged;		/* so it is said once, not every attempt */
+static int json_connecting;		/* socket open, handshake still running */
+static time_t json_connect_deadline;	/* when to give that handshake up */
 
 /* Partial line left over from the last read: TCP gives no message boundaries,
    so a frame can arrive in pieces or several can arrive together. */
@@ -309,7 +315,8 @@ net_json_decode(const char *line, uint8_t *out, size_t out_size)
 int
 net_json_is_connected(void)
 {
-	return json_fd >= 0;
+	/* A socket whose handshake is still running is not usable yet. */
+	return json_fd >= 0 && !json_connecting;
 }
 
 int
@@ -325,6 +332,87 @@ net_json_schedule_retry(void)
 	json_next_attempt = time(NULL) +
 	    (json_ever_connected ? NET_JSON_RETRY_WARM_SECONDS
 	                         : NET_JSON_RETRY_COLD_SECONDS);
+}
+
+static void net_json_drop(void);
+
+/** The socket is up: settle it and say so. */
+static void
+net_json_connected(void)
+{
+	/* One frame per line, each written on its own: Nagle would hold each back
+	   waiting for company and add its delay to every frame on the wire. */
+	socket_set_nodelay(json_fd);
+	json_in_len = 0;
+	json_connecting = 0;
+
+	if (json_ever_connected) {
+		rpclog("net_json: reconnected to %s:%d\n", config.json_net_host,
+		    config.json_net_port > 0 ? config.json_net_port : 33445);
+	} else {
+		rpclog("net_json: on %s:%d; frames go there rather than to the "
+		       "loopback wire\n", config.json_net_host,
+		    config.json_net_port > 0 ? config.json_net_port : 33445);
+	}
+	json_ever_connected = 1;
+	json_failure_logged = 0;
+}
+
+/**
+ * Has the handshake finished?
+ *
+ * The socket becomes writable either way, so the outcome is read from
+ * SO_ERROR rather than from writability alone.
+ *
+ * @return 1 if the connection is now up
+ */
+static int
+net_json_finish_connect(void)
+{
+	struct timeval tv;
+	fd_set wfds;
+	int err = 0;
+	socklen_t len = sizeof(err);
+
+	FD_ZERO(&wfds);
+	FD_SET(json_fd, &wfds);
+	tv.tv_sec = 0;
+	tv.tv_usec = 0;
+
+	if (select(json_fd + 1, NULL, &wfds, NULL, &tv) <= 0) {
+		/* Still running. Give it up once it has had long enough, rather than
+		   waiting out the TCP timeout. */
+		if (time(NULL) >= json_connect_deadline) {
+			if (!json_failure_logged) {
+				rpclog("net_json: %s:%d accepted no connection within %d "
+				       "seconds, retrying every %d\n", config.json_net_host,
+				    config.json_net_port > 0 ? config.json_net_port : 33445,
+				    NET_JSON_CONNECT_SECONDS,
+				    json_ever_connected ? NET_JSON_RETRY_WARM_SECONDS
+				                        : NET_JSON_RETRY_COLD_SECONDS);
+				json_failure_logged = 1;
+			}
+			net_json_drop();
+		}
+		return 0;
+	}
+
+	if (getsockopt(json_fd, SOL_SOCKET, SO_ERROR, (char *) &err, &len) != 0 ||
+	    err != 0) {
+		if (!json_failure_logged) {
+			rpclog("net_json: cannot reach %s:%d, retrying every %d seconds\n",
+			    config.json_net_host,
+			    config.json_net_port > 0 ? config.json_net_port : 33445,
+			    json_ever_connected ? NET_JSON_RETRY_WARM_SECONDS
+			                        : NET_JSON_RETRY_COLD_SECONDS);
+			json_failure_logged = 1;
+		}
+		net_json_drop();
+		return 0;
+	}
+
+	net_json_connected();
+	return 1;
 }
 
 /**
@@ -356,12 +444,32 @@ net_json_try_connect(void)
 		return -1;
 	}
 
+	/*
+	 * Non-blocking before connect(), not after.
+	 *
+	 * This runs on the emulator thread, from resetrpc(), before the guest has
+	 * executed an instruction. A blocking connect() to a host that takes the
+	 * SYN and never finishes the handshake waits out the TCP timeout - minutes
+	 * - and the machine cannot boot until it returns. A refused connection
+	 * comes back at once, so a server that is simply not running looked fine
+	 * and a wrong address hung the machine until it was killed.
+	 */
 	for (rp = res; rp != NULL; rp = rp->ai_next) {
 		json_fd = (int) socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
 		if (json_fd < 0) {
 			continue;
 		}
+		socket_set_nonblocking(json_fd);
+
 		if (connect(json_fd, rp->ai_addr, (int) rp->ai_addrlen) == 0) {
+			json_connecting = 0;
+			break;
+		}
+		/* Under way rather than failed: the handshake finishes in its own time
+		   and net_json_poll() picks it up. */
+		if (sock_errno() == SOCK_EINPROGRESS ||
+		    sock_errno() == SOCK_EWOULDBLOCK) {
+			json_connecting = 1;
 			break;
 		}
 		closesocket(json_fd);
@@ -380,20 +488,14 @@ net_json_try_connect(void)
 		return -1;
 	}
 
-	socket_set_nonblocking(json_fd);
-	/* One frame per line, each written on its own: Nagle would hold each back
-	   waiting for company and add its delay to every frame on the wire. */
-	socket_set_nodelay(json_fd);
-	json_in_len = 0;
-
-	if (json_ever_connected) {
-		rpclog("net_json: reconnected to %s:%s\n", config.json_net_host, port);
-	} else {
-		rpclog("net_json: on %s:%s; frames go there rather than to the "
-		       "loopback wire\n", config.json_net_host, port);
+	if (json_connecting) {
+		/* The socket exists but is not up yet, so the caller must not treat it
+		   as connected. net_json_poll() finishes it or gives it up. */
+		json_connect_deadline = time(NULL) + NET_JSON_CONNECT_SECONDS;
+		return -1;
 	}
-	json_ever_connected = 1;
-	json_failure_logged = 0;
+
+	net_json_connected();
 	return 0;
 }
 
@@ -463,7 +565,9 @@ net_json_tx(const uint8_t *frame, int frame_len)
 	int len;
 	int sent = 0;
 
-	if (json_fd < 0) {
+	/* Not while the handshake is still running: the socket exists but nothing
+	   sent down it would arrive. */
+	if (json_fd < 0 || json_connecting) {
 		return;
 	}
 
@@ -512,6 +616,10 @@ net_json_poll(void)
 				net_json_schedule_retry();
 			}
 		}
+		return 0;
+	}
+
+	if (json_connecting && !net_json_finish_connect()) {
 		return 0;
 	}
 
