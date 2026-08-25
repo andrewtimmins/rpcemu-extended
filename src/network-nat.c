@@ -33,6 +33,7 @@
 #include "app_settings.h"
 #include "mem.h"
 #include "netcapture.h"
+#include "guest_subnet.h"
 #include "network.h"
 #include "network-nat.h"
 #include "net_slot.h"
@@ -231,18 +232,25 @@ network_nat_open(void)
 	const char *vhostname = NULL;
 	const char *bootfile = NULL;
 
-	host.s_addr = htonl(0x0a0a0a02); // 10.10.10.2
-	mask.s_addr = htonl(0xffffff00); // 255.255.255.0
-	net_addr.s_addr = htonl(0x0a0a0a00); // 10.10.10.0
-	dns.s_addr = htonl(0x0a0a0a03); // 10.10.10.3
+	// Which /24 this installation's guests are on: 10.10.10.0/24 unless it has
+	// been set, and settable because every RPCEmu used the same one - two
+	// machines meeting over a JSON server, started by different RPCEmus, were
+	// both 10.10.10.10. See guest_subnet.h.
+	const uint32_t guest_net = guest_subnet_network(config.guest_subnet_b,
+	                                                config.guest_subnet_c);
 
-	// 10.10.10.10 upwards, one address per emulator on this host. Every instance ran
-	// its own NAT with these same constants, so every guest believed it was
+	host.s_addr = htonl(guest_subnet_gateway(guest_net));
+	mask.s_addr = htonl(0xffffff00); // 255.255.255.0
+	net_addr.s_addr = htonl(guest_net);
+	dns.s_addr = htonl(guest_subnet_dns(guest_net));
+
+	// .10 upwards, one address per emulator on this host. Every instance ran
+	// its own NAT with the same constants, so every guest believed it was
 	// 10.10.10.10: two machines could not have addressed each other whatever carried
 	// the frames between them. Slot 0 gets the original .10, leaving a single
 	// machine exactly as it was. The gateway and DNS stay put, since each machine
 	// keeps its own NAT and only the guest's own address has to differ.
-	dhcp.s_addr = htonl(0x0a0a0a0a + (uint32_t) net_slot_acquire());
+	dhcp.s_addr = htonl(guest_subnet_guest(guest_net, net_slot_acquire()));
 
 	// Port Forwarding
 	nat.forward_addr.s_addr = dhcp.s_addr; // Which address to apply port forwards to (same as address given out by DHCP)

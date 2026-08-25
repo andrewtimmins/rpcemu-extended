@@ -355,6 +355,14 @@ typedef struct {
 	unsigned mem_size;	/**< Amount of RAM in megabytes */
 	unsigned vram_size;	/**< Amount of VRAM in megabytes */
 	char *macaddress;
+	/*
+	 * The /24 the guests here live on: 10.<b>.<c>.0/24. Per installation and
+	 * held in rpcemu.cfg, not per machine - it describes the network every
+	 * machine here is on, so it cannot sensibly differ between them. See
+	 * guest_subnet.h.
+	 */
+	unsigned guest_subnet_b;
+	unsigned guest_subnet_c;
 	int refresh;		/**< Video refresh rate */
 	int soundenabled;
 	int cdromenabled;

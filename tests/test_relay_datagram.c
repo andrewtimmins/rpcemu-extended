@@ -36,6 +36,12 @@
 /* --- the bits of the emulator the relay leans on, stubbed ---------------- */
 
 unsigned char network_hwaddr[6] = {0x06, 0x02, 0x03, 0x04, 0x05, 0x06};
+/* The relay reads the guests' subnet from here (guest_subnet.h). */
+#include "rpcemu.h"
+#include "guest_subnet.h"
+Config config = { .guest_subnet_b = GUEST_SUBNET_DEFAULT_B,
+                  .guest_subnet_c = GUEST_SUBNET_DEFAULT_C };
+
 
 /* Frames the relay handed to the guest, in the order it handed them over. */
 #define MAX_CAPTURED 64
@@ -152,7 +158,7 @@ test_fragmented_injection_is_faithful(int payload_len)
 	captured_count = 0;
 	inject_space = MAX_CAPTURED;
 	relay.enabled = 1;
-	relay.guest_ip = 0x0a0a0a0a; /* 10.10.10.10, learned from the guest */
+	relay.guest_ip = guest_subnet_guest(SLIRP_NET, 0); /* learned from the guest */
 
 	for (i = 0; i < payload_len; i++) {
 		payload[i] = (unsigned char) (i * 7 + (i >> 8));
@@ -243,7 +249,7 @@ test_partial_datagram_is_not_delivered(void)
 	captured_count = 0;
 	inject_space = 3; /* fewer than the six an 8200-byte payload needs */
 	relay.enabled = 1;
-	relay.guest_ip = 0x0a0a0a0a;
+	relay.guest_ip = guest_subnet_guest(SLIRP_NET, 0);
 
 	memset(payload, 0xa5, sizeof(payload));
 	memset(&from, 0, sizeof(from));

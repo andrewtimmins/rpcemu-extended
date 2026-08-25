@@ -69,14 +69,20 @@ outside world.
 This carries Ethernet frames and nothing more. Two machines that are to talk IP
 still have to agree addresses.
 
-Guests here are given `10.10.10.10 + slot` by their own SLiRP, where the slot is
-claimed at startup, so the first machine started is `.10`, the second `.11`, and
-so on. Anything else joining the same network needs an address on it that does
-not collide - a Pyromaniac configured statically, for instance.
+Guests are given `.10` upwards on this installation's own network by their own
+SLiRP, where the last part follows a slot claimed at startup: the first machine
+started is `.10`, the second `.11`, and so on. Anything else joining the same
+network needs an address on it that does not collide.
 
-MAC addresses are derived from the same slot unless a machine sets `macaddress`
-explicitly. Two emulators from different projects are unlikely to collide, but
-if they do, set one of them by hand.
+**The slot only distinguishes machines started by one RPCEmu**, which is the
+catch here. Two machines meeting over a server were started by different RPCEmus,
+each handing its first machine the same address - distinct MAC addresses and one
+IP address, which cannot work and says nothing about why. So the network itself
+is a setting - put the two installations on different ones, from Settings →
+Networking in the Manager. See [guest-network.md](guest-network.md).
+
+MAC addresses are given to a machine when it first starts and kept in its
+configuration, so two machines differ whoever started them.
 
 ## The format
 

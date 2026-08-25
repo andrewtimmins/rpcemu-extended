@@ -26,6 +26,7 @@
 #include <string.h>
 
 #include "app_settings.h"
+#include "guest_subnet.h"
 
 #define APP_SETTINGS_FILE	"rpcemu.cfg"
 #define MAX_LINE		1024
@@ -129,6 +130,18 @@ apply(Config *cfg, const char *key, const char *value)
 		set_str(cfg->vnc_password_readonly,
 		    sizeof(cfg->vnc_password_readonly), value);
 		return 1;
+	}
+	if (strcmp(key, "guest_subnet") == 0) {
+		unsigned b, c;
+
+		if (guest_subnet_parse(value, &b, &c)) {
+			cfg->guest_subnet_b = b;
+			cfg->guest_subnet_c = c;
+			return 1;
+		}
+		rpclog("app_settings: ignoring guest_subnet=%s, not a usable 10.b.c "
+		       "network\n", value);
+		return 0;
 	}
 	if (strcmp(key, "hostcmd_enabled") == 0) {
 		cfg->hostcmd_enabled = (atoi(value) != 0);
@@ -235,13 +248,16 @@ app_settings_save(const char *datadir, const Config *cfg)
 	    "vnc_password=%s\n"
 	    "vnc_password_readonly=%s\n"
 	    "hostcmd_enabled=%d\n"
-	    "hostcmd_socket=%s\n",
+	    "hostcmd_socket=%s\n"
+	    "guest_subnet=%u.%u\n",
 	    cfg->vnc_enabled ? 1 : 0,
 	    cfg->vnc_port,
 	    cfg->vnc_password,
 	    cfg->vnc_password_readonly,
 	    cfg->hostcmd_enabled ? 1 : 0,
-	    cfg->hostcmd_socket);
+	    cfg->hostcmd_socket,
+	    cfg->guest_subnet_b,
+	    cfg->guest_subnet_c);
 
 	if (fflush(f) != 0 || ferror(f)) {
 		fclose(f);
