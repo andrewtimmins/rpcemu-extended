@@ -25,6 +25,7 @@
 
 #include "socket-compat.h"
 
+#include "guest_subnet.h"
 #include "net_json.h"
 #include "net_switch.h"
 #include "network.h"
@@ -665,6 +666,11 @@ net_json_poll(void)
 			   broadcast or multicast. The two wires are alternatives,
 			   so there is one right answer to "is this for us" and it
 			   lives in one place. */
+			/* Before the filter: a machine using our address is
+			   talking to somebody else, so its frames would be
+			   dropped below without anything noticing. */
+			guest_subnet_check_duplicate(frame, len, network_hwaddr);
+
 			if (len >= NET_JSON_HEADER_LEN &&
 			    net_switch_frame_is_for_us(frame, len, network_hwaddr)) {
 				if (network_nat_inject_packet(frame, len)) {

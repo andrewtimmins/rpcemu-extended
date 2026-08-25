@@ -22,6 +22,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "rpcemu.h"
+
 #include "guest_subnet.h"
 
 uint32_t
@@ -112,4 +114,64 @@ guest_subnet_format(uint32_t addr, char *out, size_t len)
 	snprintf(out, len, "%u.%u.%u.%u",
 	    (addr >> 24) & 0xffu, (addr >> 16) & 0xffu,
 	    (addr >> 8) & 0xffu, addr & 0xffu);
+}
+
+/*
+ * Somebody else answering to our address.
+ *
+ * The address is a hash of the MAC, so two machines CAN land on one address.
+ * It is unlikely - about one in a million for two machines - but the failure it
+ * causes is the silent one this whole scheme exists to remove, so it is worth
+ * the few lines to say so out loud.
+ *
+ * ARP specifically, because it is the one frame that states an address on behalf
+ * of its sender. Every frame is offered rather than only those addressed to this
+ * machine: a duplicate is by definition talking to somebody else, and its frames
+ * would be filtered out before anything else could notice.
+ *
+ * Reported once. A machine that has collided will keep ARPing, and a line per
+ * ARP would bury the rest of the log.
+ */
+static int duplicate_reported = 0;
+
+void
+guest_subnet_check_duplicate(const uint8_t *frame, int frame_len,
+    const uint8_t hwaddr[6])
+{
+	uint32_t sender_ip;
+
+	if (duplicate_reported || frame == NULL || hwaddr == NULL ||
+	    frame_len < 42) {			/* 14 Ethernet + 28 ARP */
+		return;
+	}
+
+	if (frame[12] != 0x08 || frame[13] != 0x06) {	/* not ARP */
+		return;
+	}
+
+	/* Sender hardware address at 22, sender IP at 28. Ours is not a duplicate
+	   of itself, and a frame the server reflected would say so. */
+	if (memcmp(frame + 22, hwaddr, 6) == 0) {
+		return;
+	}
+
+	sender_ip = ((uint32_t) frame[28] << 24) | ((uint32_t) frame[29] << 16) |
+	            ((uint32_t) frame[30] << 8) | (uint32_t) frame[31];
+
+	if (sender_ip != guest_subnet_guest(hwaddr)) {
+		return;
+	}
+
+	{
+		char addr_text[16];
+
+		guest_subnet_format(sender_ip, addr_text, sizeof(addr_text));
+		rpclog("Networking: another machine on this network is using %s, this "
+		       "machine's address (it is %02x:%02x:%02x:%02x:%02x:%02x). "
+		       "Neither will work properly until one of them is given a "
+		       "different MAC address.\n",
+		    addr_text, frame[22], frame[23], frame[24], frame[25],
+		    frame[26], frame[27]);
+		duplicate_reported = 1;
+	}
 }
