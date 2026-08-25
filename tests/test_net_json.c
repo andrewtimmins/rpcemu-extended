@@ -20,6 +20,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 #include "socket-compat.h"
 
@@ -225,6 +228,19 @@ test_whitespace(void)
  * interval is deliberately not waited out - the point is that the attempt is
  * made at all, and that the machine stays on the JSON wire while it waits.
  */
+/**
+ * Wait a millisecond between polls. usleep() is POSIX; Windows spells it Sleep().
+ */
+static void
+settle(void)
+{
+#ifdef _WIN32
+	Sleep(1);
+#else
+	usleep(1000);
+#endif
+}
+
 static int
 open_listener(unsigned short *port_out)
 {
@@ -297,10 +313,29 @@ test_reconnect(void)
 	check("init starts a connection when the server is up",
 	    net_json_init() == 0 && net_json_wants_connection());
 	{
-		int i;
+		/*
+		 * Give the handshake time rather than a number of iterations.
+		 *
+		 * Spinning a fixed number of times is not a wait, it is a race, and it
+		 * is one that only macOS loses: Linux and Windows complete a loopback
+		 * connect() inside the call, so one poll is enough there, while macOS
+		 * returns EINPROGRESS and finishes it asynchronously. Measured on an
+		 * Apple Silicon Mac, a tight loop needed between 53 and 200 passes for
+		 * the same connection, against the 100 this used to allow - so it
+		 * passed or failed on scheduling, and it failed on the macos-arm64 CI
+		 * runner.
+		 *
+		 * Two seconds is far longer than a loopback handshake needs and is
+		 * comfortably inside NET_JSON_CONNECT_SECONDS, so the code under test
+		 * has not given the attempt up by the time this stops asking.
+		 */
+		int ms;
 
-		for (i = 0; i < 100 && !net_json_is_connected(); i++) {
+		for (ms = 0; ms < 2000 && !net_json_is_connected(); ms++) {
 			net_json_poll();
+			if (!net_json_is_connected()) {
+				settle();
+			}
 		}
 		check("and polling completes it", net_json_is_connected());
 	}
