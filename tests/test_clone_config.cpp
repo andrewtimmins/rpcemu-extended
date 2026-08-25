@@ -85,6 +85,7 @@ main(int argc, char **argv)
 		settings.Write("hostfs_path", src_dir + "/hostfs");
 		settings.Write("hd4_path", src_dir + "/hd4.hdf");
 		settings.Write("cdrom_iso", "/srv/media/riscos.iso");
+		settings.Write("macaddress", "06:02:03:04:05:06");
 		settings.Write("mem_size", 512L);
 		settings.Flush();
 	}
@@ -104,6 +105,10 @@ main(int argc, char **argv)
 	    read_key(cfg, "netcap_socket").empty());
 
 	/* Write targets: two machines appending to one file is never intended. */
+	/* Two machines with one address stop each other working the moment they
+	   meet, and a clone is the likeliest pair to end up on one network. */
+	check("the MAC address is not inherited",
+	    read_key(cfg, "macaddress") == "");
 	check("the capture file is not inherited",
 	    read_key(cfg, "network_capture").empty());
 	check("the serial log is not inherited",

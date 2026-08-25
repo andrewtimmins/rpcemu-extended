@@ -36,6 +36,7 @@ extern "C" {
 #include <wx/arrstr.h>
 
 #include "display_options.h"
+#include "mac_address_input.h"
 
 static char current_config_path[512] = "";
 
@@ -498,6 +499,7 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	}
 
 	wxString sText;
+	bool macaddress_generated = false;
 	settings.Read("name", &sText, wxEmptyString);
 	if (snprintf(cfg->name, sizeof(cfg->name), "%s", sText.utf8_str().data()) >= (int) sizeof(cfg->name)) {
 		rpclog("config_load: name too long - truncated\n");
@@ -656,7 +658,15 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 		cfg->network_type = NetworkType_Off;
 	}
 
+	/* A machine that has never had a MAC address is given one now, and it is
+	   written straight back so it stays that machine's address. */
 	settings.Read("macaddress", &sText, wxEmptyString);
+	if (sText.empty()) {
+		sText = wxString::FromUTF8(MacAddressInput::Generate().c_str());
+		macaddress_generated = true;
+		rpclog("Networking: this machine had no MAC address, so it has been "
+		       "given %s\n", sText.utf8_str().data());
+	}
 	config_replace_strdup(&cfg->macaddress, sText);
 
 	settings.Read("cpu_idle", &value, 0L);
@@ -847,6 +857,19 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	   can say. Nothing migrates a machine's keys into the app settings file any
 	   more - config_save() writes them back where they came from. */
 	app_settings_apply_overrides(cfg);
+
+	/* The one key, not config_save(): the overrides above are in cfg now, and
+	   saving the whole structure would record them as the user's own. The group
+	   is set again first - podule_config_load() above leaves the path in its
+	   own group, and the key would be written there instead. */
+	if (macaddress_generated && cfg->macaddress != NULL) {
+		ConfigFileUseGeneralGroup(settings);
+		settings.Write("macaddress", wxString(cfg->macaddress, wxConvUTF8));
+		if (!settings.Flush()) {
+			rpclog("Networking: could not record the new MAC address; this "
+			       "machine will be given a different one next time\n");
+		}
+	}
 
 	machine_config_loaded = true;
 }
