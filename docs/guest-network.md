@@ -1,89 +1,76 @@
-# Which network the guests are on
+# Which addresses the guests are on
 
-Every machine RPCEmu starts sits on a private `/24` behind its own NAT. The
+Every machine RPCEmu starts sits on a private network behind its own NAT. The
 machine is given an address on it by DHCP, the gateway and DNS live on it, and
 nothing on it is visible to the host's real network unless a port is forwarded.
 
-That network is `10.10.10.0/24` unless it is changed, on every installation and
-however long it has been in use.
+That network is the same everywhere, and there is nothing to configure.
 
 | | |
 | --- | --- |
-| Network | `10.<b>.<c>.0/24` |
-| Gateway (the host, as the guest sees it) | `.2` |
-| DNS | `.3` |
-| Machines | `.10` upwards, one per emulator running on this computer |
-| Broadcast | `.255` |
+| Network | `100.64.0.0/10` |
+| Gateway (the host, as the guest sees it) | `100.64.0.1` |
+| DNS | `100.64.0.2` |
+| A machine | Computed from its MAC address |
+| Broadcast | `100.127.255.255` |
 
-## Why it is settable
+## Why a machine's address comes from its MAC
 
-The last part follows a **slot**, claimed when a machine starts, so the first
-machine started is `.10`, the second `.11`, and so on. That is enough to tell
-apart machines started by **one** RPCEmu on one computer, which is all it ever
-had to do.
+The obvious way to number machines is in the order they start: first `.10`,
+second `.11`, and so on. That works while every machine on a network was started
+by one copy of RPCEmu on one computer.
 
-It is not enough once machines on different computers share a network — over a
-JSON tun/tap server, for instance (see
-[json-networking.md](json-networking.md)). Those machines were
-started by different RPCEmus, and each hands its first machine the same address.
-Two hosts arrive on one wire with distinct MAC addresses and the same IP, which
-cannot work, and nothing says why: there is no error, no warning and no clue in
-the log. Traffic simply does not arrive.
+It stops working the moment machines on different computers share a network —
+over a JSON server, for instance (see
+[json-networking.md](json-networking.md)). Each copy of RPCEmu counts from the
+beginning, so each gives its first machine the same address. Two machines then
+arrive on one wire with different MAC addresses and the same IP, which cannot
+work, and nothing says why: traffic simply does not arrive.
 
-So the network is a setting. **Which way to move it depends on what the two
-installations are doing**, and the two cases pull in opposite directions:
+Every machine already has a MAC address of its own, generated once and kept in
+its configuration. Deriving the IP address from it means:
 
-| | |
-| --- | --- |
-| They must **talk to each other** over a shared server | Keep them on the **same** network — machines can only reach each other on one subnet, and RPCEmu does not route between them |
-| They must **not collide**, and will never meet | Put them on **different** ones |
+- **Nothing to configure and nothing to agree.** Two installations that have
+  never met compute different addresses for their machines without being told
+  anything.
+- **The address is stable.** The same machine gets the same address on every
+  start, whatever else is running and in whatever order — which the slot scheme
+  could not promise.
+- **It is the same wherever it is worked out.** Any RPCEmu computing the address
+  of a machine from its MAC gets the answer that machine will use.
 
-Machines that share a network still have to avoid landing on the same address
-within it, which is the `.10` collision above. Until there is a way to say "start
-my machines at `.60`", that means starting them in a known order, or setting one
-installation's network apart and accepting that its machines cannot be reached
-from the other.
+## Why `100.64.0.0/10`
 
-## Changing it
+It has to be one network for every installation, so it has to be somewhere a
+host's real LAN is unlikely to be.
 
-**Settings → Networking**, in the Manager window:
+`10.0.0.0/8` is the obvious large private range and the wrong choice. Home and
+office LANs live there, and SLiRP treats any address inside its own network as
+one of its own — so a guest could no longer reach a real `10.x` machine on the
+host's LAN.
 
-```
-Guest network:  10 . [ 10 ] . [ 10 ] . 0 / 24    [ Random ]
-```
+`100.64.0.0/10` is the shared address space of RFC 6598, set aside for carrier
+NAT. It is vanishingly rare on the networks this runs on, and its 22 host bits
+are enough for the next part.
 
-Only the middle two parts are yours to set, each 0 to 255. The first is fixed at
-`10` because `10.0.0.0/8` is a private range in its own right, so nothing chosen
-here can collide with a real network the host is on; the mask stays `/24`.
+## It is a hash, not an encoding
 
-**Random** fills the two in for you, which is the quickest way to be reasonably
-sure of not matching somebody else's — for the case where two installations must
-not collide rather than meet.
+A MAC address has 46 usable bits and there are 22 to put them in, so two machines
+**can** compute the same address. It is unlikely — about one in a million for two
+machines, and around 0.1% for a hundred on one wire — but not impossible.
 
-The change takes effect when a machine next starts. A machine already running
-keeps the network it started on.
-
-## Where it is kept
-
-`rpcemu.cfg` in the data directory, as the middle two parts:
+So it is checked rather than assumed. A machine that sees an ARP from somebody
+else claiming its own address says so, once, in `rpclog.txt`:
 
 ```
-guest_subnet=10.10
+Networking: another machine on this network is using 100.100.51.77, this
+machine's address (it is aa:bb:cc:dd:ee:ff). Neither will work properly until
+one of them is given a different MAC address.
 ```
 
-It is a property of the **installation**, not of a machine: every machine here is
-on one network, so it cannot sensibly differ between them. Nothing reads a
-per-machine `guest_subnet`.
-
-## What every installation gets
-
-`10.10.10.0/24`, new or old alike, until somebody changes it. Nothing is written
-to `rpcemu.cfg` until then, and an absent `guest_subnet` means the default.
-
-Changing it is entirely the user's decision. RPCEmu never moves the guests of an
-installation on its own: port forwards and firewall rules pointing at
-`10.10.10.10` keep working, and two installations that need to share a network
-start out able to.
+The fix is to give one of the two machines a different MAC address, in **Machine
+Settings → Network**. Clearing that field and saving is enough: a machine with no
+MAC address is given a new one.
 
 ## What has to agree with it
 
@@ -95,4 +82,7 @@ must not be allowed to disagree:
   traffic is local to the guests and which is external, and relays accordingly.
 
 Both take them from `guest_subnet.h`, so there is one definition.
-`tests/test_guest_subnet.c` pins the arithmetic down.
+`tests/test_guest_subnet.c` pins the arithmetic down, including the exact address
+one MAC address produces — two installations have to agree on that, so changing
+how it is computed has to be a deliberate act rather than a tidy-up nobody
+noticed.
