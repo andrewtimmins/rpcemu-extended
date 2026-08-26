@@ -171,8 +171,11 @@ load_symbols(const char *nmfile)
 
 		if (sscanf(line, "%lx %c %63s", &value, &type, name) == 3) {
 			syms[nsyms].value = (uint32_t) value;
-			strncpy(syms[nsyms].name, name, sizeof(syms[nsyms].name) - 1);
-			syms[nsyms].name[sizeof(syms[nsyms].name) - 1] = '\0';
+			/* snprintf, not strncpy: the two buffers are the same width,
+			   so GCC rightly points out that strncpy of size-1 bytes has
+			   nowhere to put the terminator. This truncates and terminates
+			   in one go. */
+			snprintf(syms[nsyms].name, sizeof(syms[nsyms].name), "%s", name);
 			nsyms++;
 		}
 	}
@@ -887,7 +890,13 @@ main(int argc, char **argv)
 	}
 
 	snprintf(cmd, sizeof(cmd), "rm -rf '%s'", tmp);
-	(void) system(cmd);
+	if (system(cmd) != 0) {
+		/* Not worth failing the test over: the temporary directory is under
+		   /tmp and the checks above have already run. Said rather than
+		   ignored, because system() is declared warn_unused_result and a
+		   (void) cast does not satisfy that on GCC. */
+		printf("note: could not remove the temporary directory '%s'\n", tmp);
+	}
 	free(image);
 	free(modimage);
 
