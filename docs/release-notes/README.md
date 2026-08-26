@@ -29,6 +29,11 @@ Look at `v1.1.12.md`, which is the shape to copy.
   confirming on real hardware", "still open" - these are the lines that keep
   people trusting the rest of the notes. Never imply something has been proven
   on a platform where it has not been run.
+- **Say which build an asset is** where the platforms differ. There are two
+  Windows downloads, and the arm64 one is the interpreter while amd64 and every
+  other platform ship the recompiler - a difference of several times the speed.
+  Somebody choosing between two files with the same version number in the name
+  has no way to know that unless the notes say it.
 - **Credit contributors by name** and link their pull requests.
 - **Close with a compare link** to the previous release, so the full commit list
   is one click away:
