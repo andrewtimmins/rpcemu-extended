@@ -64,6 +64,15 @@ uint8_t flaglookup[16][16];
 uint32_t *usrregs[16];
 int prog32;
 
+/**
+ * 1 when the CPU is in 32-bit program mode, 0 in 26-bit.
+ *
+ * Recompiled blocks are only reused when they were compiled for the current
+ * word size; see codeblockword[] in the backend header. Maintained by
+ * updatemode(), which is the only thing that changes arm.r15_mask.
+ */
+int jit_word32;
+
 static int unpredictable_count = 1000; ///< Limit logging of unpredictable instructions
 
 #define NFSET	((arm.reg[cpsr] & NFLAG) ? 1u : 0)
@@ -92,7 +101,6 @@ arm_is_dynarec(void)
 void updatemode(uint32_t m)
 {
         uint32_t c, om = arm.mode;
-        const uint32_t old_r15_mask = arm.r15_mask;
 
         usrregs[15] = &arm.reg[15];
         switch (arm.mode & 0xf) { /* Store back registers */
@@ -209,7 +217,11 @@ void updatemode(uint32_t m)
         }
 
 	/*
-	 * ★ A 26/32-bit switch invalidates every recompiled block.
+	 * ★ A 26/32-bit switch changes which recompiled blocks may be used.
+	 *
+	 * Each block records the word size it was compiled for and is only reused
+	 * when that matches, so both sets survive the change. What follows is why
+	 * they have to be told apart at all.
 	 *
 	 * The code generators bake arm.r15_mask into generated code as an immediate,
 	 * and in places use it at generation time to decide whether to mask R15 at
@@ -223,13 +235,22 @@ void updatemode(uint32_t m)
 	 * recompiler - the interpreter reads arm.r15_mask afresh every time - and it
 	 * went away with the debugger active, because that forces interpretation.
 	 *
-	 * A full flush is the right hammer: the mask only changes when the CPU
-	 * changes word size, which is rare, and every block in the cache is suspect
-	 * when it does. The interpreter does not need this and does not do it.
+	 * Throwing the whole cache away was the first answer and it was ruinous.
+	 * "The mask only changes when the CPU changes word size, which is rare" is
+	 * true of RISC OS 5 and false of everything older: RISC OS 3.7 and 4.x set
+	 * PROG32 in the CP15 control register (measured, 3.71 settles on &127D)
+	 * while running in 26-bit modes, so exception() takes its prog32 branch
+	 * into SVC32 and the return comes back to SVC26. That is twice per SWI -
+	 * some 63,000 round trips a second measured on RISC OS 3.71 - so the cache
+	 * was emptied around 126,000 times a second, and the recompiler compiled
+	 * 3.7 million blocks a second only to discard them. Recording the word size
+	 * per block instead took that to 10,000 a second and raised cache hits from
+	 * 0.23M/s to 0.97M/s. That is issue #181.
+	 *
+	 * The interpreter needs none of this: it reads arm.r15_mask afresh every
+	 * time.
 	 */
-	if (arm.r15_mask != old_r15_mask) {
-		initcodeblocks();
-	}
+	jit_word32 = (arm.r15_mask == 0xfffffffc) ? 1 : 0;
 
 	/* Update memory access mode based on privilege level of ARM mode. Goes
 	   through mem_set_privilege() so the fast maps follow the privilege level;
@@ -926,7 +947,8 @@ arm_exec(void)
 				pagedirty[PC>>9]=0;
 				cacheclearpage(PC>>9);
 			}
-			else */ if (!debugger_hook_active && codeblockpc[hash] == PC) {
+			else */ if (!debugger_hook_active && codeblockpc[hash] == PC &&
+			           codeblockword[hash] == (uint8_t) jit_word32) {
 				const uint32_t templ = codeblocknum[hash];
 				void (*gen_func)(void);
 

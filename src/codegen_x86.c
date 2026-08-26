@@ -47,6 +47,7 @@ static const void *codeblockaddr[BLOCKS];
 
 uint32_t codeblockpc[0x8000];
 int codeblocknum[0x8000];
+uint8_t codeblockword[0x8000];
 static uint8_t codeblockpresent[0x10000];
 
 //#define BLOCKS 4096
@@ -147,7 +148,7 @@ jit_chain_next(uint32_t r15_cached)
 	if (linecyc < 0 || (arm.event & 0xff) != 0) {
 		return NULL;
 	}
-	if (codeblockpc[hash] != pc) {
+	if (codeblockpc[hash] != pc || codeblockword[hash] != (uint8_t) jit_word32) {
 		return NULL;
 	}
 
@@ -240,6 +241,7 @@ initcodeblock(uint32_t l)
 //        if (codeblockcount[blocknum]==3) codeblockcount[blocknum]=0;
 	codeblockpos = 0;
 	codeblockpc[blocknum] = l;
+	codeblockword[blocknum] = (uint8_t) jit_word32;
 	codeblocknum[blocknum] = blockpoint;
 	blocks[blockpoint] = blocknum;
 	blockpoint2 = blockpoint;
