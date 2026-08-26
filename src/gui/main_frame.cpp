@@ -2433,14 +2433,36 @@ void MainFrame::OnDisplayChanged(wxDisplayChangedEvent &event)
 	event.Skip();
 }
 
+/*
+ * A key held when a menu is pulled down has to be released, because the menu's
+ * own tracking loop swallows the key-up and the guest would be left holding the
+ * key for ever. Where that release belongs is not the same on every platform.
+ *
+ * wxOSX raises wxEVT_MENU_OPEN from NSMenu's menuNeedsUpdate:, which AppKit
+ * calls whenever it validates the menu bar and not only when a menu is opened.
+ * Those passes are frequent, and one of them lands between a modifier going
+ * down and the key it modifies arriving: the guest was told the modifier had
+ * come back up, so the first shifted keystroke of a session came out unshifted
+ * and stayed that way until the modifier was pressed again. That is issue #183,
+ * and it was the same reason the menu_open_ flag used to stick.
+ *
+ * menuDidClose:, which raises wxEVT_MENU_CLOSE, is sent only for a menu that
+ * really opened. By then the swallowed key-ups have already been missed, so
+ * macOS does the release there instead and the validation passes are ignored.
+ */
 void MainFrame::OnMenuOpen(wxMenuEvent &)
 {
+#ifndef __WXOSX__
 	ReleaseHeldKeys();
+#endif
 	menu_open_ = true;
 }
 
 void MainFrame::OnMenuClose(wxMenuEvent &)
 {
+#ifdef __WXOSX__
+	ReleaseHeldKeys();
+#endif
 	menu_open_ = false;
 	if (panel_ != nullptr) {
 		panel_->FocusPanel();
