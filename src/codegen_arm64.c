@@ -99,6 +99,7 @@ uint8_t rcodeblock[BLOCKS][1792] __attribute__ ((aligned (4096)));
 
 uint32_t codeblockpc[0x8000];
 int codeblocknum[0x8000];
+uint8_t codeblockword[0x8000];
 static const void *codeblockaddr[BLOCKS];	/* base pointer of each block, for linking */
 static uint8_t codeblockpresent[0x10000];
 
@@ -387,7 +388,7 @@ jit_chain_next(uint32_t r15_cached)
 	if (linecyc < 0 || (arm.event & 0xff) != 0) {
 		return NULL;
 	}
-	if (codeblockpc[hash] != pc) {
+	if (codeblockpc[hash] != pc || codeblockword[hash] != (uint8_t) jit_word32) {
 		return NULL;
 	}
 
@@ -486,6 +487,7 @@ initcodeblock(uint32_t l)
 	blocknum = HASH(l);
 	codeblockpos = 0;
 	codeblockpc[blocknum] = l;
+	codeblockword[blocknum] = (uint8_t) jit_word32;
 	codeblocknum[blocknum] = blockpoint;
 	blocks[blockpoint] = blocknum;
 	blockpoint2 = blockpoint;
