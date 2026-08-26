@@ -877,22 +877,31 @@ jobs:
           archive: false
           if-no-files-found: ignore
 
+      # The zip as well as the staged directory, so this build is published
+      # alongside amd64 rather than only being an artifact of the run. The
+      # release job attaches upload/**/*.zip, and the two archives carry their
+      # architecture in the name - rpcemu_<version>_windows_amd64.zip and
+      # ..._arm64.zip - so both appear and neither is mistakable for the other.
+      #
+      # It was artifact-only until now on the grounds that nobody had run it in
+      # anger. What changed is the boot test above: the runner shows RISC OS
+      # booting and drawing on this platform, not merely the binary starting.
+      # What is still unproven is a person using it - sound, USB, a real window
+      # on a real ARM laptop - and that belongs in the release notes rather than
+      # in whether the file is offered at all.
+      #
+      # NOTE FOR THE RELEASE NOTES: this build is the INTERPRETER, deliberately
+      # (see the comment at the top of this job). Every other platform ships the
+      # recompiler. Somebody choosing between two Windows downloads has to be
+      # told which is which - see docs/release-notes/README.md.
       - name: Upload arm64 build
         uses: actions/upload-artifact@v7
         with:
           name: rpcemu-windows-arm64
-          path: releases/windows/arm64/
+          path: |
+            releases/windows/arm64/
+            releases/windows/*.zip
           if-no-files-found: error
-
-      # An artifact rather than a release asset, still - but for a smaller reason
-      # than before. The boot test above means the runner now shows that RISC OS
-      # boots and draws on this platform, not merely that the binary starts, so
-      # what is left unproven is a person actually using it: sound, USB, a real
-      # window on a real ARM laptop. This job uploads only the staged directory
-      # while the amd64 job uploads its zip as well, so the release's *.zip glob
-      # finds no arm64 asset. Publishing one is a matter of adding
-      # releases/windows/*.zip to the path below, once somebody has run it in
-      # anger.
 
   windows:
     needs: [windows-amd64, windows-arm64]
