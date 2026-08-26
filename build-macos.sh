@@ -795,6 +795,70 @@ if [ "$DO_FUSE" = true ]; then
 		echo "==> Bundled $bundled libraries into Contents/Frameworks"
 	fi
 
+	# Two names for one library must not become two copies of it.
+	#
+	# Homebrew ships one real dylib plus version symlinks pointing at it, and the
+	# dependency walk keys each entry on the basename of whichever name the
+	# object it came from happened to reference. Two names therefore produce two
+	# FULL COPIES here, and dyld loads both, because they are two distinct paths.
+	# wxWidgets then exists twice in one process, every Objective-C class inside
+	# it is registered twice, and the runtime says so on stderr:
+	#
+	#   objc[...]: Class wxImageTextCell is implemented in both
+	#   .../libwx_osx_cocoau_core-3.3.3.0.0.dylib and
+	#   .../libwx_osx_cocoau_core-3.3.dylib. One of the duplicates must be
+	#   removed or renamed.
+	#
+	# On main that was the cause of a machine started from the Manager showing a
+	# permanently black screen in the shipped .app while the same code was fine
+	# from the build tree. It was fixed there on 22 August 2026 and 1.1.16 went
+	# out without it, which is how a user came to report the warnings from a
+	# release build (issue #183).
+	#
+	# The test is the CANONICAL UPSTREAM PATH the copy came from, recorded per
+	# basename in each slice's deps.map. Comparing the staged files byte for byte
+	# does not work: each copy has already had its own LC_ID_DYLIB written into
+	# it, so two copies of one library differ in exactly those bytes.
+	#
+	# NOTE: $STAGES is a space-separated STRING on this branch, not an array as
+	# it is on main, so this iterates it unquoted. Taking main's "\${STAGES[@]}"
+	# verbatim would expand to one word here, find no deps.map, and silently
+	# collapse nothing while still reporting success.
+	if [ -d "$FRAMEWORKSD" ]; then
+		dedup_map=$(mktemp)
+		collapsed=0
+		for lib in "$FRAMEWORKSD"/*.dylib; do
+			[ -f "$lib" ] || continue	# skips existing symlinks too
+			[ -L "$lib" ] && continue
+
+			base=${lib##*/}
+			src=""
+			for s in $STAGES; do
+				[ -f "$s/deps.map" ] || continue
+				src=$(awk -F'	' -v b="$base" '$1 == b { print $2; exit }' "$s/deps.map")
+				[ -n "$src" ] && break
+			done
+			# No map entry means nothing to compare it against - leave it alone
+			# rather than guess.
+			[ -n "$src" ] || continue
+			src=$(canon_path "$src")
+
+			keep=$(awk -F'	' -v pp="$src" '$1 == pp { print $2; exit }' "$dedup_map")
+			if [ -z "$keep" ]; then
+				# First name seen for this upstream file: it is the survivor.
+				printf '%s	%s
+' "$src" "$base" >> "$dedup_map"
+			elif [ "$keep" != "$base" ]; then
+				echo "   collapsed $base -> $keep (one library under two names)"
+				rm -f "$lib"
+				( cd "$FRAMEWORKSD" && ln -sf "$keep" "$base" )
+				collapsed=$((collapsed + 1))
+			fi
+		done
+		rm -f "$dedup_map"
+		[ "$collapsed" -gt 0 ] && 			echo "==> Collapsed $collapsed duplicate librar$([ "$collapsed" = 1 ] && echo y || echo ies) into symlinks"
+	fi
+
 	write_info_plist "$CONTENTS/Info.plist"
 
 	# App icon: build rpcemu.icns from resources/rpcemu.png. Needs macOS sips +
