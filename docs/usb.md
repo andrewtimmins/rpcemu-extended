@@ -421,13 +421,42 @@ chains, directory walking, path lookup, long file names, wildcards, `*Cat`,
 
 **FAT32** is what every stick worth the name is formatted as, and it is the case
 tested against real hardware. **FAT16** is written and reads through the same
-code, but has not been tried on a real FAT16 volume. **FAT12 is refused** with
-"MultiFS does not read FAT12 volumes": its entries are twelve bits and straddle
-byte boundaries, and every place here that touches the FAT handles thirty-two
-bits or assumes sixteen. It used to be recognised and then read as though it were
-FAT16, which mounted the disc and produced cluster chains made of nonsense -
-declining is the honest answer. **exFAT** is not supported at all, and is what
-larger cards are often formatted as out of the box.
+code, but has not been tried on a real FAT16 volume. **exFAT** is read and
+written too, and is what larger cards are often formatted as out of the box; it
+has a section of its own below. **NTFS** is read and never written.
+
+**FAT12** is read and written as well. It was refused outright until 26 August
+2026, and the reason is worth keeping: a FAT16 entry is two bytes and a FAT32
+entry is four, so both divide into a 512-byte sector and reading one is an
+aligned load of a known width. A FAT12 entry is a byte and a half. It shares one
+of its two bytes with the entry beside it, which half it owns depends on whether
+its cluster number is odd, and because 512 is not a multiple of three halves one
+entry in every 341 has its two bytes in *different sectors*. On a 1.44MB floppy
+that happens six times over, so it is an ordinary case rather than an edge one.
+
+Every FAT12 access therefore goes a byte at a time, through the same cached
+sector the rest of the FAT code uses, and the straddle stops being a case at all:
+each byte comes from whichever sector holds it and nothing has to know the two
+were neighbours. Writing reads the shared byte before changing it and puts back
+only the four bits that belong to the entry, because writing the whole byte would
+take the neighbouring entry's four bits with it - which is not a wrong answer but
+a damaged volume.
+
+None of that is checkable by reading the source, so `tests/test_multifs_fat12.c`
+loads the assembled module into the emulator's RAM and *runs* it: every entry on
+a 2,829-cluster volume read back through `fat12_get`, all six straddling entries
+named individually, and every write checked for having left both neighbours and
+every other byte of the volume alone. It was also run against a 1.44MB volume
+formatted by `newfs_msdos` and written by macOS's own msdos driver, where each
+file's chain, followed with MultiFS's `fat_next`, came out exactly as long as the
+size in its directory entry demands.
+
+What has *not* happened is a FAT12 stick in a running guest: the medium reaches
+MultiFS through SCSIFS and the emulated OHCI card, which passes through to real
+hardware, and no FAT12-formatted USB device has been put in front of it. FAT12 is
+a floppy-era format, so a stick carrying one is unusual to begin with. The
+arithmetic is verified by execution; the trip through the USB stack is the same
+one FAT16 and FAT32 already take.
 
 **Long names** are read from the VFAT entries that precede each 8.3 entry, so a
 file the host calls `Quarterly Report.txt` appears as `Quarterly Report/txt`
@@ -607,12 +636,21 @@ Not done:
   no type of its own reads back as Data rather than having `.txt` turned into
   Text. Consulting MimeMap would do it; a table that guesses wrongly is worse
   than one honest answer, so it is left until MimeMap is asked properly.
-- **exFAT**, which is what large cards are often formatted as out of the box.
-
 Free space comes from the FAT32 FSInfo sector when that sector's signatures are
 intact and its count is plausible, and from counting the FAT when it is not.
 Counting is exact and costs one read per FAT sector, which on a 14.5GB stick is
-some fifteen thousand of them, so the fast path is worth having.
+some fifteen thousand of them, so the fast path is worth having. FAT12 is counted
+an entry at a time rather than a sector at a time, for the straddling reason
+above; a FAT12 volume holds at most 4,084 clusters, so the whole count is about a
+dozen reads.
+
+Counting the FAT gave an error rather than a number until 26 August 2026: the
+routine fell off the end of the FAT case straight into the NTFS one, which
+replaced the count with the volume record and went looking for an MFT that a FAT
+volume has not got. FAT32 hid it, because a volume with an intact FSInfo sector
+never reaches the count. FAT16 has no FSInfo sector, so it never got a free space
+figure at all - which is also why this went unnoticed, no FAT16 volume having
+been tried.
 
 `*MultiFSDiscs`, `*MultiFSFree`, `*MultiFSDir`, `*MultiFSFind` and `*MultiFSProbe`
 report what the module can see, which is the first thing to reach for when a

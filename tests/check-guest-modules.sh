@@ -87,12 +87,18 @@ MODULES=(
 	"riscos-progs/RPCEmuPCIEmulator:rpcemupciemulator,ffa:poduleroms"
 	"riscos-progs/RPCEmuGfx:RPCEmuGfx,ffa:gfxroms"
 	"riscos-progs/EtherRPCEm:EtherRPCEm,ffa:netroms"
+	"riscos-progs/MultiFS:70-multifs,ffa 80-multifsfiler,ffa:usbroms"
 )
 
 # ScrollWheel is deliberately absent: its makefile wants clang, which is not part
 # of this toolchain, so build.sh does not build it either and its binary is
 # committed as it stands. Saying so here is the point - an unexplained gap in a
 # list like this reads as an oversight.
+
+# MultiFS was missing from this list until FAT12 was added to it, which is
+# exactly the failure the script was written to catch: a module whose committed
+# image nothing compared against its source. It goes in usbroms/ rather than
+# poduleroms/ because it is carried in the USB card's own ROM.
 
 failures=0
 checked=0

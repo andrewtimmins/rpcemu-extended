@@ -829,6 +829,32 @@ add_executable(test_gfxrom test_gfxrom.c)
 target_include_directories(test_gfxrom PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 rpcemu_add_test(test_gfxrom "${RPCEMU_GFXROM}")
 
+# MultiFS's FAT12 entries, executed rather than read.
+#
+# A FAT12 entry is a byte and a half, so it shares a byte with the entry beside
+# it and one in every 341 has its two halves in different sectors. That is
+# arithmetic no compiler checks and no assembler warns about, and on the write
+# side a mistake does not give a wrong answer - it destroys a neighbouring
+# file's chain. So the test assembles the module and runs fat12_get, fat12_put,
+# fat_next and fat_raw under the emulator's own interpreter against a FAT12
+# image, with only the two sector routines stubbed.
+#
+# Registered only where the ARM binutils are, which is the condition
+# tests/check-guest-modules.sh already runs under: without an assembler there is
+# nothing to execute. RPCEMU_EXPECTED_TESTS accounts for it separately below, so
+# a machine with no ARM tools is not a test count mismatch.
+find_program(RPCEMU_ARM_AS NAMES arm-linux-gnueabi-as arm-none-eabi-as)
+if(RPCEMU_ARM_AS)
+    set(RPCEMU_ARM_TESTS TRUE)
+    add_executable(test_multifs_fat12 test_multifs_fat12.c test_stubs.c)
+    target_link_libraries(test_multifs_fat12 PRIVATE rpcemu_core m)
+    rpcemu_add_test(test_multifs_fat12
+                    "${CMAKE_CURRENT_SOURCE_DIR}/../riscos-progs/MultiFS")
+    message(STATUS "RPCEmu: MultiFS FAT12 test enabled (${RPCEMU_ARM_AS})")
+else()
+    message(STATUS "RPCEmu: no ARM assembler, skipping the MultiFS FAT12 test")
+endif()
+
 # The OHCI controller's isochronous transfer descriptors: the one place the
 # emulator writes a length back that a driver reads, so a mistake there is a
 # stream that appears to work and produces rubbish rather than a failure anybody
@@ -1021,6 +1047,9 @@ if(RPCEMU_JIT_TESTS)
 endif()
 if(RPCEMU_PYTHON_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 1")	# abort watcher
+endif()
+if(RPCEMU_ARM_TESTS)
+    math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 1")	# MultiFS FAT12
 endif()
 
 list(LENGTH RPCEMU_REGISTERED_TESTS RPCEMU_ACTUAL_TESTS)

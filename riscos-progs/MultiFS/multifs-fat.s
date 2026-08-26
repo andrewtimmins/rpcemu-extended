@@ -19,6 +19,214 @@
 @ file type convention borrowed from the creation timestamp, and the FSInfo
 @ sector. exFAT shares the cluster layer below this and none of this.
 
+@ ---------------------------------------------------------------------------
+@ FAT12 entries
+@ ---------------------------------------------------------------------------
+
+@ FAT12 is the odd one out and this is the whole of why. A FAT16 entry is two
+@ bytes and a FAT32 entry is four, so both divide into a 512-byte sector and
+@ every access is one aligned read of a known width. A FAT12 entry is a byte and
+@ a HALF: it shares one of its two bytes with the entry next to it, and which
+@ half it owns depends on whether its cluster number is odd. Worse, 512 is not a
+@ multiple of three halves, so one entry in every 341 has its two bytes in
+@ different sectors - cluster 341, 682, 1365 and so on. On a 1.44MB floppy, with
+@ around 2,850 clusters, that happens eight times over, so it is an ordinary
+@ case and not an edge one.
+@
+@ Rather than thread that through the shared cluster layer, every FAT12 access
+@ here goes a byte at a time. The straddle then stops being a case at all: each
+@ byte is fetched from whichever sector holds it, and nothing has to know that
+@ two of them were neighbours. The cost is one sector read per 341 clusters,
+@ because the WS_FATSEC cache that fat_next keeps is the same cache used here.
+
+	/* One byte of the first FAT, through the cached sector.
+	 *
+	 * Entry: R0 = volume record, R1 = byte offset into the FAT.
+	 * Exit:  R0 = the byte, V set on failure.
+	 */
+fat12_byte:
+	stmfd	sp!, {r1-r5, lr}
+
+	mov	r5, r0			@ volume record
+	mov	r4, r1			@ byte offset into the FAT
+
+	ldr	r0, [r5, #VOL_FATSEC0]
+	add	r0, r0, r4, lsr #9	@ the sector holding it
+
+	ldr	r1, [wp, #WS_FATSEC_LBA]
+	cmp	r1, r0
+	beq	fat12_byte_have
+
+	stmfd	sp!, {r0}
+	mov	r1, r0
+	ldr	r0, [r5, #VOL_DRIVE]
+	add	r2, wp, #WS_FATSEC
+	bl	read_sector
+	ldmfd	sp!, {r0}
+	bvs	fat12_byte_out
+	str	r0, [wp, #WS_FATSEC_LBA]
+
+fat12_byte_have:
+	@ The low nine bits are the offset within the sector. 511 will not fit in
+	@ an instruction as an immediate, and a shift pair says the same thing
+	@ without spending a literal pool entry on it.
+	mov	r0, r4, lsl #23
+	mov	r0, r0, lsr #23
+	add	r1, wp, #WS_FATSEC
+	ldrb	r0, [r1, r0]
+	cmp	pc, #0
+
+fat12_byte_out:
+	ldmfd	sp!, {r1-r5, pc}
+
+
+	/* One FAT12 entry.
+	 *
+	 * Entry: R0 = volume record, R1 = cluster.
+	 * Exit:  R0 = the twelve-bit entry, V set on failure.
+	 *
+	 * The entry for cluster N begins at byte N + N/2, which is N * 1.5 done
+	 * without a divide. The two bytes there hold this entry and half of a
+	 * neighbour: an even cluster owns the bottom twelve bits of the pair, an
+	 * odd one the top twelve.
+	 */
+fat12_get:
+	stmfd	sp!, {r1-r5, lr}
+
+	mov	r5, r0			@ volume record
+	mov	r4, r1			@ cluster
+	add	r3, r4, r4, lsr #1	@ byte offset of the entry
+
+	mov	r0, r5
+	mov	r1, r3
+	bl	fat12_byte
+	bvs	fat12_get_out
+	mov	r2, r0			@ the first of the pair
+
+	mov	r0, r5
+	add	r1, r3, #1
+	bl	fat12_byte
+	bvs	fat12_get_out
+	orr	r0, r2, r0, lsl #8	@ the pair, little end first
+
+	tst	r4, #1
+	movne	r0, r0, lsr #4		@ odd: the top twelve bits
+	biceq	r0, r0, #0xf000		@ even: the bottom twelve
+	cmp	pc, #0
+
+fat12_get_out:
+	ldmfd	sp!, {r1-r5, pc}
+
+
+	/* Change some bits of one byte of one copy of the FAT.
+	 *
+	 * Entry: R0 = volume record, R1 = byte offset into this copy of the FAT,
+	 *        R2 = the bits to write, R3 = which bits are being written,
+	 *        R4 = the first sector of this copy of the FAT.
+	 * Exit:  V set on failure.
+	 *
+	 * Read, change, put back. The mask is what makes this safe: the other
+	 * twelve-bit entry sharing this byte has to come through untouched, and
+	 * writing the whole byte would take four of its bits with it.
+	 */
+fat12_poke:
+	stmfd	sp!, {r0-r8, lr}
+
+	mov	r5, r0			@ volume record
+	mov	r7, r2			@ the bits to write
+	mov	r8, r3			@ which bits they are
+
+	@ Which sector of this copy holds the byte, and where in that sector.
+	mov	r6, r1, lsl #23
+	mov	r6, r6, lsr #23
+	add	r4, r4, r1, lsr #9	@ absolute LBA
+
+	mov	r1, r4
+	ldr	r0, [r5, #VOL_DRIVE]
+	add	r2, wp, #WS_SECTOR
+	bl	read_sector
+	bvs	fat12_poke_out
+
+	add	r0, wp, #WS_SECTOR
+	ldrb	r1, [r0, r6]
+	bic	r1, r1, r8		@ out with the bits being replaced
+	and	r2, r7, r8		@ in with the new ones, and only those
+	orr	r1, r1, r2
+	strb	r1, [r0, r6]
+
+	mov	r1, r4
+	ldr	r0, [r5, #VOL_DRIVE]
+	add	r2, wp, #WS_SECTOR
+	bl	write_sector
+
+fat12_poke_out:
+	ldmfd	sp!, {r0-r8, pc}
+
+
+	/* Write one FAT12 entry, to every copy of the FAT.
+	 *
+	 * Entry: R0 = volume record, R1 = cluster, R2 = value.
+	 * Exit:  V set on failure.
+	 *
+	 * Every copy, for the reason fat_set gives: another operating system is
+	 * entitled to read whichever one it likes. The two bytes are done
+	 * separately because they may be in different sectors, which costs a
+	 * second read and write of a sector that is usually the same one. A
+	 * FAT12 volume is at most a few megabytes and its FAT is a handful of
+	 * sectors, so that is paid gladly for not having a straddling case to
+	 * get wrong.
+	 */
+fat12_put:
+	stmfd	sp!, {r0-r10, lr}
+
+	mov	r7, r0			@ volume record
+	mov	r8, r1			@ cluster
+	mov	r9, r2			@ value
+	add	r10, r8, r8, lsr #1	@ byte offset of the entry
+
+	ldr	r6, [r7, #VOL_NFATS]
+	mov	r5, #0			@ which copy
+
+fat12_put_copy:
+	ldr	r0, [r7, #VOL_FATSEC0]
+	ldr	r1, [r7, #VOL_FATSZ]
+	mla	r4, r5, r1, r0		@ this copy starts a whole FAT further on
+
+	@ The first byte of the pair. An even cluster owns all eight bits of it;
+	@ an odd one owns only the top nibble, the bottom nibble being the top of
+	@ the entry before.
+	mov	r0, r7
+	mov	r1, r10
+	tst	r8, #1
+	moveq	r2, r9
+	moveq	r3, #0xff
+	movne	r2, r9, lsl #4
+	movne	r3, #0xf0
+	bl	fat12_poke
+	bvs	fat12_put_out
+
+	@ The second byte, which may be in the next sector. The other way round:
+	@ an even cluster owns the bottom nibble, an odd one the whole byte.
+	mov	r0, r7
+	add	r1, r10, #1
+	tst	r8, #1
+	moveq	r2, r9, lsr #8
+	moveq	r3, #0x0f
+	movne	r2, r9, lsr #4
+	movne	r3, #0xff
+	bl	fat12_poke
+	bvs	fat12_put_out
+
+	add	r5, r5, #1
+	cmp	r5, r6
+	blo	fat12_put_copy
+
+	cmp	pc, #0
+
+fat12_put_out:
+	ldmfd	sp!, {r0-r10, pc}
+
+
 	/* Print the 8.3 name of a directory entry.
 	 *
 	 * RISC OS uses '.' to separate directories, so a FAT name's dot cannot

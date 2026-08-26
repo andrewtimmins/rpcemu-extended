@@ -1221,7 +1221,10 @@ format_name:
 	moveq	pc, lr
 	cmp	r0, #32
 	adreq	r0, info_fat32
-	adrne	r0, info_fat16
+	moveq	pc, lr
+	cmp	r0, #16
+	adreq	r0, info_fat16
+	adrne	r0, info_fat12
 	mov	pc, lr
 
 info_ntfs:
@@ -1232,6 +1235,9 @@ info_exfat:
 	.align
 info_fat32:
 	.string	"FAT32"
+	.align
+info_fat12:
+	.string	"FAT12"
 	.align
 info_fat16:
 	.string	"FAT16"
@@ -2385,15 +2391,6 @@ add_volume_have_totsec:
 	blo	add_volume_type_known
 	mov	r0, #32
 add_volume_type_known:
-	@ FAT12 is recognised here and read nowhere: its entries are twelve bits
-	@ and straddle byte boundaries, and every place below that touches the FAT
-	@ handles thirty-two bits or assumes sixteen. Refusing the volume is the
-	@ only honest answer, because accepting it would mount the disc and then
-	@ hand back cluster chains built out of nonsense - and a filing system that
-	@ reads the wrong bytes confidently is worse than one that declines.
-	cmp	r0, #12
-	beq	add_volume_fat12
-
 	str	r0, [lr, #VOL_TYPE]
 
 	mov	r0, #0			@ no FSInfo sector unless FAT32 says otherwise
@@ -2445,10 +2442,6 @@ add_volume_bad:
 	adr	r0, err_not_fat
 	b	add_volume_setv
 
-add_volume_fat12:
-	adr	r0, err_fat12
-	b	add_volume_setv
-
 add_volume_full:
 	adr	r0, err_too_many
 
@@ -2462,11 +2455,6 @@ add_volume_out:
 err_not_fat:
 	.int	0
 	.string	"Not a FAT volume"
-	.align
-
-err_fat12:
-	.int	0
-	.string	"MultiFS does not read FAT12 volumes"
 	.align
 
 err_too_many:
@@ -2609,6 +2597,11 @@ fat_next:
 	mov	r7, r0			@ volume record
 	ldr	r2, [r7, #VOL_TYPE]
 
+	@ FAT12 entries are a byte and a half and do not divide into a sector, so
+	@ none of the arithmetic below fits them. See fat12_get.
+	cmp	r2, #12
+	beq	fat_next_12
+
 	cmp	r2, #16
 	movhi	r3, r1, lsl #2		@ FAT32 and exFAT: four bytes an entry
 	movls	r3, r1, lsl #1		@ FAT16: two
@@ -2659,6 +2652,19 @@ fat_next_32:
 	movhs	r0, #0			@ end of chain
 	b	fat_next_ok
 
+	@ Placed here, between one block that ends in a branch and another that
+	@ begins with a label, because fat_next_exfat below FALLS THROUGH into
+	@ fat_next_ok. Anything put between those two silently becomes part of
+	@ the exFAT path.
+fat_next_12:
+	mov	r0, r7
+	bl	fat12_get
+	bvs	fat_next_out
+	ldr	r1, =0xff8
+	cmp	r0, r1
+	movhs	r0, #0			@ end of chain
+	b	fat_next_ok
+
 	@ exFAT uses all thirty-two bits - there is no "reserved top nibble" to
 	@ mask off - and its end marker is &FFFFFFFF exactly. Masking as FAT32
 	@ does turns that into &0FFFFFFF, which is a perfectly good cluster
@@ -2701,6 +2707,13 @@ fat_set:
 	mov	r9, r2			@ value
 
 	ldr	r0, [r7, #VOL_TYPE]
+
+	@ FAT12 has no whole number of bytes to shift by, and the byte it shares
+	@ with the entry next door has to be read before it is written. See
+	@ fat12_put.
+	cmp	r0, #12
+	beq	fat_set_12
+
 	cmp	r0, #16
 	movhi	r10, #2			@ log2 of the entry width: FAT32 and exFAT
 	movls	r10, #1
@@ -2737,6 +2750,17 @@ fat_set_copy:
 	mov	r2, r9, lsr #8
 	strb	r2, [r0, #1]
 	b	fat_set_put
+
+	@ Here rather than beside fat_set_out, because the copy loop above ends by
+	@ FALLING THROUGH into it: a block placed there would be entered after
+	@ every successful FAT16, FAT32 and exFAT write, and would then write the
+	@ entry again as twelve bits.
+fat_set_12:
+	mov	r0, r7
+	mov	r1, r8
+	mov	r2, r9
+	bl	fat12_put
+	b	fat_set_out
 
 fat_set_32:
 	@ On exFAT every one of the thirty-two bits is ours, and the end marker
@@ -2829,6 +2853,8 @@ fat_raw:
 
 	mov	r7, r0
 	ldr	r2, [r7, #VOL_TYPE]
+	cmp	r2, #12
+	beq	fat_raw_12
 	cmp	r2, #16
 	movhi	r3, r1, lsl #2		@ FAT32 and exFAT
 	movls	r3, r1, lsl #1
@@ -2863,6 +2889,15 @@ fat_raw_have:
 fat_raw_32:
 	bl	ld32
 	bic	r0, r0, #0xf0000000
+	b	fat_raw_ok
+
+	@ Straight out: this is the entry as it stands, and fat12_get has already
+	@ set V or cleared it.
+fat_raw_12:
+	mov	r0, r7
+	bl	fat12_get
+	b	fat_raw_out
+
 fat_raw_ok:
 	cmp	pc, #0
 fat_raw_out:
@@ -3092,6 +3127,9 @@ vfc_scan:
 	add	r8, r8, #2		@ one past the last entry that is a cluster
 
 	ldr	r9, [r7, #VOL_TYPE]
+	cmp	r9, #12
+	beq	vfc_scan_12
+
 	cmp	r9, #32
 	moveq	r9, #2			@ log2 of the entry width in bytes
 	movne	r9, #1
@@ -3114,9 +3152,10 @@ vfc_sector:
 	bl	read_sector
 	bvs	vfc_out
 
-	@ 512 divides by both entry widths, so no entry straddles two sectors and
-	@ the walk below can stop at the end of the buffer with nothing carried
-	@ over into the next one.
+	@ 512 divides by both of the entry widths that get here, so no entry
+	@ straddles two sectors and the walk below can stop at the end of the
+	@ buffer with nothing carried over into the next one. FAT12, where that is
+	@ not true, went to vfc_scan_12 above.
 	mov	r0, r6, lsl r9
 	ldr	r1, =511
 	and	r4, r0, r1		@ where in the sector this entry sits
@@ -3143,8 +3182,34 @@ vfc_entry_have:
 	blo	vfc_entry
 	b	vfc_sector
 
+	@ FAT12 entries straddle sectors, so the sector walk above cannot be used
+	@ and each entry is asked for on its own. That is one sector read per 341
+	@ clusters through fat_raw's cache, and a FAT12 volume holds at most 4,084
+	@ clusters, so counting the whole FAT is a dozen reads.
+vfc_scan_12:
+	mov	r10, #0			@ free clusters found so far
+	mov	r6, #2			@ the entry being looked at
+
+vfc_scan_12_entry:
+	cmp	r6, r8
+	bhs	vfc_counted
+	mov	r0, r7
+	mov	r1, r6
+	bl	fat_raw
+	bvs	vfc_out
+	cmp	r0, #0
+	addeq	r10, r10, #1
+	add	r6, r6, #1
+	b	vfc_scan_12_entry
+
+	@ The count is the answer. Without the branch this fell into the NTFS
+	@ case below, which overwrote it with the volume record and went looking
+	@ for an MFT that a FAT volume has not got - so every FAT16 volume, which
+	@ has no FSInfo sector to short-circuit the count, reported an error for
+	@ its free space rather than a number.
 vfc_counted:
 	mov	r0, r10
+	b	vfc_ok
 
 	/* NTFS keeps its own bitmap, in a file. */
 vfc_ntfs:
