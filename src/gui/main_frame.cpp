@@ -42,6 +42,7 @@
 #include <wx/richmsgdlg.h>
 #include <wx/dirdlg.h>
 #include <wx/stdpaths.h>
+#include <wx/weakref.h>
 
 #include "about_dialog.h"
 #include "config_selector_dialog.h"
@@ -2653,6 +2654,32 @@ bool MainFrame::ConfirmCloseOrSwitch()
  */
 void MainFrame::AskAboutClosing()
 {
+	/*
+	 * ★ The close may already have been settled while this sat in the queue.
+	 *
+	 * A close that cannot be vetoed - which is what macOS sends when the
+	 * application is asked to quit - is obeyed by OnClose() whatever the answer
+	 * here would have been, and it runs the whole teardown, Destroy() included.
+	 * Clearing close_question_pending_ there does NOT unqueue this call: it is
+	 * already a pending event, and only the flag was dropped.
+	 *
+	 * So this used to run afterwards, on a frame waiting to be deleted: it hid
+	 * the window and opened the machine selector, and ShowModal()'s nested event
+	 * loop runs idle processing, which is exactly where wxWidgets deletes
+	 * pending windows. The frame was freed with this function and
+	 * SwitchToChosenMachine() still on the stack underneath it, and the next
+	 * free aborted inside libmalloc - "RPCEmu quit unexpectedly" on every quit,
+	 * issue #184.
+	 *
+	 * Checked first, before anything is hidden or shown, because by this point
+	 * there is nothing left to decide.
+	 */
+	if (shutting_down_ || close_confirmed_) {
+		rpclog("MainFrame: close already settled, so nothing is asked\n");
+		close_question_pending_ = false;
+		return;
+	}
+
 	const bool running = emulator_ != nullptr && emulator_->IsRunning();
 
 	/* Cleared on every path out of here, so a later close can ask again. */
@@ -2677,6 +2704,11 @@ void MainFrame::AskAboutClosing()
 		if (answer != wxYES) {
 			return;
 		}
+
+		if (shutting_down_) {
+			rpclog("MainFrame: the close was forced while the question was up\n");
+			return;
+		}
 	}
 
 	/*
@@ -2691,7 +2723,21 @@ void MainFrame::AskAboutClosing()
 	 */
 	Hide();
 
-	if (SwitchToChosenMachine()) {
+	/*
+	 * The same hazard once more, one level in: a forced close arriving while the
+	 * selector is open tears the frame down inside its modal loop. Nothing below
+	 * may touch this frame if that has happened, so its liveness is checked
+	 * rather than assumed. wxWeakRef goes empty when the window is destroyed.
+	 */
+	wxWeakRef<MainFrame> self(this);
+	const bool switching = SwitchToChosenMachine();
+
+	if (!self) {
+		rpclog("MainFrame: the frame went while the machine list was open\n");
+		return;
+	}
+
+	if (switching) {
 		Show();
 		Raise();
 		return;
