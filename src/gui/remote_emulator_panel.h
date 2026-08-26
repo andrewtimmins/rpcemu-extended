@@ -172,6 +172,16 @@ public:
 		on_capture_changed_ = std::move(callback);
 	}
 
+	/*
+	 * The machine has asked for the window showing it to be brought to the front
+	 * (IpcEventType::ManagerActivate). Runs on the GUI thread.
+	 */
+	using ActivateRequestCallback = std::function<void()>;
+	void SetActivateRequestCallback(ActivateRequestCallback callback)
+	{
+		on_activate_request_ = std::move(callback);
+	}
+
 private:
 	void OnPaint(wxPaintEvent &event);
 	void OnSize(wxSizeEvent &event);
@@ -278,6 +288,7 @@ private:
 	ErrorCallback on_error_;
 	LeaveFullScreenCallback on_leave_full_screen_;
 	CaptureChangedCallback on_capture_changed_;
+	ActivateRequestCallback on_activate_request_;
 
 	/*
 	 * The mouse mode, and whether the pointer has been captured in it.

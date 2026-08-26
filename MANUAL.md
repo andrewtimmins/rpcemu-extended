@@ -706,6 +706,7 @@ Useful even if you normally use the window.
 | Option | Does |
 | --- | --- |
 | `--machine <name>` | Start straight into that machine |
+| `--manager` | Show the manager window even when a default machine is set |
 | `--list-machines` | List them and exit |
 | `--datadir <dir>` | Use a different data directory for this run |
 | `--fetch-riscos` | Download RISC OS and make a machine ready to run, then exit |

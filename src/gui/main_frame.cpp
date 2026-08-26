@@ -388,6 +388,19 @@ void MainFrame::EnableManagedMode()
 	}
 }
 
+bool MainFrame::AskManagerToActivate()
+{
+	if (!ipc_server_ || !ipc_server_->HasClient()) {
+		return false;
+	}
+
+	IpcEvent event;
+
+	event.type = IpcEventType::ManagerActivate;
+	ipc_server_->SendEvent(event);
+	return true;
+}
+
 void MainFrame::MirrorToSharedFramebuffer(const VideoUpdate &update)
 {
 	if (!shared_fb_ || update.buffer == nullptr || update.xsize <= 0 || update.ysize <= 0) {

@@ -352,6 +352,19 @@ enum class IpcEventType : uint32_t {
 	 * only when the shape changes, which is rarely.
 	 */
 	PointerShapeChanged,
+
+	/*
+	 * Ask the Manager showing this machine to bring itself to the front.
+	 *
+	 * macOS only in practice, and the reason is LaunchServices. A managed
+	 * machine runs the application's own bundle executable, so the system counts
+	 * it as an instance of RPCEmu Extended even though it never shows a window.
+	 * Opening the application again therefore activates that instance instead of
+	 * starting a new process, and nothing appears - see
+	 * RpcemuApp::MacReopenApp(), which sends this where a Manager is already
+	 * attached and starts one where none is.
+	 */
+	ManagerActivate,
 };
 
 struct IpcEvent {
@@ -412,13 +425,22 @@ public:
 	   itself is unaffected. */
 	void SendEvent(const IpcEvent &event);
 
+	/*
+	 * Whether a Manager is connected to this machine right now.
+	 *
+	 * Asked before deciding that "open the application again" means "start a
+	 * Manager": one that is already showing this machine should be raised
+	 * instead of joined by a second (see IpcEventType::ManagerActivate).
+	 */
+	bool HasClient() const;
+
 private:
 	void AcceptLoop();
 	void ClientLoop(int client_fd);
 
 	std::function<void(const IpcRequest &)> on_request_;
 	std::thread accept_thread_;
-	std::mutex client_mutex_;
+	mutable std::mutex client_mutex_;
 	int listen_fd_ = -1;
 	int client_fd_ = -1;
 	std::atomic<bool> running_{false};

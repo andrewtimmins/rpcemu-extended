@@ -22,6 +22,7 @@
 #include <wx/cmdline.h>
 #include <wx/display.h>
 #include <wx/evtloop.h>
+#include <wx/stdpaths.h>
 
 #include <cstdarg>
 #include <cstdio>
@@ -63,6 +64,26 @@ public:
 	bool OnInit() override;
 	void OnInitCmdLine(wxCmdLineParser &parser) override;
 
+#ifdef __WXOSX__
+	/*
+	 * "Open RPCEmu Extended", arriving at a process that is a machine.
+	 *
+	 * ★ On macOS a machine started by the Manager is, as far as the system is
+	 * concerned, the application itself: it runs the bundle's own executable, so
+	 * LaunchServices registers it as an instance of RPCEmu Extended even though
+	 * --managed means it never shows a window. Opening the application again -
+	 * from the Dock, from Finder, from `open` - therefore activates that
+	 * instance rather than starting a new process, and since it has no window,
+	 * nothing whatever appears. The Manager cannot be got back until every
+	 * machine has been stopped, which is not true on Windows or Linux, where a
+	 * second launch is simply a second process.
+	 *
+	 * The activation does at least arrive here, so this is where it is answered:
+	 * raise the Manager if one is attached, and start one if none is.
+	 */
+	void MacReopenApp() override;
+#endif
+
 	/*
 	 * wxAppConsoleBase::ExitMainLoop() only acts while the main loop is the
 	 * active one, and IsRunning() means exactly that - GetActive() == this. A
@@ -86,6 +107,12 @@ public:
 
 private:
 	void InstallSignalHandlers();
+
+#ifdef __WXOSX__
+	/* When the last reopen was answered. One click produces more than one of
+	   these, and each would otherwise start a Manager of its own. */
+	wxLongLong last_reopen_ = 0;
+#endif
 };
 
 #ifndef __WXMSW__
@@ -221,6 +248,15 @@ static const char *g_startup_state_file = nullptr;
  * framebuffer and control channel MainFrame::EnableManagedMode() sets up.
  */
 static bool g_startup_managed = false;
+
+/*
+ * --manager: show the Manager window whatever else is configured, which
+ * otherwise happens only when no machine is named and no default machine is
+ * set. Wanted by anyone who has set a default machine and still wants the list,
+ * and by MacReopenApp(), which starts a Manager on behalf of a machine the
+ * system handed "open the application" to.
+ */
+static bool g_startup_manager = false;
 
 /*
  * --fetch-riscos and its modifiers. Unlike the options above, this one is not
@@ -718,6 +754,55 @@ static bool FileIsReadable(const char *path)
  */
 wxIMPLEMENT_APP_NO_MAIN(RpcemuApp);
 
+#ifdef __WXOSX__
+void RpcemuApp::MacReopenApp()
+{
+	if (!g_startup_managed) {
+		/* An ordinary launch: this process has a window of its own and wx's
+		   own handling - show it, or restore it if it is minimised - is
+		   exactly right. */
+		wxApp::MacReopenApp();
+		return;
+	}
+
+	const wxLongLong now = wxGetLocalTimeMillis();
+
+	if (last_reopen_ != 0 && now - last_reopen_ < 2000) {
+		return;	/* the second and third of one click's worth - see last_reopen_ */
+	}
+	last_reopen_ = now;
+
+	auto *frame = dynamic_cast<MainFrame *>(GetTopWindow());
+
+	if (frame != nullptr && frame->AskManagerToActivate()) {
+		/* Logged because nothing else records that this process, rather than
+		   the Manager, was handed the request. */
+		rpclog("MacReopenApp: asked the Manager showing this machine to come "
+		       "to the front\n");
+		return;
+	}
+
+	/*
+	 * None attached, so the user closed it and is asking for it back. It has to
+	 * be a new process: this one is a machine, and the only window it has is the
+	 * machine's own, which --managed exists to keep hidden.
+	 *
+	 * Started directly rather than through LaunchServices ("open -n"), which
+	 * would ask the system to launch the application again and land back here
+	 * for the same reason this handler exists.
+	 */
+	wxString cmd;
+
+	cmd << '"' << wxStandardPaths::Get().GetExecutablePath() << "\" --manager"
+	    << " --datadir \"" << wxString::FromUTF8(rpcemu_get_datadir()) << '"';
+
+	rpclog("MacReopenApp: no Manager is attached, starting one\n");
+	if (wxExecute(cmd, wxEXEC_ASYNC) == 0) {
+		rpclog("MacReopenApp: could not start a Manager window\n");
+	}
+}
+#endif
+
 bool RpcemuApp::OnInit()
 {
 	SetAppName("RPCEmu Extended");
@@ -782,14 +867,15 @@ bool RpcemuApp::OnInit()
 		       nothing to open and the selector is the only sensible answer;
 		     - holding Shift while starting, which is the way back to the
 		       selector when the default machine itself is the problem;
-		     - --machine, handled above.
+		     - --machine, handled above;
+		     - --manager, which asks for this window by name.
 		   It can also be turned off from inside the machine, through
 		   Settings > Open This Machine Automatically. */
 		const wxString default_machine =
 		    wxString::FromUTF8(GetDefaultMachine());
 		bool used_default = false;
 
-		if (!default_machine.empty() && !wxGetKeyState(WXK_SHIFT)) {
+		if (!g_startup_manager && !default_machine.empty() && !wxGetKeyState(WXK_SHIFT)) {
 			const wxString candidate = default_machine + ".cfg";
 
 			if (wxFileExists(ConfigPathsAbsoluteConfigPath(candidate))) {
@@ -997,6 +1083,7 @@ int main(int argc, char **argv)
 	bool show_help = false;
 	bool resume = false;
 	bool managed = false;
+	bool manager = false;
 	const char *machine_name = nullptr;
 	const char *state_file = nullptr;
 
@@ -1176,6 +1263,8 @@ int main(int argc, char **argv)
 			   start and badly enough to be a nuisance - which nothing here can
 			   detect, so it has to be sayable. */
 			SetHardwareAccelerationOverride(0);
+		} else if (strcmp(arg, "--manager") == 0) {
+			manager = true;
 		} else if (strcmp(arg, "--managed") == 0) {
 			/* Internal: used by the Manager window to launch a machine it
 			   will display and control itself. Not documented as a
@@ -1296,6 +1385,20 @@ int main(int argc, char **argv)
 		return 2;
 	}
 
+	/* --manager asks for the window that lists the machines; --machine and
+	   --headless each say to run one instead, so neither can be meant at the
+	   same time. */
+	if (manager && machine_name != nullptr) {
+		ConsoleMessage(true, "error: --manager and --machine are mutually exclusive.\n");
+		ConsoleMessageFlush();
+		return 2;
+	}
+	if (manager && headless) {
+		ConsoleMessage(true, "error: --manager and --headless are mutually exclusive.\n");
+		ConsoleMessageFlush();
+		return 2;
+	}
+
 	/*
 	 * Every option below this point downloads something, and a build whose
 	 * wxWidgets has no wxWebRequest cannot. Refused here, once, rather than
@@ -1399,6 +1502,8 @@ int main(int argc, char **argv)
 		g_startup_state_file = state_file;
 		g_startup_managed = managed;
 	}
+
+	g_startup_manager = manager;
 
 	/* Normal graphical launch, with the options consumed above removed. */
 	return wxEntry(wx_argc, wx_argv);
