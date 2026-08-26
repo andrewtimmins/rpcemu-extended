@@ -631,6 +631,13 @@ void MachineIpcServer::SendEvent(const IpcEvent &event)
 	}
 }
 
+bool MachineIpcServer::HasClient() const
+{
+	std::lock_guard<std::mutex> lock(client_mutex_);
+
+	return client_fd_ >= 0;
+}
+
 void MachineIpcServer::Stop()
 {
 	if (!running_.exchange(false)) {

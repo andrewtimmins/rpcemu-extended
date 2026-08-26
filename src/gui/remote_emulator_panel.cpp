@@ -558,6 +558,17 @@ void RemoteEmulatorPanel::HandleIpcEvent(const IpcEvent &event)
 			});
 		}
 		break;
+	case IpcEventType::ManagerActivate:
+		/* The machine was handed "open the application" by the system and has
+		   no window to answer it with - see IpcEventType::ManagerActivate. */
+		if (on_activate_request_) {
+			CallAfter([this] {
+				if (on_activate_request_) {
+					on_activate_request_();
+				}
+			});
+		}
+		break;
 	case IpcEventType::TitleChanged:
 		/* Nothing shown for this yet in the Manager - see the class
 		   comment for what is deferred. */

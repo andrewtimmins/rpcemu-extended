@@ -1428,6 +1428,37 @@ void ManagerFrame::DiscoverAlreadyRunningMachines()
 		    wxString::FromUTF8(endpoint), false);
 	}
 	RefreshMachineList();
+
+	/*
+	 * A machine found already running is shown, not merely listed.
+	 *
+	 * This window opens with nothing selected, and AttachPanelFor only puts a
+	 * machine on screen if it is the selected one - which is right for a
+	 * machine started from here while the user is pointing at another, and
+	 * wrong for the case this function exists to answer. Somebody who closed
+	 * the Manager, left a machine running and has opened the Manager again is
+	 * looking for that machine, and finding the list with an empty display area
+	 * beside it reads as though it had not been found.
+	 */
+	if (active_machine_.empty() && SelectedMachineName().empty()) {
+		for (size_t i = 0; i < machine_names_.size(); i++) {
+			const auto it = running_.find(machine_names_[i]);
+
+			if (it == running_.end() || it->second.panel == nullptr) {
+				continue;
+			}
+
+			/* Selecting the row is what the user would have done, so the
+			   toolbar and menus act on the machine being shown. It raises a
+			   selection event of its own, which shows the panel; doing it here
+			   as well costs nothing and does not depend on that. */
+			machine_list_->SetItemState((long) i,
+			    wxLIST_STATE_SELECTED | wxLIST_STATE_FOCUSED,
+			    wxLIST_STATE_SELECTED | wxLIST_STATE_FOCUSED);
+			ShowMachinePanel(machine_names_[i]);
+			break;
+		}
+	}
 }
 
 void ManagerFrame::AttachPanelFor(const wxString &name, long pid,
@@ -1484,6 +1515,13 @@ void ManagerFrame::AttachPanelFor(const wxString &name, long pid,
 			UpdateStatusText();
 		}
 	});
+
+	/* Asked for by a machine that the system handed "open the application" to,
+	   having no window of its own to answer with. Only this window comes
+	   forward: which machine it is showing was the user's choice, and the
+	   system picked which machine took the message, so changing it here would
+	   be this window rearranging itself for a reason nobody could see. */
+	panel->SetActivateRequestCallback([this]() { window_show_in_front(this); });
 
 	/* Alt+Enter leaves full screen. Answered false when there is none, so the
 	   key goes to the guest as any other would. */

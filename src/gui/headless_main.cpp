@@ -550,6 +550,8 @@ void HeadlessPrintUsage(const char *argv0)
 	    "and able to start any number of them at once.\n"
 	    "\n"
 	    "Options:\n"
+	    "  --manager             Show the Manager window even when a default machine\n"
+	    "                        is set, which would otherwise be opened instead.\n"
 	    "  --machine <name>      Machine to run (config name in the configs dir,\n"
 	    "                        with or without the .cfg suffix). On its own it\n"
 	    "                        starts the GUI directly on that machine, skipping\n"

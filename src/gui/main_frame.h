@@ -207,6 +207,17 @@ public:
 	void EnableManagedMode();
 	bool IsManagedMode() const { return managed_mode_; }
 
+	/*
+	 * Ask the Manager showing this machine to come to the front, and say whether
+	 * there was one to ask.
+	 *
+	 * For the macOS case in RpcemuApp::MacReopenApp(): the system hands "open the
+	 * application" to whichever process it counts as the application, which may
+	 * well be a managed machine with no window. False means no Manager is
+	 * attached and one has to be started.
+	 */
+	bool AskManagerToActivate();
+
 	/* Shut down because the process was signalled. Saves what a machine would
 	   not want to lose and closes, without writing a snapshot - see
 	   closing_for_signal_. */
