@@ -23,6 +23,7 @@
 #include <wx/bitmap.h>
 #include <wx/filefn.h>
 #include <wx/filename.h>
+#include <wx/stdpaths.h>
 #include <wx/frame.h>
 #include <wx/icon.h>
 #include <wx/image.h>
@@ -34,8 +35,42 @@ extern "C" {
 wxString
 AppLogoPath()
 {
-	return wxString::FromUTF8(rpcemu_get_resourcedir()) + "resources" +
-	    wxFileName::GetPathSeparator() + "rpcemu.png";
+	const wxChar sep = wxFileName::GetPathSeparator();
+	const wxString from_data =
+	    wxString::FromUTF8(rpcemu_get_resourcedir()) + "resources" + sep + "rpcemu.png";
+
+	if (wxFileExists(from_data)) {
+		return from_data;
+	}
+
+	/*
+	 * ★ The logo is part of the application, not part of anybody's data, so
+	 * where the resource directory has none this looks in the application's own.
+	 *
+	 * The two are usually the same folder and this changes nothing. They are not
+	 * the same when a data directory is named on the command line and holds a
+	 * payload of its own: the resource directory becomes that folder (see
+	 * ResourceDirForGivenDataDir), which has poduleroms/ and roms/ but no
+	 * resources/rpcemu.png, because nothing ever puts one there. A machine
+	 * started from a shortcut is exactly that case - the shortcut passes
+	 * --datadir - so its About window showed the drawn placeholder while the
+	 * Manager beside it, started with no --datadir, showed the logo.
+	 *
+	 * GetResourcesDir() is Contents/Resources inside a bundle and the
+	 * executable's own directory anywhere else, which is where the payload sits
+	 * in an ordinary install on all three platforms.
+	 */
+	const wxString app_resources =
+	    wxFileName::DirName(wxStandardPaths::Get().GetResourcesDir()).GetFullPath();
+	const wxString from_app = app_resources + "resources" + sep + "rpcemu.png";
+
+	if (wxFileExists(from_app)) {
+		return from_app;
+	}
+
+	/* Neither: answer the same thing as before, so a caller reporting what it
+	   could not find names the place it is meant to be. */
+	return from_data;
 }
 
 /*

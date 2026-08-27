@@ -25,7 +25,9 @@
 
 class wxFrame;
 
-/* The application logo, <resourcedir>/resources/rpcemu.png. Not every caller
+/* The application logo, <resourcedir>/resources/rpcemu.png, or the same file
+   under the application's own resources where the resource directory has none -
+   which is what a data directory named with --datadir gives. Not every caller
    wants it the same way - one rescales it, another falls back to a drawn one -
    so this is the path rather than the picture. */
 wxString AppLogoPath();
