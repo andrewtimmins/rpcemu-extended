@@ -46,6 +46,11 @@ ONE_ARCH=""
 # argument. That accepted "build-macos.sh arm64", and silently ignored a bare
 # "--arch" with nothing after it.
 FUSE_REQUESTED=false
+# Build the interpreter as well as the recompiler, and put both in the bundle.
+# Off by default: it is a second full compile of the core per slice, which a
+# developer rebuilding to try one change does not want. CI asks for it, because
+# a release ships both.
+BUILD_BOTH=false
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--zip|-z) MAKE_ZIP=true ;;
@@ -63,6 +68,7 @@ while [ $# -gt 0 ]; do
 			esac
 			;;
 		--fuse) DO_FUSE=true; FUSE_REQUESTED=true ;;
+		--both) BUILD_BOTH=true ;;
 		--help|-h) echo "Usage: $0 [--arch x86_64|arm64] [--fuse] [--zip]"; exit 0 ;;
 		*) echo "unknown option: $1"; exit 2 ;;
 	esac
@@ -208,6 +214,30 @@ build_slice() {
 		-DRPCEMU_ENABLE_GHOSTPDL=OFF
 	echo "==> [$arch] building"
 	cmake --build "$build_dir" -j"$(njobs)"
+
+	if [ "$BUILD_BOTH" = true ]; then
+		# ★ The other emulator, for the same slice.
+		#
+		# A release ships both: the recompiler as the bundle's own binary, and the
+		# interpreter beside it for anyone who needs to rule the JIT out of a
+		# problem. RPCEMU_DYNAREC is decided at configure time, so that is a second
+		# configure and a second compile into a tree of its own - the price of
+		# shipping both, and it roughly doubles this job.
+		#
+		# No tests here: the suite has just run against the same sources, and the
+		# JIT differential tests, which are the ones that care about the backend,
+		# need the backend that this build does not have.
+		echo "==> [$arch] configuring the interpreter (dynarec=OFF, tests=OFF)"
+		cmake -B "$build_dir-interpreter" -G "$gen" \
+			${tc_args[@]+"${tc_args[@]}"} ${extra_args[@]+"${extra_args[@]}"} \
+			-DCMAKE_BUILD_TYPE=Release \
+			-DRPCEMU_DYNAREC=OFF \
+			-DRPCEMU_BUILD_TESTS=OFF \
+			"-DRPCEMU_REQUIRE_LIBUSB=$require_libusb" \
+			-DRPCEMU_ENABLE_GHOSTPDL=OFF
+		echo "==> [$arch] building the interpreter"
+		cmake --build "$build_dir-interpreter" -j"$(njobs)"
+	fi
 
 	# Run the unit tests where we can: a native build, of an architecture this
 	# machine can actually execute. Decide that up front so a real failure can be
@@ -440,6 +470,13 @@ stage_slice() {
 	# The emulator is renamed to "rpcemu" in the bundle regardless of which
 	# variant this slice built.
 	cp -f "$build_dir/bin/$(slice_binname "$arch")" "$stage/bin/rpcemu"
+	# And the interpreter under its own name, from its own tree. Kept as
+	# rpcemu-interpreter rather than renamed: the bundle runs "rpcemu", and a
+	# second binary is only useful if it can be told apart from it.
+	if [ -f "$build_dir-interpreter/bin/rpcemu-interpreter" ]; then
+		cp -f "$build_dir-interpreter/bin/rpcemu-interpreter" \
+		    "$stage/bin/rpcemu-interpreter"
+	fi
 	if [ -f "$build_dir/bin/rpcemu-run" ]; then
 		cp -f "$build_dir/bin/rpcemu-run" "$stage/bin/rpcemu-run"
 	fi
@@ -701,9 +738,9 @@ if [ "$DO_FUSE" = true ]; then
 	# through into the bundle.
 	# What the release notes and the About box should say this bundle is.
 	case "$FUSE_ARCHES" in
-		"x86_64 arm64") BINARY_DESC="universal: x86_64 and arm64, recompiler on both" ;;
-		x86_64)         BINARY_DESC="x86_64 only, recompiler" ;;
-		arm64)          BINARY_DESC="arm64 only, recompiler" ;;
+		"x86_64 arm64") BINARY_DESC="universal: x86_64 and arm64, recompiler on both, interpreter beside it" ;;
+		x86_64)         BINARY_DESC="x86_64 only, recompiler, interpreter beside it" ;;
+		arm64)          BINARY_DESC="arm64 only, recompiler, interpreter beside it" ;;
 		*)              BINARY_DESC="$FUSE_ARCHES" ;;
 	esac
 
@@ -716,6 +753,11 @@ if [ "$DO_FUSE" = true ]; then
 
 	echo "==> lipo emulator binary ($FUSE_ARCHES)"
 	fuse_binary rpcemu "$MACOSD/rpcemu"
+
+	# The interpreter, the same way. Not fatal if it is absent: a --fuse over
+	# slices staged by an older build of this script has no such binary, and a
+	# bundle without it is the bundle we shipped until now.
+	fuse_binary rpcemu-interpreter "$MACOSD/rpcemu-interpreter" || true
 
 	# The HostCmd host client, and rpcemu-shell which is the same binary.
 	if fuse_binary rpcemu-run "$MACOSD/rpcemu-run"; then

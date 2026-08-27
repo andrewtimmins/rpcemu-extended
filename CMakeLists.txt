@@ -146,6 +146,29 @@ install(DIRECTORY docs/ DESTINATION share/doc/rpcemu)
 # on x86 dynarec builds, rpcemu-interpreter on arm64/interpreter builds); it is
 # configured and installed from src/gui/CMakeLists.txt where the name is known.
 
+# ★ The other flavour's binary, built by a separate configure and handed to this
+# one to package.
+#
+# RPCEMU_DYNAREC decides what the core is compiled to do, so one configure can
+# only ever produce one of the two emulators. A release ships both, which means
+# two builds - and a .deb built by the second of them would otherwise contain
+# only its own. Rather than teach the whole project to build the core twice,
+# which is a refactor of every platform's build at once, the build scripts point
+# this at the binary the first pass produced and it is installed alongside.
+#
+# Empty for an ordinary build, which then packages exactly what it built.
+set(RPCEMU_EXTRA_BINARY "" CACHE FILEPATH
+    "A second emulator binary, from another configure, to install beside this one")
+if(RPCEMU_EXTRA_BINARY)
+    if(NOT EXISTS "${RPCEMU_EXTRA_BINARY}")
+        message(FATAL_ERROR
+                "RPCEMU_EXTRA_BINARY is set to ${RPCEMU_EXTRA_BINARY}, which does not exist. "
+                "It should name a binary from an earlier build of the other flavour.")
+    endif()
+    install(PROGRAMS "${RPCEMU_EXTRA_BINARY}" DESTINATION bin)
+    message(STATUS "Packaging a second emulator binary: ${RPCEMU_EXTRA_BINARY}")
+endif()
+
 set(CPACK_PACKAGE_NAME "rpcemu")
 set(CPACK_PACKAGE_VENDOR "Andy Timmins")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "RPCEmu (Extended Edition)")
