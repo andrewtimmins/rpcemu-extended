@@ -74,6 +74,9 @@ VERSION="$(get_version)"
 BUILD_DEB=false
 BUILD_ZIP=false
 BUILD_INTERPRETER=false
+BUILD_BOTH=false
+BUILD_DIR=build
+EXTRA_BINARY=
 BUILD_DEBUG=false
 BUILD_PODULES=true
 PODULES_EXPLICIT=false
@@ -99,6 +102,7 @@ for arg in "$@"; do
 
 	case $arg in
 		--interpreter|-i) BUILD_INTERPRETER=true ;;
+		--both) BUILD_BOTH=true ;;
 		--debug|-g) BUILD_DEBUG=true ;;
 		--deb|-d) BUILD_DEB=true ;;
 		--zip|-z) BUILD_ZIP=true ;;
@@ -112,6 +116,7 @@ for arg in "$@"; do
 			echo "  --arch ARCH         Linux target: amd64 or arm64 (default: host)"
 			echo "  --cross-arm64       Cross-compile Linux arm64 from x86_64"
 			echo "  --interpreter, -i   Build interpreter instead of dynarec"
+			echo "  --both              Build and ship both: recompiler and interpreter"
 			echo "  --debug, -g         Debug build"
 			echo "  --deb, -d           Create .deb package"
 			echo "  --zip, -z           Create .tar.gz in releases/linux/"
@@ -245,15 +250,15 @@ stage_linux_release() {
 		sed -i "s/@RPCEMU_GUI_TARGET@/$binary_name/" "$LINUX_RELEASE/rpcemu.desktop"
 	fi
 
-	cp -f "build/bin/$binary_name" "$release_binary"
+	cp -f "$BUILD_DIR/bin/$binary_name" "$release_binary"
 	chmod +x "$release_binary"
 	cp -f "$release_binary" "$binary_name"
 
 	# HostCmd host-side client (rpcemu-run + rpcemu-shell symlink). These let
 	# the host drive the guest RISC OS command line; ship them alongside the
 	# emulator binary. See docs/hostcmd.md.
-	if [ -f build/bin/rpcemu-run ]; then
-		cp -f build/bin/rpcemu-run "$LINUX_RELEASE/rpcemu-run"
+	if [ -f "$BUILD_DIR/bin/rpcemu-run" ]; then
+		cp -f "$BUILD_DIR/bin/rpcemu-run" "$LINUX_RELEASE/rpcemu-run"
 		chmod +x "$LINUX_RELEASE/rpcemu-run"
 		ln -sf rpcemu-run "$LINUX_RELEASE/rpcemu-shell"
 	fi
@@ -261,16 +266,16 @@ stage_linux_release() {
 	# DebugCmd host-side client. The counterpart of rpcemu-run: that one drives
 	# RISC OS's command line, this one drives the processor underneath it.
 	# See docs/debugcmd.md.
-	if [ -f build/bin/rpcemu-debug ]; then
-		cp -f build/bin/rpcemu-debug "$LINUX_RELEASE/rpcemu-debug"
+	if [ -f "$BUILD_DIR/bin/rpcemu-debug" ]; then
+		cp -f "$BUILD_DIR/bin/rpcemu-debug" "$LINUX_RELEASE/rpcemu-debug"
 		chmod +x "$LINUX_RELEASE/rpcemu-debug"
 	fi
 
 	# NetCapCmd host-side client. The third of the sockets: this one watches
 	# the network the machine is on, and can hand a live pcap stream to
 	# Wireshark. See docs/netcapture.md.
-	if [ -f build/bin/rpcemu-netcap ]; then
-		cp -f build/bin/rpcemu-netcap "$LINUX_RELEASE/rpcemu-netcap"
+	if [ -f "$BUILD_DIR/bin/rpcemu-netcap" ]; then
+		cp -f "$BUILD_DIR/bin/rpcemu-netcap" "$LINUX_RELEASE/rpcemu-netcap"
 		chmod +x "$LINUX_RELEASE/rpcemu-netcap"
 	fi
 
@@ -300,7 +305,7 @@ stage_linux_release() {
 RPCEmu Extended $VERSION
 Built: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 Host:  $(uname -s) $(uname -m)
-Binary: $binary_name
+Binary: $binary_name$([ -n "$EXTRA_BINARY" ] && echo " (and $(basename "$EXTRA_BINARY"), the other flavour)")
 Toolkit: wxWidgets + CMake (Linux)
 USB passthrough: $usb_state
 EOF
@@ -503,12 +508,16 @@ build_linux() {
 	fi
 	echo ""
 
-	rm -rf build
+	rm -rf "$BUILD_DIR"
 	mkdir -p "$LINUX_RELEASE"
 
-	local cmake_args=(-S . -B build)
+	local cmake_args=(-S . -B "$BUILD_DIR")
 	mapfile -t common_args < <(cmake_common_args)
 	cmake_args+=("${common_args[@]}")
+
+	if [ -n "$EXTRA_BINARY" ]; then
+		cmake_args+=(-DRPCEMU_EXTRA_BINARY="$EXTRA_BINARY")
+	fi
 
 	if [ "$LINUX_CROSS" = true ]; then
 		if ! command -v aarch64-linux-gnu-gcc &>/dev/null; then
@@ -524,14 +533,14 @@ build_linux() {
 	fi
 
 	cmake "${cmake_args[@]}"
-	cmake --build build -j"$NPROC"
+	cmake --build "$BUILD_DIR" -j"$NPROC"
 
 	if [ "$LINUX_CROSS" = false ]; then
 		echo ""
 		# Whether the tests can run here is decided above; whether they passed is
 		# decided by the script, which treats a suite that is absent or the wrong
 		# size as a failure rather than as nothing to do. See docs/testing.md.
-		bash "$SCRIPT_DIR/tests/run-ctest.sh" build
+		bash "$SCRIPT_DIR/tests/run-ctest.sh" "$BUILD_DIR"
 	else
 		echo "Note: skipping tests (cross-compiled binaries cannot run on this host)."
 	fi
@@ -550,11 +559,11 @@ build_linux() {
 		echo ""
 		echo "Creating .deb package ($LINUX_ARCH)..."
 		(
-			cd build
+			cd "$BUILD_DIR"
 			cpack -G DEB > /dev/null 2>&1
 		)
 		shopt -s nullglob
-		local debs=(build/*.deb)
+		local debs=("$BUILD_DIR"/*.deb)
 		shopt -u nullglob
 		if [ ${#debs[@]} -eq 0 ]; then
 			echo "Error: cpack did not produce a .deb file"
@@ -578,7 +587,41 @@ if [ "$BUILD_PODULES" = true ]; then
 fi
 
 mkdir -p "$LINUX_RELEASE"
-build_linux
+
+if [ "$BUILD_BOTH" = true ]; then
+	# ★ Two passes, and the order matters.
+	#
+	# RPCEMU_DYNAREC is decided at configure time, so one configure builds one
+	# emulator. The interpreter goes first, into a build tree of its own, and
+	# stages its binary; the recompiler then builds second, so that everything
+	# written once and overwritten by the later pass - the .desktop Exec line,
+	# BUILDINFO.txt, the .deb - describes the recompiler, which is the one a
+	# user should reach for. The interpreter is handed to the second configure
+	# as RPCEMU_EXTRA_BINARY so it is inside the .deb as well as the tarball.
+	#
+	# Two full compiles, with no compiler cache in CI, so this roughly doubles
+	# the build. That is the price of shipping both and it is paid on purpose.
+	want_zip=$BUILD_ZIP
+	want_deb=$BUILD_DEB
+
+	BUILD_DIR=build-interpreter
+	BUILD_INTERPRETER=true
+	BUILD_ZIP=false
+	BUILD_DEB=false
+	build_linux
+
+	# Staged, so it is beside the recompiler in the archive already; named here
+	# so the second configure can put it in the .deb too.
+	EXTRA_BINARY="$PWD/$LINUX_RELEASE/$(binary_basename)"
+
+	BUILD_DIR=build
+	BUILD_INTERPRETER=false
+	BUILD_ZIP=$want_zip
+	BUILD_DEB=$want_deb
+	build_linux
+else
+	build_linux
+fi
 
 echo ""
 echo "=================================================="

@@ -46,6 +46,11 @@ ONE_ARCH=""
 # argument. That accepted "build-macos.sh arm64", and silently ignored a bare
 # "--arch" with nothing after it.
 FUSE_REQUESTED=false
+# Build the interpreter as well as the recompiler, and put both in the bundle.
+# Off by default: it is a second full compile of the core per slice, which a
+# developer rebuilding to try one change does not want. CI asks for it, because
+# a release ships both.
+BUILD_BOTH=false
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--zip|-z) MAKE_ZIP=true ;;
@@ -63,6 +68,7 @@ while [ $# -gt 0 ]; do
 			esac
 			;;
 		--fuse) DO_FUSE=true; FUSE_REQUESTED=true ;;
+		--both) BUILD_BOTH=true ;;
 		--help|-h) echo "Usage: $0 [--arch x86_64|arm64] [--fuse] [--zip]"; exit 0 ;;
 		*) echo "unknown option: $1"; exit 2 ;;
 	esac
@@ -274,6 +280,30 @@ build_slice() {
 		-DRPCEMU_ENABLE_GHOSTPDL=OFF
 	echo "==> [$arch] building"
 	cmake --build "$build_dir" -j"$(njobs)"
+
+	if [ "$BUILD_BOTH" = true ]; then
+		# ★ The other emulator, for the same slice.
+		#
+		# A release ships both: the recompiler as the bundle's own binary, and the
+		# interpreter beside it for anyone who needs to rule the JIT out of a
+		# problem. RPCEMU_DYNAREC is decided at configure time, so that is a second
+		# configure and a second compile into a tree of its own - the price of
+		# shipping both, and it roughly doubles this job.
+		#
+		# No tests here: the suite has just run against the same sources, and the
+		# JIT differential tests, which are the ones that care about the backend,
+		# need the backend that this build does not have.
+		echo "==> [$arch] configuring the interpreter (dynarec=OFF, tests=OFF)"
+		cmake -B "$build_dir-interpreter" -G "$gen" \
+			${tc_args[@]+"${tc_args[@]}"} ${extra_args[@]+"${extra_args[@]}"} \
+			-DCMAKE_BUILD_TYPE=Release \
+			-DRPCEMU_DYNAREC=OFF \
+			-DRPCEMU_BUILD_TESTS=OFF \
+			"-DRPCEMU_REQUIRE_LIBUSB=$require_libusb" \
+			-DRPCEMU_ENABLE_GHOSTPDL=OFF
+		echo "==> [$arch] building the interpreter"
+		cmake --build "$build_dir-interpreter" -j"$(njobs)"
+	fi
 
 	# Run the unit tests where we can: a native build, of an architecture this
 	# machine can actually execute. Decide that up front so a real failure can be
@@ -506,6 +536,13 @@ stage_slice() {
 	# The emulator is renamed to "rpcemu" in the bundle regardless of which
 	# variant this slice built.
 	cp -f "$build_dir/bin/$(slice_binname "$arch")" "$stage/bin/rpcemu"
+	# And the interpreter under its own name, from its own tree. Kept as
+	# rpcemu-interpreter rather than renamed: the bundle runs "rpcemu", and a
+	# second binary is only useful if it can be told apart from it.
+	if [ -f "$build_dir-interpreter/bin/rpcemu-interpreter" ]; then
+		cp -f "$build_dir-interpreter/bin/rpcemu-interpreter" \
+		    "$stage/bin/rpcemu-interpreter"
+	fi
 	if [ -f "$build_dir/bin/rpcemu-run" ]; then
 		cp -f "$build_dir/bin/rpcemu-run" "$stage/bin/rpcemu-run"
 	fi
@@ -793,10 +830,10 @@ if [ "$DO_FUSE" = true ]; then
 	# A one-slice bundle called "universal" is a download that fails on half the
 	# Macs that trust the name, so only a genuinely fused pair earns the word.
 	if [ ${#SLICE_ARCHES[@]} -gt 1 ]; then
-		BINARY_DESC="universal: ${SLICE_ARCHES[*]}, recompiler on both"
+		BINARY_DESC="universal: ${SLICE_ARCHES[*]}, recompiler on both, interpreter beside it"
 		ARCHTAG=universal
 	else
-		BINARY_DESC="${SLICE_ARCHES[0]} only, recompiler"
+		BINARY_DESC="${SLICE_ARCHES[0]} only, recompiler, interpreter beside it"
 		ARCHTAG="${SLICE_ARCHES[0]}"
 	fi
 
@@ -804,6 +841,11 @@ if [ "$DO_FUSE" = true ]; then
 	fuse_bin rpcemu "$MACOSD/rpcemu" || {
 		echo "error: no staged rpcemu binary to assemble"; exit 1;
 	}
+
+	# The interpreter, the same way. Not fatal if it is absent: a --fuse over
+	# slices staged by an older build of this script has no such binary, and a
+	# bundle without it is the bundle we shipped until now.
+	fuse_bin rpcemu-interpreter "$MACOSD/rpcemu-interpreter" || true
 
 	# Fuse the HostCmd host client from whichever slices built it.
 	if fuse_bin rpcemu-run "$MACOSD/rpcemu-run"; then
