@@ -884,10 +884,16 @@ jobs:
       - name: Headless boot smoke test
         timeout-minutes: 3
         run: |
+          # The recompiler, not the interpreter it used to be: this job ships
+          # both now, and the AArch64 JIT on Windows is the half nobody here
+          # can try by hand, so it is the half worth booting.
+          #
+          # The comment lives HERE, above the command. Inside the backslash
+          # continuation below it is not a comment at all: the shell takes the
+          # continuation, meets a #, and discards every remaining line of the
+          # command - which cost this job a run, failing with "the following
+          # arguments are required: --binary".
           python3 tests/boot_smoke.py \
-            # The recompiler, not the interpreter it used to be: this job now
-            # ships both, and the AArch64 JIT on Windows is the half nobody
-            # here can try by hand, so it is the half worth booting.
             --binary releases/windows/arm64/rpcemu-recompiler.exe \
             --datadir "$(cygpath -u "$RUNNER_TEMP")/rpcemu-data" \
             --abort-check require \
