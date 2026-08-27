@@ -39,7 +39,8 @@ extern "C" {
 #include <cstring>
 #include <ctime>
 
-#include <wx/richmsgdlg.h>
+#include <wx/artprov.h>
+#include <wx/statbmp.h>
 
 #include <wx/dir.h>
 #include <wx/fileconf.h>
@@ -1191,65 +1192,157 @@ wxString MachineEditDialog::SelectedMacAddress() const
 /*
  * What joining the Community Network means, and the user's agreement to it.
  *
+ * ★ A dialogue of its own rather than a message box, and the reason is the
+ * text. wxRichMessageDialog's extended message collapses a blank line to a
+ * single break on macOS, so five separate points arrive as one wall of text;
+ * and its main message is styled as the heading, so a sentence long enough to
+ * say what the network is becomes a two-line title. Both were seen on screen,
+ * which is the only way either was going to be found. Here the heading is a
+ * heading, the points are laid out with air between them, and the wrapping is
+ * ours.
+ *
  * Asked once per person rather than once per machine, because it is the person
  * who is agreeing; the answer and its date live in the preferences (see
  * gui_preferences.h). Somebody who has already agreed is not asked again.
- *
- * Two buttons and nothing else. A multi-button dialogue with custom labels has
- * form on macOS for returning without ever appearing, and a question about
- * security that answers itself is worse than no question at all.
  */
+namespace {
+
+class CommunityNetworkDialog : public wxDialog {
+public:
+	explicit CommunityNetworkDialog(wxWindow *parent)
+	    : wxDialog(parent, wxID_ANY, "Join the Community Network")
+	{
+		/* Wide enough for a sentence to breathe, narrow enough to stay a
+		   dialogue rather than a document. Everything wraps to it. */
+		const int width = 520;
+
+		auto *columns = new wxBoxSizer(wxHORIZONTAL);
+		auto *text = new wxBoxSizer(wxVERTICAL);
+
+		columns->Add(new wxStaticBitmap(this, wxID_ANY,
+		        wxArtProvider::GetBitmap(wxART_WARNING, wxART_MESSAGE_BOX)),
+		    0, wxALIGN_TOP | wxRIGHT, 16);
+
+		auto *heading = new wxStaticText(this, wxID_ANY,
+		    "Join the Community Network?");
+		wxFont heading_font = heading->GetFont();
+
+		heading_font.MakeBold();
+		heading_font.SetPointSize(heading_font.GetPointSize() + 3);
+		heading->SetFont(heading_font);
+		text->Add(heading, 0, wxBOTTOM, 12);
+
+		AddParagraph(this, text, width,
+		    "This machine will share one network with other people's machines, "
+		    "over the internet. Please read this before you turn it on.");
+
+		static const char *const points[] = {
+		    "Nothing on this network is encrypted or authenticated. Every "
+		    "frame this machine sends can be read by everyone else on it, and "
+		    "anyone can claim to be anyone.",
+
+		    "RISC OS has no meaningful security. ShareFS, Access and the rest "
+		    "were written for a trusted office network in the 1990s: a disc "
+		    "you share is shared with everybody, and file protection is a "
+		    "convention rather than a defence.",
+
+		    "Anything this machine offers is public. Discs, folders and "
+		    "printers it shares are reachable by strangers, and anything they "
+		    "send you arrives with no check on where it came from. Keep "
+		    "personal data, credentials and work files off it, including other "
+		    "people's personal data.",
+
+		    "Treat the machine as disposable. Anything the guest can write to, "
+		    "somebody else can ask it to write to. Your IP address is visible "
+		    "to the server, and whoever runs it may log connections.",
+
+		    "The network is provided as it is, with no undertaking that it "
+		    "works, stays available, or is free of other people's mistakes or "
+		    "bad behaviour. So far as the law allows, the authors and "
+		    "contributors of RPCEmu Extended accept no liability for any loss, "
+		    "damage or disclosure arising from your use of it. You use it at "
+		    "your own risk, and what this machine shares and does on it is "
+		    "your responsibility.",
+		};
+
+		for (const char *point : points) {
+			AddBullet(this, text, width, point);
+		}
+
+		AddParagraph(this, text, width,
+		    "Turning this on is your agreement to the above.");
+
+		columns->Add(text, 1, wxEXPAND);
+
+		auto *buttons = new wxStdDialogButtonSizer();
+		auto *ok = new wxButton(this, wxID_OK, "I agree, join");
+
+		buttons->AddButton(ok);
+		buttons->AddButton(new wxButton(this, wxID_CANCEL, "Cancel"));
+		buttons->Realize();
+
+		/* Cancel, not the agreement, on Return and on the close button: the
+		   safe answer is the one a stray keypress should give. */
+		SetEscapeId(wxID_CANCEL);
+		SetAffirmativeId(wxID_OK);
+		FindWindow(wxID_CANCEL)->SetFocus();
+
+		auto *outer = new wxBoxSizer(wxVERTICAL);
+
+		outer->Add(columns, 1, wxEXPAND | wxALL, 20);
+		outer->Add(buttons, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 20);
+		SetSizerAndFit(outer);
+		CentreOnParent();
+	}
+
+private:
+	/*
+	 * A paragraph, wrapped, with air after it.
+	 *
+	 * The window is passed in rather than asked of the sizer:
+	 * wxSizer::GetContainingWindow() answers null until the sizer has been
+	 * given to one, and these sizers are still being filled in. A label with no
+	 * parent then crashes inside Wrap(), which needs a device context and has
+	 * no window to get one from.
+	 *
+	 * Wrap() at all, because a wxStaticText in a sizer otherwise grows the
+	 * dialogue to fit its longest sentence on one line.
+	 */
+	static void AddParagraph(wxWindow *parent, wxSizer *sizer, int width,
+	                         const wxString &text)
+	{
+		auto *label = new wxStaticText(parent, wxID_ANY, text);
+
+		label->Wrap(width);
+		sizer->Add(label, 0, wxBOTTOM, 12);
+	}
+
+	/* A point, indented under its bullet so the wrapped lines line up with the
+	   first one rather than with the bullet. */
+	static void AddBullet(wxWindow *parent, wxSizer *sizer, int width,
+	                      const wxString &text)
+	{
+		auto *row = new wxBoxSizer(wxHORIZONTAL);
+		auto *bullet = new wxStaticText(parent, wxID_ANY,
+		    wxString::FromUTF8("\xe2\x80\xa2"));
+		auto *label = new wxStaticText(parent, wxID_ANY, text);
+
+		label->Wrap(width - 20);
+		row->Add(bullet, 0, wxRIGHT, 8);
+		row->Add(label, 1, wxEXPAND);
+		sizer->Add(row, 0, wxEXPAND | wxBOTTOM, 12);
+	}
+};
+
+}	/* namespace */
+
 bool MachineEditDialog::ConfirmCommunityNetwork()
 {
 	if (GetCommunityNetworkAccepted() != 0) {
 		return true;
 	}
 
-	wxRichMessageDialog dlg(this,
-	    "The Community Network puts this machine on one shared network with "
-	    "other people\'s machines, over the internet.",
-	    "Join the Community Network", wxOK | wxCANCEL | wxICON_WARNING);
-
-	/*
-	 * Each point led by a bullet, and no blank lines between them.
-	 * SetExtendedMessage() collapses "\n\n" to a single break on macOS, so
-	 * paragraphs written to be separate arrive as one wall of text - checked on
-	 * screen, which is the only way to find that out. The bullets do the
-	 * separating instead, and survive whatever the platform does to the
-	 * spacing.
-	 */
-	dlg.SetExtendedMessage(
-	    "Please read this before you turn it on.\n"
-	    "\n"
-	    "\u2022 Nothing on this network is encrypted or authenticated. Every "
-	    "frame this machine sends can be read by everyone else on it, and "
-	    "anyone can claim to be anyone.\n"
-	    "\n"
-	    "\u2022 RISC OS has no meaningful security. ShareFS, Access and the "
-	    "rest were written for a trusted office network in the 1990s: a disc "
-	    "you share is shared with everybody, and file protection is a "
-	    "convention rather than a defence.\n"
-	    "\n"
-	    "\u2022 Anything this machine offers is public. Discs, folders and "
-	    "printers it shares are reachable by strangers, and anything they send "
-	    "you arrives with no check on where it came from. Keep personal data, "
-	    "credentials and work files off it, including other people\'s personal "
-	    "data.\n"
-	    "\n"
-	    "\u2022 Treat the machine as disposable. Anything the guest can write "
-	    "to, it can be asked by somebody else to write to. Your IP address is "
-	    "visible to the server, and whoever runs it may log connections.\n"
-	    "\n"
-	    "\u2022 The network is provided as it is, with no undertaking that it "
-	    "works, stays available, or is free of other people\'s mistakes or bad "
-	    "behaviour. So far as the law allows, the authors and contributors of "
-	    "RPCEmu Extended accept no liability for any loss, damage or "
-	    "disclosure arising from your use of it. You use it at your own risk, "
-	    "and what this machine shares and does on it is your responsibility.\n"
-	    "\n"
-	    "Turning this on is your agreement to the above.");
-
-	dlg.SetOKCancelLabels("I agree, join", "Cancel");
+	CommunityNetworkDialog dlg(this);
 
 	if (dlg.ShowModal() != wxID_OK) {
 		return false;
