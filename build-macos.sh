@@ -98,7 +98,12 @@ fi
 get_version() {
 	# See build.sh: number from VERSION, commit from git unless on a tag.
 	release="$([ -f VERSION ] && tr -d ' \t\r\n' < VERSION || echo 0.0.0)"
-	if command -v git >/dev/null 2>&1 && [ -d .git ] \
+	# `git rev-parse --git-dir` rather than `[ -d .git ]`: in a git worktree
+	# .git is a FILE pointing at the real one, so the directory test failed
+	# there and the build id came out as a bare version number with no
+	# commit in it - the one thing that says which source a bundle was built
+	# from.
+	if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1 \
 	   && ! git describe --tags --exact-match --match 'v[0-9]*' >/dev/null 2>&1; then
 		commit="$(git rev-parse --short HEAD 2>/dev/null)"
 		if [ -n "$commit" ]; then
