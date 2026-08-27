@@ -352,6 +352,109 @@ test_reconnect(void)
 	    net_json_init() == -1 && !net_json_wants_connection());
 }
 
+/*
+ * Which servers a machine's settings put it on.
+ *
+ * The whole point of net_json_link_wanted() is that this can be checked without
+ * a socket, a server or an emulator, and the answers are easy to get wrong:
+ * the two networks are independent rather than alternatives, the Community
+ * Network's address is never taken from the settings, and a port of zero means
+ * the standard one rather than port zero.
+ */
+static void
+test_link_selection(void)
+{
+	const char *host;
+	int port;
+
+	printf("\nWhich servers the settings ask for\n");
+
+	memset(&config, 0, sizeof(config));
+	check("nothing set: no server of its own",
+	    !net_json_link_wanted(NET_JSON_LINK_OWN, NULL, NULL));
+	check("nothing set: not on the Community Network",
+	    !net_json_link_wanted(NET_JSON_LINK_COMMUNITY, NULL, NULL));
+
+	/* Enabled with no host name is not a server. It is a settings file where
+	   the box was ticked and the field never filled in. */
+	config.json_net_enabled = 1;
+	config.json_net_host[0] = '\0';
+	check("own server on but unnamed: not wanted",
+	    !net_json_link_wanted(NET_JSON_LINK_OWN, NULL, NULL));
+
+	host = NULL;
+	port = -1;
+	snprintf(config.json_net_host, sizeof(config.json_net_host), "example.test");
+	config.json_net_port = 12345;
+	check("own server: wanted",
+	    net_json_link_wanted(NET_JSON_LINK_OWN, &host, &port));
+	check("own server: host as configured",
+	    host != NULL && strcmp(host, "example.test") == 0);
+	check("own server: port as configured", port == 12345);
+
+	/* Zero and out of range both mean "not set", not "port 0" and not a port
+	   getaddrinfo would refuse. */
+	port = -1;
+	config.json_net_port = 0;
+	(void) net_json_link_wanted(NET_JSON_LINK_OWN, &host, &port);
+	check("own server: port 0 means the standard port",
+	    port == JSON_NET_DEFAULT_PORT);
+
+	port = -1;
+	config.json_net_port = 70000;
+	(void) net_json_link_wanted(NET_JSON_LINK_OWN, &host, &port);
+	check("own server: an impossible port means the standard port",
+	    port == JSON_NET_DEFAULT_PORT);
+
+	host = NULL;
+	port = -1;
+	config.community_net_enabled = 1;
+	check("community: wanted once enabled",
+	    net_json_link_wanted(NET_JSON_LINK_COMMUNITY, &host, &port));
+	check("community: the fixed host",
+	    host != NULL && strcmp(host, COMMUNITY_NET_HOST) == 0);
+	check("community: the standard port", port == JSON_NET_DEFAULT_PORT);
+
+	/* The two do not compete. Both on means both, which is what lets a machine
+	   reach its own people and the community at the same time. */
+	config.json_net_port = 12345;
+	check("both on: own server still wanted",
+	    net_json_link_wanted(NET_JSON_LINK_OWN, NULL, NULL));
+	check("both on: community still wanted",
+	    net_json_link_wanted(NET_JSON_LINK_COMMUNITY, NULL, NULL));
+
+	/* The community's address is never the machine's business, however the
+	   settings are filled in. */
+	host = NULL;
+	snprintf(config.json_net_host, sizeof(config.json_net_host), "somewhere.else");
+	config.community_net_enabled = 1;
+	(void) net_json_link_wanted(NET_JSON_LINK_COMMUNITY, &host, &port);
+	check("community: unaffected by the other server's host name",
+	    host != NULL && strcmp(host, COMMUNITY_NET_HOST) == 0);
+
+	/* Turning the community off leaves the other one alone, and vice versa. */
+	config.community_net_enabled = 0;
+	check("community off: not wanted",
+	    !net_json_link_wanted(NET_JSON_LINK_COMMUNITY, NULL, NULL));
+	check("community off: own server unaffected",
+	    net_json_link_wanted(NET_JSON_LINK_OWN, NULL, NULL));
+
+	config.community_net_enabled = 1;
+	config.json_net_enabled = 0;
+	check("own server off: not wanted",
+	    !net_json_link_wanted(NET_JSON_LINK_OWN, NULL, NULL));
+	check("own server off: community unaffected",
+	    net_json_link_wanted(NET_JSON_LINK_COMMUNITY, NULL, NULL));
+
+	/* An index that is neither is not a server, rather than reading off the
+	   end of the array. */
+	check("an unknown link is not wanted",
+	    !net_json_link_wanted(NET_JSON_LINK_COUNT, NULL, NULL) &&
+	    !net_json_link_wanted(-1, NULL, NULL));
+
+	memset(&config, 0, sizeof(config));
+}
+
 int
 main(void)
 {
@@ -371,6 +474,7 @@ main(void)
 	test_bad_input();
 	test_whitespace();
 	test_reconnect();
+	test_link_selection();
 
 	printf("\n%s\n", failures ? "FAILED" : "All tests passed");
 	return failures != 0;

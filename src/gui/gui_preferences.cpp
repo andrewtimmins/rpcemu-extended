@@ -276,6 +276,36 @@ SetWarnOnExit(bool warn)
 	delete config;
 }
 
+/* When the Community Network's terms were accepted. Zero means never. */
+long long
+GetCommunityNetworkAccepted()
+{
+	wxConfig *config = OpenPreferences();
+	wxString when;
+
+	/* A string, not a long: wxConfig's integers are 32-bit on some platforms
+	   and a Unix time is not. Same reason GetLastUpdateCheck() does it. */
+	config->Read("CommunityNetworkAccepted", &when, "0");
+	delete config;
+
+	long long value = 0;
+
+	if (!when.ToLongLong(&value)) {
+		return 0;
+	}
+	return value;
+}
+
+void
+SetCommunityNetworkAccepted(long long when)
+{
+	wxConfig *config = OpenPreferences();
+
+	config->Write("CommunityNetworkAccepted", wxString::Format("%lld", when));
+	config->Flush();
+	delete config;
+}
+
 /* The command line's answer for this session, or none. See
    display_acceleration.h for why the precedence is spelled out separately. */
 static int g_acceleration_override = DISPLAY_ACCELERATION_NO_OVERRIDE;
