@@ -2898,6 +2898,7 @@ void MachineEditDialog::ApplySavedSettingsToGlobalConfig(const wxString &rom_dir
 	strncpy(config.json_net_host, json_net_host_edit_->GetValue().utf8_str().data(),
 	    sizeof(config.json_net_host) - 1);
 	config.json_net_host[sizeof(config.json_net_host) - 1] = '\0';
+	config.community_net_enabled = community_net_check_->GetValue() ? 1 : 0;
 }
 
 wxString MachineEditDialog::CurrentMachineNameForHd() const
