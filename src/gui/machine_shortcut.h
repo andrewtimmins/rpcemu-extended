@@ -25,9 +25,12 @@
 
 /*
  * A shortcut that opens one machine, in whatever form the desktop understands:
- * a .lnk on Windows, a .desktop on Linux, a .command on macOS. wxWidgets has
- * nothing for this, so there is a writer per platform and they share nothing
- * but this declaration.
+ * a .lnk on Windows, a .desktop on Linux, a small application bundle on macOS.
+ * wxWidgets has nothing for this, so there is a writer per platform and they
+ * share nothing but this declaration.
+ *
+ * Each carries the emulator's icon, so the shortcut looks like the thing it
+ * starts rather than like a script.
  *
  * Answers false if it could not be written, which the caller reports.
  */

@@ -2468,8 +2468,10 @@ void ManagerFrame::OnCreateShortcut(wxCommandEvent & /*event*/)
 	const wxString extension = ".lnk";
 	const wxString wildcard = "Shortcuts (*.lnk)|*.lnk";
 #elif defined(__WXOSX__)
-	const wxString extension = ".command";
-	const wxString wildcard = "Shell commands (*.command)|*.command";
+	/* An application bundle, not a .command file: see machine_shortcut.cpp for
+	   why, and note that the "file" this dialogue returns is a directory. */
+	const wxString extension = ".app";
+	const wxString wildcard = "Applications (*.app)|*.app";
 #else
 	const wxString extension = ".desktop";
 	const wxString wildcard = "Desktop entries (*.desktop)|*.desktop";
@@ -2490,7 +2492,16 @@ void ManagerFrame::OnCreateShortcut(wxCommandEvent & /*event*/)
 		return;
 	}
 
-	if (!WriteShortcut(dialog.GetPath(), exe, args,
+	/* A name typed without the extension still has to be a shortcut: every
+	   platform decides what a file is from it, and macOS will not treat a
+	   directory as an application without it. */
+	wxString path = dialog.GetPath();
+
+	if (!path.EndsWith(extension)) {
+		path << extension;
+	}
+
+	if (!WriteShortcut(path, exe, args,
 	        wxFileName(exe).GetPath(), name)) {
 		wxMessageBox("The shortcut could not be written.",
 		    "RPCEmu Extended Manager", wxOK | wxICON_ERROR, this);
@@ -2498,7 +2509,7 @@ void ManagerFrame::OnCreateShortcut(wxCommandEvent & /*event*/)
 	}
 
 	rpclog("Manager: shortcut for '%s' written to %s\n",
-	    name.utf8_str().data(), dialog.GetPath().utf8_str().data());
+	    name.utf8_str().data(), path.utf8_str().data());
 }
 
 /*
