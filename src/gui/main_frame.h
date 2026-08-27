@@ -155,6 +155,21 @@ enum StatusBarField {
 	STATUS_FIELD_COUNT
 };
 
+/*
+ * Ask every modal dialogue that is open to close, and say how many were found.
+ *
+ * Shared because two shutdown paths need it and only one of them had it: the
+ * signal handler's "no machine window yet" case (see HandleQuitSignal) and the
+ * machine window's own close. See MainFrame::CloseWhenNothingIsModal() for what
+ * goes wrong without it.
+ *
+ * @param cancel Whether to ask them to end, as opposed to only counting them.
+ *               Asking again is harmless but pointless: a dialogue leaves its
+ *               loop when control returns to it, not when it is told to.
+ * @return How many modal dialogues are open
+ */
+int EndOpenModalDialogs(bool cancel);
+
 class MainFrame : public wxFrame, public GuiBridge {
 public:
 	MainFrame();
@@ -167,6 +182,26 @@ public:
 	   not want to lose and closes, without writing a snapshot - see
 	   closing_for_signal_. */
 	void CloseForSignal();
+
+	/*
+	 * Close as soon as nothing modal is in the way, which is how anything that
+	 * closes this window without being asked by the user must do it.
+	 *
+	 * ★ A modal dialogue here is a STACK object parented to this window - see
+	 * OnSettingsMachine, and every other dialogue in this file. Closing the
+	 * window while one is up destroys it from inside that dialogue's own nested
+	 * event loop, and wxWindowBase::DestroyChildren() then calls delete on a
+	 * stack address: "pointer being freed was not allocated", and the process
+	 * aborts at the very end of an otherwise clean shutdown.
+	 *
+	 * So the dialogue is cancelled first and the close is queued, because its
+	 * scope only unwinds once control returns to it.
+	 */
+	void CloseWhenNothingIsModal();
+
+	/* Whether the dialogues have already been asked to close, so the wait above
+	   asks once rather than on every turn of the event loop. */
+	bool close_asked_modals_ = false;
 
 	/* Reset the running machine because the process was signalled. Does
 	   nothing when no machine is running, there being nothing to reset. */
