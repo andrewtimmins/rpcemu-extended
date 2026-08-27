@@ -2603,9 +2603,18 @@ void MainFrame::PostMachineSwitched(const std::string &machine_name)
 
 void MainFrame::PostQuit()
 {
-	/* Called from the emulator thread; hop to the GUI thread and close the
-	   window, which runs the normal shutdown (stop + join the emu threads). */
-	CallAfter([this]() { Close(true); });
+	/*
+	 * Called from the emulator thread; hop to the GUI thread and close the
+	 * window, which runs the normal shutdown (stop + join the emu threads).
+	 *
+	 * Through CloseWhenNothingIsModal() rather than straight to Close(true),
+	 * for the reason set out there: every dialogue this window opens is a stack
+	 * object parented to it, and destroying the window from inside a dialogue's
+	 * own event loop aborts the process. This path is the guest asking to be
+	 * powered off - the desktop's Shutdown, via OS_Reset - which can arrive
+	 * while anything at all is on screen.
+	 */
+	CallAfter([this]() { CloseWhenNothingIsModal(); });
 }
 
 /*
