@@ -529,6 +529,28 @@ using NAT, there being nothing to forward otherwise.
 Machines running on one computer see each other automatically, each with its own
 address. See [docs/multi-machine.md](docs/multi-machine.md).
 
+### Reaching machines on other computers
+
+Two boxes on the same page, and a machine can use either or both:
+
+**JSON Networking** joins a server you run, so any emulators pointed at it share
+one virtual network wherever they are. RISC OS Pyromaniac speaks the same
+protocol. See [docs/json-networking.md](docs/json-networking.md).
+
+**Community Network** joins one shared server that everybody using the option
+joins, so there is nothing to run and nothing to configure. It is for reaching
+other people's ShareFS discs and printers.
+
+It is a public network of strangers with no encryption and no authentication,
+and RISC OS has no security worth the name, so anything a machine shares on it
+is shared with everybody. Ticking the box asks you to agree to that first. Use a
+machine you would not mind losing, and keep personal data and work files off it.
+See [docs/community-network.md](docs/community-network.md).
+
+Either one takes the machine off the direct link to machines started on this
+computer, which are then reachable only if they are on the same server. NAT, and
+any port forwarding, are unaffected.
+
 ### Watching the network
 
 Every frame a machine sends or receives can be recorded and read.

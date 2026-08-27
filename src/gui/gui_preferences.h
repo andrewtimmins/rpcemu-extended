@@ -91,6 +91,18 @@ void SetWarnOnStop(bool warn);
 bool GetWarnOnExit();
 void SetWarnOnExit(bool warn);
 
+/*
+ * When the Community Network's terms were accepted, as a Unix time, or 0 if
+ * they never were.
+ *
+ * Kept here rather than per machine because it is the person who agrees, not
+ * the machine: somebody who has read it once should not be asked again for
+ * every machine they own. The time rather than a flag so the answer says when,
+ * which is the point of recording an agreement at all.
+ */
+long long GetCommunityNetworkAccepted();
+void SetCommunityNetworkAccepted(long long when);
+
 std::string GetDefaultMachine();
 void SetDefaultMachine(const std::string &machine_name);
 void ClearDefaultMachine();

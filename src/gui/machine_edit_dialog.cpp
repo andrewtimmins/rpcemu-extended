@@ -37,6 +37,9 @@ extern "C" {
 #include "toolbar_icons.h"
 
 #include <cstring>
+#include <ctime>
+
+#include <wx/richmsgdlg.h>
 
 #include <wx/dir.h>
 #include <wx/fileconf.h>
@@ -1063,10 +1066,44 @@ wxWindow *MachineEditDialog::BuildNetworkPage(wxWindow *parent)
 	json_net_check_->Bind(wxEVT_CHECKBOX,
 	    [this](wxCommandEvent &) { UpdateJsonNetEnabled(); });
 
+	/*
+	 * The Community Network: the same transport as the box above, joining one
+	 * shared server instead of one of the user's own. Its own box because it is
+	 * not a variation on that setting - there is nothing to configure, both can
+	 * be on at once, and what it needs is not a server name but the user
+	 * understanding what they are joining.
+	 */
+	auto *community_box =
+	    new wxStaticBoxSizer(wxVERTICAL, page, "Community Network");
+	wxWindow *community_parent = community_box->GetStaticBox();
+
+	community_net_check_ = new wxCheckBox(community_parent, wxID_ANY,
+	    "Join the Community Network");
+
+	auto *community_note = MakeNote(community_parent,
+	    "One shared network with other people running RPCEmu, for reaching each "
+	    "other's ShareFS discs and printers. It is public and unencrypted: "
+	    "anything this machine shares on it is reachable by people you do not "
+	    "know. There is nothing to configure, and it can be used at the same "
+	    "time as a server of your own.");
+
+	community_box->Add(community_net_check_, 0, wxALL, 6);
+	community_box->Add(community_note, 0, wxEXPAND | wxALL, 6);
+
+	/* Asked on the way in, never on the way out: a box being ticked is the
+	   moment the user is deciding, and the Cancel button on this dialogue must
+	   stay an honest way out of it. */
+	community_net_check_->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent &) {
+		if (community_net_check_->GetValue() && !ConfirmCommunityNetwork()) {
+			community_net_check_->SetValue(false);
+		}
+	});
+
 	auto *sizer = new wxBoxSizer(wxVERTICAL);
 	sizer->Add(form, 0, wxEXPAND | wxALL, 10);
 	sizer->Add(note, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
 	sizer->Add(json_box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
+	sizer->Add(community_box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
 	page->SetSizer(sizer);
 	return page;
 }
@@ -1151,6 +1188,68 @@ wxString MachineEditDialog::SelectedMacAddress() const
 }
 
 /** Grey the server fields when the machine is not joining one. */
+/*
+ * What joining the Community Network means, and the user's agreement to it.
+ *
+ * Asked once per person rather than once per machine, because it is the person
+ * who is agreeing; the answer and its date live in the preferences (see
+ * gui_preferences.h). Somebody who has already agreed is not asked again.
+ *
+ * Two buttons and nothing else. A multi-button dialogue with custom labels has
+ * form on macOS for returning without ever appearing, and a question about
+ * security that answers itself is worse than no question at all.
+ */
+bool MachineEditDialog::ConfirmCommunityNetwork()
+{
+	if (GetCommunityNetworkAccepted() != 0) {
+		return true;
+	}
+
+	wxRichMessageDialog dlg(this,
+	    "The Community Network puts this machine on one shared network with "
+	    "other people\'s machines, over the internet.",
+	    "Join the Community Network", wxOK | wxCANCEL | wxICON_WARNING);
+
+	dlg.SetExtendedMessage(
+	    "Please read this before you turn it on.\n"
+	    "\n"
+	    "Nothing on this network is encrypted or authenticated. Every frame "
+	    "this machine sends can be read by everyone else on it, and anyone can "
+	    "claim to be anyone.\n"
+	    "\n"
+	    "RISC OS has no meaningful security. ShareFS, Access and the rest were "
+	    "written for a trusted office network in the 1990s: a disc you share is "
+	    "shared with everybody, and file protection is a convention rather than "
+	    "a defence.\n"
+	    "\n"
+	    "Anything this machine offers is public. Discs, folders and printers it "
+	    "shares are reachable by strangers, and anything they send you arrives "
+	    "with no check on where it came from. Keep personal data, credentials "
+	    "and work files off it, including other people\'s personal data.\n"
+	    "\n"
+	    "Treat the machine as disposable. Anything the guest can write to, it "
+	    "can be asked by somebody else to write to. Your IP address is visible "
+	    "to the server, and whoever runs it may log connections.\n"
+	    "\n"
+	    "The network is provided as it is, with no undertaking that it works, "
+	    "stays available, or is free of other people\'s mistakes or bad "
+	    "behaviour. So far as the law allows, the authors and contributors of "
+	    "RPCEmu Extended accept no liability for any loss, damage or disclosure "
+	    "arising from your use of it. You use it at your own risk, and what "
+	    "this machine shares and does on it is your responsibility.\n"
+	    "\n"
+	    "Turning this on is your agreement to the above.");
+
+	dlg.SetOKCancelLabels("I agree, join", "Cancel");
+
+	if (dlg.ShowModal() != wxID_OK) {
+		return false;
+	}
+
+	SetCommunityNetworkAccepted((long long) time(NULL));
+	return true;
+}
+
 void MachineEditDialog::UpdateJsonNetEnabled()
 {
 	const bool on = json_net_check_ != nullptr && json_net_check_->GetValue();
@@ -2375,6 +2474,15 @@ void MachineEditDialog::LoadSettings()
 		json_net_check_->SetValue(json_on != 0);
 		json_net_host_edit_->SetValue(json_host);
 		json_net_port_edit_->SetValue(static_cast<int>(json_port));
+
+		/* Not asked about here: this is what the machine already had, and a
+		   dialogue that interrogates the user for opening a settings window
+		   would be answered by ticking it off again. The question belongs to
+		   the act of turning it on. */
+		long community_on = 0;
+
+		settings.Read("community_net_enabled", &community_on, 0L);
+		community_net_check_->SetValue(community_on != 0);
 		UpdateJsonNetEnabled();
 	}
 
@@ -2599,6 +2707,8 @@ void MachineEditDialog::SaveSettings()
 	settings.Write("json_net_host", json_net_host_edit_->GetValue());
 	settings.Write("json_net_port",
 	    static_cast<long>(json_net_port_edit_->GetValue()));
+	settings.Write("community_net_enabled",
+	    static_cast<long>(community_net_check_->GetValue() ? 1 : 0));
 
 	SavePoduleSettings(settings);
 

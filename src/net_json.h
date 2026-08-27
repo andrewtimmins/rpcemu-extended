@@ -77,6 +77,53 @@ extern "C" {
 #endif
 
 /**
+ * The Community Network's server, which is deliberately not a setting: the
+ * point of the option is that everybody who turns it on joins the same wire, so
+ * an address each would defeat it. A user who wants a server of their own has
+ * the JSON networking option for that, and can have both at once.
+ */
+#define COMMUNITY_NET_HOST "nexus.branchthroughzero.co.uk"
+
+/** The JSON server's standard port, and so the Community Network's. */
+#define JSON_NET_DEFAULT_PORT 33445
+
+/**
+ * The servers a machine can be on, at the same time.
+ *
+ * Two rather than a list, because there are exactly these two and anything
+ * reporting on one wants to name it.
+ */
+enum {
+	NET_JSON_LINK_OWN = 0,		/**< The server named in this machine's settings */
+	NET_JSON_LINK_COMMUNITY = 1,	/**< The Community Network */
+	NET_JSON_LINK_COUNT = 2
+};
+
+/**
+ * Whether this machine's settings put it on one of the two servers, and where
+ * that server is.
+ *
+ * The whole decision in one place, so it can be checked without a socket: a
+ * port of zero or nonsense means the standard one, a JSON server with no host
+ * name is not configured at all, and the Community Network's address is never
+ * taken from the settings.
+ *
+ * @param link One of NET_JSON_LINK_*
+ * @param host Where to put the host name, or NULL if it is not wanted. Points
+ *             at storage that outlives the call, so it is not copied
+ * @param port Where to put the port, or NULL
+ * @return 1 if the machine belongs on that server, 0 if not (in which case
+ *         host and port are untouched)
+ */
+extern int net_json_link_wanted(int link, const char **host, int *port);
+
+/**
+ * Whether the Community Network in particular is up, for anything that has to
+ * say which of the two a machine is talking to.
+ */
+extern int net_json_is_community_connected(void);
+
+/**
  * Connect to the configured server.
  *
  * Does nothing and reports failure when the machine has no server configured,

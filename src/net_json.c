@@ -56,21 +56,54 @@
    timeout an unanswering address would otherwise take. */
 #define NET_JSON_CONNECT_SECONDS	5
 
-static int json_fd = -1;
+/*
+ * ★ Two servers at once, not one.
+ *
+ * A machine can be on a server of its own AND on the Community Network, so
+ * everything about a connection lives in a JsonLink and there is one per
+ * server. Frames from the guest go to every link that is up; frames from any
+ * link go to the guest. The links know nothing about each other and retry
+ * independently, so one server being down is not the other's problem.
+ *
+ * The cost is duplication, and it is worth stating plainly rather than
+ * discovering: both servers are hubs that copy every frame to every client, so
+ * a machine that is on both networks hears a peer that is also on both of them
+ * twice. IP tolerates that. Broadcast discovery - ShareFS and Access - shows
+ * the same machine from both directions and doubles its traffic. Being on one
+ * network is the quiet arrangement; being on both is for reaching two sets of
+ * people at once and paying for it.
+ */
+typedef struct {
+	const char *name;	/* for the log, so the two can be told apart */
+	const char *host;	/* into config, or the constant; never owned */
+	int port;
 
-/* Retrying, so a machine started before its server, or left running across a
-   server restart, joins the network by itself. */
-static int json_want_connection;	/* configured for a server at startup */
-static int json_ever_connected;		/* which of the two intervals applies */
-static time_t json_next_attempt;
-static int json_failure_logged;		/* so it is said once, not every attempt */
-static int json_connecting;		/* socket open, handshake still running */
-static time_t json_connect_deadline;	/* when to give that handshake up */
+	int fd;
 
-/* Partial line left over from the last read: TCP gives no message boundaries,
-   so a frame can arrive in pieces or several can arrive together. */
-static char json_in[NET_JSON_MAX_LINE * 2];
-static size_t json_in_len;
+	/* Retrying, so a machine started before its server, or left running
+	   across a server restart, joins the network by itself. */
+	int want_connection;		/* configured for this server at startup */
+	int ever_connected;		/* which of the two intervals applies */
+	time_t next_attempt;
+	int failure_logged;		/* so it is said once, not every attempt */
+	int connecting;			/* socket open, handshake still running */
+	time_t connect_deadline;	/* when to give that handshake up */
+
+	/* Partial line left over from the last read: TCP gives no message
+	   boundaries, so a frame can arrive in pieces or several can arrive
+	   together. */
+	char in[NET_JSON_MAX_LINE * 2];
+	size_t in_len;
+} JsonLink;
+
+/* fd is set here, not left to zero-initialisation: net_json_close() can be
+   called before anything has been opened, and closing fd 0 would take standard
+   input with it. */
+static JsonLink json_links[NET_JSON_LINK_COUNT] = {
+	{ "JSON server", NULL, 0, -1, 0, 0, 0, 0, 0, 0, { 0 }, 0 },
+	{ "Community Network", COMMUNITY_NET_HOST, JSON_NET_DEFAULT_PORT,
+	  -1, 0, 0, 0, 0, 0, 0, { 0 }, 0 },
+};
 
 static const char base64_alphabet[] =
 	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -314,49 +347,118 @@ net_json_decode(const char *line, uint8_t *out, size_t out_size)
 }
 
 int
+net_json_link_wanted(int link, const char **host, int *port)
+{
+	if (link == NET_JSON_LINK_COMMUNITY) {
+		if (!config.community_net_enabled) {
+			return 0;
+		}
+		if (host != NULL) {
+			*host = COMMUNITY_NET_HOST;
+		}
+		if (port != NULL) {
+			*port = JSON_NET_DEFAULT_PORT;
+		}
+		return 1;
+	}
+
+	if (link != NET_JSON_LINK_OWN) {
+		return 0;
+	}
+
+	/* A server with no host name is not a server. The setting can be on with
+	   the field never filled in, which is not an error worth refusing to start
+	   over - it simply means this half is not configured. */
+	if (!config.json_net_enabled || config.json_net_host[0] == '\0') {
+		return 0;
+	}
+	if (host != NULL) {
+		*host = config.json_net_host;
+	}
+	if (port != NULL) {
+		*port = (config.json_net_port > 0 && config.json_net_port <= 65535)
+		    ? config.json_net_port : JSON_NET_DEFAULT_PORT;
+	}
+	return 1;
+}
+
+/** Usable, as opposed to open: a handshake still running is neither. */
+static int
+link_is_connected(const JsonLink *link)
+{
+	return link->fd >= 0 && !link->connecting;
+}
+
+int
 net_json_is_connected(void)
 {
-	/* A socket whose handshake is still running is not usable yet. */
-	return json_fd >= 0 && !json_connecting;
+	int i;
+
+	/* Any of them: one server answering is enough for the guest to be on a
+	   network, and net_json_tx() sends to whichever are up. */
+	for (i = 0; i < NET_JSON_LINK_COUNT; i++) {
+		if (link_is_connected(&json_links[i])) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+int
+net_json_is_community_connected(void)
+{
+	return link_is_connected(&json_links[NET_JSON_LINK_COMMUNITY]);
 }
 
 int
 net_json_wants_connection(void)
 {
-	return json_want_connection;
+	int i;
+
+	/*
+	 * Wanting a connection, not having one. This is what takes the machine off
+	 * the loopback wire, and it has to stay true while a server is being
+	 * retried, or a machine would drift back onto the local wire every time its
+	 * server blinked.
+	 */
+	for (i = 0; i < NET_JSON_LINK_COUNT; i++) {
+		if (json_links[i].want_connection) {
+			return 1;
+		}
+	}
+	return 0;
 }
 
 /** Arrange for the next attempt, at whichever interval now applies. */
 static void
-net_json_schedule_retry(void)
+net_json_schedule_retry(JsonLink *link)
 {
-	json_next_attempt = time(NULL) +
-	    (json_ever_connected ? NET_JSON_RETRY_WARM_SECONDS
-	                         : NET_JSON_RETRY_COLD_SECONDS);
+	link->next_attempt = time(NULL) +
+	    (link->ever_connected ? NET_JSON_RETRY_WARM_SECONDS
+	                          : NET_JSON_RETRY_COLD_SECONDS);
 }
 
-static void net_json_drop(void);
+static void net_json_drop(JsonLink *link);
 
 /** The socket is up: settle it and say so. */
 static void
-net_json_connected(void)
+net_json_connected(JsonLink *link)
 {
 	/* One frame per line, each written on its own: Nagle would hold each back
 	   waiting for company and add its delay to every frame on the wire. */
-	socket_set_nodelay(json_fd);
-	json_in_len = 0;
-	json_connecting = 0;
+	socket_set_nodelay(link->fd);
+	link->in_len = 0;
+	link->connecting = 0;
 
-	if (json_ever_connected) {
-		rpclog("net_json: reconnected to %s:%d\n", config.json_net_host,
-		    config.json_net_port > 0 ? config.json_net_port : 33445);
+	if (link->ever_connected) {
+		rpclog("net_json: reconnected to the %s at %s:%d\n", link->name,
+		    link->host, link->port);
 	} else {
-		rpclog("net_json: on %s:%d; frames go there rather than to the "
-		       "loopback wire\n", config.json_net_host,
-		    config.json_net_port > 0 ? config.json_net_port : 33445);
+		rpclog("net_json: on the %s at %s:%d; frames go there rather than to "
+		       "the loopback wire\n", link->name, link->host, link->port);
 	}
-	json_ever_connected = 1;
-	json_failure_logged = 0;
+	link->ever_connected = 1;
+	link->failure_logged = 0;
 }
 
 /**
@@ -368,7 +470,7 @@ net_json_connected(void)
  * @return 1 if the connection is now up
  */
 static int
-net_json_finish_connect(void)
+net_json_finish_connect(JsonLink *link)
 {
 	struct timeval tv;
 	fd_set wfds;
@@ -376,71 +478,68 @@ net_json_finish_connect(void)
 	socklen_t len = sizeof(err);
 
 	FD_ZERO(&wfds);
-	FD_SET(json_fd, &wfds);
+	FD_SET(link->fd, &wfds);
 	tv.tv_sec = 0;
 	tv.tv_usec = 0;
 
-	if (select(json_fd + 1, NULL, &wfds, NULL, &tv) <= 0) {
+	if (select(link->fd + 1, NULL, &wfds, NULL, &tv) <= 0) {
 		/* Still running. Give it up once it has had long enough, rather than
 		   waiting out the TCP timeout. */
-		if (time(NULL) >= json_connect_deadline) {
-			if (!json_failure_logged) {
-				rpclog("net_json: %s:%d accepted no connection within %d "
-				       "seconds, retrying every %d\n", config.json_net_host,
-				    config.json_net_port > 0 ? config.json_net_port : 33445,
-				    NET_JSON_CONNECT_SECONDS,
-				    json_ever_connected ? NET_JSON_RETRY_WARM_SECONDS
-				                        : NET_JSON_RETRY_COLD_SECONDS);
-				json_failure_logged = 1;
+		if (time(NULL) >= link->connect_deadline) {
+			if (!link->failure_logged) {
+				rpclog("net_json: %s (%s:%d) accepted no connection within %d "
+				       "seconds, retrying every %d\n", link->name, link->host,
+				    link->port, NET_JSON_CONNECT_SECONDS,
+				    link->ever_connected ? NET_JSON_RETRY_WARM_SECONDS
+				                         : NET_JSON_RETRY_COLD_SECONDS);
+				link->failure_logged = 1;
 			}
-			net_json_drop();
+			net_json_drop(link);
 		}
 		return 0;
 	}
 
-	if (getsockopt(json_fd, SOL_SOCKET, SO_ERROR, (char *) &err, &len) != 0 ||
+	if (getsockopt(link->fd, SOL_SOCKET, SO_ERROR, (char *) &err, &len) != 0 ||
 	    err != 0) {
-		if (!json_failure_logged) {
-			rpclog("net_json: cannot reach %s:%d, retrying every %d seconds\n",
-			    config.json_net_host,
-			    config.json_net_port > 0 ? config.json_net_port : 33445,
-			    json_ever_connected ? NET_JSON_RETRY_WARM_SECONDS
-			                        : NET_JSON_RETRY_COLD_SECONDS);
-			json_failure_logged = 1;
+		if (!link->failure_logged) {
+			rpclog("net_json: cannot reach the %s at %s:%d, retrying every %d "
+			       "seconds\n", link->name, link->host, link->port,
+			    link->ever_connected ? NET_JSON_RETRY_WARM_SECONDS
+			                         : NET_JSON_RETRY_COLD_SECONDS);
+			link->failure_logged = 1;
 		}
-		net_json_drop();
+		net_json_drop(link);
 		return 0;
 	}
 
-	net_json_connected();
+	net_json_connected(link);
 	return 1;
 }
 
 /**
- * One attempt at the server.
+ * One attempt at this link's server.
  *
  * @return 0 if the connection is up
  */
 static int
-net_json_try_connect(void)
+net_json_try_connect(JsonLink *link)
 {
 	struct addrinfo hints;
 	struct addrinfo *res = NULL, *rp;
 	char port[16];
 
-	snprintf(port, sizeof(port), "%d",
-	    config.json_net_port > 0 ? config.json_net_port : 33445);
+	snprintf(port, sizeof(port), "%d", link->port);
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 
-	if (getaddrinfo(config.json_net_host, port, &hints, &res) != 0) {
-		if (!json_failure_logged) {
-			rpclog("net_json: cannot resolve %s:%s, retrying every %d "
-			       "seconds\n", config.json_net_host, port,
+	if (getaddrinfo(link->host, port, &hints, &res) != 0) {
+		if (!link->failure_logged) {
+			rpclog("net_json: cannot resolve %s:%s for the %s, retrying every "
+			       "%d seconds\n", link->host, port, link->name,
 			    NET_JSON_RETRY_COLD_SECONDS);
-			json_failure_logged = 1;
+			link->failure_logged = 1;
 		}
 		return -1;
 	}
@@ -456,126 +555,150 @@ net_json_try_connect(void)
 	 * and a wrong address hung the machine until it was killed.
 	 */
 	for (rp = res; rp != NULL; rp = rp->ai_next) {
-		json_fd = (int) socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-		if (json_fd < 0) {
+		link->fd = (int) socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+		if (link->fd < 0) {
 			continue;
 		}
-		socket_set_nonblocking(json_fd);
+		socket_set_nonblocking(link->fd);
 
-		if (connect(json_fd, rp->ai_addr, (int) rp->ai_addrlen) == 0) {
-			json_connecting = 0;
+		if (connect(link->fd, rp->ai_addr, (int) rp->ai_addrlen) == 0) {
+			link->connecting = 0;
 			break;
 		}
 		/* Under way rather than failed: the handshake finishes in its own time
 		   and net_json_poll() picks it up. */
 		if (sock_errno() == SOCK_EINPROGRESS ||
 		    sock_errno() == SOCK_EWOULDBLOCK) {
-			json_connecting = 1;
+			link->connecting = 1;
 			break;
 		}
-		closesocket(json_fd);
-		json_fd = -1;
+		closesocket(link->fd);
+		link->fd = -1;
 	}
 	freeaddrinfo(res);
 
-	if (json_fd < 0) {
-		if (!json_failure_logged) {
-			rpclog("net_json: cannot reach %s:%s, retrying every %d "
-			       "seconds\n", config.json_net_host, port,
-			    json_ever_connected ? NET_JSON_RETRY_WARM_SECONDS
-			                        : NET_JSON_RETRY_COLD_SECONDS);
-			json_failure_logged = 1;
+	if (link->fd < 0) {
+		if (!link->failure_logged) {
+			rpclog("net_json: cannot reach the %s at %s:%s, retrying every %d "
+			       "seconds\n", link->name, link->host, port,
+			    link->ever_connected ? NET_JSON_RETRY_WARM_SECONDS
+			                         : NET_JSON_RETRY_COLD_SECONDS);
+			link->failure_logged = 1;
 		}
 		return -1;
 	}
 
-	if (json_connecting) {
+	if (link->connecting) {
 		/* The socket exists but is not up yet, so the caller must not treat it
 		   as connected. net_json_poll() finishes it or gives it up. */
-		json_connect_deadline = time(NULL) + NET_JSON_CONNECT_SECONDS;
+		link->connect_deadline = time(NULL) + NET_JSON_CONNECT_SECONDS;
 		return -1;
 	}
 
-	net_json_connected();
+	net_json_connected(link);
 	return 0;
 }
 
 int
 net_json_init(void)
 {
+	int wanted = 0;
+	int i;
+
 	net_json_close();
 
-	json_want_connection = 0;
-	json_ever_connected = 0;
-	json_failure_logged = 0;
-	json_next_attempt = 0;
+	for (i = 0; i < NET_JSON_LINK_COUNT; i++) {
+		JsonLink *link = &json_links[i];
+		const char *host = NULL;
+		int port = 0;
 
-	if (!config.json_net_enabled || config.json_net_host[0] == '\0') {
+		link->want_connection = 0;
+		link->ever_connected = 0;
+		link->failure_logged = 0;
+		link->next_attempt = 0;
+
+		if (!net_json_link_wanted(i, &host, &port)) {
+			continue;
+		}
+		link->host = host;
+		link->port = port;
+
+		/*
+		 * From here this machine belongs to that server's wire whether or not
+		 * it answers, so the caller must not put it on the loopback wire
+		 * instead: they are alternatives, and a machine on both receives every
+		 * frame twice. A first attempt that fails is therefore still success as
+		 * far as the caller is concerned - net_json_poll() keeps trying.
+		 */
+		link->want_connection = 1;
+		wanted++;
+
+		if (net_json_try_connect(link) != 0) {
+			net_json_schedule_retry(link);
+		}
+	}
+
+	if (wanted == 0) {
 		return -1;
 	}
 
-	/*
-	 * From here this machine belongs to the JSON wire whether or not the server
-	 * answers, so the caller must not put it on the loopback wire instead: the
-	 * two are alternatives, and a machine on both receives every frame twice.
-	 * A first attempt that fails is therefore still success as far as the
-	 * caller is concerned - net_json_poll() keeps trying.
-	 */
-	json_want_connection = 1;
+	rpclog("net_json: this machine is on %s; the direct link to machines "
+	       "started on this computer is off, and they are unreachable unless "
+	       "they are on the same server. NAT is unaffected.\n",
+	    wanted > 1 ? "both a JSON server of its own and the Community Network"
+	               : (json_links[NET_JSON_LINK_COMMUNITY].want_connection
+	                      ? "the Community Network"
+	                      : "a JSON server"));
 
-	rpclog("net_json: this machine is on the %s:%d server's network; the "
-	       "direct link to machines started on this computer is off, and they "
-	       "are unreachable unless they are on that server too. NAT is "
-	       "unaffected.\n",
-	    config.json_net_host,
-	    config.json_net_port > 0 ? config.json_net_port : 33445);
-
-	if (net_json_try_connect() != 0) {
-		net_json_schedule_retry();
+	if (json_links[NET_JSON_LINK_COMMUNITY].want_connection) {
+		/*
+		 * Said every time the machine starts, not only when the option is
+		 * ticked: this is an open network of strangers with no encryption and
+		 * no authentication, and the log is the record that the machine was put
+		 * on it. See docs/community-network.md.
+		 */
+		rpclog("net_json: the Community Network is a public, unencrypted "
+		       "network shared with people you do not know. Anything the guest "
+		       "shares on it - discs, printers, ShareFS - is reachable by all "
+		       "of them.\n");
 	}
 	return 0;
 }
 
-/** Give up the connection, but keep wanting one. */
+/** Give up this link's connection, but keep wanting one. */
 static void
-net_json_drop(void)
+net_json_drop(JsonLink *link)
 {
-	if (json_fd >= 0) {
-		closesocket(json_fd);
-		json_fd = -1;
+	if (link->fd >= 0) {
+		closesocket(link->fd);
+		link->fd = -1;
 	}
-	json_in_len = 0;
-	net_json_schedule_retry();
+	link->in_len = 0;
+	net_json_schedule_retry(link);
 }
 
 void
 net_json_close(void)
 {
-	if (json_fd >= 0) {
-		closesocket(json_fd);
-		json_fd = -1;
+	int i;
+
+	for (i = 0; i < NET_JSON_LINK_COUNT; i++) {
+		JsonLink *link = &json_links[i];
+
+		if (link->fd >= 0) {
+			closesocket(link->fd);
+			link->fd = -1;
+		}
+		link->in_len = 0;
+		link->want_connection = 0;
 	}
-	json_in_len = 0;
-	json_want_connection = 0;
 }
 
-void
-net_json_tx(const uint8_t *frame, int frame_len)
+/** Write one encoded line to one link, dropping the link if it will not go. */
+static void
+net_json_send_line(JsonLink *link, const char *line, int len)
 {
-	char line[NET_JSON_MAX_LINE];
-	int len;
 	int sent = 0;
-
-	/* Not while the handshake is still running: the socket exists but nothing
-	   sent down it would arrive. */
-	if (json_fd < 0 || json_connecting) {
-		return;
-	}
-
-	len = net_json_encode(frame, frame_len, line, sizeof(line));
-	if (len < 0) {
-		return;
-	}
 
 	/*
 	 * A short write is possible on a stream socket, and half a line would
@@ -583,7 +706,7 @@ net_json_tx(const uint8_t *frame, int frame_len)
 	 * real error rather than spinning.
 	 */
 	while (sent < len) {
-		const int n = (int) send(json_fd, line + sent, (size_t) (len - sent),
+		const int n = (int) send(link->fd, line + sent, (size_t) (len - sent),
 		    MSG_NOSIGNAL);
 
 		if (n > 0) {
@@ -595,32 +718,65 @@ net_json_tx(const uint8_t *frame, int frame_len)
 		              sock_errno() == SOCK_EINTR)) {
 			continue;
 		}
-		rpclog("net_json: the server has gone; retrying every %d seconds\n",
-		    NET_JSON_RETRY_WARM_SECONDS);
-		net_json_drop();
+		rpclog("net_json: the %s has gone; retrying every %d seconds\n",
+		    link->name, NET_JSON_RETRY_WARM_SECONDS);
+		net_json_drop(link);
 		return;
 	}
 }
 
-int
-net_json_poll(void)
+void
+net_json_tx(const uint8_t *frame, int frame_len)
+{
+	char line[NET_JSON_MAX_LINE];
+	int len = -1;
+	int i;
+
+	for (i = 0; i < NET_JSON_LINK_COUNT; i++) {
+		JsonLink *link = &json_links[i];
+
+		/* Not while a handshake is still running: the socket exists but
+		   nothing sent down it would arrive. */
+		if (!link_is_connected(link)) {
+			continue;
+		}
+
+		/* Encoded once, on the first link that wants it, and reused: the line
+		   is the same for every server. */
+		if (len < 0) {
+			len = net_json_encode(frame, frame_len, line, sizeof(line));
+			if (len < 0) {
+				return;
+			}
+		}
+		net_json_send_line(link, line, len);
+	}
+}
+
+/**
+ * Read and deliver what one link has to offer.
+ *
+ * @return how many frames reached the guest
+ */
+static int
+net_json_poll_link(JsonLink *link)
 {
 	uint8_t frame[NET_JSON_MAX_FRAME];
 	int delivered = 0;
 	int lines = 0;
 
-	if (json_fd < 0) {
+	if (link->fd < 0) {
 		/* Waiting for a server to answer. Nothing is logged per attempt: the
 		   one failure message has already been written. */
-		if (json_want_connection && time(NULL) >= json_next_attempt) {
-			if (net_json_try_connect() != 0) {
-				net_json_schedule_retry();
+		if (link->want_connection && time(NULL) >= link->next_attempt) {
+			if (net_json_try_connect(link) != 0) {
+				net_json_schedule_retry(link);
 			}
 		}
 		return 0;
 	}
 
-	if (json_connecting && !net_json_finish_connect()) {
+	if (link->connecting && !net_json_finish_connect(link)) {
 		return 0;
 	}
 
@@ -629,43 +785,43 @@ net_json_poll(void)
 		int n;
 
 		/* Take what is there, then deal in whole lines. */
-		if (json_in_len < sizeof(json_in) - 1) {
-			n = (int) recv(json_fd, json_in + json_in_len,
-			    sizeof(json_in) - json_in_len - 1, 0);
+		if (link->in_len < sizeof(link->in) - 1) {
+			n = (int) recv(link->fd, link->in + link->in_len,
+			    sizeof(link->in) - link->in_len - 1, 0);
 			if (n > 0) {
-				json_in_len += (size_t) n;
+				link->in_len += (size_t) n;
 			} else if (n == 0) {
-				rpclog("net_json: the server closed the connection; "
-				       "retrying every %d seconds\n",
-				    NET_JSON_RETRY_WARM_SECONDS);
-				net_json_drop();
+				rpclog("net_json: the %s closed the connection; retrying every "
+				       "%d seconds\n", link->name, NET_JSON_RETRY_WARM_SECONDS);
+				net_json_drop(link);
 				return delivered;
 			}
 		}
-		json_in[json_in_len] = '\0';
+		link->in[link->in_len] = '\0';
 
-		nl = memchr(json_in, '\n', json_in_len);
+		nl = memchr(link->in, '\n', link->in_len);
 		if (nl == NULL) {
 			/*
 			 * No whole line. If the buffer is full there never will be
 			 * one, so throw it away rather than wedging: a line that long
 			 * is not a frame this can carry.
 			 */
-			if (json_in_len >= sizeof(json_in) - 1) {
-				rpclog("net_json: over-long line discarded\n");
-				json_in_len = 0;
+			if (link->in_len >= sizeof(link->in) - 1) {
+				rpclog("net_json: over-long line discarded from the %s\n",
+				    link->name);
+				link->in_len = 0;
 			}
 			return delivered;
 		}
 
 		*nl = '\0';
 		{
-			const int len = net_json_decode(json_in, frame, sizeof(frame));
+			const int len = net_json_decode(link->in, frame, sizeof(frame));
 
 			/* Same filter the loopback wire uses: our address, or a
-			   broadcast or multicast. The two wires are alternatives,
-			   so there is one right answer to "is this for us" and it
-			   lives in one place. */
+			   broadcast or multicast. The wires are alternatives to the
+			   local one, so there is one right answer to "is this for us"
+			   and it lives in one place. */
 			/* Before the filter: a machine using our address is
 			   talking to somebody else, so its frames would be
 			   dropped below without anything noticing. */
@@ -681,14 +837,31 @@ net_json_poll(void)
 
 		/* Shuffle the rest down. */
 		{
-			const size_t used = (size_t) (nl - json_in) + 1;
+			const size_t used = (size_t) (nl - link->in) + 1;
 
-			memmove(json_in, json_in + used, json_in_len - used);
-			json_in_len -= used;
+			memmove(link->in, link->in + used, link->in_len - used);
+			link->in_len -= used;
 		}
 
 		if (++lines >= NET_JSON_POLL_MAX) {
 			return delivered;
 		}
 	}
+}
+
+int
+net_json_poll(void)
+{
+	int delivered = 0;
+	int i;
+
+	/*
+	 * Every link, every poll, and each with its own line budget: one busy
+	 * server must not be able to starve the other, and neither must be able to
+	 * keep this loop running instead of the emulator.
+	 */
+	for (i = 0; i < NET_JSON_LINK_COUNT; i++) {
+		delivered += net_json_poll_link(&json_links[i]);
+	}
+	return delivered;
 }

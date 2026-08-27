@@ -376,6 +376,19 @@ typedef struct {
 	int json_net_enabled;		/**< Join a JSON server rather than the local wire */
 	char json_net_host[256];	/**< Host running the server */
 	int json_net_port;		/**< Its port; 33445 is the server's own default */
+
+	/*
+	 * The Community Network: the same JSON transport, joining one shared
+	 * server that everybody using this option joins, rather than a server the
+	 * user runs. Its address is not a setting - see COMMUNITY_NET_HOST in
+	 * net_json.h - so that everybody who ticks the box lands on the same wire.
+	 *
+	 * It is an open network of strangers with no encryption and no
+	 * authentication, which is why turning it on asks the user to agree to
+	 * something first (see the machine editor). Where both this and a server of
+	 * the user's own are set, this one wins; net_json_target() decides.
+	 */
+	int community_net_enabled;	/**< Join the shared Community Network */
 	int cpu_idle;		/**< Attempt to reduce CPU usage */
 	int show_fullscreen_message;	/**< Show explanation of how to leave fullscreen, on entering fullscreen */
 	int display_scaling;	/**< How the guest's screen is drawn in the window (DisplayScaling) */

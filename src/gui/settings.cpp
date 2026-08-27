@@ -440,6 +440,7 @@ extern "C" void config_sync_machine_edit_to_copy(Config *dest, const Config *src
 	   the editor writes it, and this is what carries it to the running copy. */
 	dest->json_net_enabled = src->json_net_enabled;
 	dest->json_net_port = src->json_net_port;
+	dest->community_net_enabled = src->community_net_enabled;
 	strncpy(dest->json_net_host, src->json_net_host, sizeof(dest->json_net_host) - 1);
 	dest->json_net_host[sizeof(dest->json_net_host) - 1] = '\0';
 
@@ -844,6 +845,8 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	cfg->json_net_host[sizeof(cfg->json_net_host) - 1] = '\0';
 	settings.Read("json_net_port", &value, 33445L);
 	cfg->json_net_port = static_cast<int>(value);
+	settings.Read("community_net_enabled", &value, 0L);
+	cfg->community_net_enabled = static_cast<int>(value);
 
 	settings.Read("network_capture", &sText, wxEmptyString);
 	config_replace_strdup(&cfg->network_capture, sText);
@@ -959,6 +962,8 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	settings.Write("json_net_enabled", static_cast<long>(cfg->json_net_enabled));
 	settings.Write("json_net_host", wxString(cfg->json_net_host, wxConvUTF8));
 	settings.Write("json_net_port", static_cast<long>(cfg->json_net_port));
+	settings.Write("community_net_enabled",
+	    static_cast<long>(cfg->community_net_enabled));
 
 	settings.Write("macaddress", cfg->macaddress ? wxString(cfg->macaddress, wxConvUTF8) : wxString());
 	settings.Write("cpu_idle", static_cast<long>(cfg->cpu_idle));

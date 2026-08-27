@@ -1,5 +1,9 @@
 # JSON Networking
 
+> For the shared network that needs no server of your own, see
+> [community-network.md](community-network.md). It is the same transport with a
+> fixed address, and the two can be used at the same time.
+
 Machines here and any other emulator speaking the same protocol can sit on one
 virtual network, by all connecting to a JSON tun/tap server. The protocol is
 Charles Ferguson's, and RISC OS Pyromaniac speaks it, so a machine here and a

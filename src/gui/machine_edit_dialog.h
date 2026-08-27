@@ -79,6 +79,13 @@ private:
 	wxWindow *BuildOptionsPage(wxWindow *parent);
 	wxWindow *BuildNetworkPage(wxWindow *parent);
 	void UpdateJsonNetEnabled();
+
+	/*
+	 * The Community Network's tick box, which is not just a tick box: turning it
+	 * on asks the user to accept what it means first, and puts the box back if
+	 * they decline. Answers whether it is now on.
+	 */
+	bool ConfirmCommunityNetwork();
 	void OnMacAddressText(wxCommandEvent &event);
 	wxString SelectedMacAddress() const;
 	wxWindow *BuildDrivesPage(wxWindow *parent);
@@ -234,6 +241,7 @@ private:
 	wxTextCtrl *json_net_host_edit_ = nullptr;
 	wxStaticText *json_net_port_label_ = nullptr;
 	wxSpinCtrl *json_net_port_edit_ = nullptr;
+	wxCheckBox *community_net_check_ = nullptr;
 
 	/*
 	 * The explanatory paragraphs on these pages.
