@@ -420,15 +420,15 @@ jobs:
       # Piped through tee so the compiler's output can be examined afterwards.
       # pipefail so a failed build still fails the step rather than being masked
       # by tee's exit status.
-      - name: Build and package (amd64, dynarec)
-        timeout-minutes: 3
+      - name: Build and package (amd64, both binaries)
+        timeout-minutes: 8
         run: |
           set -o pipefail
           chmod +x build.sh setup-build-env.sh
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            ./build.sh --deb --zip 2>&1 | tee build.log
+            ./build.sh --both --deb --zip 2>&1 | tee build.log
           else
-            ./build.sh --zip 2>&1 | tee build.log
+            ./build.sh --both --zip 2>&1 | tee build.log
           fi
 
       # A warning in code this project maintains fails the build. Done here
@@ -442,7 +442,11 @@ jobs:
 
       - name: Smoke test binary
         run: |
+          # ★ BOTH binaries, or the release is short of one. A build that
+          # quietly produced only the recompiler would still pass every test
+          # and ship an archive missing the thing this job exists to add.
           file releases/linux/amd64/rpcemu-recompiler | grep -i ELF
+          file releases/linux/amd64/rpcemu-interpreter | grep -i ELF
           ls -la releases/linux/amd64/
           # Actually execute it. These paths run before any wxWidgets/GTK
           # initialisation, so they work with no display and catch a binary that
@@ -530,20 +534,24 @@ jobs:
       - name: Install dependencies
         run: bash setup-build-env.sh
 
-      - name: Build and package (arm64, recompiler)
-        timeout-minutes: 3
+      - name: Build and package (arm64, both binaries)
+        timeout-minutes: 8
         run: |
           set -o pipefail
           chmod +x build.sh setup-build-env.sh
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            ./build.sh --deb --zip 2>&1 | tee build.log
+            ./build.sh --both --deb --zip 2>&1 | tee build.log
           else
-            ./build.sh --zip 2>&1 | tee build.log
+            ./build.sh --both --zip 2>&1 | tee build.log
           fi
 
       - name: Smoke test binary
         run: |
+          # ★ BOTH binaries, or the release is short of one. A build that
+          # quietly produced only the recompiler would still pass every test
+          # and ship an archive missing the thing this job exists to add.
           file releases/linux/arm64/rpcemu-recompiler | grep -i ELF
+          file releases/linux/arm64/rpcemu-interpreter | grep -i ELF
           ls -la releases/linux/arm64/
           # See the amd64 job: runs before any wxWidgets/GTK initialisation, so
           # it needs no display and catches a binary that cannot start at all.
@@ -637,18 +645,22 @@ jobs:
             mingw-w64-x86_64-libvncserver
             mingw-w64-x86_64-libusb
 
-      - name: Build and stage release (native MSYS2)
-        timeout-minutes: 6
+      - name: Build and stage release (native MSYS2, both binaries)
+        timeout-minutes: 14
         run: |
           chmod +x build-windows.sh
-          ./build-windows.sh --zip
+          ./build-windows.sh --both --zip
 
       - name: Smoke test binary (PE executable)
         run: |
           ls -la releases/windows/amd64/
           # Windows ships the recompiler (full-speed dynarec; the JIT now
-          # supports the Windows x64 ABI).
+          # supports the Windows x64 ABI) and the interpreter beside it.
+          # ★ BOTH binaries, or the release is short of one. A build that
+          # quietly produced only the recompiler would still pass every test
+          # and ship an archive missing the thing this job exists to add.
           file releases/windows/amd64/rpcemu-recompiler.exe | grep -i 'PE32'
+          file releases/windows/amd64/rpcemu-interpreter.exe | grep -i 'PE32'
           # The same checks the other platforms run. This also exercises the
           # staged release as a user gets it, so it catches a DLL that
           # build-windows.sh failed to copy alongside the executable.
@@ -756,18 +768,23 @@ jobs:
     # aarch64-w64-windows-gnu and file(1) calls the output "PE32+ ... ARM64", so
     # this is a native binary and not the amd64 one under emulation.
     #
-    # The INTERPRETER, deliberately (build-windows.sh defaults to it here). The
-    # AArch64 dynarec is not shipped on any platform yet, and Windows on ARM adds
-    # its own questions to it - x18 is reserved as the TEB pointer, and cache
-    # maintenance wants FlushInstructionCache rather than the EL0 dc/ic the
-    # backend uses. Shipping an unproven JIT on a new platform would make both
-    # harder to judge.
+    # Both binaries, as everywhere else. This job shipped the interpreter alone
+    # until now, on the grounds that the AArch64 dynarec was not shipped
+    # anywhere - which stopped being true at 1.1.15, when Linux arm64 and both
+    # macOS arm64 paths took it.
     #
-    # Worth knowing before this is offered to anyone as "the fast one": Windows on
-    # ARM already runs our amd64 build under Prism emulation WITH the x86-64
-    # recompiler, so an emulated build with a JIT may well beat a native build
-    # with the interpreter. Which is quicker is a question for real hardware, and
-    # this job exists so there is something to measure.
+    # Windows on ARM does add its own questions to that backend: x18 is reserved
+    # as the TEB pointer, and cache maintenance wants FlushInstructionCache
+    # rather than the EL0 dc/ic the backend emits. Nobody on the project has an
+    # ARM Windows machine to try it on, which is why the boot test below runs
+    # the RECOMPILER: the half that cannot be checked by hand is the half worth
+    # watching RISC OS come up on.
+    #
+    # Worth knowing when comparing the two downloads: Windows on ARM already
+    # runs our amd64 build under Prism emulation WITH the x86-64 recompiler, so
+    # an emulated build with a JIT may well beat a native one. Which is quicker
+    # is a question for real hardware, and this job exists so there is something
+    # to measure.
     #
     # Slower than the amd64 job for a mundane reason: MSYS2's own runtime is
     # x86-64, so the build tools themselves run emulated. Setting up the
@@ -797,11 +814,11 @@ jobs:
             mingw-w64-clang-aarch64-libvncserver
             mingw-w64-clang-aarch64-libusb
 
-      - name: Build and stage release (arm64, interpreter)
-        timeout-minutes: 8
+      - name: Build and stage release (arm64, both binaries)
+        timeout-minutes: 18
         run: |
           chmod +x build-windows.sh
-          ./build-windows.sh --zip
+          ./build-windows.sh --both --zip
 
       # The architecture is the whole point of this job, so it is asserted rather
       # than admired: a toolchain misconfiguration that produced x86-64 here would
@@ -809,10 +826,15 @@ jobs:
       - name: Smoke test binary (native ARM64 PE)
         run: |
           ls -la releases/windows/arm64/
-          exe=releases/windows/arm64/rpcemu-interpreter.exe
-          file "$exe"
-          file "$exe" | grep -qi 'aarch64\|arm64' \
-            || { echo "not a native ARM64 binary"; exit 1; }
+          # ★ BOTH binaries, and both native. A build that quietly produced one
+          # of them would still pass every other check in this file.
+          for exe in releases/windows/arm64/rpcemu-recompiler.exe \
+                     releases/windows/arm64/rpcemu-interpreter.exe; do
+            file "$exe"
+            file "$exe" | grep -qi 'aarch64\|arm64' \
+              || { echo "$exe is not a native ARM64 binary"; exit 1; }
+          done
+          exe=releases/windows/arm64/rpcemu-recompiler.exe
           # Runs the staged release as a user receives it, so a runtime DLL the
           # bundler failed to copy is caught here rather than by them. clang's
           # runtime differs from GCC's - libc++ and libunwind rather than
@@ -841,7 +863,7 @@ jobs:
           mkdir -p "$data" ci-rom
           cp -r default configs "$data/"
           if ! ls ci-rom/ROM* >/dev/null 2>&1; then
-            releases/windows/arm64/rpcemu-interpreter.exe --fetch-riscos --no-disc --accept-licence
+            releases/windows/arm64/rpcemu-recompiler.exe --fetch-riscos --no-disc --accept-licence
             cp "$data"/roms/ROM* ci-rom/
           fi
           mkdir -p "$data/roms"
@@ -863,7 +885,10 @@ jobs:
         timeout-minutes: 3
         run: |
           python3 tests/boot_smoke.py \
-            --binary releases/windows/arm64/rpcemu-interpreter.exe \
+            # The recompiler, not the interpreter it used to be: this job now
+            # ships both, and the AArch64 JIT on Windows is the half nobody
+            # here can try by hand, so it is the half worth booting.
+            --binary releases/windows/arm64/rpcemu-recompiler.exe \
             --datadir "$(cygpath -u "$RUNNER_TEMP")/rpcemu-data" \
             --abort-check require \
             --save vnc-smoke-windows-arm64.png
@@ -890,10 +915,9 @@ jobs:
       # on a real ARM laptop - and that belongs in the release notes rather than
       # in whether the file is offered at all.
       #
-      # NOTE FOR THE RELEASE NOTES: this build is the INTERPRETER, deliberately
-      # (see the comment at the top of this job). Every other platform ships the
-      # recompiler. Somebody choosing between two Windows downloads has to be
-      # told which is which - see docs/release-notes/README.md.
+      # Both archives carry both binaries now, so the two Windows downloads
+      # differ by architecture alone and nothing about flavours needs saying in
+      # the release notes.
       - name: Upload arm64 build
         uses: actions/upload-artifact@v7
         with:
@@ -952,8 +976,8 @@ jobs:
           echo "==> x86_64 dependency versions"
           arch -x86_64 /usr/local/bin/brew list --versions sdl2-compat sdl3 wxwidgets libvncserver libusb || true
 
-      - name: Build x86_64 slice + test (Rosetta)
-        timeout-minutes: 10
+      - name: Build x86_64 slice (both binaries) + test (Rosetta)
+        timeout-minutes: 22
         run: |
           chmod +x build-macos.sh
           # Resolve wx-config / pkg-config / cmake from the x86_64 Homebrew
@@ -962,7 +986,7 @@ jobs:
           # binary is x86_64 and runs under Rosetta.
           export PATH="/usr/local/bin:$PATH"
           export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig"
-          ./build-macos.sh --arch x86_64
+          ./build-macos.sh --both --arch x86_64
 
       - name: Upload x86_64 slice
         uses: actions/upload-artifact@v7
@@ -1009,11 +1033,11 @@ jobs:
           echo "==> arm64 dependency versions"
           brew list --versions sdl2-compat sdl3 wxwidgets libvncserver libusb || true
 
-      - name: Build arm64 slice (recompiler) + test
-        timeout-minutes: 3
+      - name: Build arm64 slice (both binaries) + test
+        timeout-minutes: 8
         run: |
           chmod +x build-macos.sh
-          ./build-macos.sh --arch arm64
+          ./build-macos.sh --both --arch arm64
 
       - name: Upload arm64 slice
         uses: actions/upload-artifact@v7

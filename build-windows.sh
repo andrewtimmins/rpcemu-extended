@@ -46,6 +46,11 @@ esac
 BUILD_DIR=build-win
 WIN_RELEASE="releases/windows/$WIN_ARCH"
 MAKE_ZIP=false
+BUILD_BOTH=false
+# Set by the second pass of --both, so it adds to what the first pass staged
+# instead of deleting it. Not an option: nothing outside this script should be
+# staging into a directory it did not create.
+KEEP_STAGED="${RPCEMU_KEEP_STAGED:-0}"
 
 # The x86-64 dynarec supports the Windows x64 ABI (codegen_amd64.c), so that
 # build uses the recompiler by default for full-speed emulation.
@@ -74,10 +79,31 @@ for arg in "$@"; do
 		--zip|-z) MAKE_ZIP=true ;;
 		--interpreter|-i) INTERPRETER=true ;;
 		--dynarec) INTERPRETER=false ;;
-		--help|-h) echo "Usage: $0 [--zip] [--interpreter|--dynarec]"; echo "Target follows \$MSYSTEM: MINGW64 -> amd64, CLANGARM64 -> arm64 (interpreter by default)"; exit 0 ;;
+		--both) BUILD_BOTH=true ;;
+		--help|-h) echo "Usage: $0 [--zip] [--interpreter|--dynarec|--both]"; echo "Target follows \$MSYSTEM: MINGW64 -> amd64, CLANGARM64 -> arm64 (interpreter by default)"; exit 0 ;;
 		*) echo "unknown option: $arg"; exit 2 ;;
 	esac
 done
+
+# ★ Both emulators, which takes two passes.
+#
+# RPCEMU_DYNAREC is a configure-time decision, so one configure builds one
+# emulator. Rather than restructure this script around that, --both runs it
+# twice: the interpreter first, then the recompiler, which stages alongside
+# rather than over it and makes the archive at the end. The recompiler goes
+# second so that the things written once - BUILDINFO, the zip - come from it.
+#
+# Two full compiles. On the arm64 runner, where MSYS2's own tools run emulated,
+# that is the slowest job in CI; the timeout in the workflow allows for it.
+if [ "$BUILD_BOTH" = true ]; then
+	"$0" --interpreter
+	if [ "$MAKE_ZIP" = true ]; then
+		RPCEMU_KEEP_STAGED=1 "$0" --dynarec --zip
+	else
+		RPCEMU_KEEP_STAGED=1 "$0" --dynarec
+	fi
+	exit 0
+fi
 
 if [ "$INTERPRETER" = true ]; then
 	DYNAREC_ARG=-DRPCEMU_DYNAREC=OFF
@@ -205,7 +231,9 @@ else
 fi
 
 echo "==> Staging $WIN_RELEASE"
-rm -rf "$WIN_RELEASE"
+if [ "$KEEP_STAGED" != "1" ]; then
+	rm -rf "$WIN_RELEASE"
+fi
 mkdir -p "$WIN_RELEASE"
 # Shared resources - identical set to the Linux release.
 # The guest-side payload - poduleroms, netroms, gfxroms, usbroms, podules and
@@ -265,7 +293,7 @@ cat > "$WIN_RELEASE/BUILDINFO.txt" <<EOF
 RPCEmu (Extended Edition) $VERSION
 Built: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 Host:  $(uname -s) $(uname -m) (cross to $TARGET)
-Binary: $BIN
+Binary: $BIN$([ "$KEEP_STAGED" = "1" ] && echo " (and rpcemu-interpreter.exe, the other flavour)")
 Toolkit: wxWidgets (wxMSW) + CMake (MinGW-w64)
 EOF
 
