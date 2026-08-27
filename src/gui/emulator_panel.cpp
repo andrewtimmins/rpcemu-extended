@@ -1309,8 +1309,50 @@ void EmulatorPanel::OnLeaveWindow(wxMouseEvent &event)
 	event.Skip();
 }
 
+/*
+ * ★ A wheel click is a quantity of rotation, not the sign of an event.
+ *
+ * The guest gets one scroll click per event whose rotation is non-zero, in the
+ * direction of its sign (podulerom_mouse_wheel_change). For a mouse that is
+ * exactly right: one detent is one event carrying a full delta, usually 120.
+ *
+ * A trackpad does not work like that. It sends a stream of small rotations as
+ * the fingers move, and around the ends of a gesture - the start, the stop, the
+ * momentum - the sign flickers. Turning each of those into a whole click gives
+ * a view that lurches up and down instead of scrolling, which is issue #197.
+ *
+ * So rotation is accumulated and a click is emitted per GetWheelDelta() worth,
+ * with the remainder kept for the next event. A genuine change of direction
+ * throws the remainder away rather than letting it cancel the new movement.
+ */
 void EmulatorPanel::OnMouseWheel(wxMouseEvent &event)
 {
-	emulator_.MouseWheel(event.GetWheelRotation());
+	/* Horizontal gestures are not this wheel. A trackpad sends them as a
+	   separate axis, and treating them as vertical is scrolling nobody asked
+	   for. */
+	if (event.GetWheelAxis() != wxMOUSE_WHEEL_VERTICAL) {
+		event.Skip();
+		return;
+	}
+
+	const int rotation = event.GetWheelRotation();
+	int delta = event.GetWheelDelta();
+
+	if (delta <= 0) {
+		delta = 120;	/* what a mouse reports; a sane fallback if wx cannot say */
+	}
+	if ((rotation < 0) != (wheel_accumulator_ < 0)) {
+		wheel_accumulator_ = 0;
+	}
+	wheel_accumulator_ += rotation;
+
+	while (wheel_accumulator_ >= delta) {
+		emulator_.MouseWheel(1);
+		wheel_accumulator_ -= delta;
+	}
+	while (wheel_accumulator_ <= -delta) {
+		emulator_.MouseWheel(-1);
+		wheel_accumulator_ += delta;
+	}
 	event.Skip();
 }

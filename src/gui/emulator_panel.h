@@ -97,6 +97,10 @@ private:
 	void OnMouseDoubleClick(wxMouseEvent &event);
 	void ForwardMousePress(const wxMouseEvent &event);
 	void OnMouseWheel(wxMouseEvent &event);
+
+	/* Wheel rotation not yet turned into a scroll click. A trackpad sends far
+	   less than a click at a time; see OnMouseWheel. */
+	int wheel_accumulator_ = 0;
 	void OnEnterWindow(wxMouseEvent &event);
 	void OnLeaveWindow(wxMouseEvent &event);
 	void OnMouseCaptureLost(wxMouseCaptureLostEvent &event);

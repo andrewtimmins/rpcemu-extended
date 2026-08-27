@@ -1296,16 +1296,42 @@ void RemoteEmulatorPanel::OnMouseUp(wxMouseEvent &event)
 	SendRequest(request);
 }
 
+/*
+ * The same accumulation as the machine window's own panel, and for the same
+ * reason (issue #197): the machine turns any non-zero rotation into one scroll
+ * click, and a trackpad sends a stream of small ones whose sign flickers. The
+ * counting is done here rather than in the machine so that what crosses the
+ * control channel is whole clicks.
+ */
 void RemoteEmulatorPanel::OnMouseWheel(wxMouseEvent &event)
 {
 	if (!live_) {
 		return;
 	}
+	if (event.GetWheelAxis() != wxMOUSE_WHEEL_VERTICAL) {
+		return;
+	}
 
-	IpcRequest request;
-	request.type = IpcRequestType::MouseWheel;
-	request.arg1 = event.GetWheelRotation();
-	SendRequest(request);
+	const int rotation = event.GetWheelRotation();
+	int delta = event.GetWheelDelta();
+
+	if (delta <= 0) {
+		delta = 120;
+	}
+	if ((rotation < 0) != (wheel_accumulator_ < 0)) {
+		wheel_accumulator_ = 0;
+	}
+	wheel_accumulator_ += rotation;
+
+	while (wheel_accumulator_ >= delta || wheel_accumulator_ <= -delta) {
+		IpcRequest request;
+		const int click = wheel_accumulator_ > 0 ? 1 : -1;
+
+		request.type = IpcRequestType::MouseWheel;
+		request.arg1 = click;
+		SendRequest(request);
+		wheel_accumulator_ -= click * delta;
+	}
 }
 
 void RemoteEmulatorPanel::OnKeyDown(wxKeyEvent &event)

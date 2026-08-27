@@ -190,6 +190,10 @@ private:
 	void OnMouseDown(wxMouseEvent &event);
 	void OnMouseUp(wxMouseEvent &event);
 	void OnMouseWheel(wxMouseEvent &event);
+
+	/* Wheel rotation not yet turned into a scroll click. A trackpad sends far
+	   less than a click at a time; see OnMouseWheel. */
+	int wheel_accumulator_ = 0;
 	void OnKeyDown(wxKeyEvent &event);
 	void OnKeyUp(wxKeyEvent &event);
 	void OnKillFocus(wxFocusEvent &event);
