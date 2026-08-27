@@ -1210,33 +1210,42 @@ bool MachineEditDialog::ConfirmCommunityNetwork()
 	    "other people\'s machines, over the internet.",
 	    "Join the Community Network", wxOK | wxCANCEL | wxICON_WARNING);
 
+	/*
+	 * Each point led by a bullet, and no blank lines between them.
+	 * SetExtendedMessage() collapses "\n\n" to a single break on macOS, so
+	 * paragraphs written to be separate arrive as one wall of text - checked on
+	 * screen, which is the only way to find that out. The bullets do the
+	 * separating instead, and survive whatever the platform does to the
+	 * spacing.
+	 */
 	dlg.SetExtendedMessage(
 	    "Please read this before you turn it on.\n"
 	    "\n"
-	    "Nothing on this network is encrypted or authenticated. Every frame "
-	    "this machine sends can be read by everyone else on it, and anyone can "
-	    "claim to be anyone.\n"
+	    "\u2022 Nothing on this network is encrypted or authenticated. Every "
+	    "frame this machine sends can be read by everyone else on it, and "
+	    "anyone can claim to be anyone.\n"
 	    "\n"
-	    "RISC OS has no meaningful security. ShareFS, Access and the rest were "
-	    "written for a trusted office network in the 1990s: a disc you share is "
-	    "shared with everybody, and file protection is a convention rather than "
-	    "a defence.\n"
+	    "\u2022 RISC OS has no meaningful security. ShareFS, Access and the "
+	    "rest were written for a trusted office network in the 1990s: a disc "
+	    "you share is shared with everybody, and file protection is a "
+	    "convention rather than a defence.\n"
 	    "\n"
-	    "Anything this machine offers is public. Discs, folders and printers it "
-	    "shares are reachable by strangers, and anything they send you arrives "
-	    "with no check on where it came from. Keep personal data, credentials "
-	    "and work files off it, including other people\'s personal data.\n"
+	    "\u2022 Anything this machine offers is public. Discs, folders and "
+	    "printers it shares are reachable by strangers, and anything they send "
+	    "you arrives with no check on where it came from. Keep personal data, "
+	    "credentials and work files off it, including other people\'s personal "
+	    "data.\n"
 	    "\n"
-	    "Treat the machine as disposable. Anything the guest can write to, it "
-	    "can be asked by somebody else to write to. Your IP address is visible "
-	    "to the server, and whoever runs it may log connections.\n"
+	    "\u2022 Treat the machine as disposable. Anything the guest can write "
+	    "to, it can be asked by somebody else to write to. Your IP address is "
+	    "visible to the server, and whoever runs it may log connections.\n"
 	    "\n"
-	    "The network is provided as it is, with no undertaking that it works, "
-	    "stays available, or is free of other people\'s mistakes or bad "
+	    "\u2022 The network is provided as it is, with no undertaking that it "
+	    "works, stays available, or is free of other people\'s mistakes or bad "
 	    "behaviour. So far as the law allows, the authors and contributors of "
-	    "RPCEmu Extended accept no liability for any loss, damage or disclosure "
-	    "arising from your use of it. You use it at your own risk, and what "
-	    "this machine shares and does on it is your responsibility.\n"
+	    "RPCEmu Extended accept no liability for any loss, damage or "
+	    "disclosure arising from your use of it. You use it at your own risk, "
+	    "and what this machine shares and does on it is your responsibility.\n"
 	    "\n"
 	    "Turning this on is your agreement to the above.");
 
