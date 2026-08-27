@@ -475,8 +475,10 @@ void MainFrame::HandleIpcRequest(const IpcRequest &request)
 	case IpcRequestType::RequestExit:
 		/* Close() touches wx window state, so it has to run on the GUI
 		   thread; everything above is a plain EmulatorHost call and needs
-		   no hop. */
-		CallAfter([this]() { Close(true); });
+		   no hop. Through CloseWhenNothingIsModal() because the Manager's
+		   Stop arrives whatever this machine is showing, and a dialogue open
+		   in front of it is the case that aborts. */
+		CallAfter([this]() { CloseWhenNothingIsModal(); });
 		break;
 	case IpcRequestType::LoadDisc0:
 		emulator_->LoadDisc(0, request.path);
@@ -3616,6 +3618,60 @@ void MainFrame::OnClose(wxCloseEvent &event)
 	Destroy();
 }
 
+int EndOpenModalDialogs(bool cancel)
+{
+	int open = 0;
+
+	/* The iterator is tested directly rather than against nullptr. wxWidgets
+	   defines wxWindowList::compatibility_iterator two different ways: with
+	   wxUSE_STL it is a class offering operator bool() and no comparison with
+	   nullptr_t, and without it a wrapper that converts to a node pointer. Only
+	   the second form compiles against nullptr, so a build with the STL
+	   containers enabled - which is what Homebrew's wx gives on macOS - failed
+	   with "invalid operands to binary expression". Truth-testing works in
+	   both. Reported by Septercius, issue #30. */
+	for (auto node = wxTopLevelWindows.GetFirst(); node; node = node->GetNext()) {
+		auto *dialog = dynamic_cast<wxDialog *>(node->GetData());
+
+		if (dialog == nullptr || !dialog->IsModal()) {
+			continue;
+		}
+		open++;
+		if (cancel) {
+			dialog->EndModal(wxID_CANCEL);
+		}
+	}
+	return open;
+}
+
+void MainFrame::CloseWhenNothingIsModal()
+{
+	/* Asked once. A dialogue does not leave its loop when it is told to, it
+	   leaves when control next returns to it, so telling it again on every
+	   turn of this would be noise. */
+	if (!close_asked_modals_) {
+		close_asked_modals_ = EndOpenModalDialogs(true) > 0;
+		if (close_asked_modals_) {
+			rpclog("MainFrame: waiting for an open dialogue to close before "
+			       "shutting down\n");
+		}
+	}
+
+	if (EndOpenModalDialogs(false) > 0) {
+		/* Still up, so this window must not be destroyed yet: doing it from
+		   inside that dialogue's nested loop is the abort this exists to
+		   avoid. Queued, so the loop gets its turn. */
+		CallAfter([this]() { CloseWhenNothingIsModal(); });
+		return;
+	}
+
+	/* Close() rather than Destroy(), so the machine is taken down by the same
+	   OnClose() the window's own close button uses - the snapshot being the
+	   only part a signal skips. Forced, because neither a signal nor the
+	   Manager's Stop is a request the window may decline. */
+	Close(true);
+}
+
 void MainFrame::CloseForSignal()
 {
 	if (shutting_down_) {
@@ -3623,12 +3679,7 @@ void MainFrame::CloseForSignal()
 	}
 
 	closing_for_signal_ = true;
-
-	/* Close() rather than Destroy(), so the machine is taken down by the same
-	   OnClose() the window's own close button uses - the snapshot being the
-	   only part it skips. Forced, because a signal is not a request the window
-	   may decline. */
-	Close(true);
+	CloseWhenNothingIsModal();
 }
 
 void MainFrame::ResetForSignal()
