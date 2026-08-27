@@ -94,10 +94,21 @@ both Intel and Apple Silicon.
 `.tar.gz` and run `./rpcemu-recompiler` from inside it. Builds are published for
 Intel/AMD (`amd64`) and ARM (`arm64`, which covers the Raspberry Pi).
 
-Two binaries are in each build. `rpcemu-recompiler` translates ARM code to your
-processor's own and is the one to use. `rpcemu-interpreter` executes instructions
-one at a time: far slower, occasionally useful when something behaves oddly and
-you want to rule the recompiler out.
+**Two binaries are in every build, on every platform.**
+`rpcemu-recompiler` translates ARM code into your processor's own and is the one
+to use. `rpcemu-interpreter` executes instructions one at a time: far slower, and
+worth having when something behaves oddly and you want to rule the recompiler
+out of it. Reporting a fault that happens on one and not the other says a great
+deal in one sentence.
+
+On Windows and Linux they sit side by side in the archive. On macOS the
+application runs the recompiler, and the interpreter is inside the bundle at
+`RPCEmu.app/Contents/MacOS/rpcemu-interpreter`, which you can start from a
+terminal:
+
+```sh
+/Applications/RPCEmu.app/Contents/MacOS/rpcemu-interpreter
+```
 
 ## Your first machine
 
