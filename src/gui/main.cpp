@@ -151,22 +151,7 @@ void HandleQuitSignal(int signum)
 	   emulator would appear to ignore it. End the dialogue first, which
 	   unwinds that loop and lets the startup path fall through to its "no
 	   machine chosen" exit. */
-	/* The iterator is tested directly rather than against nullptr. wxWidgets
-	   defines wxWindowList::compatibility_iterator two different ways: with
-	   wxUSE_STL it is a class offering operator bool() and no comparison with
-	   nullptr_t, and without it a wrapper that converts to a node pointer. Only
-	   the second form compiles against nullptr, so a build with the STL
-	   containers enabled - which is what Homebrew's wx gives on macOS - failed
-	   here with "invalid operands to binary expression". Truth-testing works in
-	   both. Reported by Septercius, issue #30. */
-	for (auto node = wxTopLevelWindows.GetFirst(); node;
-	     node = node->GetNext()) {
-		auto *dialog = dynamic_cast<wxDialog *>(node->GetData());
-
-		if (dialog != nullptr && dialog->IsModal()) {
-			dialog->EndModal(wxID_CANCEL);
-		}
-	}
+	EndOpenModalDialogs(true);
 
 	wxTheApp->ExitMainLoop();
 }
