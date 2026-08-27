@@ -628,12 +628,40 @@ void SeedMonitorChoice(const wxString &hostfs_dir, unsigned vram_mb)
  *
  * The hostname is rewritten on the way in: left alone, every machine made this
  * way would announce the same name to Access.
+ *
+ * ★ NOTHING HERE MAY CREATE !Boot.Choices.Boot.
+ *
+ * The first boot builds Choices from the hook for the running ROM, and the
+ * decision is one test in !Boot.Utils.SetChoices:
+ *
+ *     SYS "XOS_File",17,"<Boot$ChoicesRW>.Boot" TO obj%;flags%
+ *     IF obj%<>2 ... THEN ... COPY Choices:Boot <Boot$ChoicesRW>.Boot R~C~VF
+ *
+ * If Choices.Boot is already a directory, that copy does not happen - and
+ * nothing else populates Choices.Boot, ever. This function used to ship a
+ * PreDesk file inside Choices.Boot, which created the directory on a disc that
+ * had never been booted and so silently suppressed the whole thing. A new
+ * machine came up missing most of !Boot.Choices.Boot, which had to be copied
+ * out of the hook by hand, and Access sharing never started either, because
+ * the hook's own SetupNet was among the files that never arrived.
+ *
+ * So the boot-time half goes into the HOOKS, where SetChoices will copy it in
+ * along with everything else, exactly as SeedMonitorChoice does with Configure.
+ * Choices.Internet is untouched by that test and stays where RISC OS wants it.
+ *
+ * The file is named RPCEmuNet rather than SetUpNet for a reason worth keeping:
+ * the hook already ships SetupNet, and RISC OS filenames are case-insensitive,
+ * so the two would be one file and ours would quietly replace the one that
+ * starts ShareFS.
  */
 bool SeedNetworkChoices(const wxString &hostfs_dir, const wxString &machine_name)
 {
 	const wxString sep = wxFileName::GetPathSeparator();
-	const wxString source = wxString::FromUTF8(rpcemu_get_resourcedir()) +
-	    "resources" + sep + "ro5" + sep + "network" + sep + "!Boot";
+	/* The template's root, which holds !Boot for the Choices half and PreDesk
+	   for the part that has to reach the hooks. */
+	const wxString base = wxString::FromUTF8(rpcemu_get_resourcedir()) +
+	    "resources" + sep + "ro5" + sep + "network";
+	const wxString source = base + sep + "!Boot";
 
 	if (!wxDirExists(source)) {
 		rpclog("riscos fetch: no network template at %s, so the disc is left "
@@ -644,6 +672,40 @@ bool SeedNetworkChoices(const wxString &hostfs_dir, const wxString &machine_name
 	if (!ConfigPathsCopyDirectory(source, hostfs_dir + sep + "!Boot")) {
 		rpclog("riscos fetch: the network template could not be copied\n");
 		return false;
+	}
+
+	/* The PreDesk half, into every hook the disc has - which one applies
+	   depends on the ROM, and this runs before any of it - and into Choices
+	   only where a previous boot has already made it. */
+	{
+		const wxString predesk = base + sep + "PreDesk" + sep + "RPCEmuNet,feb";
+		const wxString boot = hostfs_dir + sep + "!Boot";
+		const wxString tail = sep + "Boot" + sep + "PreDesk";
+		int placed = 0;
+		wxString entry;
+		wxDir dir(boot);
+
+		if (wxFileExists(predesk) && dir.IsOpened()) {
+			if (dir.GetFirst(&entry, "RO*Hook", wxDIR_DIRS)) {
+				do {
+					const wxString target = boot + sep + entry + tail;
+
+					if (wxDirExists(target) &&
+					    wxCopyFile(predesk, target + sep + "RPCEmuNet,feb")) {
+						placed++;
+					}
+				} while (dir.GetNext(&entry));
+			}
+
+			const wxString choices = boot + sep + "Choices" + tail;
+
+			if (wxDirExists(choices) &&
+			    wxCopyFile(predesk, choices + sep + "RPCEmuNet,feb")) {
+				placed++;
+			}
+		}
+		rpclog("riscos fetch: network startup placed in %d location(s)\n",
+		    placed);
 	}
 
 	const wxString startup = hostfs_dir + sep + "!Boot" + sep + "Choices" + sep +
