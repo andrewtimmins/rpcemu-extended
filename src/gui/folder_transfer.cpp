@@ -247,16 +247,30 @@ FolderTransferGatherFacts(const wxString &from, const wxString &to, bool in_use,
 	f.dest_is_dir = wxDirExists(to) ? 1 : 0;
 	f.dest_empty = f.dest_is_dir ? (DirIsEmpty(to) ? 1 : 0) : 1;
 
+	/*
+	 * Walked once and remembered. This used to call ListTree(from) here and
+	 * again on the way out for the caller's byte count, so every file in the
+	 * source was stat'ed twice for one question - which on a full HardDisc4 is
+	 * the difference between a pause and a window that looks dead. Issue #204.
+	 *
+	 * It is kept separate from f.bytes_needed deliberately: bytes_needed is
+	 * cleared below when the free space cannot be measured, and the caller's
+	 * figure is the size of the tree either way.
+	 */
+	unsigned long long tree_bytes = 0;
+
+	if (f.source_is_dir) {
+		const TreeListing listing = ListTree(from);
+
+		tree_bytes = listing.ok ? listing.bytes : 0;
+	}
+
 	{
 		const wxString anchor = f.dest_is_dir ? to : NearestExisting(to);
 
 		f.dest_parent_writable = (!anchor.empty() && CanWriteIn(anchor)) ? 1 : 0;
 
-		if (f.source_is_dir) {
-			const TreeListing listing = ListTree(from);
-
-			f.bytes_needed = listing.ok ? listing.bytes : 0;
-		}
+		f.bytes_needed = tree_bytes;
 		/*
 		 * Free space where the files are going. Left at zero when it cannot be
 		 * had: folder_move_space_is_enough() treats a pair of zeroes as "not
@@ -273,7 +287,7 @@ FolderTransferGatherFacts(const wxString &from, const wxString &to, bool in_use,
 	}
 
 	if (bytes != NULL) {
-		*bytes = f.source_is_dir ? ListTree(from).bytes : 0;
+		*bytes = tree_bytes;
 	}
 	return f;
 }
