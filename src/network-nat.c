@@ -354,6 +354,7 @@ network_nat_init(void)
 	   emulator cannot have them. Turning it off deliberately is better than
 	   racing for them and losing quietly. */
 	if (app_settings_relay_enabled()) {
+		broadcast_relay_set_interface(config.relay_interface);
 		broadcast_relay_init();
 	} else {
 		rpclog("network: Access broadcast relay disabled for this instance "
