@@ -888,22 +888,40 @@ void MainFrame::EnterFullScreen()
 	if (panel_ != nullptr) {
 		panel_->SetFullScreen(true);
 	}
-	if (GetMenuBar() != nullptr) {
-		GetMenuBar()->Show(false);
-	}
-	if (tool_bar_ != nullptr) {
-		tool_bar_->Show(false);
-	}
+
+	/*
+	 * ★ THE MENU BAR AND THE TOOL BAR ARE NOT OURS TO HIDE.
+	 *
+	 * ShowFullScreen(wxFULLSCREEN_ALL) hides and restores both, on GTK and on
+	 * MSW, from the flags it is given. This used to hide them here as well, so
+	 * one piece of state had two owners, and on Windows the second owner does
+	 * not merely duplicate the first - it changes what it does. wxMSW's
+	 * ShowFullScreen reads IsShown() on the way in and, for a bar that is
+	 * already hidden, drops the flag "to prevent it from being restored later"
+	 * (src/msw/frame.cpp). Hiding the tool bar first therefore told wx not to
+	 * bring it back, and only the matching Show(true) on the way out covered
+	 * for it.
+	 *
+	 * Issue #206 is the menu bar not coming back on Windows after a round trip.
+	 * Leaving both bars to ShowFullScreen means there is one owner again and
+	 * nothing to get out of step, whichever half was failing.
+	 *
+	 * The status bar below is the genuine exception and stays.
+	 */
+
 	/* Removed rather than hidden. Hiding it leaves the space it occupied
 	   reserved - measurably so: the frame's client height does not change -
 	   and on macOS that shows as an empty strip along the bottom of the
-	   screen. BuildStatusBar() puts it back on the way out. */
+	   screen. BuildStatusBar() puts it back on the way out. And because it is
+	   gone rather than hidden, wxMSW finds no status bar to reason about and
+	   the flag interaction described above does not arise for it. */
 	if (wxStatusBar *bar = GetStatusBar()) {
 		SetStatusBar(nullptr);
 		bar->Destroy();
 	}
 	ShowFullScreen(true, wxFULLSCREEN_ALL);
 	full_screen_ = true;
+	LogBarState("entered");
 
 	/*
 	 * ★ Ask for the layout again, having changed what the frame contains.
@@ -984,16 +1002,13 @@ void MainFrame::ExitFullScreen()
 	if (panel_ != nullptr) {
 		panel_->SetFullScreen(false);
 	}
+	/* Both bars come back with it: see the note in EnterFullScreen() for why
+	   nothing here shows them by hand any more. */
 	ShowFullScreen(false);
-	if (GetMenuBar() != nullptr) {
-		GetMenuBar()->Show(true);
-	}
-	if (tool_bar_ != nullptr) {
-		tool_bar_->Show(true);
-	}
 	if (GetStatusBar() == nullptr) {
 		BuildStatusBar();
 	}
+	LogBarState("left");
 
 	/*
 	 * ★ Put the window back explicitly, rather than trusting ShowFullScreen().
@@ -1019,6 +1034,46 @@ void MainFrame::ExitFullScreen()
 	if (fullscreen_menu_item_ != nullptr) {
 		fullscreen_menu_item_->Check(false);
 	}
+}
+
+/*
+ * What the frame's bars are actually doing, in one log line.
+ *
+ * Issue #206 - the menu bar not coming back after a full-screen round trip on
+ * Windows - could not be seen from this end at all: RPCEMU_TEST_FULLSCREEN_AFTER
+ * logged the window size at each step and nothing about the bars, so a menu bar
+ * that never returned looked exactly like one that did. There is no Windows
+ * machine here, so the substitute for watching it is a line the reporter can
+ * send back.
+ *
+ * On Windows the native menu is asked for directly with ::GetMenu(). That is the
+ * question that matters there, and it is not the same question as
+ * wxMenuBar::IsShown(): the menu bar is an HMENU attached to the frame rather
+ * than a window that is shown or hidden, so wx can believe it is showing one
+ * that the frame no longer has.
+ */
+void MainFrame::LogBarState(const char *when) const
+{
+	const wxMenuBar *menu = GetMenuBar();
+	const bool tool_shown = tool_bar_ != nullptr && tool_bar_->IsShown();
+
+#ifdef __WXMSW__
+	const bool native_menu = GetHWND() != nullptr &&
+	    ::GetMenu((HWND) GetHWND()) != nullptr;
+
+	rpclog("MainFrame: full screen %s - menu bar %s (native menu %s), "
+	       "tool bar %s, status bar %s\n", when,
+	       menu == nullptr ? "absent" : (menu->IsShown() ? "shown" : "hidden"),
+	       native_menu ? "attached" : "GONE",
+	       tool_shown ? "shown" : "hidden",
+	       GetStatusBar() != nullptr ? "present" : "absent");
+#else
+	rpclog("MainFrame: full screen %s - menu bar %s, tool bar %s, "
+	       "status bar %s\n", when,
+	       menu == nullptr ? "absent" : (menu->IsShown() ? "shown" : "hidden"),
+	       tool_shown ? "shown" : "hidden",
+	       GetStatusBar() != nullptr ? "present" : "absent");
+#endif
 }
 
 void MainFrame::OnFullscreen(wxCommandEvent &)
