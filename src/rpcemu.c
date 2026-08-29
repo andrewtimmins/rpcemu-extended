@@ -361,6 +361,7 @@ Config config = {
 	"",			/* vnc_password */
 	"",			/* vnc_password_readonly */
 	1,			/* hostcmd_enabled (ON by default) */
+	"",			/* relay_interface (empty => choose one; see issue #205) */
 	"",			/* hostcmd_socket (empty => <machinedir>hostcmd.sock) */
 	1,			/* netcap_enabled (ON by default, like the other two sockets) */
 	"",			/* netcap_socket (empty => <machinedir>rpcemu-netcap.sock) */

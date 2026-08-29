@@ -121,6 +121,7 @@ int net_slot_acquire(void) { return 0; }
 void net_slot_release(void) { }
 int app_settings_relay_enabled(void) { return 0; }
 int broadcast_relay_init(void) { return 0; }
+void broadcast_relay_set_interface(const char *name) { (void) name; }
 void broadcast_relay_close(void) { }
 void broadcast_relay_poll(void) { }
 

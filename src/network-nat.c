@@ -321,6 +321,7 @@ network_nat_init(void)
 	}
 
 	if (app_settings_relay_enabled()) {
+		broadcast_relay_set_interface(config.relay_interface);
 		broadcast_relay_init();
 	} else {
 		rpclog("network: Access broadcast relay disabled for this instance "

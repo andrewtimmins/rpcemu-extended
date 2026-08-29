@@ -52,6 +52,16 @@ extern "C" {
  *
  * @return 0 on success, -1 on failure (relay disabled, emulator continues)
  */
+/**
+ * Name the host interface the relay should broadcast on, before init.
+ *
+ * Empty or NULL means choose one, preferring a real wired or wireless adapter
+ * over a tunnel. Matched case-insensitively as a substring, against the
+ * interface name on Unix and against both the adapter name and its description
+ * on Windows. See issue #205, where a connected VPN took the relay with it.
+ */
+void broadcast_relay_set_interface(const char *name);
+
 int broadcast_relay_init(void);
 
 /**
