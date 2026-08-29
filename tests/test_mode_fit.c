@@ -446,6 +446,28 @@ main(void)
 	expect_mode("Kinetic 2MB at 16bpp", 1920, 1080, 2, 2, 1360, 768);
 	expect_mode("8MB at 16bpp", 1920, 1080, 2, 8, 1920, 1080);
 
+	/*
+	 * The same machines with the desktop in 256 colours, which is what a size
+	 * asked for by name is budgeted at since issue #207.
+	 *
+	 * 3840x2160 is the case in the report: 33MB at 32bpp, so no machine we can
+	 * configure could reach it, against 8MB at 8bpp, which a 16MB VRAM machine
+	 * holds with room to spare. The mode was there in the list all along and
+	 * the budget was the only thing keeping it out.
+	 */
+	printf("\nand the same machines at 8bpp, which is what a named size gets\n");
+	expect_mode("16MB at 8bpp reaches 4K", 3840, 2160, 1, 16, 3840, 2160);
+	/* The same machine budgeted at 32bpp stops at 1440p, which is the case
+	   asserted above and the whole of the difference the report was about. */
+	/* 8MB gets there too, with 92KB to spare: 3840x2160 is 8100KB against a
+	   budget of 8192KB. Worth pinning, because it is the closest fit in the
+	   whole table and an off-by-a-little in the budget arithmetic would move
+	   it. */
+	expect_mode("8MB at 8bpp reaches 4K, barely", 3840, 2160, 1, 8, 3840, 2160);
+	/* Depth buys headroom, it does not remove the limit: 2MB still cannot show
+	   4K in 256 colours, and stops at the largest mode under two megabytes. */
+	expect_mode("2MB at 8bpp is still bounded", 3840, 2160, 1, 2, 1920, 1080);
+
 	printf("\nbounds are respected exactly\n");
 	expect_mode("host exactly 800x600", 800, 600, 4, 8, 800, 600);
 	expect_mode("host one pixel under 800x600", 799, 599, 4, 8, 640, 480);
