@@ -37,6 +37,7 @@ extern "C" {
 
 #include <cstring>
 
+#include <wx/busyinfo.h>
 #include <wx/dir.h>
 #include <wx/fileconf.h>
 #include <wx/bmpbuttn.h>
@@ -2440,8 +2441,37 @@ bool MachineEditDialog::OfferToBringHostfsFilesAcross()
 	const wxString from = ResolveHostfsValue(original_hostfs_);
 	const wxString to = ResolveHostfsValue(now);
 	unsigned long long bytes = 0;
-	const folder_move_facts facts =
-	    FolderTransferGatherFacts(from, to, emulator_running_, &bytes);
+
+	/*
+	 * A machine that has never been used is not an empty folder. It carries the
+	 * seed copied out of default/hostfs, so "is there anything in there" answers
+	 * yes and the user was offered the chance to move files they had never put
+	 * anywhere - reported as issue #204, on a machine created minutes earlier.
+	 *
+	 * Only for the machine's own default folder, which is the case that can hold
+	 * a seed and nothing else. Somewhere the user named themselves is their own
+	 * disc and is asked about however little is in it.
+	 */
+	if (original_hostfs_.empty() && RiscosFetchHostfsIsPristine(from)) {
+		return true;
+	}
+
+	folder_move_facts facts;
+
+	{
+		/*
+		 * Both trees are walked and sized here, which on a full HardDisc4 is
+		 * tens of thousands of files and takes long enough that the window
+		 * stops repainting and Windows calls it dead. Also #204. wxBusyInfo
+		 * paints a window of its own, so there is something on screen that is
+		 * demonstrably still alive.
+		 */
+		wxBusyCursor busy;
+		wxBusyInfo info("Checking the HostFS folders...", this);
+
+		facts = FolderTransferGatherFacts(from, to, emulator_running_, &bytes);
+	}
+
 	folder_move_reason why = FOLDER_MOVE_OK;
 	const folder_move_offer offer = folder_move_decide(&facts, &why);
 

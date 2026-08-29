@@ -205,4 +205,16 @@ long long RiscosFetchApproximateSize(const RiscosFetchRequest &request);
  */
 bool RiscosFetchMachineDiscIsEmpty(const wxString &machine_name);
 
+/**
+ * The same test against a HostFS folder named directly, rather than by the
+ * machine that owns it.
+ *
+ * The machine editor needs it for a folder the user has just typed, which has
+ * no machine name attached to it yet. See issue #204: a machine created moments
+ * ago carries the seed, so "is this folder empty" and "has anything been put on
+ * this disc" are not the same question, and the second is the one worth asking
+ * before offering to move files.
+ */
+bool RiscosFetchHostfsIsPristine(const wxString &hostfs_dir);
+
 #endif /* RISCOS_FETCH_H */
