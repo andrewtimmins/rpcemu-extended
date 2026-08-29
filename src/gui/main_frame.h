@@ -697,6 +697,10 @@ private:
 	wxTimer test_close_timer_;
 
 	/* RPCEMU_TEST_FULLSCREEN_AFTER only. */
+	/* Whether the menu bar, tool bar and status bar are where they should be,
+	   logged either side of a full-screen transition. See issue #206. */
+	void LogBarState(const char *when) const;
+
 	wxTimer test_fullscreen_timer_;
 	int test_fullscreen_step_ = 0;
 
