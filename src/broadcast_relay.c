@@ -36,6 +36,7 @@
  * exceeding Ethernet MTU are delivered via IP fragmentation.
  */
 
+#include <ctype.h>
 #include <errno.h>
 #include <string.h>
 #include <time.h>
@@ -381,21 +382,172 @@ find_socket_for_port(uint16_t port)
     return -1;
 }
 
+/*
+ * Choosing the interface the Access relay broadcasts on.
+ *
+ * "The first one that is not loopback" was the rule, and it is wrong on any
+ * machine with a VPN client, a hypervisor or a container runtime on it. Issue
+ * #205: with a VPN connected the relay bound to the VPN's adapter, so Access
+ * broadcasts went somewhere no Acorn can hear them, and disconnecting the VPN
+ * was the only way to get the real adapter back.
+ *
+ * There is no reliable way to ask a host "which interface is my LAN", so the
+ * candidates are scored and the best one wins. The scores are deliberately far
+ * apart, so the ordering is readable in the log rather than depending on a
+ * near-tie nobody can see. An explicit relay_interface setting skips all of it.
+ */
+
+#define RELAY_SCORE_REAL_MEDIA   100	/* Ethernet or wireless, per the OS */
+#define RELAY_SCORE_HAS_GATEWAY   10	/* On a network with a way off it */
+#define RELAY_SCORE_TUNNEL      (-100)	/* VPN, tunnel or point-to-point */
+
+/*
+ * Interface names that are a tunnel or a virtual link on some platform we build
+ * for. Matched as a prefix against a lowercased name.
+ *
+ * awdl and llw are Apple Wireless Direct Link and its low-latency sibling: both
+ * are up, running, broadcast-capable and completely useless for this, and awdl0
+ * sorts before en0 on a Mac, so without this the wrong one was picked there too.
+ */
+static const char *const relay_tunnel_prefixes[] = {
+	"utun", "tun", "tap", "ppp", "ipsec", "wg", "vpn", "gpd", "zt",
+	"awdl", "llw", "bridge", "vmnet", "docker", "veth", "vboxnet",
+};
+
+/* Case-insensitive substring, so a user need only give part of a name. */
+static int
+relay_name_contains(const char *haystack, const char *needle)
+{
+	size_t i, j;
+
+	if (haystack == NULL || needle == NULL || needle[0] == '\0') {
+		return 0;
+	}
+	for (i = 0; haystack[i] != '\0'; i++) {
+		for (j = 0; needle[j] != '\0'; j++) {
+			const char a = (char) tolower((unsigned char) haystack[i + j]);
+			const char b = (char) tolower((unsigned char) needle[j]);
+
+			if (haystack[i + j] == '\0' || a != b) {
+				break;
+			}
+		}
+		if (needle[j] == '\0') {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+static int
+relay_name_is_tunnel(const char *name)
+{
+	size_t i;
+
+	if (name == NULL) {
+		return 0;
+	}
+	for (i = 0; i < sizeof(relay_tunnel_prefixes) / sizeof(relay_tunnel_prefixes[0]);
+	     i++)
+	{
+		const char *p = relay_tunnel_prefixes[i];
+		size_t j;
+
+		for (j = 0; p[j] != '\0'; j++) {
+			if (tolower((unsigned char) name[j]) != p[j]) {
+				break;
+			}
+		}
+		if (p[j] == '\0') {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+/*
+ * The interface the user named, or empty for "choose one".
+ *
+ * Held here rather than read from the global config, because this file is
+ * linked on its own by tests/test_relay_datagram.c and tests/test_relay_reasm.c
+ * and touching `config` would drag the emulator in behind it. The caller hands
+ * it over before broadcast_relay_init(); see broadcast_relay_set_interface().
+ */
+static char relay_interface[128];
+
+void
+broadcast_relay_set_interface(const char *name)
+{
+	if (name == NULL) {
+		relay_interface[0] = '\0';
+		return;
+	}
+	snprintf(relay_interface, sizeof(relay_interface), "%s", name);
+}
+
+/* The setting, or NULL when it is empty and a choice has to be made. */
+static const char *
+relay_wanted_interface(void)
+{
+	if (relay_interface[0] == '\0') {
+		return NULL;
+	}
+	return relay_interface;
+}
+
+/*
+ * Said once, when the choice was made without being told. Names the setting and
+ * the file, because somebody reading the log after an Access share failed to
+ * appear needs to know there is a lever and where it is.
+ */
+static void
+relay_log_choice(const char *chosen, int scored, int by_name)
+{
+	const char *wanted = relay_wanted_interface();
+
+	if (by_name) {
+		rpclog("broadcast_relay: using %s, named by relay_interface\n", chosen);
+		return;
+	}
+
+	/* A setting that matched nothing must say so. Falling back to the best
+	   candidate is right - better a working relay on the wrong interface than
+	   none at all - but reporting it as the interface they asked for would send
+	   somebody looking for the fault everywhere except at their own typo. */
+	if (wanted != NULL) {
+		rpclog("broadcast_relay: relay_interface=\"%s\" matched no interface, "
+		       "so %s was chosen instead (score %d)\n", wanted, chosen, scored);
+		return;
+	}
+
+	rpclog("broadcast_relay: chose %s (score %d). If Access cannot see other "
+	       "machines, set relay_interface in the application settings file to "
+	       "part of the name of the adapter you want.\n", chosen, scored);
+}
+
 /**
- * Find the broadcast address for the first suitable network interface.
- * Skips loopback and interfaces without broadcast capability.
+ * Find the broadcast address for the most suitable network interface.
+ * Skips loopback and interfaces without broadcast capability; prefers a real
+ * wired or wireless adapter over a tunnel. See the scoring note above.
  */
 #ifdef _WIN32
 static int
 get_broadcast_address(struct in_addr *bcast, struct in_addr *host)
 {
-    /* Enumerate IPv4 adapters via GetAdaptersInfo() (iphlpapi). For the first
-       non-loopback adapter with a real address, derive the directed broadcast
-       address from the IP and subnet mask (bcast = ip | ~mask). */
+    /* Enumerate IPv4 adapters via GetAdaptersInfo() (iphlpapi). Every adapter
+       with a real address is a candidate; the best-scoring one wins, and the
+       directed broadcast address comes from the IP and subnet mask
+       (bcast = ip | ~mask). */
     IP_ADAPTER_INFO *adapters = NULL, *ad;
     ULONG size = 0;
     DWORD ret;
+    const char *wanted = relay_wanted_interface();
+    int best_score = 0;
     int found = 0;
+    int found_by_name = 0;
+    char best_name[256];
+
+    best_name[0] = '\0';
 
     ret = GetAdaptersInfo(NULL, &size);
     if (ret != ERROR_BUFFER_OVERFLOW) {
@@ -415,7 +567,7 @@ get_broadcast_address(struct in_addr *bcast, struct in_addr *host)
         return -1;
     }
 
-    for (ad = adapters; ad != NULL && !found; ad = ad->Next) {
+    for (ad = adapters; ad != NULL; ad = ad->Next) {
         IP_ADDR_STRING *ip;
 
         if (ad->Type == MIB_IF_TYPE_LOOPBACK) {
@@ -423,6 +575,8 @@ get_broadcast_address(struct in_addr *bcast, struct in_addr *host)
         }
         for (ip = &ad->IpAddressList; ip != NULL; ip = ip->Next) {
             struct in_addr ipaddr, mask;
+            int score = 0;
+            int wanted_this;
 
             ipaddr.s_addr = inet_addr(ip->IpAddress.String);
             mask.s_addr = inet_addr(ip->IpMask.String);
@@ -432,18 +586,73 @@ get_broadcast_address(struct in_addr *bcast, struct in_addr *host)
                 continue;
             }
 
-            host->s_addr = ipaddr.s_addr;
-            bcast->s_addr = ipaddr.s_addr | ~mask.s_addr;
-            found = 1;
+            /* Windows names an adapter twice: a GUID-ish AdapterName and the
+               Description the user actually recognises. Match on either. */
+            wanted_this = wanted != NULL &&
+                (relay_name_contains(ad->Description, wanted) ||
+                 relay_name_contains(ad->AdapterName, wanted));
 
-            rpclog("broadcast_relay: using adapter %s, host %s, ",
-                   ad->Description, inet_ntoa(*host));
-            rpclog("broadcast %s\n", inet_ntoa(*bcast));
-            break;
+            /* The OS's own idea of the medium is the strongest signal there is,
+               and it is the one that separates a Realtek WiFi adapter from a
+               VPN's virtual one without having to recognise either by name. */
+            if (ad->Type == MIB_IF_TYPE_ETHERNET || ad->Type == IF_TYPE_IEEE80211) {
+                score += RELAY_SCORE_REAL_MEDIA;
+            }
+            if (ad->Type == MIB_IF_TYPE_PPP || ad->Type == IF_TYPE_TUNNEL ||
+                relay_name_is_tunnel(ad->AdapterName) ||
+                relay_name_contains(ad->Description, "VPN") ||
+                relay_name_contains(ad->Description, "Virtual") ||
+                relay_name_contains(ad->Description, "Pseudo") ||
+                relay_name_contains(ad->Description, "TAP-"))
+            {
+                score += RELAY_SCORE_TUNNEL;
+            }
+            if (ad->GatewayList.IpAddress.String[0] != '\0' &&
+                inet_addr(ad->GatewayList.IpAddress.String) != 0)
+            {
+                score += RELAY_SCORE_HAS_GATEWAY;
+            }
+
+            rpclog("broadcast_relay: candidate \"%s\" host %s type %u score %d%s\n",
+                   ad->Description, ip->IpAddress.String,
+                   (unsigned) ad->Type, score, wanted_this ? " (named)" : "");
+
+            /* An adapter the user named is taken outright, whatever it scores.
+               They know something the scoring does not. */
+            if (wanted_this) {
+                *host = ipaddr;
+                bcast->s_addr = ipaddr.s_addr | ~mask.s_addr;
+                snprintf(best_name, sizeof(best_name), "%s", ad->Description);
+                best_score = score;
+                found = 1;
+                found_by_name = 1;
+                goto done;
+            }
+
+            if (!found || score > best_score) {
+                *host = ipaddr;
+                bcast->s_addr = ipaddr.s_addr | ~mask.s_addr;
+                snprintf(best_name, sizeof(best_name), "%s", ad->Description);
+                best_score = score;
+                found = 1;
+            }
         }
     }
 
+done:
     free(adapters);
+
+    if (found) {
+        char host_str[INET_ADDRSTRLEN];
+
+        snprintf(host_str, sizeof(host_str), "%s", inet_ntoa(*host));
+        rpclog("broadcast_relay: using adapter %s, host %s, broadcast %s\n",
+               best_name, host_str, inet_ntoa(*bcast));
+        relay_log_choice(best_name, best_score, found_by_name);
+    } else if (wanted != NULL) {
+        rpclog("broadcast_relay: no adapter is usable at all, so "
+               "relay_interface=\"%s\" could not be honoured\n", wanted);
+    }
     return found ? 0 : -1;
 }
 #else
@@ -451,7 +660,13 @@ static int
 get_broadcast_address(struct in_addr *bcast, struct in_addr *host)
 {
     struct ifaddrs *ifaddr, *ifa;
+    const char *wanted = relay_wanted_interface();
+    int best_score = 0;
     int found = 0;
+    int found_by_name = 0;
+    char best_name[IFNAMSIZ + 1];
+
+    best_name[0] = '\0';
 
     if (getifaddrs(&ifaddr) < 0) {
         rpclog("broadcast_relay: getifaddrs() failed: %s\n", strerror(errno));
@@ -459,6 +674,10 @@ get_broadcast_address(struct in_addr *bcast, struct in_addr *host)
     }
 
     for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        struct sockaddr_in *bcast_sa, *host_sa;
+        int score = 0;
+        int wanted_this;
+
         if (ifa->ifa_addr == NULL) {
             continue;
         }
@@ -495,22 +714,64 @@ get_broadcast_address(struct in_addr *bcast, struct in_addr *host)
         /* Get broadcast address. Use the standard ifa_broadaddr spelling: on
            glibc it is a macro over the ifa_ifu union; on macOS/BSD it is a
            direct struct member (there is no ifa_ifu union there). */
-        if (ifa->ifa_broadaddr != NULL) {
-            struct sockaddr_in *bcast_sa = (struct sockaddr_in *)ifa->ifa_broadaddr;
-            struct sockaddr_in *host_sa = (struct sockaddr_in *)ifa->ifa_addr;
+        if (ifa->ifa_broadaddr == NULL) {
+            continue;
+        }
 
+        wanted_this = wanted != NULL &&
+            relay_name_contains(ifa->ifa_name, wanted);
+
+        /* There is no medium to ask about here as there is on Windows, so the
+           name and the point-to-point flag are what is left. Both catch a
+           tunnel; neither is certain, which is why the setting exists. */
+        if (relay_name_is_tunnel(ifa->ifa_name) ||
+            (ifa->ifa_flags & IFF_POINTOPOINT))
+        {
+            score += RELAY_SCORE_TUNNEL;
+        } else {
+            score += RELAY_SCORE_REAL_MEDIA;
+        }
+
+        bcast_sa = (struct sockaddr_in *) ifa->ifa_broadaddr;
+        host_sa = (struct sockaddr_in *) ifa->ifa_addr;
+
+        rpclog("broadcast_relay: candidate %s host %s score %d%s\n",
+               ifa->ifa_name, inet_ntoa(host_sa->sin_addr), score,
+               wanted_this ? " (named)" : "");
+
+        /* An interface the user named is taken outright, whatever it scores. */
+        if (wanted_this) {
             *bcast = bcast_sa->sin_addr;
             *host = host_sa->sin_addr;
+            snprintf(best_name, sizeof(best_name), "%s", ifa->ifa_name);
+            best_score = score;
             found = 1;
-
-            rpclog("broadcast_relay: using interface %s, host %s, ",
-                   ifa->ifa_name, inet_ntoa(*host));
-            rpclog("broadcast %s\n", inet_ntoa(*bcast));
+            found_by_name = 1;
             break;
+        }
+
+        if (!found || score > best_score) {
+            *bcast = bcast_sa->sin_addr;
+            *host = host_sa->sin_addr;
+            snprintf(best_name, sizeof(best_name), "%s", ifa->ifa_name);
+            best_score = score;
+            found = 1;
         }
     }
 
     freeifaddrs(ifaddr);
+
+    if (found) {
+        char host_str[INET_ADDRSTRLEN];
+
+        snprintf(host_str, sizeof(host_str), "%s", inet_ntoa(*host));
+        rpclog("broadcast_relay: using interface %s, host %s, broadcast %s\n",
+               best_name, host_str, inet_ntoa(*bcast));
+        relay_log_choice(best_name, best_score, found_by_name);
+    } else if (wanted != NULL) {
+        rpclog("broadcast_relay: no interface is usable at all, so "
+               "relay_interface=\"%s\" could not be honoured\n", wanted);
+    }
     return found ? 0 : -1;
 }
 #endif /* _WIN32 */

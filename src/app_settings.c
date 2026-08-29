@@ -138,6 +138,10 @@ apply(Config *cfg, const char *key, const char *value)
 		set_str(cfg->hostcmd_socket, sizeof(cfg->hostcmd_socket), value);
 		return 1;
 	}
+	if (strcmp(key, "relay_interface") == 0) {
+		set_str(cfg->relay_interface, sizeof(cfg->relay_interface), value);
+		return 1;
+	}
 
 	/* An unknown key is left alone rather than treated as an error: a settings
 	   file written by a later version should not stop this one starting. */
@@ -235,13 +239,20 @@ app_settings_save(const char *datadir, const Config *cfg)
 	    "vnc_password=%s\n"
 	    "vnc_password_readonly=%s\n"
 	    "hostcmd_enabled=%d\n"
-	    "hostcmd_socket=%s\n",
+	    "hostcmd_socket=%s\n"
+	    "\n"
+	    "# Which host interface the Access broadcast relay uses. Empty chooses one,\n"
+	    "# preferring a real wired or wireless adapter over a VPN or virtual one.\n"
+	    "# Set it to part of an interface name if that choice is wrong; the log\n"
+	    "# lists every candidate it considered at startup.\n"
+	    "relay_interface=%s\n",
 	    cfg->vnc_enabled ? 1 : 0,
 	    cfg->vnc_port,
 	    cfg->vnc_password,
 	    cfg->vnc_password_readonly,
 	    cfg->hostcmd_enabled ? 1 : 0,
-	    cfg->hostcmd_socket);
+	    cfg->hostcmd_socket,
+	    cfg->relay_interface);
 
 	if (fflush(f) != 0 || ferror(f)) {
 		fclose(f);

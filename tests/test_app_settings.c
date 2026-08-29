@@ -156,12 +156,13 @@ main(int argc, char *argv[])
 	    "watch round trip");
 	cfg.hostcmd_enabled = 0;
 	snprintf(cfg.hostcmd_socket, sizeof(cfg.hostcmd_socket), "/tmp/hc.sock");
+	snprintf(cfg.relay_interface, sizeof(cfg.relay_interface), "Realtek");
 	check("save succeeds", app_settings_save(dir, &cfg) == 0);
 	{
 		Config back;
 
 		memset(&back, 0, sizeof(back));
-		check("all six keys come back", app_settings_load(dir, &back) == 6);
+		check("all seven keys come back", app_settings_load(dir, &back) == 7);
 		check("vnc_enabled", back.vnc_enabled == 1);
 		check("vnc_port", back.vnc_port == 5910);
 		check("vnc_password", strcmp(back.vnc_password, "round trip") == 0);
@@ -170,6 +171,11 @@ main(int argc, char *argv[])
 		check("hostcmd_enabled", back.hostcmd_enabled == 0);
 		check("hostcmd_socket",
 		    strcmp(back.hostcmd_socket, "/tmp/hc.sock") == 0);
+		/* Issue #205. A name with a space in it is the normal case on Windows,
+		   where the adapter is described as "Realtek RTL8852BE WiFi 6 ...", and
+		   the parser keeps spaces inside a value - checked above. */
+		check("relay_interface",
+		    strcmp(back.relay_interface, "Realtek") == 0);
 	}
 
 	/*

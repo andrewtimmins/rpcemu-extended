@@ -371,6 +371,18 @@ typedef struct {
 	char vnc_password[64];	/**< Password for VNC authentication (empty = no auth) */
 	char vnc_password_readonly[64];	/**< Password for view-only VNC clients (empty = disabled) */
 	int hostcmd_enabled;	/**< Enable the HostCmd control socket (host drives the RISC OS CLI) */
+	/**
+	 * Which host interface the Access broadcast relay should use, or empty to
+	 * choose one. An application setting rather than a machine one, because the
+	 * relay is claimed once per host - see app_settings.h.
+	 *
+	 * Matched against the interface name on Unix (en0, eth0) and against both
+	 * the adapter name and its description on Windows, case-insensitively, as a
+	 * substring so "Realtek" is enough. Issue #205: with a VPN connected the
+	 * automatic choice took the VPN's adapter, where no Access peer can hear it.
+	 */
+	char relay_interface[128];
+
 	char hostcmd_socket[512];	/**< Socket spec: empty = <datadir>hostcmd.sock (AF_UNIX); a path = AF_UNIX; a bare port = TCP 127.0.0.1:port */
 	int debug_enabled;	/**< Enable the DebugCmd control socket (host inspects/controls the emulated CPU) */
 	char debug_socket[512];	/**< Socket spec: empty = <datadir>rpcemu-debug.sock (AF_UNIX); a path = AF_UNIX; a bare port = TCP 127.0.0.1:port */
