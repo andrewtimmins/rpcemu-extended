@@ -316,6 +316,65 @@ test_manual_and_cancel_do_nothing(const wxString &tmp)
 	check("and there is always a message to show", !r.message.empty());
 }
 
+/*
+ * The facts the decision is made from, which is the half that reads the disc.
+ *
+ * Added with the issue #204 fix, which stopped this walking the source tree
+ * twice for one answer. The size has to come out right whichever field is
+ * asked for it, and the two must agree, because they used to be two separate
+ * walks and could not disagree by construction. Now they can.
+ */
+static void
+test_gather_facts(const wxString &tmp)
+{
+	const wxString from = tmp + Sep() + "facts-from";
+	const wxString to = tmp + Sep() + "facts-to";
+	unsigned long long bytes = 0;
+
+	puts("Gathering the facts about a pair of folders:");
+
+	Nuke(from);
+	Nuke(to);
+	MakeSourceTree(from);
+
+	folder_move_facts f = FolderTransferGatherFacts(from, to, false, &bytes);
+
+	check("the source is seen, and seen as a directory",
+	    f.source_exists && f.source_is_dir);
+	check("a source with files in it is not empty", !f.source_empty);
+	check("the destination is correctly reported as not there yet",
+	    !f.dest_exists);
+	check("the tree is sized, not reported as nothing", bytes > 0);
+	check("and the caller's figure matches the one used for free space",
+	    bytes == f.bytes_needed);
+
+	/* "boot" + "draw" + "deep", with no separators or padding: the sizes are
+	   the file contents from MakeSourceTree() and nothing else. */
+	check("the size is the sum of the files, and the empty directory adds none",
+	    bytes == 4 + 4 + 4);
+
+	/* An empty source is the case the machine editor leans on: a machine that
+	   has nothing on its disc must not be offered a move. Since #204 a new
+	   machine's HostFS really is empty, so this is the state it is in. */
+	Nuke(from);
+	wxDir::Make(from, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL);
+
+	bytes = 1;	/* Not zero, so a figure that is never written shows up. */
+	f = FolderTransferGatherFacts(from, to, false, &bytes);
+
+	folder_move_reason why = FOLDER_MOVE_OK;
+	const folder_move_offer offer = folder_move_decide(&f, &why);
+
+	check("an empty source is reported empty", f.source_empty);
+	check("its size is nothing", bytes == 0);
+	check("nothing is offered for it", offer == FOLDER_MOVE_OFFER_NOTHING);
+	check("and the reason given is that the source is empty",
+	    why == FOLDER_MOVE_SOURCE_EMPTY);
+
+	Nuke(from);
+	Nuke(to);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -337,6 +396,7 @@ main(int argc, char **argv)
 	test_failure_leaves_everything_as_it_was(tmp);
 	test_move_never_destroys(tmp);
 	test_manual_and_cancel_do_nothing(tmp);
+	test_gather_facts(tmp);
 
 	/* Tidy up, whatever happened. */
 	{
