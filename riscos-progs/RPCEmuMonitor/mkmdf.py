@@ -25,14 +25,32 @@ HS, HBP, HFP = 32, 80, 48
 VS, VBP, VFP = 6, 29, 3
 PIXEL_RATE = 25175      # kHz. See the note above: low on purpose.
 
-# VIDC20 cannot scan out a display wider than this, so a mode above it does not
-# belong in a definition describing what VIDC20 drives. Leaving them in is not
-# merely useless: RISC OS 3.71 stops making sense of the file when it meets one,
-# and the whole definition is lost - the symptom being a definition that loads
-# with no error and changes nothing at all. The wider modes are still offered on
-# RISC OS 5 through the graphics card, which is not VIDC20 and has no such
-# limit.
-VIDC20_MAX_WIDTH = 2048
+# The widest mode a detailed timing can describe: build_detailed_timing() in
+# edid.c carries 12 bits of horizontal active, so 4095, and the definition here
+# describes the same monitor as that block.
+#
+# This used to be 2048, on the grounds that VIDC20 cannot scan out a wider
+# display and that RISC OS 3.71 loses the whole definition when it meets one.
+# Neither holds in this emulator, and the cap was the entire reason RISC OS 4
+# could not reach the large modes - issue #207, where 3840x2160 in 256 colours
+# was reported as working in 1.1.13 and not afterwards. The module first shipped
+# in 1.1.16, which is the change the reporter was feeling.
+#
+# Measured on 29 August 2026 with the cap raised, both machines booting to a
+# desktop and the mode read back from the framebuffer rather than believed:
+#
+#   RISC OS 4.39, 16MB VRAM   1920x1440, 2560x1440 and 3840x2160 all accepted
+#   RISC OS 3.71,  8MB VRAM   the same, and 3440x1440, at 256 colours
+#
+# 3.71 keeps its definition throughout - 1152x864, 1600x1200 and 1920x1440 still
+# select afterwards - so the definition is not being discarded. RPCEmu draws the
+# display in software and has no VIDC20 scan-out limit to hit.
+#
+# What still bounds a mode is the framestore, which RISC OS checks for itself,
+# and the depth: 3840x2160 is 8MB at 256 colours and 33MB at 16M, so the deeper
+# modes simply are not offered at that size. That is the trade, and it is the
+# user's to make.
+MAX_WIDTH = 4096
 
 def modes(path):
     src = open(path).read()
@@ -40,7 +58,7 @@ def modes(path):
     body = body[:body.index('};')]
     out = []
     for w, h in re.findall(r'\{\s*(\d+)\s*,\s*(\d+)\s*\}', body):
-        if int(w) <= VIDC20_MAX_WIDTH:
+        if int(w) <= MAX_WIDTH:
             out.append((int(w), int(h)))
     return out
 
