@@ -1039,6 +1039,11 @@ bool RiscosFetchMachineDiscIsEmpty(const wxString &machine_name)
 	                        wxFileName::GetPathSeparator() + "hostfs");
 }
 
+bool RiscosFetchHostfsIsPristine(const wxString &hostfs_dir)
+{
+	return HostfsIsPristine(hostfs_dir);
+}
+
 long long RiscosFetchApproximateSize(const RiscosFetchRequest &request)
 {
 	return (request.include_rom ? kRomApproxBytes : 0) +
