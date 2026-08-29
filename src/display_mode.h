@@ -51,6 +51,26 @@ extern int display_mode_fit(unsigned max_width, unsigned max_height,
                             unsigned bytes_per_pixel, size_t budget_bytes,
                             unsigned *width, unsigned *height);
 
+/*
+ * The two depths worth budgeting for, named rather than written as bare numbers
+ * at each call, because which one a caller wants is a decision and 1 or 4 on its
+ * own does not read as one.
+ *
+ * DISPLAY_BPP_SAFE is 32bpp, for choosing a size on the user's behalf: whatever
+ * is picked automatically should still work when RISC OS lands in the deepest
+ * mode it has.
+ *
+ * DISPLAY_BPP_SHALLOWEST is 8bpp, for a size the user has asked for by name.
+ * The depth is the guest's choice, not ours, and budgeting a request at 32bpp
+ * refuses modes that work perfectly well in 256 colours - which is issue #207,
+ * where 3840x2160 needs 33MB at 32bpp and 8MB at 8bpp, so it was filtered out of
+ * every machine we can configure while being entirely displayable on a 16MB one.
+ * Someone who names a size is telling us what they want; the deeper modes at
+ * that size may not be available, and that is theirs to find out.
+ */
+#define DISPLAY_BPP_SAFE        4
+#define DISPLAY_BPP_SHALLOWEST  1
+
 /**
  * How many standard modes there are, for walking the list.
  *

@@ -158,8 +158,11 @@ rpcemu_default_screen_size(unsigned *width, unsigned *height)
 		return 0;
 	}
 
-	return display_mode_fit(max_w, max_h, 4, rpcemu_display_memory(),
-	                        width, height);
+	/* Chosen for the user, so budgeted at the deepest mode RISC OS might land
+	   in. A size the user names themselves is a different question - see
+	   rpcemu_guest_size_for(). */
+	return display_mode_fit(max_w, max_h, DISPLAY_BPP_SAFE,
+	                        rpcemu_display_memory(), width, height);
 }
 
 int
@@ -182,8 +185,16 @@ rpcemu_guest_size_for(unsigned width, unsigned height,
 		return 0;
 	}
 
-	return display_mode_fit(width, height, 4, rpcemu_display_memory(),
-	                        fitted_width, fitted_height);
+	/*
+	 * A size somebody asked for by name, so budgeted at the shallowest depth
+	 * rather than the deepest. Issue #207: 3840x2160 needs 33MB at 32bpp and
+	 * 8MB at 8bpp, so budgeting the request at 32bpp quietly substituted a
+	 * smaller mode for one the machine could display perfectly well in 256
+	 * colours - and did it after the size had been offered and chosen, which is
+	 * worse than not offering it.
+	 */
+	return display_mode_fit(width, height, DISPLAY_BPP_SHALLOWEST,
+	                        rpcemu_display_memory(), fitted_width, fitted_height);
 }
 
 void
@@ -205,8 +216,8 @@ rpcemu_request_guest_size_ex(unsigned width, unsigned height, int force)
 	   width, and all but a few of those land on the same standard mode; bumping
 	   the generation for each would have the guest reflowing its desktop over
 	   and over to arrive where it already was. */
-	if (!display_mode_fit(width, height, 4, rpcemu_display_memory(),
-	                      &fitted_w, &fitted_h))
+	if (!display_mode_fit(width, height, DISPLAY_BPP_SHALLOWEST,
+	                      rpcemu_display_memory(), &fitted_w, &fitted_h))
 	{
 		return;
 	}
