@@ -489,13 +489,21 @@ rom_patch_monitor_edid(size_t rom_bytes)
 	   it cannot display: RISC OS answers "not suitable for displaying the
 	   desktop", which is how a Kinetic (clamped to 2MB) reacts to being offered
 	   2560x1440. With the graphics card fitted the budget is the card's own
-	   framestore, which is the point of it. Budget 32bpp, since that is the
-	   deepest the desktop may choose and the advertised mode has to work
-	   whichever depth is configured. A machine with no VRAM fitted takes screen
-	   memory from DRAM instead, so there is no figure to reason about and the
-	   limit is skipped. */
-	if (!display_mode_fit(bound_x, bound_y, 4, rpcemu_display_memory(),
-	                             &native_x, &native_y))
+	   framestore, which is the point of it. A machine with no VRAM fitted takes
+	   screen memory from DRAM instead, so there is no figure to reason about and
+	   the limit is skipped.
+
+	   Budgeted at the shallowest depth, and it has to be: rpcemu_edid_bound()
+	   hands a size the user named straight through, and re-fitting it at 32bpp
+	   here would advertise a smaller preferred timing than the one they chose.
+	   RISC OS validates against the monitor definition in force, so the mode
+	   they asked for would then be refused and the setting would appear to do
+	   nothing - issue #207. The size still cannot exceed what the framestore
+	   holds at any depth; what it no longer does is demand room for a depth
+	   nobody asked for. The fallback is unaffected, since the default size has
+	   already been fitted at DISPLAY_BPP_SAFE before it arrives here. */
+	if (!display_mode_fit(bound_x, bound_y, DISPLAY_BPP_SHALLOWEST,
+	                             rpcemu_display_memory(), &native_x, &native_y))
 	{
 		rpclog("rom_patch: no standard mode fits %zu KB of display memory "
 		       "within %ux%u - leaving the monitor EDID alone\n",

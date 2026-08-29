@@ -57,7 +57,8 @@ inline const char *ScreenSizeHelp()
 {
 	return "The size of the RISC OS desktop. Only modes this machine's display "
 	       "memory can hold are offered; fit more VRAM, or the graphics card, for "
-	       "the larger ones.";
+	       "the larger ones. The biggest sizes need a lower colour depth to fit, "
+	       "so RISC OS may not offer 32 thousand or 16 million colours there.";
 }
 
 /* --- how that desktop is drawn in the window ----------------------------- */
@@ -126,8 +127,14 @@ inline void FixedModes(size_t display_memory,
 		if (!display_mode_get(i, &w, &h)) {
 			continue;
 		}
+		/* Budgeted at the shallowest depth, not the deepest. The user is
+		   choosing a size, and the colour depth at that size is the guest's
+		   choice afterwards - see DISPLAY_BPP_SHALLOWEST. Budgeting the list at
+		   32bpp hid 3840x2160 from every machine we can configure, including
+		   16MB VRAM ones that display it quite happily in 256 colours, which is
+		   issue #207. What stays out is a mode that fits at no depth at all. */
 		if (display_memory != 0 &&
-		    (size_t) w * (size_t) h * 4u > display_memory)
+		    (size_t) w * (size_t) h * DISPLAY_BPP_SHALLOWEST > display_memory)
 		{
 			continue;
 		}
