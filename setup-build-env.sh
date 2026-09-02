@@ -38,12 +38,18 @@ fi
 echo "Detected $(uname -s) $(uname -m)"
 echo ""
 
+# Retries, because the failure this guards against is a mirror that stalls
+# rather than one that refuses: apt gives up on the first timeout otherwise, and
+# in CI that fails the step and with it the whole matrix. Costs nothing when the
+# mirror is healthy.
+APT_RETRY="-o Acquire::Retries=3"
+
 echo "Updating package lists..."
-sudo apt update
+sudo apt $APT_RETRY update
 
 echo ""
 echo "Installing build tools, CMake, wxWidgets, SDL2, ALSA, VNC, and libusb..."
-sudo apt install -y \
+sudo apt $APT_RETRY install -y \
 	build-essential \
 	cmake \
 	pkg-config \
@@ -66,7 +72,7 @@ echo ""
 
 if [ "$INSTALL_CROSS_ARM64" = true ]; then
 	echo "Installing Linux arm64 cross-compilation tools..."
-	sudo apt install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+	sudo apt $APT_RETRY install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 	echo ""
 	echo "For cross-compiled wxWidgets builds you may also need arm64 dev libraries:"
 	echo "  sudo dpkg --add-architecture arm64"
@@ -77,7 +83,7 @@ fi
 if [ "$INSTALL_PODULES" = true ]; then
 	echo ""
 	echo "Installing ARM binutils for podule ROM builds..."
-	sudo apt install -y binutils-arm-linux-gnueabi || {
+	sudo apt $APT_RETRY install -y binutils-arm-linux-gnueabi || {
 		echo "Warning: binutils-arm-linux-gnueabi not available"
 	}
 fi
