@@ -207,6 +207,41 @@ bool MachineNeedsRestart(const Config *before, const Config *after)
 
 } // namespace
 
+/*
+ * RPCEMU_TEST_DISPLAY_TIMING: where the time goes when the guest changes mode.
+ *
+ * Issue #220 reported mode switching as slow, and slower the larger the mode,
+ * on Windows. It does not reproduce on macOS - measured flat at every size from
+ * 800x600 to 1920x1440 - so the numbers have to come from the machine that has
+ * the problem. This prints them: what the guest asked for, how long the window
+ * waited before following, how long each step of the resize took, and whether
+ * the GPU is drawing at all, since the software path pays a full-frame blit
+ * that the GPU path does not.
+ *
+ * Read once. Off, this costs one comparison per mode change.
+ */
+static bool
+display_timing_wanted(void)
+{
+	static int wanted = -1;
+
+	if (wanted < 0) {
+		const char *env = getenv("RPCEMU_TEST_DISPLAY_TIMING");
+
+		wanted = (env != NULL && env[0] != '\0' && env[0] != '0') ? 1 : 0;
+	}
+	return wanted != 0;
+}
+
+/** Milliseconds since the first call, for the diagnostic above. */
+static long
+display_timing_ms(void)
+{
+	static const wxLongLong start = wxGetLocalTimeMillis();
+
+	return (long) (wxGetLocalTimeMillis() - start).GetValue();
+}
+
 wxBEGIN_EVENT_TABLE(MainFrame, wxFrame)
 	EVT_CLOSE(MainFrame::OnClose)
 	EVT_ACTIVATE(MainFrame::OnActivate)
@@ -442,6 +477,9 @@ void MainFrame::StartEmulator()
 
 	AddRecentMachine(config_copy_.name);
 
+	/* The boot's run of mode changes starts here; see NoteGuestFrame(). */
+	machine_started_ms_ = wxGetLocalTimeMillis();
+
 	if (emulator_) {
 		emulator_->Start();
 	}
@@ -479,6 +517,9 @@ void MainFrame::OnReset(wxCommandEvent &)
 		return;
 	}
 	if (emulator_) {
+		/* A reset boots again, so the window goes back to waiting for the run
+		   of mode changes to finish rather than following each one. */
+		machine_started_ms_ = wxGetLocalTimeMillis();
 		emulator_->Reset();
 	}
 }
@@ -492,6 +533,9 @@ void MainFrame::RestartMachine()
 	if (emulator_ == nullptr || !emulator_->IsRunning()) {
 		return;
 	}
+	/* Boots again, so the window waits out the boot's modes once more rather
+	   than following each of them; see NoteGuestFrame(). */
+	machine_started_ms_ = wxGetLocalTimeMillis();
 	emulator_->Restart();
 }
 
@@ -592,6 +636,10 @@ void MainFrame::OnRecentMachine(wxCommandEvent &event)
 	SetTitle(WindowTitleFor(machine_name));
 
 	if (emulator_) {
+		/* The machine being switched to boots from cold, so the window waits
+		   out its run of mode changes rather than following each one; see
+		   NoteGuestFrame(). */
+		machine_started_ms_ = wxGetLocalTimeMillis();
 		emulator_->SwitchMachine(config_path.utf8_str().data());
 	}
 }
@@ -1218,11 +1266,33 @@ void MainFrame::SizeWindowToGuest()
 		return;
 	}
 
+	if (!display_timing_wanted()) {
+		panel_->SizeToGuest();
+		Layout();
+		Fit();
+		CentreWindowOnScreen();
+		ForcePanelRedraw();
+		return;
+	}
+
+	/* The same sequence, timed step by step. Kept as a separate copy rather
+	   than sprinkling clocks through the live path: this runs once per mode
+	   change and clarity is worth more here than the duplication costs. */
+	const long t0 = display_timing_ms();
+
 	panel_->SizeToGuest();
+	const long t1 = display_timing_ms();
 	Layout();
 	Fit();
+	const long t2 = display_timing_ms();
 	CentreWindowOnScreen();
+	const long t3 = display_timing_ms();
 	ForcePanelRedraw();
+
+	rpclog("DISPLAY_TIMING %ld resized: SizeToGuest %ldms, Layout+Fit %ldms, "
+	       "Centre %ldms, window now %dx%d, drawing on the %s\n",
+	       t0, t1 - t0, t2 - t1, t3 - t2, GetSize().x, GetSize().y,
+	       panel_->DrawingWithGpu() ? "GPU" : "CPU");
 }
 
 
@@ -1508,12 +1578,35 @@ void MainFrame::NoteGuestFrame()
 	 * How long the guest's screen mode has to hold still before the window is
 	 * resized to it.
 	 *
-	 * Long enough to swallow the run of mode changes RISC OS makes while booting -
-	 * and the graphics card's display handover in the middle of them - so the
-	 * window is sized once at the end rather than at every step. Short enough that
-	 * a mode change the user asked for feels immediate.
+	 * TWO DIFFERENT WAITS, because there are two different things going on and
+	 * one number cannot serve both.
+	 *
+	 * While the machine is starting, RISC OS changes mode several times in quick
+	 * succession - and the graphics card hands the display over in the middle of
+	 * them - so the window has to wait for the run to finish or it marches
+	 * through three or four sizes on the way to the desktop. That is what the
+	 * half second was for, and it is still right during a boot.
+	 *
+	 * A mode change afterwards is a deliberate one. It arrives on its own,
+	 * whether from the Screen Size menu or from *WimpMode or the Display
+	 * manager inside RISC OS, and the whole half second is then dead time the
+	 * user sits through: measured here on RISC OS 4.39, the guest adopts a new
+	 * mode in about 300ms and the window then waited another 500 before
+	 * following, at every size from 800x600 to 1920x1440. Resizing the window
+	 * itself takes 2ms. Issue #220.
+	 *
+	 * The short wait is not zero because a deliberate change can still be seen
+	 * as two steps if a frame arrives mid-switch, and 80ms costs nothing that
+	 * can be felt.
 	 */
-	static const int kGuestSettleMs = 500;
+	static const int kGuestSettleBootMs = 500;
+	static const int kGuestSettleMs = 80;
+
+	/* How long after starting or resetting a machine mode changes are still
+	   treated as part of its boot. Generous: the cost of being wrong this way
+	   is one extra window resize, and the cost of being wrong the other way is
+	   the window marching through the boot's modes. */
+	static const long kBootWindowMs = 20000;
 
 	if (panel_ == nullptr) {
 		return;
@@ -1525,7 +1618,19 @@ void MainFrame::NoteGuestFrame()
 		return;
 	}
 	guest_size_seen_ = guest;
-	guest_resize_timer_.StartOnce(kGuestSettleMs);
+
+	const bool booting = machine_started_ms_ == 0 ||
+	    (wxGetLocalTimeMillis() - machine_started_ms_).GetValue() < kBootWindowMs;
+
+	const int settle = booting ? kGuestSettleBootMs : kGuestSettleMs;
+
+	if (display_timing_wanted()) {
+		rpclog("DISPLAY_TIMING %ld guest mode now %dx%d, waiting %dms (%s)\n",
+		       display_timing_ms(), guest.x, guest.y, settle,
+		       booting ? "still booting" : "a deliberate change");
+	}
+
+	guest_resize_timer_.StartOnce(settle);
 
 	/* The tick follows the desktop, so it has to move when RISC OS changes mode
 	   from its own end and not only when the change was asked for here. */
@@ -3021,6 +3126,8 @@ bool MainFrame::SwitchToChosenMachine()
 	/* Stops the machine that is running and starts this one in its place, which
 	   is the same path the recent-machines menu uses. */
 	if (emulator_) {
+		/* Boots from cold, as above. */
+		machine_started_ms_ = wxGetLocalTimeMillis();
 		emulator_->SwitchMachine(config_path.utf8_str().data());
 	}
 	return true;

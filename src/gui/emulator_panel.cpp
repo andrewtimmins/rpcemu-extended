@@ -632,6 +632,15 @@ void EmulatorPanel::CalculateScaling()
 	offset_y_ = (client.y - scaled_y_) / 2;
 }
 
+bool EmulatorPanel::DrawingWithGpu() const
+{
+#if wxUSE_GLCANVAS
+	return GlActive();
+#else
+	return false;	/* built without a GL canvas at all */
+#endif
+}
+
 #if wxUSE_GLCANVAS
 bool EmulatorPanel::GlActive() const
 {
