@@ -310,6 +310,68 @@ INSTALL_NAME_TOOL=$(command -v install_name_tool || \
 # "cd $(dirname) && pwd -P" alone resolves the directory only, so Homebrew's
 # lib/libSDL3.dylib -> libSDL3.0.dylib still came back under the link's name and
 # looked like a different library from the same file reached directly.
+# Do the two slices' copies of a library with the same basename come from the
+# same place?
+#
+# Prints one of:
+#   same     - the same library under each slice's own Homebrew prefix
+#   version  - the same formula, but a different version in each slice
+#   differ   - not the same library at all
+#
+# WHY THE MIDDLE ANSWER EXISTS. The two macOS runners are separate images with
+# separate Homebrew installations, and they drift: on 2 September 2026 the
+# x86_64 runner had pcre2 10.48 while the arm64 one had 10.47_1, and every
+# build on main and 1.x failed because the check compared the whole path tail -
+# version directory included - and called that a different library. It is not,
+# and fusing them is sound: a fat dylib is two independent binaries in one
+# file, the x86_64 half built against 10.48 and the arm64 half against
+# 10.47_1, and a process loads only the half matching its own architecture.
+# Neither half ever sees the other's code.
+#
+# What must still fail is a genuinely different library sharing a name - a
+# /opt/local libfoo staged against a Homebrew one - because that says the two
+# halves of the bundle are not the same software. So the formula name and the
+# path below the version are compared, and only the version is forgiven.
+staged_library_agreement() {
+	local x86_src="$1" arm_src="$2"
+	local x86_tail arm_tail
+
+	# Strip each slice's expected Homebrew prefix. What remains should be the
+	# same path under both, e.g. "Cellar/webp/1.6.0/lib/libwebp.7.dylib".
+	x86_tail=${x86_src#/usr/local/}
+	arm_tail=${arm_src#/opt/homebrew/}
+
+	if [ "$x86_tail" = "$arm_tail" ]; then
+		echo same
+		return
+	fi
+
+	# Cellar/<formula>/<version>/<rest>: compare the formula and the rest, and
+	# let the version differ. Anything not shaped like a Cellar path (an
+	# opt/ symlink, a non-Homebrew prefix) falls through to "differ", which is
+	# the safe answer.
+	case "$x86_tail" in Cellar/*) ;; *) echo differ; return ;; esac
+	case "$arm_tail" in Cellar/*) ;; *) echo differ; return ;; esac
+
+	local x86_rest=${x86_tail#Cellar/} arm_rest=${arm_tail#Cellar/}
+	local x86_formula=${x86_rest%%/*} arm_formula=${arm_rest%%/*}
+
+	if [ "$x86_formula" != "$arm_formula" ]; then
+		echo differ
+		return
+	fi
+
+	# Drop the formula, then the version, from each.
+	x86_rest=${x86_rest#*/}; x86_rest=${x86_rest#*/}
+	arm_rest=${arm_rest#*/}; arm_rest=${arm_rest#*/}
+
+	if [ "$x86_rest" = "$arm_rest" ]; then
+		echo version
+	else
+		echo differ
+	fi
+}
+
 canon_path() {
 	local p="$1" d f
 	while [ -L "$p" ]; do
@@ -784,8 +846,7 @@ if [ "$DO_FUSE" = true ]; then
 			# machine with, say, /opt/local alongside could stage a different
 			# libfoo for each. Comparing the files is no use - thin slices for
 			# different architectures always differ - so compare where they
-			# came from, which the per-slice maps record. Anything below the
-			# slice's own prefix is expected to differ only in that prefix.
+			# came from, which the per-slice maps record.
 			# The maps are per-slice build output, so they are present for a
 			# local two-arch build but not when the fusing job only downloaded
 			# the staged appstage directories. Missing maps mean the check
@@ -797,18 +858,28 @@ if [ "$DO_FUSE" = true ]; then
 				x86_src=$(awk -F'\t' -v b="$base" '$1 == b { print $2; exit }' "$X86_STAGE/deps.map")
 				arm_src=$(awk -F'\t' -v b="$base" '$1 == b { print $2; exit }' "$ARM_STAGE/deps.map")
 			fi
-			# Strip each slice's expected Homebrew prefix. What remains should
-			# be the same path under both - "Cellar/webp/1.6.0/lib/libwebp.7.dylib"
-			# and so on. If the tails differ, these are different libraries that
-			# happen to share a name.
-			x86_tail=${x86_src#/usr/local/}
-			arm_tail=${arm_src#/opt/homebrew/}
-			if [ -n "$x86_src" ] && [ -n "$arm_src" ] && [ "$x86_tail" != "$arm_tail" ]; then
-				echo "   ! $base is a different library in each slice:"
-				echo "       x86_64: $x86_src"
-				echo "       arm64:  $arm_src"
-				echo "     refusing to fuse them into one Contents/Frameworks/$base"
-				exit 1
+			if [ -n "$x86_src" ] && [ -n "$arm_src" ]; then
+				case "$(staged_library_agreement "$x86_src" "$arm_src")" in
+				same)
+					;;
+				version)
+					# Same formula, different version on each runner. Said out
+					# loud because it explains any behaviour that differs
+					# between the two halves of the bundle, but not fatal: see
+					# staged_library_agreement() for why fusing them is sound.
+					echo "   ! $base is a different VERSION in each slice:"
+					echo "       x86_64: $x86_src"
+					echo "       arm64:  $arm_src"
+					echo "     fusing anyway; each architecture loads its own half"
+					;;
+				*)
+					echo "   ! $base is a different library in each slice:"
+					echo "       x86_64: $x86_src"
+					echo "       arm64:  $arm_src"
+					echo "     refusing to fuse them into one Contents/Frameworks/$base"
+					exit 1
+					;;
+				esac
 			fi
 			"$LIPO" -create "$X86_STAGE/libs/$base" "$ARM_STAGE/libs/$base" \
 				-output "$FRAMEWORKSD/$base"
