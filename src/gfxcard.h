@@ -123,7 +123,21 @@
 #define GFXCARD_REG_RENDER_SRC_Y 35	/* RW source top, for a copy */
 #define GFXCARD_REG_RENDER_PAT_IDX 36	/* RW pattern word the next write lands on */
 #define GFXCARD_REG_RENDER_PAT	37	/* RW pattern word; writing steps the index on */
-#define GFXCARD_REG_COUNT	38
+/*
+ * Which 16bpp layout the framestore holds: GFXCARD_PIXFMT_565 or _555.
+ *
+ * RISC OS asks a display driver for its pixel formats and then sets a mode by
+ * one of them, and 16bpp is two different formats: 565, which it calls 64
+ * thousand colours, and 555, which it calls 32 thousand. The card scanned out
+ * 565 and nothing else, so a 32-thousand-colour desktop was unavailable on the
+ * card while being the ONLY 16bpp mode VIDC20 offers - which is issue #220,
+ * where one HostFS image shared between RISC OS 4 and 5 has no depth in common
+ * between the two machines.
+ *
+ * Reset to 565, so a driver that never writes it behaves exactly as before.
+ */
+#define GFXCARD_REG_PIXFMT	38	/* RW GFXCARD_PIXFMT_*, 16bpp only */
+#define GFXCARD_REG_COUNT	39
 
 /* Where each register sits in the card's EASI space. */
 #define GFXCARD_REG_ADDR(n)	(GFXCARD_REG_BASE + (n) * 4)
@@ -145,6 +159,14 @@
 #define GFXCARD_CAP_EDID	0x0400u		/* can serve the monitor's EDID */
 #define GFXCARD_CAP_HW_POINTER	0x0800u		/* draws the pointer itself */
 #define GFXCARD_CAP_RENDER	0x1000u		/* copies and fills rectangles */
+/* Honours GFXCARD_REG_PIXFMT, so 16bpp can be 555 as well as 565. A driver
+   built before this bit existed will not see it and will not offer 32 thousand
+   colours, which is the behaviour it had. */
+#define GFXCARD_CAP_16BPP555	0x2000u
+
+/* GFXCARD_REG_PIXFMT. Only meaningful while GFXCARD_REG_BPP is 16. */
+#define GFXCARD_PIXFMT_565	0u	/* five red, six green, five blue */
+#define GFXCARD_PIXFMT_555	1u	/* five each; RISC OS calls it 32K */
 
 /* Operations GFXCARD_REG_RENDER_OP performs, matching what GraphicsV_Render
    asks for. */
@@ -244,6 +266,7 @@ typedef struct {
 	unsigned height;	/**< Active lines */
 	unsigned stride;	/**< Bytes per line */
 	unsigned bpp;		/**< Bits per pixel: 8, 16 or 32 */
+	unsigned pixfmt;	/**< GFXCARD_PIXFMT_*; only read when bpp is 16 */
 	int blanked;		/**< Output is blanked; show nothing */
 
 	/* The pointer, taken with the same snapshot so it cannot change halfway

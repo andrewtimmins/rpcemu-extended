@@ -131,6 +131,19 @@ savestate_read_rle(FILE *f, void *data, size_t len)
 	}
 }
 
+/*
+ * Which snapshot version the card's loader thinks it is reading.
+ *
+ * Settable, because the card's chunk changed shape at version 9 - it gained the
+ * 16bpp pixel format - and both sides of that need exercising: a current
+ * snapshot round trips the field, and an older one must NOT read it, or every
+ * value after it in the chunk is off by a word. Defaults to current, so a test
+ * that does not care gets the modern layout.
+ */
+static uint32_t stub_snapshot_version = SNAPSHOT_VERSION_GFX_PIXFMT;
+
+uint32_t savestate_version_being_loaded(void) { return stub_snapshot_version; }
+
 #include "gfxcard.c"
 
 static int failures;
@@ -194,12 +207,47 @@ main(void)
 	check((rd(GFXCARD_REG_CAPS) & GFXCARD_CAP_32BPP) != 0, "32bpp offered");
 	check((rd(GFXCARD_REG_CAPS) & GFXCARD_CAP_16BPP) != 0, "16bpp offered");
 	check((rd(GFXCARD_REG_CAPS) & GFXCARD_CAP_8BPP) != 0, "8bpp offered");
+	check((rd(GFXCARD_REG_CAPS) & GFXCARD_CAP_16BPP555) != 0,
+	      "and 16bpp in 555 as well as 565");
 	check(rd(GFXCARD_REG_MAX_WIDTH) == GFXCARD_MAX_WIDTH &&
 	      rd(GFXCARD_REG_MAX_HEIGHT) == GFXCARD_MAX_HEIGHT,
 	      "largest accepted mode is readable");
 	check(rd(GFXCARD_REG_FB_PHYS) == gfxcard_fb_phys &&
 	      rd(GFXCARD_REG_FB_SIZE) == GFXCARD_FB_SIZE,
 	      "framestore address and size readable");
+
+	/*
+	 * The 16bpp pixel format.
+	 *
+	 * RISC OS has two 16bpp modes and they are not interchangeable: 565 is what
+	 * it calls 64 thousand colours and 555 is 32 thousand. The card scanned out
+	 * 565 and nothing else, which left a 32 thousand colour desktop unavailable
+	 * on the card while being the only 16bpp mode VIDC20 offers - issue #220,
+	 * where one HostFS image shared between RISC OS 4 and 5 has no depth in
+	 * common between the two machines.
+	 *
+	 * Getting this register wrong does not raise an error: it shows as a
+	 * picture whose greens and blues are wrong, which is why it is worth
+	 * pinning rather than eyeballing.
+	 */
+	printf("\nthe 16bpp pixel format\n");
+	check(rd(GFXCARD_REG_PIXFMT) == GFXCARD_PIXFMT_565,
+	      "565 after a reset, which is what the card did before it could be asked");
+	wr(GFXCARD_REG_PIXFMT, GFXCARD_PIXFMT_555);
+	check(rd(GFXCARD_REG_PIXFMT) == GFXCARD_PIXFMT_555, "555 can be selected");
+	wr(GFXCARD_REG_PIXFMT, 0x5a5au);
+	check(rd(GFXCARD_REG_PIXFMT) == GFXCARD_PIXFMT_565,
+	      "a value the card does not know reads back as 565, not as itself");
+	wr(GFXCARD_REG_PIXFMT, GFXCARD_PIXFMT_555);
+	set_mode(640, 480, 16, 640 * 2, 0);
+	wr(GFXCARD_REG_CTRL, GFXCARD_CTRL_ENABLE);
+	check(gfxcard_frame(&frame) && frame.bpp == 16 &&
+	      frame.pixfmt == GFXCARD_PIXFMT_555,
+	      "and the frame carries it to whatever converts the pixels");
+	wr(GFXCARD_REG_PIXFMT, GFXCARD_PIXFMT_565);
+	check(gfxcard_frame(&frame) && frame.pixfmt == GFXCARD_PIXFMT_565,
+	      "and follows it when it changes");
+	wr(GFXCARD_REG_CTRL, 0);
 
 	printf("\nnothing is displayed until the guest enables the card\n");
 	set_mode(1920, 1080, 32, 1920 * 4, 0);
@@ -628,11 +676,23 @@ main(void)
 
 		printf("\na snapshot is no more trustworthy than the guest that wrote it\n");
 		{
-			/* Doctor the saved chunk in place. The layout is a word each, in
-			   the order gfxcard_savestate() writes them: present, slot,
-			   easi_phys, then the registers from ctrl onwards. */
-			const long word_edid_index = 12;
-			const long word_ptr_width  = 16;
+			/*
+			 * Doctor the saved chunk in place. The layout is a word each, in
+			 * the order gfxcard_savestate() writes them:
+			 *
+			 *   0 present   1 slot     2 easi_phys  3 ctrl    4 status
+			 *   5 width     6 height   7 bpp        8 pixfmt  9 stride
+			 *  10 start    11 pal_idx 12 frames    13 edid_index
+			 *  14 ptr_ctrl 15 ptr_x   16 ptr_y     17 ptr_width
+			 *
+			 * ★ These indices MOVE when the chunk gains a field. pixfmt was
+			 * added at word 8 for snapshot version 9 and pushed everything
+			 * after it along by one, which is how this test found the change:
+			 * it doctored what it thought was the pointer width, hit stride
+			 * instead, and the clamp it was checking never fired.
+			 */
+			const long word_edid_index = 13;
+			const long word_ptr_width  = 17;
 			const uint32_t absurd = 0xffffffffu;
 
 			rewind(f);
@@ -652,6 +712,76 @@ main(void)
 			      "and so is an EDID index past the end of the block");
 		}
 
+		fclose(f);
+	}
+
+	/*
+	 * A snapshot older than the pixel format must not have the field read out
+	 * of it.
+	 *
+	 * The card's chunk grew a word at snapshot version 9. A loader that reads
+	 * it unconditionally takes the NEXT field's bytes for it and every value
+	 * after that is off by a word - which does not fail, it silently restores
+	 * a machine with the wrong pointer position, palette and display start. So
+	 * the guard is worth a test, and testing it needs an old-shaped chunk:
+	 * this writes a current one and then splices the pixel-format word out,
+	 * which is exactly what version 8 would have written.
+	 */
+	printf("\nan older snapshot has no pixel format in it\n");
+	{
+		FILE *f = tmpfile();
+		FILE *old = tmpfile();
+		long total;
+		long cut;
+		long i;
+
+		config.gfxcard_enabled = 1;
+		gfxcard_init();
+		set_mode(800, 600, 16, 800 * 2, 2048);
+		wr(GFXCARD_REG_PIXFMT, GFXCARD_PIXFMT_555);
+		wr(GFXCARD_REG_PTR_X, 111);
+		wr(GFXCARD_REG_PTR_Y, 222);
+		wr(GFXCARD_REG_CTRL, GFXCARD_CTRL_ENABLE);
+
+		gfxcard_savestate(f);
+		total = ftell(f);
+		check(!savestate_error && total > 0, "a current chunk to work from");
+
+		/*
+		 * Where the word sits: present, slot, easi, ctrl, status, width,
+		 * height, bpp, THEN pixfmt. Counted in the order gfxcard_savestate()
+		 * writes them, so if that order changes this test stops finding it and
+		 * the check below fails rather than passing by accident.
+		 */
+		cut = 9 * 4;
+
+		rewind(f);
+		for (i = 0; i < total; i++) {
+			const int c = fgetc(f);
+
+			if (i < cut - 4 || i >= cut) {
+				fputc(c, old);
+			}
+		}
+		check(ftell(old) == total - 4, "and an older one, a word shorter");
+
+		/* Scrub, then load the old-shaped chunk as version 8 would be. */
+		gfxcard_podule_reset(&test_podule);
+		stub_snapshot_version = SNAPSHOT_VERSION_GFX_PIXFMT - 1;
+		rewind(old);
+		gfxcard_loadstate(old);
+		stub_snapshot_version = SNAPSHOT_VERSION_GFX_PIXFMT;
+
+		check(!savestate_error, "it loads without error");
+		check(rd(GFXCARD_REG_PIXFMT) == GFXCARD_PIXFMT_565,
+		      "the format is 565, which is all that version could scan out");
+		check(rd(GFXCARD_REG_PTR_X) == 111 && rd(GFXCARD_REG_PTR_Y) == 222,
+		      "and every field after it is still in the right place");
+		check(gfxcard_frame(&frame) && frame.width == 800 &&
+		      frame.height == 600 && frame.bpp == 16,
+		      "including the mode");
+
+		fclose(old);
 		fclose(f);
 	}
 

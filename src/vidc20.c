@@ -143,6 +143,7 @@ static struct cached_state {
         const uint8_t *gfx_fb;
         unsigned gfx_stride;
         unsigned gfx_bpp;
+        unsigned gfx_pixfmt;	/* GFXCARD_PIXFMT_*, read only at 16bpp */
         int gfx_blanked;
         /* The card's pointer. RISC OS leaves the shape where it built it and
            gives the card its physical address, so the video thread reads it out
@@ -394,6 +395,7 @@ drawscr(void)
 			thr.gfx_fb = frame.fb;
 			thr.gfx_stride = frame.stride;
 			thr.gfx_bpp = frame.bpp;
+			thr.gfx_pixfmt = frame.pixfmt;
 			thr.gfx_blanked = frame.blanked;
 			thr.gfx_ptr_visible = frame.ptr_visible;
 			thr.gfx_ptr_x = (int) frame.ptr_x;
@@ -926,10 +928,42 @@ vidcthread_gfxcard(void)
 			break;
 
 		case 16:
-			/* 565, in the same order as the 32bpp case below: red in the
-			   low bits, then green, then blue. The five and six bit
-			   channels are widened to eight by repeating their top bits,
-			   so that full red reaches 255 rather than 248. */
+			/*
+			 * Red in the low bits, then green, then blue - the same order as
+			 * the 32bpp case below. Each channel is widened to eight bits by
+			 * repeating its top bits, so full red reaches 255 rather than 248.
+			 *
+			 * Two layouts, because RISC OS has two 16bpp modes and the driver
+			 * says which one the framestore holds: 565 is what it calls 64
+			 * thousand colours and 555 is 32 thousand. The card scanned out
+			 * 565 only until GFXCARD_REG_PIXFMT existed, which left a 32
+			 * thousand colour desktop unavailable on the card while being the
+			 * only 16bpp mode VIDC20 offers - issue #220.
+			 *
+			 * Split into two loops rather than branching per pixel: this runs
+			 * once per pixel of every frame, and the format cannot change
+			 * within one.
+			 */
+			if (thr.gfx_pixfmt == GFXCARD_PIXFMT_555) {
+				for (x = 0; x < thr.vidc_xsize; x++) {
+					const uint8_t *p = line + ((size_t) x * 2);
+					unsigned v, r, g, b;
+
+#ifdef _RPCEMU_BIG_ENDIAN
+					v = (unsigned) p[1] | ((unsigned) p[0] << 8);
+#else
+					v = (unsigned) p[0] | ((unsigned) p[1] << 8);
+#endif
+					r = v & 0x1f;
+					g = (v >> 5) & 0x1f;
+					b = (v >> 10) & 0x1f;
+					vidp[x] = makecol((r << 3) | (r >> 2),
+					                  (g << 3) | (g >> 2),
+					                  (b << 3) | (b >> 2));
+				}
+				break;
+			}
+
 			for (x = 0; x < thr.vidc_xsize; x++) {
 				const uint8_t *p = line + ((size_t) x * 2);
 				unsigned v, r, g, b;

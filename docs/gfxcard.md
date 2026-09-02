@@ -436,6 +436,46 @@ beats plotting them again.
 GraphicsV and `OS_ScreenMode 64` are RISC OS 5 features. On an older RISC OS the
 driver declines to initialise and says so; the card is simply unused.
 
+## The two 16bpp modes
+
+RISC OS has two sixteen-bit-per-pixel formats and they are not interchangeable:
+**565** — five bits of red, six of green, five of blue — which it calls 64
+thousand colours, and **555**, five each, which it calls 32 thousand. A display
+driver offers whichever it can scan out, and the OS picks one when a mode is
+selected.
+
+The card scanned out 565 and nothing else. That was invisible on a machine using
+only the card, and awkward the moment one HostFS image is shared between a
+RISC OS 5 machine (on the card, 64K) and a RISC OS 4 one (on VIDC20, whose
+framestore is 555 and so offers 32K only). The two had no depth in common, and
+somebody wanting one default for both had to drop to 256 or go up to 16M. That
+is issue #220.
+
+The card now scans out both. `GFXCARD_REG_PIXFMT` says which layout the
+framestore holds, `GFXCARD_CAP_16BPP555` says the card honours that register,
+and the driver offers a 32K pixel format only when the cap is present — so a
+driver and a host from different releases cannot end up with the OS selecting a
+mode the card cannot show.
+
+Two details are worth knowing before touching this, because both were measured
+the hard way:
+
+- **A 32K mode's `NColour` is 65535, not 32767.** Both formats address 65536
+  pixel values and what separates them is `ModeFlag_64k`. The kernel's own list
+  says so — see `PixelFormats` in `Kernel/s/vdu/legacymodes`, where the 32K
+  entry is `65535, 0, 4` and the 64K entry is `65535, ModeFlag_64k, 4`. An entry
+  offered as 32767 matches nothing the OS knows and is simply never selected.
+- **Absent `ModeFlags` means 555.** The kernel derives flags of zero for every
+  depth but 8bpp and only puts `ControlList_ModeFlags` in the mode's control
+  list when it has something to say, so a 555 mode arrives with no flags at all.
+  The stock VIDC20 driver does the same thing — `CMP r1,#3 / MOVNE r2,#0` in
+  `ProcessVIDCList` — and defaulting to 565 here produced a 32K desktop with
+  its greens and blues mangled.
+
+`*GfxCardStatus` reports the format of the last mode offered, as `(555, 32K)` or
+`(565, 64K)`, because the depth alone cannot tell them apart and getting it
+wrong shows as wrong colours rather than as an error.
+
 ## Prior art
 
 The approach follows the precedent set by
