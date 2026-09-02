@@ -77,6 +77,7 @@ enum class EmuCommandType {
 	DebuggerPause,
 	DebuggerResume,
 	DebuggerStep,
+	DebuggerStepOver,
 	DebuggerStepN,
 	DebuggerAddBreakpoint,
 	DebuggerRemoveBreakpoint,
@@ -209,6 +210,16 @@ public:
 	void DebuggerPause();
 	void DebuggerResume();
 	void DebuggerStep();
+
+	/**
+	 * Run to the instruction after this one, over a call rather than into it.
+	 *
+	 * The core has had debugger_step_over() since the debug socket gained it;
+	 * nothing in the window could reach it, so stepping through a SWI or a BL
+	 * in the inspector meant stepping through everything it did. Asked for as
+	 * "Step past" in discussion #223.
+	 */
+	void DebuggerStepOver();
 	void DebuggerStepN(uint32_t instruction_count);
 	void DebuggerAddBreakpoint(uint32_t address);
 	void DebuggerRemoveBreakpoint(uint32_t address);

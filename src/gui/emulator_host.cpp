@@ -1036,6 +1036,14 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 		debugger_single_step(1);
 		NotifyDebuggerStateChanged();
 		break;
+	case EmuCommandType::DebuggerStepOver:
+		/* Falls back to a plain step when there is nothing to step over,
+		   which is what debugger_step_over() reports by returning zero. */
+		if (!debugger_step_over()) {
+			debugger_single_step(1);
+		}
+		NotifyDebuggerStateChanged();
+		break;
 	case EmuCommandType::DebuggerStepN: {
 		uint32_t count = command.debug_count;
 		if (count == 0) {
@@ -1314,6 +1322,11 @@ void EmulatorHost::DebuggerResume()
 void EmulatorHost::DebuggerStep()
 {
 	PostCommand(MakeCommand(EmuCommandType::DebuggerStep));
+}
+
+void EmulatorHost::DebuggerStepOver()
+{
+	PostCommand(MakeCommand(EmuCommandType::DebuggerStepOver));
 }
 
 void EmulatorHost::DebuggerStepN(uint32_t instruction_count)

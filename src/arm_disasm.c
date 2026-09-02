@@ -45,11 +45,68 @@ static const char *cond_names[16] = {
 	"HI", "LS", "GE", "LT", "GT", "LE", "",   "NV"
 };
 
-/* Register names */
-static const char *reg_names[16] = {
+/*
+ * Register names, ARM notation.
+ *
+ * R13 and R14 are numbered rather than shown as SP and LR, which is what this
+ * table used to do. Mixing the two conventions in one line was raised in
+ * discussion #223: either name every register by number or name them all by
+ * role, but do not do half of each. PC stays, because R15 is written PC in
+ * every ARM assembler there has ever been.
+ */
+static const char *reg_names_arm[16] = {
 	"R0",  "R1",  "R2",  "R3",  "R4",  "R5",  "R6",  "R7",
-	"R8",  "R9",  "R10", "R11", "R12", "SP",  "LR",  "PC"
+	"R8",  "R9",  "R10", "R11", "R12", "R13", "R14", "PC"
 };
+
+/*
+ * The same registers by their APCS roles, for reading a disassembly against
+ * assembler source that uses them.
+ */
+static const char *reg_names_apcs[16] = {
+	"a1",  "a2",  "a3",  "a4",  "v1",  "v2",  "v3",  "v4",
+	"v5",  "sb",  "sl",  "fp",  "ip",  "sp",  "lr",  "pc"
+};
+
+/* See ArmDisasmOptions. Zeroed, so the defaults are the plain ARM rendering. */
+static ArmDisasmOptions disasm_opts;
+
+/** The register naming in force. */
+#define reg_names (disasm_opts.apcs_registers ? reg_names_apcs : reg_names_arm)
+
+void
+arm_disasm_set_options(const ArmDisasmOptions *opts)
+{
+	if (opts == NULL) {
+		memset(&disasm_opts, 0, sizeof(disasm_opts));
+	} else {
+		disasm_opts = *opts;
+	}
+}
+
+void
+arm_disasm_get_options(ArmDisasmOptions *opts)
+{
+	if (opts != NULL) {
+		*opts = disasm_opts;
+	}
+}
+
+/**
+ * Render an immediate the way the options ask for.
+ *
+ * @param buf    Destination, at least 16 bytes
+ * @param value  The value to render
+ */
+static void
+format_imm(char *buf, size_t buflen, uint32_t value)
+{
+	if (disasm_opts.hex_immediates) {
+		snprintf(buf, buflen, "&%X", (unsigned) value);
+	} else {
+		snprintf(buf, buflen, "%u", (unsigned) value);
+	}
+}
 
 /* Data processing opcode names */
 static const char *dp_names[16] = {
@@ -91,9 +148,14 @@ decode_shifter(uint32_t opcode, char *buf, size_t buflen, int imm)
 		 * going to be used leaves the shift with 1..31.
 		 */
 		if (rot == 0) {
-			return snprintf(buf, buflen, "#%u", imm8);
+			char imm_str[16];
+
+			format_imm(imm_str, sizeof(imm_str), imm8);
+			return snprintf(buf, buflen, "#%s", imm_str);
 		}
-		return snprintf(buf, buflen, "#0x%X",
+		/* A rotated immediate is unreadable in decimal whatever the option
+		   says, so this one stays hex; only the notation follows the option. */
+		return snprintf(buf, buflen, disasm_opts.hex_immediates ? "#&%X" : "#0x%X",
 		    (imm8 >> rot) | (imm8 << (32 - rot)));
 	} else {
 		/* Register with optional shift */
@@ -122,8 +184,15 @@ decode_shifter(uint32_t opcode, char *buf, size_t buflen, int imm)
 					                reg_names[rm], shift_names[shift_type]);
 				}
 			} else {
-				return snprintf(buf, buflen, "%s, %s #%d",
-				                reg_names[rm], shift_names[shift_type], shift_amt);
+				{
+					char imm_str[16];
+
+					format_imm(imm_str, sizeof(imm_str),
+					    (uint32_t) shift_amt);
+					return snprintf(buf, buflen, "%s, %s #%s",
+					    reg_names[rm], shift_names[shift_type],
+					    imm_str);
+				}
 			}
 		}
 	}
@@ -247,7 +316,28 @@ disasm_single_transfer(uint32_t opcode, uint32_t address, char *buf, size_t bufl
 	const char *suffix = b ? "B" : "";
 	const char *sign = u ? "" : "-";
 
-	(void) address;
+	/*
+	 * A literal pool load, resolved to the address it reaches.
+	 *
+	 * "LDR R11, [PC, #-120]" says nothing about what is being loaded; the
+	 * address does, and the instruction carries everything needed to work it
+	 * out. Asked for in discussion #223. R15 reads eight ahead of the
+	 * instruction, which is where the +8 comes from.
+	 *
+	 * Restricted to the pre-indexed immediate form with no writeback off R15:
+	 * a register offset or a writeback means the address is not knowable here,
+	 * and pretending otherwise would be worse than leaving the registers on
+	 * show.
+	 */
+	if (disasm_opts.resolve_pc_relative && imm && p && !w && rn == 15) {
+		const int offset = (int) (opcode & 0xFFF);
+		const uint32_t target = u ? address + 8u + (uint32_t) offset
+		                          : address + 8u - (uint32_t) offset;
+
+		return snprintf(buf, buflen, "%s%s%s %s, &%08X",
+		                mnem, cond_names[cond], suffix, reg_names[rd],
+		                (unsigned) target);
+	}
 
 	if (imm) {
 		/* Immediate offset */
@@ -255,7 +345,10 @@ disasm_single_transfer(uint32_t opcode, uint32_t address, char *buf, size_t bufl
 		if (offset == 0) {
 			offset_str[0] = '\0';
 		} else {
-			snprintf(offset_str, sizeof(offset_str), ", #%s%d", sign, offset);
+			char imm_str[16];
+
+			format_imm(imm_str, sizeof(imm_str), (uint32_t) offset);
+			snprintf(offset_str, sizeof(offset_str), ", #%s%s", sign, imm_str);
 		}
 	} else {
 		/* Register offset with shift */
@@ -266,8 +359,11 @@ disasm_single_transfer(uint32_t opcode, uint32_t address, char *buf, size_t bufl
 		if (shift_amt == 0 && shift_type == 0) {
 			snprintf(offset_str, sizeof(offset_str), ", %s%s", sign, reg_names[rm]);
 		} else {
-			snprintf(offset_str, sizeof(offset_str), ", %s%s, %s #%d",
-			         sign, reg_names[rm], shift_names[shift_type], shift_amt);
+			char imm_str[16];
+
+			format_imm(imm_str, sizeof(imm_str), (uint32_t) shift_amt);
+			snprintf(offset_str, sizeof(offset_str), ", %s%s, %s #%s",
+			         sign, reg_names[rm], shift_names[shift_type], imm_str);
 		}
 	}
 
@@ -383,17 +479,41 @@ disasm_block_transfer(uint32_t opcode, uint32_t address, char *buf, size_t bufle
 		mnem = "STM";
 	}
 
-	/* Build register list */
+	/*
+	 * Build the register list.
+	 *
+	 * Collapsed to ranges when asked - "{R0-R4, R7-R8, R14}" rather than every
+	 * register spelled out - which is how an assembler writes it and how the
+	 * request in discussion #223 asked to read it. A range is only worth
+	 * writing for three or more registers: "R0-R1" is longer than "R0, R1".
+	 */
 	*ptr++ = '{';
 	for (i = 0; i < 16; i++) {
-		if (reglist & (1 << i)) {
-			if (!first) {
-				*ptr++ = ',';
-				*ptr++ = ' ';
-			}
-			ptr += sprintf(ptr, "%s", reg_names[i]);
-			first = 0;
+		int run;
+
+		if (!(reglist & (1 << i))) {
+			continue;
 		}
+
+		/* How far the consecutive run from here reaches. */
+		run = i;
+		if (disasm_opts.collapse_reglists) {
+			while (run + 1 < 16 && (reglist & (1 << (run + 1)))) {
+				run++;
+			}
+		}
+
+		if (!first) {
+			*ptr++ = ',';
+			*ptr++ = ' ';
+		}
+		if (run >= i + 2) {
+			ptr += sprintf(ptr, "%s-%s", reg_names[i], reg_names[run]);
+			i = run;
+		} else {
+			ptr += sprintf(ptr, "%s", reg_names[i]);
+		}
+		first = 0;
 	}
 	*ptr++ = '}';
 	if (s) {
@@ -424,7 +544,8 @@ disasm_branch(uint32_t opcode, uint32_t address, char *buf, size_t buflen)
 	/* Calculate target: PC + 8 + (offset << 2) */
 	uint32_t target = address + 8 + ((uint32_t) offset << 2);
 
-	return snprintf(buf, buflen, "%s%s 0x%08X",
+	return snprintf(buf, buflen,
+	                disasm_opts.hex_immediates ? "%s%s &%08X" : "%s%s 0x%08X",
 	                l ? "BL" : "B", cond_names[cond], target);
 }
 
@@ -1429,9 +1550,13 @@ disasm_swi(uint32_t opcode, uint32_t address, char *buf, size_t buflen)
 	} else {
 		/* Unknown SWI - show number */
 		if (imm < 0x200) {
-			return snprintf(buf, buflen, "SWI%s 0x%X", cond_names[cond], imm);
+			return snprintf(buf, buflen,
+			    disasm_opts.hex_immediates ? "SWI%s &%X" : "SWI%s 0x%X",
+			    cond_names[cond], imm);
 		} else {
-			return snprintf(buf, buflen, "SWI%s 0x%06X", cond_names[cond], imm);
+			return snprintf(buf, buflen,
+			    disasm_opts.hex_immediates ? "SWI%s &%06X" : "SWI%s 0x%06X",
+			    cond_names[cond], imm);
 		}
 	}
 }
@@ -1577,7 +1702,8 @@ disasm_msr(uint32_t opcode, uint32_t address, char *buf, size_t buflen)
 		uint32_t value = (rot == 0) ? imm8
 		    : ((imm8 >> rot) | (imm8 << (32 - rot)));
 
-		snprintf(operand, sizeof(operand), "#0x%X", value);
+		snprintf(operand, sizeof(operand),
+		    disasm_opts.hex_immediates ? "#&%X" : "#0x%X", value);
 	} else {
 		int rm = opcode & 0xF;
 		snprintf(operand, sizeof(operand), "%s", reg_names[rm]);
