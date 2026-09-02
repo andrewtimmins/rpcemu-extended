@@ -100,6 +100,7 @@ static struct {
 	uint32_t	width;
 	uint32_t	height;
 	uint32_t	bpp;
+	uint32_t	pixfmt;		/* GFXCARD_PIXFMT_*, 16bpp only */
 	uint32_t	stride;
 	uint32_t	start;
 	uint32_t	pal_index;
@@ -253,11 +254,14 @@ gfxcard_reg_read(int reg)
 	case GFXCARD_REG_ID:         return GFXCARD_ID;
 	case GFXCARD_REG_VERSION:    return GFXCARD_VERSION;
 	case GFXCARD_REG_CAPS:
-		/* The three depths the card scans out. 16bpp is 565 - five bits of
-		   red, six of green, five of blue - which is what RISC OS means by a
-		   64 thousand colour mode. A depth the card does not claim is simply
-		   one the OS will not ask it for. */
+		/* The three depths the card scans out. 16bpp is 565 by default -
+		   five bits of red, six of green, five of blue - which is what
+		   RISC OS means by a 64 thousand colour mode, and GFXCARD_CAP_16BPP555
+		   says it will also scan out 555, which RISC OS calls 32 thousand.
+		   Which of the two is in force is GFXCARD_REG_PIXFMT. A depth the card
+		   does not claim is simply one the OS will not ask it for. */
 		return GFXCARD_CAP_8BPP | GFXCARD_CAP_16BPP | GFXCARD_CAP_32BPP |
+		       GFXCARD_CAP_16BPP555 |
 		       GFXCARD_CAP_HW_SCROLL | GFXCARD_CAP_VSYNC |
 		       GFXCARD_CAP_HW_POINTER | GFXCARD_CAP_RENDER |
 		       (edid_published() != NULL ? GFXCARD_CAP_EDID : 0);
@@ -268,6 +272,7 @@ gfxcard_reg_read(int reg)
 	case GFXCARD_REG_WIDTH:      return gfx.width;
 	case GFXCARD_REG_HEIGHT:     return gfx.height;
 	case GFXCARD_REG_BPP:        return gfx.bpp;
+	case GFXCARD_REG_PIXFMT:     return gfx.pixfmt;
 	case GFXCARD_REG_STRIDE:     return gfx.stride;
 	case GFXCARD_REG_START:      return gfx.start;
 	case GFXCARD_REG_PAL_INDEX:  return gfx.pal_index;
@@ -544,6 +549,14 @@ gfxcard_reg_write(int reg, uint32_t val)
 	case GFXCARD_REG_WIDTH:     gfx.width = val; gfxcard_dirty_all(); break;
 	case GFXCARD_REG_HEIGHT:    gfx.height = val; gfxcard_dirty_all(); break;
 	case GFXCARD_REG_BPP:       gfx.bpp = val; gfxcard_dirty_all(); break;
+	case GFXCARD_REG_PIXFMT:
+		/* Anything but 555 means 565, so a driver writing a value this card
+		   does not know gets the default rather than an undefined display. */
+		gfx.pixfmt = (val == GFXCARD_PIXFMT_555) ? GFXCARD_PIXFMT_555
+		                                         : GFXCARD_PIXFMT_565;
+		/* Every pixel in the framestore now decodes differently. */
+		gfxcard_dirty_all();
+		break;
 	case GFXCARD_REG_STRIDE:    gfx.stride = val; gfxcard_dirty_all(); break;
 	case GFXCARD_REG_START:     gfx.start = val; gfxcard_dirty_all(); break;
 	case GFXCARD_REG_PAL_INDEX: gfx.pal_index = val & 0xff; break;
@@ -756,6 +769,7 @@ gfxcard_podule_reset(podule *p)
 	gfx.width = 0;
 	gfx.height = 0;
 	gfx.bpp = 0;
+	gfx.pixfmt = GFXCARD_PIXFMT_565;	/* as the card behaved before it could be asked */
 	gfx.stride = 0;
 	gfx.start = 0;
 	gfx.pal_index = 0;
@@ -921,6 +935,7 @@ gfxcard_frame(GfxCardFrame *frame)
 	frame->height = gfx.height;
 	frame->stride = gfx.stride;
 	frame->bpp = gfx.bpp;
+	frame->pixfmt = gfx.pixfmt;
 	frame->blanked = (gfx.ctrl & GFXCARD_CTRL_BLANK) != 0;
 
 	/* The pointer, only if there is a shape to draw and it was placed on the
@@ -990,6 +1005,7 @@ gfxcard_savestate(FILE *f)
 	savestate_write_u32(f, gfx.width);
 	savestate_write_u32(f, gfx.height);
 	savestate_write_u32(f, gfx.bpp);
+	savestate_write_u32(f, gfx.pixfmt);
 	savestate_write_u32(f, gfx.stride);
 	savestate_write_u32(f, gfx.start);
 	savestate_write_u32(f, gfx.pal_index);
@@ -1079,6 +1095,15 @@ gfxcard_loadstate(FILE *f)
 	gfx.width	= savestate_read_u32(f);
 	gfx.height	= savestate_read_u32(f);
 	gfx.bpp		= savestate_read_u32(f);
+	/* Written from version 9. An older snapshot was taken by a card that could
+	   only scan out 565, so that is what it is restored as - and the field must
+	   NOT be read, or every following value in the chunk is off by a word. */
+	if (savestate_version_being_loaded() >= SNAPSHOT_VERSION_GFX_PIXFMT) {
+		gfx.pixfmt = (savestate_read_u32(f) == GFXCARD_PIXFMT_555)
+		    ? GFXCARD_PIXFMT_555 : GFXCARD_PIXFMT_565;
+	} else {
+		gfx.pixfmt = GFXCARD_PIXFMT_565;
+	}
 	gfx.stride	= savestate_read_u32(f);
 	gfx.start	= savestate_read_u32(f);
 	gfx.pal_index	= savestate_read_u32(f) & 0xff;

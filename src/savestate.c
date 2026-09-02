@@ -67,7 +67,7 @@
    applies host-dependent patches such as the display-derived EDID). v4 hashed
    the patched image, so a resume on different host display geometry falsely
    reported a ROM mismatch. */
-#define SNAPSHOT_VERSION	8
+#define SNAPSHOT_VERSION	9
 /* Oldest snapshot we can still load. v4's chunk payload is byte-for-byte
    identical to v5 - only the ROM-CRC field's meaning changed - so v4 files load
    fine; we just cannot reproduce their host-dependent ROM CRC, so the ROM-image

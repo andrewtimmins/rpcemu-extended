@@ -167,6 +167,11 @@
 	VIDCList3_ControlList		= 64
 
 	ControlList_ExtraBytes		= 14
+	@ The kernel always puts these in a type 3 list (see ModeChangeSub in
+	@ Kernel/s/vdu/legacymodes), and ModeFlags is what says which 16bpp format
+	@ the OS has chosen: bit 7 set means 565, clear means 555.
+	ControlList_NColour		= 15
+	ControlList_ModeFlags		= 16
 	ControlList_Terminator		= -1
 
 	SyncPol_InterlaceFields		= 16
@@ -211,6 +216,7 @@
 	REG_RENDER_SRC_Y = 0x8c
 	REG_RENDER_PAT_IDX = 0x90
 	REG_RENDER_PAT	= 0x94
+	REG_PIXFMT	= 0x98		@ which 16bpp layout the framestore holds
 
 	@ Operations REG_RENDER_OP performs, as GraphicsV_Render names them.
 	RENDER_COPY	= 1
@@ -230,6 +236,10 @@
 	GFXCARD_CAP_EDID	= 0x0400
 	GFXCARD_CAP_HW_POINTER	= 0x0800
 	GFXCARD_CAP_RENDER	= 0x1000
+	GFXCARD_CAP_16BPP555	= 0x2000	@ REG_PIXFMT is honoured
+
+	GFXCARD_PIXFMT_565	= 0		@ 64 thousand colours
+	GFXCARD_PIXFMT_555	= 1		@ 32 thousand colours
 
 	GFXCARD_CTRL_ENABLE	= 0x0001
 	GFXCARD_CTRL_BLANK	= 0x0002
@@ -269,7 +279,10 @@
 	WS_SAVE_W	= 84	@ geometry in use before a switch, so it survives it
 	WS_SAVE_H	= 88
 	WS_SAVE_L2BPP	= 92
-	WS_CMD		= 120	@ CMD_SIZE bytes: *WimpMode command builder
+	@ Which 16bpp format the last vetted or set mode asked for, as
+	@ GFXCARD_PIXFMT_*. Filled in by mode_geometry from the mode's ModeFlags.
+	WS_MODE_PIXFMT	= 120
+	WS_CMD		= 124	@ CMD_SIZE bytes: *WimpMode command builder
 	@ The trampoline the GfxCard$Display code variable is entered through. It
 	@ has to live somewhere writable that stays put for the module's lifetime,
 	@ and it has to hand the read code its workspace, which the kernel does not
@@ -620,24 +633,64 @@ gv_ri_version_word:
 	@ the stock driver terminates its list.
 gv_ri_ctrllist_items:
 	.int	ControlList_ExtraBytes
+	@ Asked for so the OS states which 16bpp format it has chosen; the kernel
+	@ supplies it regardless, but a driver should say what it reads.
+	.int	ControlList_ModeFlags
 	.int	ControlList_Terminator
 gv_ri_ctrllist_end:
 
 	@ PixelFormats: out r0 -> list of (NColour, ModeFlags, Log2BPP), r1 = count
+	@
+	@ Two lists, because 32 thousand colours is only offered if the card will
+	@ actually scan out 555. A host from before REG_PIXFMT existed does not set
+	@ GFXCARD_CAP_16BPP555, and offering a mode it cannot show would put us back
+	@ where issue #220 started: a depth RISC OS selects and then cannot display.
 gv_pixelformats:
+	stmfd	sp!, {r2}
+	ldr	r2, [ws, #WS_REGS]
+	ldr	r2, [r2, #REG_CAPS]
+	tst	r2, #GFXCARD_CAP_16BPP555
+	ldmfd	sp!, {r2}
+	beq	gv_pf_no555
+
+	adr	r0, pixel_formats_555
+	mov	r1, #(pixel_formats_555_end - pixel_formats_555) / 12
+	mov	r4, #0
+	ldmfd	sp!, {pc}
+
+gv_pf_no555:
 	adr	r0, pixel_formats
 	mov	r1, #(pixel_formats_end - pixel_formats) / 12
 	mov	r4, #0
 	ldmfd	sp!, {pc}
 
+	@ ModeFlag_64k is what says 565 rather than 555 at log2bpp 4, and it is the
+	@ same bit as ModeFlag_FullPalette - the kernel reads it one way at that
+	@ depth and the other below it. So the 16bpp entries differ by that one bit
+	@ and RISC OS names them 64K and 32K accordingly.
 pixel_formats:
 	.int	255, ModeFlag_FullPalette, 3	@ 8bpp, 256 colours
-	@ 16bpp. ModeFlag_64k is what says 565 rather than 555 at this depth, and
-	@ it is the same bit as ModeFlag_FullPalette - the kernel reads it one way
-	@ at log2bpp 4 and the other below it.
 	.int	65535, ModeFlag_64k, 4		@ 16bpp, 64K colours, 565
 	.int	-1, 0, 5			@ 32bpp, 16M colours
 pixel_formats_end:
+
+	@ The same, plus 555. Ordered by increasing colours, which is how the
+	@ desktop's display list reads.
+pixel_formats_555:
+	.int	255, ModeFlag_FullPalette, 3	@ 8bpp, 256 colours
+	@ ★ NColour is 65535, NOT 32767.
+	@
+	@ Both 16bpp formats address 65536 pixel values; what separates them is
+	@ ModeFlag_64k, and nothing else. The kernel's own list says so - see
+	@ PixelFormats in Kernel/s/vdu/legacymodes, where the RISC OS 3.5 32K entry
+	@ is "65535, 0, 4" and the RISC OS 6 64K entry is "65535, ModeFlag_64k, 4".
+	@ 32767 matches no entry the OS knows, so a mode offered that way is simply
+	@ never selected, which is exactly what happened when it was first written
+	@ that way here.
+	.int	65535, 0, 4			@ 16bpp, 32K colours, 555
+	.int	65535, ModeFlag_64k, 4		@ 16bpp, 64K colours, 565
+	.int	-1, 0, 5			@ 32bpp, 16M colours
+pixel_formats_555_end:
 
 	@ UpdatePointer: r0 = flags (bit 0 show, bit 1 the shape has changed),
 	@ r1 = x, r2 = y, r3 -> shape descriptor:
@@ -896,6 +949,13 @@ gv_setmode:
 	mov	r0, #1
 	mov	r0, r0, lsl r5		@ log2bpp -> bits per pixel
 	str	r0, [r6, #REG_BPP]
+
+	@ And which 16bpp layout it is, which the card needs before it scans out a
+	@ single pixel of the new mode. Written whatever the depth: the card ignores
+	@ it below 16bpp, and writing it unconditionally means there is no state to
+	@ get out of step.
+	ldr	r0, [ws, #WS_MODE_PIXFMT]
+	str	r0, [r6, #REG_PIXFMT]
 	mov	r0, #0			@ scan out from the base until the
 	str	r0, [r6, #REG_START]	@ kernel says otherwise
 
@@ -962,15 +1022,53 @@ mode_geometry:
 	add	r3, r3, #7
 	mov	r3, r3, lsr #3		@ bytes per line, before ExtraBytes
 
+	@ ★ THE DEFAULT AT 16BPP IS 555, NOT 565.
+	@
+	@ RISC OS's convention is that the mode's ModeFlags default to zero and
+	@ ModeFlag_64k is set only when the mode really is 565 - so the kernel has
+	@ nothing to say for a 555 mode and puts no ControlList_ModeFlags in the
+	@ list at all. The stock driver does exactly this: see the CMP r1,#3 /
+	@ MOVNE r2,#0 in ProcessVIDCList (VIDC20Video/s/Modes), which derives
+	@ flags of zero for every depth but 8bpp and then lets the control list
+	@ override it.
+	@
+	@ Defaulting to 565 here was measured wrong: a 32K desktop came out with
+	@ its greens and blues mangled, because the framestore held 555 and the
+	@ card had been told 565. Below 16bpp the value is ignored, so 555 is a
+	@ safe default for every depth.
+	mov	lr, #GFXCARD_PIXFMT_555
+	str	lr, [ws, #WS_MODE_PIXFMT]
+
 	add	r6, r0, #VIDCList3_ControlList
 1:
 	ldr	lr, [r6], #4
 	cmn	lr, #1			@ ControlList_Terminator?
 	beq	mode_geometry_ok
+	teq	lr, #ControlList_ModeFlags
+	beq	mode_geometry_flags
 	teq	lr, #ControlList_ExtraBytes
 	ldr	lr, [r6], #4
 	addeq	r3, r3, lr
 	b	1b
+
+	@ ModeFlags. At log2bpp 4, bit 7 set means 565 and clear means 555 - the
+	@ kernel reads that one bit two ways depending on the depth, which is why
+	@ this is only consulted at 16bpp. Anything else keeps the 565 default.
+	@
+	@ ★ Falls back into the loop rather than out of it: the list is a run of
+	@ index/value pairs and there may be more after this one.
+mode_geometry_flags:
+	ldr	lr, [r6], #4		@ the flags themselves
+	teq	r5, #4			@ 16bpp?
+	bne	1b
+	tst	lr, #ModeFlag_64k
+	moveq	lr, #GFXCARD_PIXFMT_555
+	movne	lr, #GFXCARD_PIXFMT_565
+	str	lr, [ws, #WS_MODE_PIXFMT]
+	b	1b
+
+	@ Note there is no arm here for "the list said flags of zero": that is the
+	@ default above, and the kernel need not mention it.
 
 mode_geometry_ok:
 	cmp	pc, #0			@ clear V
@@ -2444,6 +2542,26 @@ command_status:
 	swi	XOS_Write0
 	ldr	r0, [r5, #WS_VET_STRIDE]
 	bl	print_number
+
+	@ Which 16bpp layout it asked for, since the two are indistinguishable
+	@ from the depth alone and getting it wrong shows as wrong colours rather
+	@ than as an error.
+	ldr	r0, [r5, #WS_VET_L2BPP]
+	teq	r0, #4
+	bne	1f
+	ldr	r0, [r5, #WS_MODE_PIXFMT]
+	teq	r0, #GFXCARD_PIXFMT_555
+	bne	3f
+	adrl	r0, msg_fmt_555
+	b	2f
+3:
+	adrl	r0, msg_fmt_565
+	b	2f
+1:
+	adrl	r0, msg_nothing
+2:
+	swi	XOS_Write0
+
 	adrl	r0, msg_arrow
 	swi	XOS_Write0
 	ldr	r0, [r5, #WS_VET_REASON]
@@ -2564,6 +2682,15 @@ msg_arrow:
 	.align
 msg_vet_ok:
 	.string	"accepted"
+	.align
+msg_fmt_555:
+	.string	" (555, 32K)"
+	.align
+msg_fmt_565:
+	.string	" (565, 64K)"
+	.align
+msg_nothing:
+	.string	""
 	.align
 
 	@ Fixed 32-byte slots so the reason can be indexed, in VET_* order.

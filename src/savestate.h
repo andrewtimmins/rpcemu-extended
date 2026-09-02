@@ -47,6 +47,12 @@ extern int savestate_error;
    rather than one shared set. Needed by ide.c's loader. */
 #define SNAPSHOT_VERSION_IDE_PER_DRIVE	8
 
+/* Snapshots from this version onward carry the graphics card's 16bpp pixel
+   format. An older one is loaded with the card set to 565, which is the only
+   format it could scan out when that snapshot was written. Needed by
+   gfxcard.c's loader. */
+#define SNAPSHOT_VERSION_GFX_PIXFMT	9
+
 /**
  * Version of the snapshot being loaded, for chunk loaders whose payload has
  * changed shape between versions. Only meaningful during a load.
