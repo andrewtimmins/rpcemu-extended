@@ -592,6 +592,14 @@ void MachineInspectorWindow::OnAutoRefresh(wxCommandEvent &event)
 	}
 }
 
+void MachineInspectorWindow::RefreshFromStateChange()
+{
+	/* Only worth the round trip while the window is up. */
+	if (IsShown()) {
+		RefreshSnapshot();
+	}
+}
+
 void MachineInspectorWindow::RefreshSnapshot()
 {
 	const MachineSnapshot snapshot = emulator_.TakeSnapshot();
