@@ -39,6 +39,25 @@ quickest way to read a failure:
 
 Set `RPCEMU_TEST_LOG=1` to see what a unit under test is logging.
 
+## Driving the window without a pointer
+
+Some faults are only in the front end, and a wxWidgets control cannot be read or
+clicked by a script on every platform - on macOS a checkbox is invisible to
+accessibility. Three environment variables ask the window to do the thing
+itself and write what happened to the machine's `rpclog.txt`, so a GUI fault can
+be measured rather than only described. Each takes a delay in seconds from the
+machine starting:
+
+| Variable | What it does |
+| --- | --- |
+| `RPCEMU_TEST_CLOSE_AFTER` | Asks the window to close, exactly as the close button does, so the confirmation is put to the user rather than answered for them |
+| `RPCEMU_TEST_FULLSCREEN_AFTER` | Enters full screen and leaves it again, logging the window size and the state of the menu, tool and status bars at each step (issues #173, #206) |
+| `RPCEMU_TEST_INSPECTOR_AFTER` | Sets the machine trapping and tracing, opens the Machine Inspector, closes it, opens it again, and logs whether the Trace tab's controls agree with the machine each time (issue #221) |
+
+They need a real display, so none of them work headless. Grep the machine's log
+for `TEST_` afterwards; the machine directory's `rpclog.txt` is the one with
+these lines in it, not the data directory's.
+
 ## Before pushing
 
 A pre-push hook builds the tree and runs the suite, so a broken commit is caught

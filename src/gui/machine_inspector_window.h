@@ -37,6 +37,21 @@ public:
 
 	void ShowAndRaise();
 
+	/**
+	 * Log the Trace tab's controls beside the machine's own trapping and
+	 * tracing settings, and say whether they agree.
+	 *
+	 * For RPCEMU_TEST_INSPECTOR_AFTER. A checkbox cannot be read from a script
+	 * on macOS, so the window is asked instead - which is the only way to get
+	 * evidence for issue #221, where the controls came up clear on a machine
+	 * that was still trapping and tracing.
+	 *
+	 * @param when Short label for the log line, so before and after are
+	 *             distinguishable
+	 * @return true if every control matches the machine
+	 */
+	bool LogTraceControlsAgainstMachine(const char *when);
+
 private:
 	enum {
 		ID_AUTO_REFRESH = wxID_HIGHEST + 1,
@@ -95,6 +110,11 @@ private:
 	void PopulateBreakpointList(const MachineSnapshot &snapshot);
 	void PopulateWatchpointList(const MachineSnapshot &snapshot);
 	void ApplyTraceConfig();
+
+	/* Fill the Trace tab in from the machine's own settings, once, when the
+	   window first sees a snapshot. */
+	void SeedTraceConfig(const MachineSnapshot &snapshot);
+
 	void DrainTraceEvents();
 
 	uint32_t ParseAddress(const wxString &text, bool *ok) const;
@@ -159,6 +179,12 @@ private:
 	wxCheckBox *trace_autoscroll_checkbox_ = nullptr;
 	wxStaticText *trace_dropped_label_ = nullptr;
 	uint32_t trace_dropped_total_ = 0;
+
+	/* Cleared until the Trace tab has been filled in from the machine. Only
+	   the first snapshot may write to those controls; after that they are the
+	   user's, and a snapshot taken before a click reached the emulator thread
+	   would undo it. */
+	bool trace_config_seeded_ = false;
 
 	uint32_t disasm_current_address_ = 0;
 	uint32_t memory_current_address_ = 0;

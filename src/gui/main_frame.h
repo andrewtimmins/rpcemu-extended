@@ -167,6 +167,7 @@ enum TimerId {
 	ID_TIMER_GUEST_RESIZE,
 	ID_TIMER_TEST_CLOSE,
 	ID_TIMER_TEST_FULLSCREEN,
+	ID_TIMER_TEST_INSPECTOR,
 };
 
 /* The menu ids are bound as a range, so they must not grow into the timers. */
@@ -461,6 +462,21 @@ private:
 	void OnTestFullscreenTimer(wxTimerEvent &event);
 
 	/**
+	 * RPCEMU_TEST_INSPECTOR_AFTER: open the Machine Inspector, close it, open it
+	 * again, and log whether its Trace tab agrees with the machine each time.
+	 *
+	 * The trapping and tracing settings live in the emulator and outlive the
+	 * window, so a reopened inspector has to be filled in from the machine
+	 * rather than from the defaults its controls were built with. It was not,
+	 * which is issue #221: Halt on exception went on halting with the box clear,
+	 * and Log SWIs went on filling the ring with nothing reading it.
+	 *
+	 * A checkbox cannot be read by a script on macOS, so the window reports its
+	 * own controls - see MachineInspectorWindow::LogTraceControlsAgainstMachine().
+	 */
+	void OnTestInspectorTimer(wxTimerEvent &event);
+
+	/**
 	 * A frame arrived from the guest. Notices a change of desktop size and, for
 	 * ScreenSize_MatchWindow, waits for it to settle before acting.
 	 */
@@ -703,6 +719,10 @@ private:
 
 	wxTimer test_fullscreen_timer_;
 	int test_fullscreen_step_ = 0;
+
+	/* RPCEMU_TEST_INSPECTOR_AFTER only. */
+	wxTimer test_inspector_timer_;
+	int test_inspector_step_ = 0;
 
 	/** The size last asked of the guest, or (0,0) when nothing is outstanding. */
 	wxSize mode_requested_ = wxSize(0, 0);
