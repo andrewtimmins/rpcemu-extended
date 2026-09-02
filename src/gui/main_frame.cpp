@@ -2809,7 +2809,27 @@ void MainFrame::ShowFatal(const std::string &message)
 
 void MainFrame::PostDebuggerStateChanged()
 {
-	CallAfter([this]() { UpdateDebuggerActionStates(); });
+	CallAfter([this]() {
+		UpdateDebuggerActionStates();
+
+		/*
+		 * ★ And tell the inspector, which used to hear nothing from here.
+		 *
+		 * Its own refresh is a half-second timer. That is fine for watching a
+		 * running machine and hopeless for stepping: the snapshot it takes
+		 * straight after a step still says "running", because the step has not
+		 * finished, so Step and Run grey out and nothing re-reads until the
+		 * next tick. Measured by the reporter of discussion #223 as a
+		 * consistent half second per step with Step unclickable in between,
+		 * which is exactly this and not the cost of drawing the window.
+		 *
+		 * The emulator thread raises this when the debugger actually starts or
+		 * stops, so the window now follows the machine rather than the clock.
+		 */
+		if (machine_inspector_window_ != nullptr) {
+			machine_inspector_window_->RefreshFromStateChange();
+		}
+	});
 }
 
 /* Handed straight to whoever is waiting for it (see guest_command.cpp), which is
