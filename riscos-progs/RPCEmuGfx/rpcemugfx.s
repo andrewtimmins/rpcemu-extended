@@ -1623,6 +1623,7 @@ command_on:
 	swi	XOS_ScreenMode
 	ldmvsfd	sp!, {r5, pc}		@ refused: report it as it stands
 
+	mov	r0, #1			@ onto the card, so 16bpp means C64K
 	bl	restore_wimp_mode
 
 	@ The modes on offer are the monitor's, not the card's, so a monitor type
@@ -1693,6 +1694,14 @@ save_mode:
 @ that will not take the mode says so itself.
 @
 @ in: r5 = workspace
+@     r0 = non-zero if the mode is being restored onto the card, zero for
+@          VIDC20. The two disagree about what 16bpp means, so the same desktop
+@          is C32K on one and C64K on the other; see where the depth is chosen.
+@
+@ The flag is read back off the stack rather than kept in a register or the
+@ workspace: every register this function has is in use building the command,
+@ and the workspace has no free word between the saved mode and WS_CMD -
+@ WS_EDID_SIZE already owns the next one.
 restore_wimp_mode:
 	stmfd	sp!, {r0, r1, r2, r3, r4, r6, lr}
 	ldr	r0, [r5, #WS_SAVE_W]
@@ -1734,15 +1743,68 @@ restore_wimp_mode:
 	swi	XOS_ConvertCardinal4
 	mov	r4, r1
 
-	@ The depth we came from, of the two this card scans out.
+	@ The depth we came from - and which display is about to show it, because
+	@ the two do not mean the same thing by 16bpp.
+	@
+	@ ★ THIS IS WHERE THE MODE USED TO BE LOST. The depth was mapped to C16M
+	@ for log2bpp 5 and C256 for everything else, so a desktop in 32 or 64
+	@ thousand colours came back in 256 - and on VIDC20 with little VRAM that
+	@ mode may not exist at all, so the restore failed outright and the display
+	@ was left wherever the OS had re-initialised it. The next switch then saved
+	@ THAT as the mode worth restoring, and the desktop stayed there. Reported
+	@ in discussion #84 as the Wimp ending up in a low resolution mode after a
+	@ game, which is what it looks like from the outside.
+	@
+	@ At 16bpp VIDC20's framestore is 555, which RISC OS calls 32 thousand
+	@ colours, and this card's is 565, which it calls 64 thousand. So the same
+	@ desktop is C32K on one and C64K on the other, and asking for the wrong
+	@ one asks for a mode the display cannot show.
 	ldr	r0, [r5, #WS_SAVE_L2BPP]
+	ldr	r1, [sp]		@ the flag this was called with
+
+	@ adrl takes no condition code, so each arm branches to its own adrl
+	@ rather than being selected by one.
 	teq	r0, #5
-	bne	1f
+	beq	rwm_c16m
+	teq	r0, #4
+	beq	rwm_16bpp
+
+	@ Below 16bpp the two displays agree, so the depth is kept as it was -
+	@ except on the way to the card, which scans out nothing below 256 colours
+	@ and would refuse the mode.
+	teq	r1, #0
+	bne	rwm_c256
+	teq	r0, #0
+	beq	rwm_c2
+	teq	r0, #1
+	beq	rwm_c4
+	teq	r0, #2
+	beq	rwm_c16
+	b	rwm_c256
+
+rwm_16bpp:
+	teq	r1, #0
+	bne	rwm_c64k		@ the card: 565
+	adrl	r6, mode_c32k		@ VIDC20: 555
+	b	rwm_depth_done
+rwm_c64k:
+	adrl	r6, mode_c64k
+	b	rwm_depth_done
+rwm_c16m:
 	adrl	r6, mode_c16m
-	b	2f
-1:
+	b	rwm_depth_done
+rwm_c2:
+	adrl	r6, mode_c2
+	b	rwm_depth_done
+rwm_c4:
+	adrl	r6, mode_c4
+	b	rwm_depth_done
+rwm_c16:
+	adrl	r6, mode_c16
+	b	rwm_depth_done
+rwm_c256:
 	adrl	r6, mode_c256
-2:
+rwm_depth_done:
 	bl	copy_string
 
 	mov	r0, #0
@@ -1797,8 +1859,23 @@ mode_prefix:
 mode_y:
 	.string	" Y"
 	.align
+mode_c2:
+	.string	" C2"
+	.align
+mode_c4:
+	.string	" C4"
+	.align
+mode_c16:
+	.string	" C16"
+	.align
 mode_c256:
 	.string	" C256"
+	.align
+mode_c32k:
+	.string	" C32K"
+	.align
+mode_c64k:
+	.string	" C64K"
 	.align
 mode_c16m:
 	.string	" C16M"
@@ -1847,6 +1924,7 @@ command_off:
 	mov	r1, #0
 	str	r1, [r0, #REG_CTRL]
 
+	mov	r0, #0			@ onto VIDC20, so 16bpp means C32K
 	bl	restore_wimp_mode
 	ldmfd	sp!, {r5, pc}
 
