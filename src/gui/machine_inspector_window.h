@@ -63,6 +63,8 @@ private:
 		ID_RUN,
 		ID_PAUSE,
 		ID_STEP,
+		ID_STEP_OVER,
+		ID_DISASM_STYLE,
 		ID_BREAKPOINT_ADD,
 		ID_BREAKPOINT_REMOVE,
 		ID_WATCHPOINT_ADD,
@@ -70,6 +72,15 @@ private:
 		ID_TRACE_CONFIG,
 		ID_TRACE_CLEAR,
 	};
+
+	/*
+	 * How much disassembly the view shows, and how much of it sits above the
+	 * PC when the view is following it. A third above and two thirds below
+	 * reads better than dead centre: what led here is usually a handful of
+	 * instructions, and where it is going is the part being read.
+	 */
+	static const int kDisasmLines = 32;
+	static const int kDisasmLeadIn = 10;
 
 	void BuildUi();
 
@@ -88,6 +99,13 @@ private:
 	void OnRun(wxCommandEvent &event);
 	void OnPause(wxCommandEvent &event);
 	void OnStep(wxCommandEvent &event);
+	void OnStepOver(wxCommandEvent &event);
+
+	/** A disassembly rendering option moved; push the set to arm_disasm. */
+	void OnDisasmStyleChanged(wxCommandEvent &event);
+
+	/** Enter runs or pauses, Space steps, Shift+Space steps over. */
+	void OnDebugKey(wxKeyEvent &event);
 	void OnAddBreakpoint(wxCommandEvent &event);
 	void OnRemoveBreakpoint(wxCommandEvent &event);
 	void OnAddWatchpoint(wxCommandEvent &event);
@@ -148,6 +166,14 @@ private:
 	wxTextCtrl *disasm_address_input_ = nullptr;
 	wxCheckBox *disasm_follow_pc_checkbox_ = nullptr;
 
+	/* How the disassembly is written down, from discussion #223. These drive
+	   arm_disasm's global options, so they change the debug socket's output
+	   too, which is deliberate: one machine, one rendering. */
+	wxCheckBox *disasm_hex_checkbox_ = nullptr;
+	wxCheckBox *disasm_apcs_checkbox_ = nullptr;
+	wxCheckBox *disasm_ranges_checkbox_ = nullptr;
+	wxCheckBox *disasm_resolve_checkbox_ = nullptr;
+
 	wxTextCtrl *memory_address_input_ = nullptr;
 	wxSpinCtrl *memory_bytes_spin_ = nullptr;
 
@@ -156,6 +182,7 @@ private:
 	wxButton *run_button_ = nullptr;
 	wxButton *pause_button_ = nullptr;
 	wxButton *step_button_ = nullptr;
+	wxButton *step_over_button_ = nullptr;
 	wxListBox *breakpoint_list_ = nullptr;
 	wxTextCtrl *breakpoint_input_ = nullptr;
 	wxButton *breakpoint_remove_button_ = nullptr;
