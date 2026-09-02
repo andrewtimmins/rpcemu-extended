@@ -30,6 +30,14 @@ macro(rpcemu_add_python_test name script)
     list(APPEND RPCEMU_REGISTERED_TESTS ${name})
 endmacro()
 
+# And for a shell script, which the macOS build script's own logic is tested
+# with. Same reasoning as above: it lands on the same list and is counted.
+macro(rpcemu_add_shell_test name script)
+    add_test(NAME ${name}
+             COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/${script} ${ARGN})
+    list(APPEND RPCEMU_REGISTERED_TESTS ${name})
+endmacro()
+
 # The JIT differential testers use the recompiler's test hooks
 # (compiled into rpcemu_core when RPCEMU_JIT_TEST is set, see src/CMakeLists.txt).
 # They compare each recompiled instruction class against the interpreter and are
@@ -214,6 +222,19 @@ rpcemu_add_test(test_debugger_gate)
 # hand, and so are the seven legal modes: this is a new arm on a switch that
 # every mode change in the emulator passes through, and the way to get it wrong
 # is to catch a mode that used to work.
+# Which libraries build-macos.sh may fuse into one universal bundle. macOS
+# only, because that is the only platform the script runs on.
+#
+# Every build on main and 1.x failed on 2 September 2026 with nothing in the
+# tree changed: the two macOS runners are separate images with separate
+# Homebrew installations and had drifted to pcre2 10.48 against 10.47_1, which
+# the fuse check read as two different libraries. Too strict stops every
+# release and too lax ships two unrelated libraries in one file, so the
+# judgement is tested rather than eyeballed - the case that broke CI included.
+if(APPLE)
+    rpcemu_add_shell_test(test_fuse_libs test_fuse_libs.sh)
+endif()
+
 add_executable(test_bad_mode test_bad_mode.c test_stubs.c)
 target_link_libraries(test_bad_mode PRIVATE rpcemu_core m)
 rpcemu_add_test(test_bad_mode)
@@ -1063,6 +1084,9 @@ if(RPCEMU_PYTHON_TESTS)
 endif()
 if(RPCEMU_ARM_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 1")	# MultiFS FAT12
+endif()
+if(APPLE)
+    math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 1")	# build-macos.sh library fusing
 endif()
 
 list(LENGTH RPCEMU_REGISTERED_TESTS RPCEMU_ACTUAL_TESTS)
