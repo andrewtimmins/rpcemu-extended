@@ -201,7 +201,15 @@ way the first one after a boot is; send a throwaway command before trusting an
 empty result.
 
 `status.reason` / pause reasons: `0`=none `1`=user `2`=breakpoint `3`=watchpoint
-`4`=step `5`=exception `6`=SWI. Trace `type`: `0`=exception `1`=SWI `2`=watchpoint.
+`4`=step `5`=exception `6`=SWI `7`=reserved CPU mode. Trace `type`: `0`=exception
+`1`=SWI `2`=watchpoint; for an exception, `arg0` is `0`=undefined instruction
+`1`=prefetch abort `2`=data abort `3`=reserved CPU mode.
+
+Reason `7` is not a trap that can be switched on: writing one of the nine
+reserved mode values is always a fault, and the machine halts on it whatever the
+trace configuration says. `arg1` of its trace event carries the mode that was
+written. See *A reserved CPU mode* in
+[debugger-tracing.md](debugger-tracing.md).
 
 `step over`, `step out` and `runto` all report reason `4`, since all three are
 "stopped where you asked", not "stopped at a breakpoint".

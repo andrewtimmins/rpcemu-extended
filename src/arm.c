@@ -158,7 +158,34 @@ void updatemode(uint32_t m)
                 break;
 
             default:
-                fatal("Bad mode %i\n", arm.mode);
+                /*
+                 * One of the nine reserved mode values (4, 5, 6, 8, 9, 10, 12,
+                 * 13, 14). Writing one is UNPREDICTABLE on real hardware, so
+                 * this is a fault in the guest - which is what somebody would
+                 * want to look at, and what fatal() used to take away with the
+                 * rest of the process. Issue #227.
+                 *
+                 * PC is read before r15_mask is updated below, so it is still
+                 * the mask of the mode the offending instruction ran in.
+                 */
+                if (!debugger_bad_mode(arm.mode, PC)) {
+                        fatal("Bad mode %i\n", arm.mode);
+                }
+
+                /*
+                 * Bank as User and System mode do, so the halted machine has
+                 * defined registers to show and can be stepped afterwards.
+                 *
+                 * The store-back switch above deliberately has no matching arm:
+                 * leaving a reserved mode discards whatever it did to R8-R14
+                 * rather than writing it into the user bank, so a guest that
+                 * strays into one and comes back does not find User mode's
+                 * registers rewritten underneath it. Both halves are undefined
+                 * behaviour on hardware; this is the half that damages less.
+                 */
+                for (c=8;c<15;c++) arm.reg[c] = arm.user_reg[c];
+                for (c=0;c<15;c++) usrregs[c] = &arm.reg[c];
+                break;
         }
 
         if (ARM_MODE_32(arm.mode)) {

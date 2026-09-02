@@ -24,6 +24,27 @@ interrupts and are not trappable here; a SWI is caught by SWI tracing below.)
 Exceptions can also be **logged** to the Trace tab without halting — useful for
 seeing, for example, the harmless app-space probes RISC OS performs during boot.
 
+## A reserved CPU mode
+
+The mode field of the CPSR has sixteen possible values and the architecture
+defines seven of them. Writing one of the other nine is UNPREDICTABLE on real
+hardware, so it is always a fault in the guest, and there is no checkbox for it:
+the machine halts whenever it happens, with the pause reason given as *reserved
+CPU mode written* and the halt PC naming the instruction that wrote it. The mode
+itself is in the Trace tab entry beside it.
+
+The emulator used to report this with a fatal error and exit, which took the
+registers, the memory and the disassembly with it at exactly the moment somebody
+wanted to read them (issue #227). The halted machine can be inspected and then
+stepped or resumed like any other. Register banking in a reserved mode follows
+User and System mode, so what the inspector shows is defined rather than
+whatever happened to be in the banks.
+
+The one case that still ends the emulator is a machine with the debugger turned
+off (`debug_enabled=0`), where there is nothing to halt into: neither the
+inspector nor the debug socket is available, so a halt would be indistinguishable
+from a hang.
+
 ## SWI tracing
 
 SWI tracing records every operating-system call the guest makes. Options:

@@ -1067,6 +1067,7 @@ void MachineInspectorWindow::UpdateDebuggerUi(const MachineSnapshot &snapshot)
 	case DebugPauseReason_Step: reason = "single step"; break;
 	case DebugPauseReason_Exception: reason = "exception trap"; break;
 	case DebugPauseReason_Swi: reason = "SWI trap"; break;
+	case DebugPauseReason_BadMode: reason = "reserved CPU mode written"; break;
 	default: reason = "unknown"; break;
 	}
 
@@ -1149,6 +1150,13 @@ void MachineInspectorWindow::DrainTraceEvents()
 			}
 		}
 	}
+	/* A halted machine is drained whatever the boxes say. Nothing is running
+	   to flood the ring, and the events that put it here - a reserved CPU
+	   mode, which nobody switches on because it is never wanted - would
+	   otherwise sit unread while the Trace tab showed an empty box. */
+	if (!active && last_snapshot_.debug_paused != 0) {
+		active = true;
+	}
 	if (!active) {
 		return;
 	}
@@ -1188,10 +1196,16 @@ void MachineInspectorWindow::DrainTraceEvents()
 			case TraceException_Undefined: kind = "undefined instruction"; break;
 			case TraceException_PrefetchAbort: kind = "prefetch abort"; break;
 			case TraceException_DataAbort: kind = "data abort"; break;
+			case TraceException_BadMode: kind = "reserved CPU mode"; break;
 			default: break;
 			}
 			line = wxString::Format("%08u  PC=%s  EXCEPTION  %s",
 			                        ev.seq, FormatHex(ev.pc), kind);
+			/* A reserved mode carries the mode written where a fault
+			   address would be; there is no fault status. */
+			if (ev.arg0 == TraceException_BadMode) {
+				line += wxString::Format("  mode=%02X", ev.arg1 & 0xffu);
+			}
 			/* Only a data abort carries a fault address and status; the
 			   others leave them zero on purpose (see DebugTraceEvent). */
 			if (ev.arg0 == TraceException_DataAbort) {
