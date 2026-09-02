@@ -53,10 +53,18 @@ machine starting:
 | `RPCEMU_TEST_CLOSE_AFTER` | Asks the window to close, exactly as the close button does, so the confirmation is put to the user rather than answered for them |
 | `RPCEMU_TEST_FULLSCREEN_AFTER` | Enters full screen and leaves it again, logging the window size and the state of the menu, tool and status bars at each step (issues #173, #206) |
 | `RPCEMU_TEST_INSPECTOR_AFTER` | Sets the machine trapping and tracing, opens the Machine Inspector, closes it, opens it again, and logs whether the Trace tab's controls agree with the machine each time (issue #221) |
+| `RPCEMU_TEST_DISPLAY_TIMING` | Not a delay: set it to 1 and every guest mode change logs where its time went - what the guest asked for, how long the window waited before following, each step of the resize, and whether the GPU or the CPU is drawing (issue #220) |
 
 They need a real display, so none of them work headless. Grep the machine's log
-for `TEST_` afterwards; the machine directory's `rpclog.txt` is the one with
-these lines in it, not the data directory's.
+for `TEST_` or `DISPLAY_TIMING` afterwards; the machine directory's `rpclog.txt`
+is the one with these lines in it, not the data directory's.
+
+`RPCEMU_TEST_DISPLAY_TIMING` is the one to reach for when somebody reports the
+display as slow, because it separates the three things that "slow" can mean:
+the guest taking a while to adopt the mode, the window waiting before it
+follows, and the resize itself. Measured on this Mac with RISC OS 4.39, those
+are about 300ms, 80ms and 2ms - so a report of anything much larger says which
+of the three to look at.
 
 ## Before pushing
 

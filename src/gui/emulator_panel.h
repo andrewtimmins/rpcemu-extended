@@ -108,6 +108,18 @@ private:
 	void ReleasePointerAfterDrag();
 
 	void CalculateScaling();
+public:
+	/**
+	 * Whether the GPU is drawing the guest's picture.
+	 *
+	 * Public because the display-timing diagnostic reports it: a machine on the
+	 * software path pays a full-frame blit where one on the GPU path does not,
+	 * and that is the first thing worth knowing about a display someone
+	 * describes as slow. See RPCEMU_TEST_DISPLAY_TIMING in docs/testing.md.
+	 */
+	bool DrawingWithGpu() const;
+
+private:
 #if wxUSE_GLCANVAS
 	void TryCreateGlCanvas();
 	void DestroyGlCanvas(const wxString &why);

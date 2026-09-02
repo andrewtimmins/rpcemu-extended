@@ -709,6 +709,18 @@ private:
 	 */
 	wxTimer guest_resize_timer_;
 
+	/*
+	 * When the machine last started or was reset, from wxGetLocalTimeMillis().
+	 *
+	 * The window waits for the guest's mode to hold still before following it,
+	 * and how long it should wait depends entirely on which of two things is
+	 * happening. RISC OS changes mode several times in quick succession while
+	 * booting, and following each step would march the window through three or
+	 * four sizes; a mode change some time later is a deliberate one, arrives on
+	 * its own, and every millisecond of waiting is felt. See NoteGuestFrame().
+	 */
+	wxLongLong machine_started_ms_ = 0;
+
 	/* RPCEMU_TEST_CLOSE_AFTER only; never started otherwise. */
 	wxTimer test_close_timer_;
 
