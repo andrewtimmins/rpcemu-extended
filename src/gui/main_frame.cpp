@@ -968,6 +968,21 @@ void MainFrame::EnterFullScreen()
 	 * The status bar below is the genuine exception and stays.
 	 */
 
+	/*
+	 * ★ Read the bars BEFORE touching anything.
+	 *
+	 * Without this the log has only the state after each transition, and the
+	 * two readings cannot answer the question that matters: was the menu bar
+	 * detached BY going full screen, or was it never attached on this machine
+	 * at all? "native menu GONE" afterwards means nothing without a "native
+	 * menu attached" beforehand to compare it with.
+	 *
+	 * That gap is why the CI run on a Windows runner - the first time a window
+	 * has ever come up in CI - could not settle issue #219 on its own. See
+	 * docs/testing.md.
+	 */
+	LogBarState("before entering");
+
 	/* Removed rather than hidden. Hiding it leaves the space it occupied
 	   reserved - measurably so: the frame's client height does not change -
 	   and on macOS that shows as an empty strip along the bottom of the
@@ -1053,6 +1068,11 @@ void MainFrame::ExitFullScreen()
 	if (!full_screen_) {
 		return;
 	}
+
+	/* The other half of the pair; see the note in EnterFullScreen(). Taken
+	   while still full screen, so the four readings across a round trip are
+	   before/after entering and before/after leaving. */
+	LogBarState("before leaving");
 
 	/* Cleared first: SizeWindowToGuest() below does nothing while it is set, and
 	   it is the thing that puts the window back. */
