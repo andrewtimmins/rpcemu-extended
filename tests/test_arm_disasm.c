@@ -98,7 +98,7 @@ test_data_processing(void)
 	check_text(0xE1A00060, "MOV R0, R0, RRX");
 	check_text(0xE1B00001, "MOVS R0, R1");
 	check_text(0x01A00001, "MOVEQ R0, R1");
-	check_text(0xE1A0F00E, "MOV PC, LR");
+	check_text(0xE1A0F00E, "MOV PC, R14");
 }
 
 static void
@@ -120,8 +120,8 @@ test_transfers(void)
 
 	printf("Block transfer\n");
 
-	check_text(0xE92D4010, "STMDB SP!, {R4, LR}");
-	check_text(0xE8BD8010, "LDMIA SP!, {R4, PC}");
+	check_text(0xE92D4010, "STMDB R13!, {R4, R14}");
+	check_text(0xE8BD8010, "LDMIA R13!, {R4, PC}");
 	check_text(0xE8900007, "LDMIA R0, {R0, R1, R2}");
 }
 
@@ -136,7 +136,7 @@ test_branches(void)
 	check_text(0xEAFFFFFE, "B 0x00008000");
 	check_text(0x1A000002, "BNE 0x00008010");
 	check_text(0xE12FFF11, "BX R1");
-	check_text(0xE12FFF1E, "BX LR");
+	check_text(0xE12FFF1E, "BX R14");
 }
 
 static void
@@ -168,7 +168,7 @@ test_fpa(void)
 	/* Load and store, CP1: precision from bits 22 and 15 */
 	check_text(0xED910100, "LDFS F0, [R1]");
 	check_text(0xED910108, "LDFS F0, [R1, #32]");
-	check_text(0xED2DA102, "STFD F2, [SP, #-8]!");
+	check_text(0xED2DA102, "STFD F2, [R13, #-8]!");
 
 	/* Multiple register load and store, CP2 */
 	check_text(0xED910200, "LFM F0, 4, [R1]");
@@ -430,6 +430,119 @@ test_symbol_annotation(void)
 	check("no resolver leaves the text alone", strcmp(buf, "BL 0x00008008") == 0);
 }
 
+
+/* ------------------------------------------------------ rendering options */
+
+/**
+ * Check an opcode's rendering with a given set of options in force, and put
+ * the defaults back afterwards so no test can leak into the next.
+ */
+static void
+check_opts(const ArmDisasmOptions *opts, uint32_t opcode, uint32_t at,
+           const char *expected)
+{
+	char buf[256];
+	char what[400];
+
+	arm_disasm_set_options(opts);
+	arm_disasm(opcode, at, buf, sizeof(buf));
+	arm_disasm_set_options(NULL);
+
+	snprintf(what, sizeof(what), "%08X -> \"%s\"", opcode, expected);
+	check(what, strcmp(buf, expected) == 0);
+	if (strcmp(buf, expected) != 0) {
+		printf("      got \"%s\"\n", buf);
+	}
+}
+
+/*
+ * The four rendering options from discussion #223.
+ *
+ * WHY THESE ARE TESTED. Each one exists so a disassembly can be read against
+ * assembler source without translating every line, and each is a different
+ * way of writing the same decoded instruction. A bug here does not look like a
+ * bug: it looks like the disassembler disagreeing with your own code, which is
+ * exactly the doubt these were added to remove. The defaults are checked
+ * alongside every option, because an option that cannot be turned off is as
+ * bad as one that does not work.
+ */
+static void
+test_rendering_options(void)
+{
+	ArmDisasmOptions opts;
+
+	printf("Rendering options\n");
+
+	/* Hex immediates: MOV R0, #128 the RISC OS way. */
+	memset(&opts, 0, sizeof(opts));
+	check_opts(NULL, 0xE3A00080, AT, "MOV R0, #128");
+	opts.hex_immediates = 1;
+	check_opts(&opts, 0xE3A00080, AT, "MOV R0, #&80");
+	/* And an immediate offset on a load, which goes through the same helper. */
+	check_opts(NULL, 0xE5D000FF, AT, "LDRB R0, [R0, #255]");
+	check_opts(&opts, 0xE5D000FF, AT, "LDRB R0, [R0, #&FF]");
+
+	/* APCS names. */
+	memset(&opts, 0, sizeof(opts));
+	opts.apcs_registers = 1;
+	check_opts(NULL, 0xE1A0F00E, AT, "MOV PC, R14");
+	check_opts(&opts, 0xE1A0F00E, AT, "MOV pc, lr");
+	check_opts(&opts, 0xE0812003, AT, "ADD a3, a2, a4");
+
+	/* Register lists as ranges. A run of two is left spelled out, being no
+	   longer than the range that would replace it. */
+	memset(&opts, 0, sizeof(opts));
+	opts.collapse_reglists = 1;
+	check_opts(NULL,  0xE92D409F, AT, "STMDB R13!, {R0, R1, R2, R3, R4, R7, R14}");
+	check_opts(&opts, 0xE92D409F, AT, "STMDB R13!, {R0-R4, R7, R14}");
+	check_opts(&opts, 0xE92D4003, AT, "STMDB R13!, {R0, R1, R14}");
+	check_opts(&opts, 0xE92D0007, AT, "STMDB R13!, {R0-R2}");
+	/* Every register, which is one range from end to end. */
+	check_opts(&opts, 0xE92DFFFF, AT, "STMDB R13!, {R0-PC}");
+
+	/* PC-relative loads resolved. R15 reads eight ahead, so a -120 offset
+	   from 0x8000 reaches 0x7F90. */
+	memset(&opts, 0, sizeof(opts));
+	opts.resolve_pc_relative = 1;
+	check_opts(NULL,  0xE51FB078, AT, "LDR R11, [PC, #-120]");
+	check_opts(&opts, 0xE51FB078, AT, "LDR R11, &00007F90");
+	check_opts(&opts, 0xE59FB004, AT, "LDR R11, &0000800C");
+	/* Not off R15, so nothing to resolve. */
+	check_opts(&opts, 0xE51CB078, AT, "LDR R11, [R12, #-120]");
+	/* Writeback: the address moves, so the registers stay on show. */
+	check_opts(&opts, 0xE53FB078, AT, "LDR R11, [PC, #-120]!");
+
+	/* Hex notation is one setting for the whole line, not just the operands
+	   that happen to be immediates: a branch target, a SWI number and an MSR
+	   immediate all follow it. Mixing "&80" with "0x374C" in one disassembly
+	   is the inconsistency this option exists to remove. */
+	memset(&opts, 0, sizeof(opts));
+	opts.hex_immediates = 1;
+	check_opts(NULL,  0xEA00001C, AT, "B 0x00008078");
+	check_opts(&opts, 0xEA00001C, AT, "B &00008078");
+	/* A named SWI keeps its name whatever the notation - the name is the
+	   useful part, and it is not a number to be reformatted. */
+	check_opts(&opts, 0xEF000011, AT, "SWI OS_Exit");
+	check_opts(NULL,  0xEF012345, AT, "SWI 0x012345");
+	check_opts(&opts, 0xEF012345, AT, "SWI &012345");
+
+	/* The options are independent, and combine. */
+	memset(&opts, 0, sizeof(opts));
+	opts.apcs_registers = 1;
+	opts.collapse_reglists = 1;
+	opts.hex_immediates = 1;
+	check_opts(&opts, 0xE92D409F, AT, "STMDB sp!, {a1-v1, v4, lr}");
+
+	/* And setting NULL restores every default. */
+	arm_disasm_set_options(&opts);
+	arm_disasm_set_options(NULL);
+	memset(&opts, 0xff, sizeof(opts));
+	arm_disasm_get_options(&opts);
+	check("NULL puts every option back to its default",
+	      opts.hex_immediates == 0 && opts.apcs_registers == 0 &&
+	      opts.collapse_reglists == 0 && opts.resolve_pc_relative == 0);
+}
+
 int
 main(void)
 {
@@ -445,6 +558,7 @@ main(void)
 	test_swi();
 	test_unknown();
 	test_symbol_annotation();
+	test_rendering_options();
 
 	printf("\n%s\n", failures ? "FAILED" : "All tests passed");
 
