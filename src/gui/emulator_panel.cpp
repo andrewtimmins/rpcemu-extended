@@ -734,6 +734,15 @@ void EmulatorPanel::CalculateScaling()
 	RebuildGuestCursor();
 }
 
+bool EmulatorPanel::DrawingWithGpu() const
+{
+#if wxUSE_GLCANVAS
+	return GlActive();
+#else
+	return false;	/* built without a GL canvas at all */
+#endif
+}
+
 #if wxUSE_GLCANVAS
 bool EmulatorPanel::GlActive() const
 {
