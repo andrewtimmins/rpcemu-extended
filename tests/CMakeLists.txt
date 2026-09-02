@@ -162,6 +162,19 @@ add_executable(test_debugger_gate test_debugger_gate.c test_stubs.c)
 target_link_libraries(test_debugger_gate PRIVATE rpcemu_core m)
 rpcemu_add_test(test_debugger_gate)
 
+# A reserved CPU mode. Nine of the sixteen mode values the CPSR can hold are
+# reserved, and writing one is UNPREDICTABLE on hardware; updatemode() used to
+# answer with fatal(), so the emulator exited and took the state that would have
+# explained it (issue #227). It now halts into the debugger instead.
+#
+# All nine reserved values are covered rather than the one that was tried by
+# hand, and so are the seven legal modes: this is a new arm on a switch that
+# every mode change in the emulator passes through, and the way to get it wrong
+# is to catch a mode that used to work.
+add_executable(test_bad_mode test_bad_mode.c test_stubs.c)
+target_link_libraries(test_bad_mode PRIVATE rpcemu_core m)
+rpcemu_add_test(test_bad_mode)
+
 # Breakpoint condition expressions. Compiles debugexpr.c directly - it reads the
 # machine only through a caller-supplied environment, so a test substitutes its
 # own registers and memory and needs no emulator.
@@ -699,7 +712,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 43)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 44)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()

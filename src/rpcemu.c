@@ -1420,6 +1420,63 @@ debugger_swi_hook(uint32_t swinum, uint32_t opcode)
 }
 
 /**
+ * Called from updatemode() when a guest write has asked for one of the nine
+ * CPU mode values the architecture reserves.
+ *
+ * Writing a reserved mode is UNPREDICTABLE on real hardware, so the guest is
+ * where the fault is - and the guest is what somebody would want to look at.
+ * The emulator used to answer with fatal(), which ended the process and took
+ * the registers, the memory and the disassembly with it: issue #227 asked for
+ * the machine to be halted for inspection instead.
+ *
+ * The halt is immediate rather than deferred, unlike the exception and SWI
+ * traps above. Those want the vector set up first, so that the machine stops
+ * at the handler's first instruction; here there is no handler to reach and
+ * the instruction that made the write is the whole of the interesting part,
+ * so debugger_halt_pc is made to name it. The current instruction still
+ * finishes - nothing here unwinds it - and the core stops at the next fetch,
+ * where it checks debugger_paused.
+ *
+ * @param mode The full mode value written, including the 32-bit bit
+ * @param pc   Address of the instruction that wrote it
+ * @return 1 if the machine has been halted, 0 if the caller should treat the
+ *         mode as fatal because nothing could be halted into
+ */
+int
+debugger_bad_mode(uint32_t mode, uint32_t pc)
+{
+	/* Recorded whatever happens next, since with debug_enabled off this log
+	   line is the only account of it that survives. */
+	rpclog("ARM: reserved CPU mode %02x written at %08x\n",
+	       (unsigned) mode, (unsigned) pc);
+
+	debugger_trace_push(TraceEvent_Exception, pc, 0, TraceException_BadMode,
+	    mode, 0);
+
+	/* With the debugger switched off there is nowhere to halt into: the
+	   inspector cannot be opened and the debug socket is not listening, so a
+	   halt would be an emulator that had silently stopped. */
+	if (!config.debug_enabled) {
+		return 0;
+	}
+
+	if (debugger_paused) {
+		return 1;	/* already stopped; nothing to add */
+	}
+
+	debugger_enter_pause(DebugPauseReason_BadMode, pc, 0);
+
+	/* Said out loud, because a machine that has stopped dead with no
+	   inspector open looks like a hang rather than a diagnosis. Non-fatal:
+	   the front end shows it and the machine stays up. */
+	error("The machine has been halted: a reserved CPU mode (%02x) was written "
+	      "at %08x.\n\nUse the Machine Inspector to look at it, or Run to carry "
+	      "on.", (unsigned) mode, (unsigned) pc);
+
+	return 1;
+}
+
+/**
  * Write a message to the RPCEmu log file rpclog.txt
  *
  * @param format printf style format of message

@@ -115,7 +115,11 @@ typedef enum {
 	DebugPauseReason_Watchpoint = 3,
 	DebugPauseReason_Step = 4,
 	DebugPauseReason_Exception = 5,
-	DebugPauseReason_Swi = 6
+	DebugPauseReason_Swi = 6,
+	/* A guest write asked for one of the nine mode values the architecture
+	   reserves. Not a trap the user turns on: it is always wrong, and the
+	   emulator used to answer it by ending the process. */
+	DebugPauseReason_BadMode = 7
 } DebugPauseReason;
 
 typedef struct {
@@ -184,7 +188,11 @@ typedef enum {
 typedef enum {
 	TraceException_Undefined = 0,
 	TraceException_PrefetchAbort = 1,
-	TraceException_DataAbort = 2
+	TraceException_DataAbort = 2,
+	/* Not an ARM exception - a reserved CPU mode. It travels with these
+	   because it is the same shape of event, and arg1 carries the mode
+	   that was asked for in place of a fault address. */
+	TraceException_BadMode = 3
 } TraceExceptionKind;
 
 /** A single entry in the debug trace ring. Pure POD, copied between threads. */
@@ -654,6 +662,7 @@ extern uint32_t debugger_trace_pending(void);
 extern uint32_t debugger_drain_trace_events(DebugTraceEvent *out, uint32_t max, uint32_t *dropped);
 extern void debugger_exception_hook(uint32_t mmode, uint32_t address, uint32_t pc);
 extern int debugger_swi_hook(uint32_t swinum, uint32_t opcode);
+extern int debugger_bad_mode(uint32_t mode, uint32_t pc);
 
 /* host GUI bridge */
 extern void rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize, int yl, int yh, int double_size, int host_xsize, int host_ysize);
