@@ -23,6 +23,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <list>
 #include <memory>
 #include <string>
@@ -200,6 +201,14 @@ public:
 	 */
 	void CloseWhenNothingIsModal();
 
+	/*
+	 * The same wait, for anything other than a close: runs `action` as soon as
+	 * nothing modal is in the way. The guest powering the machine off arrives
+	 * while any dialogue at all may be on screen, and what follows it opens a
+	 * dialogue of its own.
+	 */
+	void WhenNothingIsModal(std::function<void()> action);
+
 	/* Whether the dialogues have already been asked to close, so the wait above
 	   asks once rather than on every turn of the event loop. */
 	bool close_asked_modals_ = false;
@@ -241,6 +250,32 @@ private:
 
 	/** Ask whether to close, then offer the machine list. */
 	void AskAboutClosing();
+
+	/**
+	 * The machine is finished with: stop it running, hide the window and offer
+	 * the machine list.
+	 *
+	 * Shared by the confirmed close and by the guest powering itself off, which
+	 * are the same thing reached from two directions.
+	 *
+	 * @return true if this has been dealt with - another machine was chosen and
+	 *         is now running, or the frame went while the list was open - and
+	 *         false if the list was dismissed without choosing, so the caller
+	 *         should go on and close.
+	 */
+	bool StopMachineAndOfferList();
+
+	/**
+	 * RISC OS switched the machine off.
+	 *
+	 * RISC OS 5 powers the machine down at the end of its own Shutdown, which
+	 * used to end the application: the machine list did not come back and a
+	 * user who wanted another machine had to start RPCEmu again (issue #224).
+	 * It now behaves as the close button does once the question has been
+	 * answered - the question itself is skipped, because RISC OS has already
+	 * asked it.
+	 */
+	void GuestPoweredOff();
 
 	/** Show the machine list and switch to whatever is chosen. */
 	bool SwitchToChosenMachine();

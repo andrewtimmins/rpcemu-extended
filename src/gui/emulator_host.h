@@ -130,6 +130,27 @@ public:
 	void Stop();
 	void Join();
 
+	/**
+	 * Stop the guest executing without stopping the emulator thread.
+	 *
+	 * For a machine the user has finished with but which cannot be taken all
+	 * the way down yet: the machine list is shown over it, and if another
+	 * machine is chosen it is this same thread that switches to it, so Stop()
+	 * is not available. Suspended, the CPU runs no instructions, the sound it
+	 * was feeding runs dry and the core is given back to the host - which is
+	 * what closing a running machine failed to do (issue #222).
+	 *
+	 * Deliberately not the debugger's pause: that is a debugging state, it is
+	 * reported to the inspector as one, and a Run there would undo this. The
+	 * command queue is still drained while suspended, so the machine switch
+	 * that usually follows is acted on.
+	 */
+	void SetExecutionSuspended(bool suspended);
+	bool IsExecutionSuspended() const
+	{
+		return execution_suspended_.load(std::memory_order_acquire);
+	}
+
 	/* Notify every request condition variable so any GUI-thread wait wakes and
 	   re-evaluates its predicate. Called from fatal() when the emulator thread
 	   is about to spin forever and can no longer signal completion itself. */
@@ -284,6 +305,10 @@ private:
 	uint32_t trace_dropped_ = 0;
 
 	std::atomic<bool> flyback_pending_{false};
+
+	/* See SetExecutionSuspended(). Read by the emulator thread once per turn of
+	   its loop, written by the GUI thread. */
+	std::atomic<bool> execution_suspended_{false};
 };
 
 /*

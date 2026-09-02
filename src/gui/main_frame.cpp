@@ -2737,17 +2737,16 @@ void MainFrame::PostMachineSwitched(const std::string &machine_name)
 void MainFrame::PostQuit()
 {
 	/*
-	 * Called from the emulator thread; hop to the GUI thread and close the
-	 * window, which runs the normal shutdown (stop + join the emu threads).
+	 * Called from the emulator thread; hop to the GUI thread and deal with the
+	 * guest having powered itself off - the desktop's Shutdown, via OS_Reset.
 	 *
-	 * Through CloseWhenNothingIsModal() rather than straight to Close(true),
-	 * for the reason set out there: every dialogue this window opens is a stack
-	 * object parented to it, and destroying the window from inside a dialogue's
-	 * own event loop aborts the process. This path is the guest asking to be
-	 * powered off - the desktop's Shutdown, via OS_Reset - which can arrive
-	 * while anything at all is on screen.
+	 * Through WhenNothingIsModal() rather than acting straight away, for the
+	 * reason set out there: every dialogue this window opens is a stack object
+	 * parented to it, destroying the window from inside a dialogue's own event
+	 * loop aborts the process, and this request can arrive while anything at
+	 * all is on screen.
 	 */
-	CallAfter([this]() { CloseWhenNothingIsModal(); });
+	CallAfter([this]() { WhenNothingIsModal([this]() { GuestPoweredOff(); }); });
 }
 
 /*
@@ -2875,8 +2874,40 @@ void MainFrame::AskAboutClosing()
 		}
 	}
 
+	if (StopMachineAndOfferList()) {
+		return;
+	}
+
+	/* The list was closed without choosing, so there is no machine to go to and
+	   the close stands. Flagged so it is not questioned a second time, and the
+	   guard is dropped here rather than by the destructor above, because Close()
+	   runs the close handler before this function returns. */
+	close_confirmed_ = true;
+	close_question_pending_ = false;
+	Close(true);
+}
+
+bool MainFrame::StopMachineAndOfferList()
+{
 	/*
-	 * The window goes first, then the list.
+	 * ★ Execution stops BEFORE anything is shown.
+	 *
+	 * The window used to be hidden with the emulator still running, so a
+	 * machine the user had just agreed to shut down went on executing behind
+	 * the machine list: a host core at full tilt, and - which is how it was
+	 * noticed - a game's music still playing out of a machine that was
+	 * supposedly closed. Issue #222.
+	 *
+	 * Suspended rather than stopped, because if another machine is chosen it is
+	 * this same emulator thread that switches to it; Stop() would leave nothing
+	 * to do the switching. See EmulatorHost::SetExecutionSuspended().
+	 */
+	if (emulator_ != nullptr) {
+		emulator_->SetExecutionSuspended(true);
+	}
+
+	/*
+	 * The window goes next, then the list.
 	 *
 	 * Hidden rather than destroyed, because it has to be able to come back.
 	 * Destroying it would take the emulator thread with it, and starting a
@@ -2898,19 +2929,45 @@ void MainFrame::AskAboutClosing()
 
 	if (!self) {
 		rpclog("MainFrame: the frame went while the machine list was open\n");
-		return;
+		return true;	/* nothing left here to close */
 	}
 
 	if (switching) {
+		/* The switch is a command on the emulator thread, and commands are
+		   drained whether or not execution is suspended, so this can be lifted
+		   now: the new machine runs as soon as the switch has been done. */
+		if (emulator_ != nullptr) {
+			emulator_->SetExecutionSuspended(false);
+		}
 		Show();
 		Raise();
+		return true;
+	}
+
+	return false;
+}
+
+void MainFrame::GuestPoweredOff()
+{
+	rpclog("MainFrame: the guest powered the machine off\n");
+
+	/* Already on the way down for some other reason, so there is nothing to
+	   offer a machine list to. */
+	if (shutting_down_ || close_confirmed_) {
+		rpclog("MainFrame: already closing, so the power-off is ignored\n");
 		return;
 	}
 
-	/* The list was closed without choosing, so there is no machine to go to and
-	   the close stands. Flagged so it is not questioned a second time, and the
-	   guard is dropped here rather than by the destructor above, because Close()
-	   runs the close handler before this function returns. */
+	/*
+	 * No confirmation. RISC OS has just been through its own shutdown, which
+	 * asked about unsaved work and dismounted the discs, and asking "are you
+	 * sure you wish to shut down this machine" after that is asking twice about
+	 * one decision.
+	 */
+	if (StopMachineAndOfferList()) {
+		return;
+	}
+
 	close_confirmed_ = true;
 	close_question_pending_ = false;
 	Close(true);
@@ -3081,7 +3138,7 @@ int EndOpenModalDialogs(bool cancel)
 	return open;
 }
 
-void MainFrame::CloseWhenNothingIsModal()
+void MainFrame::WhenNothingIsModal(std::function<void()> action)
 {
 	/* Asked once. A dialogue does not leave its loop when it is told to, it
 	   leaves when control next returns to it, so telling it again on every
@@ -3089,8 +3146,7 @@ void MainFrame::CloseWhenNothingIsModal()
 	if (!close_asked_modals_) {
 		close_asked_modals_ = EndOpenModalDialogs(true) > 0;
 		if (close_asked_modals_) {
-			rpclog("MainFrame: waiting for an open dialogue to close before "
-			       "shutting down\n");
+			rpclog("MainFrame: waiting for an open dialogue to close first\n");
 		}
 	}
 
@@ -3098,15 +3154,25 @@ void MainFrame::CloseWhenNothingIsModal()
 		/* Still up, so this window must not be destroyed yet: doing it from
 		   inside that dialogue's nested loop is the abort this exists to
 		   avoid. Queued, so the loop gets its turn. */
-		CallAfter([this]() { CloseWhenNothingIsModal(); });
+		CallAfter([this, action]() { WhenNothingIsModal(action); });
 		return;
 	}
 
+	/* Dropped before the action runs, not after: the guest powering the machine
+	   off no longer ends the session, so a later close has to be able to ask
+	   the dialogues of that session to end as well. Left latched, that close
+	   would wait for ever for dialogues nothing had asked to go. */
+	close_asked_modals_ = false;
+	action();
+}
+
+void MainFrame::CloseWhenNothingIsModal()
+{
 	/* Close() rather than Destroy(), so the machine is taken down by the same
 	   OnClose() the window's own close button uses - the snapshot being the
 	   only part a signal skips. Forced, because neither a signal nor the
 	   Manager's Stop is a request the window may decline. */
-	Close(true);
+	WhenNothingIsModal([this]() { Close(true); });
 }
 
 void MainFrame::CloseForSignal()

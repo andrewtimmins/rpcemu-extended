@@ -469,6 +469,12 @@ void EmulatorHost::Stop()
 	vidcwakeupthread();
 }
 
+void EmulatorHost::SetExecutionSuspended(bool suspended)
+{
+	rpclog("RPCEmu: execution %s\n", suspended ? "suspended" : "resumed");
+	execution_suspended_.store(suspended, std::memory_order_release);
+}
+
 void EmulatorHost::Join()
 {
 	if (g_fatal_occurred.load()) {
@@ -1553,6 +1559,21 @@ void EmulatorHost::MainEmuLoop()
 
 	while (!quited) {
 		DrainCommands();
+
+		/*
+		 * Execution suspended from the front end, which is a different thing
+		 * from the debugger's pause and must not be reported as one: this is a
+		 * machine the user has finished with, sitting behind the machine list
+		 * while they choose another (issue #222). Commands are drained above,
+		 * so the switch that usually follows is still acted on, and the
+		 * debugger socket is kept serviced for the same reason it is while
+		 * paused.
+		 */
+		if (execution_suspended_.load(std::memory_order_acquire)) {
+			debugcmd_poll();
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			continue;
+		}
 
 		const bool paused = debugger_is_paused() != 0;
 		if (paused) {
