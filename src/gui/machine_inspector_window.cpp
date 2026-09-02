@@ -578,6 +578,7 @@ void MachineInspectorWindow::ApplySnapshot(const MachineSnapshot &snapshot)
 	PopulateBreakpointList(snapshot);
 	PopulateWatchpointList(snapshot);
 	UpdateDebuggerUi(snapshot);
+	SeedTraceConfig(snapshot);
 
 	/* Something useful in the memory pane on the first snapshot rather than an
 	   empty box: the stack is what a stopped machine is usually asked about. */
@@ -871,6 +872,80 @@ void MachineInspectorWindow::OnTraceClear(wxCommandEvent &)
 	trace_view_->Clear();
 	trace_dropped_total_ = 0;
 	trace_dropped_label_->SetLabel("Dropped: 0");
+}
+
+/*
+ * Show what the machine is actually doing, the first time this window sees it.
+ *
+ * The trapping and tracing settings live in the emulator, not in this window,
+ * and they outlive it: closing the inspector destroys the frame but leaves the
+ * machine trapping and tracing exactly as it was. Building the controls
+ * unticked and leaving them there meant a reopened inspector disagreed with its
+ * own machine - Halt on exception still halting with the box clear, and Log
+ * SWIs still filling the ring while DrainTraceEvents(), which gates on these
+ * same boxes, quietly stopped reading it, so the SWIs "stopped" being logged.
+ * That is issue #221, and both halves of it are this one omission.
+ *
+ * Once only. After the first snapshot these controls belong to the user, and a
+ * snapshot taken between a click and the emulator thread acting on it would
+ * put the box back.
+ */
+void MachineInspectorWindow::SeedTraceConfig(const MachineSnapshot &snapshot)
+{
+	if (trace_config_seeded_) {
+		return;
+	}
+	trace_config_seeded_ = true;
+
+	const DebugTraceConfig &cfg = snapshot.debug_trace_config;
+
+	trap_undefined_checkbox_->SetValue(cfg.trap_undefined != 0);
+	trap_prefetch_checkbox_->SetValue(cfg.trap_prefetch_abort != 0);
+	trap_data_abort_checkbox_->SetValue(cfg.trap_data_abort != 0);
+	log_exceptions_checkbox_->SetValue(cfg.log_exceptions != 0);
+	swi_trace_checkbox_->SetValue(cfg.swi_trace_enabled != 0);
+	swi_halt_checkbox_->SetValue(cfg.swi_trace_halt != 0);
+
+	/* The full range is "no filter", which is what an empty box means, so it
+	   is left showing its hint rather than 0 and FFFFFFFF. */
+	if (cfg.swi_filter_min != 0 || cfg.swi_filter_max != 0xffffffffu) {
+		swi_filter_min_input_->SetValue(wxString::Format("%X", cfg.swi_filter_min));
+		swi_filter_max_input_->SetValue(wxString::Format("%X", cfg.swi_filter_max));
+	}
+}
+
+bool MachineInspectorWindow::LogTraceControlsAgainstMachine(const char *when)
+{
+	const MachineSnapshot snapshot = emulator_.TakeSnapshot();
+	const DebugTraceConfig &cfg = snapshot.debug_trace_config;
+
+	const struct {
+		const char *name;
+		int shown;
+		int machine;
+	} controls[] = {
+		{ "undefined",  trap_undefined_checkbox_->GetValue() ? 1 : 0, cfg.trap_undefined != 0 },
+		{ "prefetch",   trap_prefetch_checkbox_->GetValue() ? 1 : 0,  cfg.trap_prefetch_abort != 0 },
+		{ "data-abort", trap_data_abort_checkbox_->GetValue() ? 1 : 0, cfg.trap_data_abort != 0 },
+		{ "log-exc",    log_exceptions_checkbox_->GetValue() ? 1 : 0,  cfg.log_exceptions != 0 },
+		{ "swi-log",    swi_trace_checkbox_->GetValue() ? 1 : 0,       cfg.swi_trace_enabled != 0 },
+		{ "swi-halt",   swi_halt_checkbox_->GetValue() ? 1 : 0,        cfg.swi_trace_halt != 0 },
+	};
+
+	bool agree = true;
+
+	for (const auto &c : controls) {
+		if (c.shown != c.machine) {
+			agree = false;
+		}
+		rpclog("TEST_INSPECTOR: %s: %-10s shown=%d machine=%d%s\n",
+		       when, c.name, c.shown, c.machine,
+		       c.shown != c.machine ? "  DISAGREE" : "");
+	}
+
+	rpclog("TEST_INSPECTOR: %s: controls %s the machine\n", when,
+	       agree ? "agree with" : "DISAGREE with");
+	return agree;
 }
 
 void MachineInspectorWindow::ApplyTraceConfig()
