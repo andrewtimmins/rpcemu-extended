@@ -213,6 +213,14 @@ emulator_disassemble_at(uint32_t address, int count)
 		count = 256;
 	}
 
+	/*
+	 * Where execution actually is, so the line about to run can be marked.
+	 *
+	 * R15 reads eight ahead of the instruction being executed, which is what
+	 * PC in arm.h undoes. Read once rather than per line.
+	 */
+	const uint32_t pc = (arm.reg[15] - 8u) & arm.r15_mask;
+
 	std::string result;
 	char disasm_buf[128];
 
@@ -222,8 +230,15 @@ emulator_disassemble_at(uint32_t address, int count)
 
 		arm_disasm(opcode, addr, disasm_buf, sizeof(disasm_buf));
 
+		/*
+		 * Upper case, and "<" in place of ":" on the instruction about to
+		 * execute - both asked for in discussion #223. The marker follows
+		 * what the RISC OS disassembler does, so it reads the way somebody
+		 * coming from *Memory expects, and it costs no column width.
+		 */
 		char line[256];
-		snprintf(line, sizeof(line), "%08x: %08x  %s\n", addr, opcode, disasm_buf);
+		snprintf(line, sizeof(line), "%08X%c %08X  %s\n",
+		         addr, addr == pc ? '<' : ':', opcode, disasm_buf);
 		result += line;
 	}
 

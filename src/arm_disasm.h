@@ -50,6 +50,55 @@
 extern "C" {
 #endif
 
+/**
+ * How arm_disasm() renders what it decodes.
+ *
+ * Asked for in discussion #223, by somebody using the debugger against his own
+ * assembler source: a disassembly that does not look like the code you are
+ * comparing it against costs a translation step on every line. None of these
+ * change what is decoded, only how it is written down.
+ *
+ * Held globally rather than passed per call, because the whole disassembler is
+ * already a set of static tables and every caller wants the same answer. Both
+ * the GUI thread (the inspector) and the emulator thread (the debug socket's
+ * "dis") read it, and the GUI writes it when a checkbox moves; the fields are
+ * single bytes and the worst a race can do is render one line with a mixture of
+ * old and new settings.
+ */
+typedef struct {
+	/** Immediates as RISC OS hex, "#&80" rather than "#128". */
+	uint8_t hex_immediates;
+
+	/**
+	 * APCS register names: a1-a4, v1-v5, sb, sl, fp, ip, sp, lr, pc.
+	 *
+	 * Clear gives ARM names, R0-R14 and PC. Note that clear is not what this
+	 * disassembler used to print: R13 and R14 came out as SP and LR while
+	 * R0-R12 were numbered, which is the mixture the request complains about.
+	 */
+	uint8_t apcs_registers;
+
+	/** Collapse LDM/STM lists to ranges: "{R0-R4, R7}" not "{R0, R1, ...}". */
+	uint8_t collapse_reglists;
+
+	/**
+	 * Resolve a PC-relative load or store to the address it reaches, so
+	 * "LDR R11, [PC, #-120]" reads "LDR R11, &00001C84".
+	 *
+	 * Only for a pre-indexed immediate offset off R15 with no writeback,
+	 * which is the literal-pool form the compiler and the assembler emit.
+	 * Anything else keeps its registers, because the address is not knowable
+	 * from the instruction alone.
+	 */
+	uint8_t resolve_pc_relative;
+} ArmDisasmOptions;
+
+/** Replace the rendering options. NULL restores the defaults (all clear). */
+void arm_disasm_set_options(const ArmDisasmOptions *opts);
+
+/** Read the rendering options currently in force. */
+void arm_disasm_get_options(ArmDisasmOptions *opts);
+
 /** Broad category of an instruction, as identified by arm_decode(). */
 typedef enum {
 	ARM_CLASS_UNKNOWN = 0,	/**< Not a recognised encoding */

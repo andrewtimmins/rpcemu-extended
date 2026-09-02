@@ -77,6 +77,45 @@ time there was no step-over.
 `arm_disasm_sym()` is `arm_disasm()` with a symbol resolver, which annotates a
 branch target with the name it lands in.
 
+## How it is written down
+
+Four options change the rendering without changing what is decoded, set through
+`arm_disasm_set_options()` and exposed as checkboxes beside the Machine
+Inspector's disassembly view. They came out of discussion #223, from somebody
+reading the disassembly against his own assembler source: a listing that does
+not look like the code you are comparing it against costs a translation step on
+every line.
+
+| Option | Off | On |
+| --- | --- | --- |
+| `hex_immediates` | `MOV R0, #128` | `MOV R0, #&80` |
+| `apcs_registers` | `MOV PC, R14` | `MOV pc, lr` |
+| `collapse_reglists` | `{R0, R1, R2, R3, R7}` | `{R0-R3, R7}` |
+| `resolve_pc_relative` | `LDR R11, [PC, #-120]` | `LDR R11, &00007F90` |
+
+`hex_immediates` governs the whole line - branch targets, SWI numbers and MSR
+immediates as well as operands - because a listing mixing `&80` with `0x374C` is
+the inconsistency the option exists to remove. A named SWI keeps its name: the
+name is the useful part and is not a number to reformat.
+
+Two things are deliberately not options. Register names are consistent whichever
+setting is chosen: with `apcs_registers` clear the answer is R0-R14 and PC, where
+this disassembler used to print R13 and R14 as SP and LR while numbering
+everything else - the mixture the request complained about. And a range is only
+collapsed for three or more registers, since `{R0-R1}` is longer than
+`{R0, R1}`.
+
+The options are global rather than per call, because the whole disassembler is a
+set of static tables and every caller wants the same answer. That includes the
+debug socket's `dis`, so one machine disassembles one way whoever asked. The GUI
+thread writes them when a checkbox moves while the emulator thread may be
+reading: the fields are single bytes, and the worst a race can do is render one
+line with a mixture of old and new settings.
+
+Not done yet, from the same discussion: a lower-case rendering. It cannot be a
+post-pass over the finished string, because SWI names and symbol annotations
+must keep their case, so it needs the mnemonic and operand tables doubled up.
+
 ## Testing
 
 `tests/test_arm_disasm.c` covers both entry points: a sample of every encoding

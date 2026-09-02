@@ -35,6 +35,8 @@ extern "C" {
 #include "arm_common.h"	/* ARM_MODE_32: bit 4 of the mode says 26- or 32-bit */
 }
 
+#include <cstring>
+
 #include "arm_disasm.h"
 #include "cp15.h"
 
@@ -131,6 +133,8 @@ wxBEGIN_EVENT_TABLE(MachineInspectorWindow, wxFrame)
 	EVT_BUTTON(ID_RUN, MachineInspectorWindow::OnRun)
 	EVT_BUTTON(ID_PAUSE, MachineInspectorWindow::OnPause)
 	EVT_BUTTON(ID_STEP, MachineInspectorWindow::OnStep)
+	EVT_BUTTON(ID_STEP_OVER, MachineInspectorWindow::OnStepOver)
+	EVT_CHECKBOX(ID_DISASM_STYLE, MachineInspectorWindow::OnDisasmStyleChanged)
 	EVT_BUTTON(ID_BREAKPOINT_ADD, MachineInspectorWindow::OnAddBreakpoint)
 	EVT_BUTTON(ID_BREAKPOINT_REMOVE, MachineInspectorWindow::OnRemoveBreakpoint)
 	EVT_BUTTON(ID_WATCHPOINT_ADD, MachineInspectorWindow::OnAddWatchpoint)
@@ -297,11 +301,29 @@ void MachineInspectorWindow::BuildUi()
 	disasm_follow_pc_checkbox_ = new wxCheckBox(disasm_panel, ID_DISASM_FOLLOW_PC, "Follow PC");
 	disasm_follow_pc_checkbox_->SetValue(true);
 
+	/* How the disassembly is written down: see ArmDisasmOptions. Off by
+	   default, so the view reads as it always has until asked otherwise. */
+	disasm_hex_checkbox_ = new wxCheckBox(disasm_panel, ID_DISASM_STYLE, "Hex");
+	disasm_hex_checkbox_->SetToolTip("Immediates as &80 rather than 128");
+	disasm_apcs_checkbox_ = new wxCheckBox(disasm_panel, ID_DISASM_STYLE, "APCS");
+	disasm_apcs_checkbox_->SetToolTip(
+	    "Register names as a1-a4, v1-v5, sb, sl, fp, ip, sp, lr, pc");
+	disasm_ranges_checkbox_ = new wxCheckBox(disasm_panel, ID_DISASM_STYLE, "Ranges");
+	disasm_ranges_checkbox_->SetToolTip(
+	    "Collapse LDM/STM register lists: {R0-R4, R7}");
+	disasm_resolve_checkbox_ = new wxCheckBox(disasm_panel, ID_DISASM_STYLE, "PC-rel");
+	disasm_resolve_checkbox_->SetToolTip(
+	    "Show a PC-relative load as the address it reaches");
+
 	auto *disasm_controls = new wxBoxSizer(wxHORIZONTAL);
 	disasm_controls->Add(new wxStaticText(disasm_panel, wxID_ANY, "Address:"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
 	disasm_controls->Add(disasm_address_input_, 0, wxRIGHT, 6);
 	disasm_controls->Add(disasm_go_button, 0, wxRIGHT, 6);
-	disasm_controls->Add(disasm_follow_pc_checkbox_, 0);
+	disasm_controls->Add(disasm_follow_pc_checkbox_, 0, wxRIGHT, 12);
+	disasm_controls->Add(disasm_hex_checkbox_, 0, wxRIGHT, 6);
+	disasm_controls->Add(disasm_apcs_checkbox_, 0, wxRIGHT, 6);
+	disasm_controls->Add(disasm_ranges_checkbox_, 0, wxRIGHT, 6);
+	disasm_controls->Add(disasm_resolve_checkbox_, 0);
 
 	disasm_view_ = new wxTextCtrl(disasm_panel, wxID_ANY, wxEmptyString,
 	                              wxDefaultPosition, wxDefaultSize,
@@ -353,6 +375,9 @@ void MachineInspectorWindow::BuildUi()
 	run_button_ = new wxButton(debug_panel, ID_RUN, "Run");
 	pause_button_ = new wxButton(debug_panel, ID_PAUSE, "Pause");
 	step_button_ = new wxButton(debug_panel, ID_STEP, "Step");
+	step_over_button_ = new wxButton(debug_panel, ID_STEP_OVER, "Step over");
+	step_over_button_->SetToolTip(
+	    "Run to the next instruction without going into a call or a SWI");
 	run_button_->Enable(false);
 	pause_button_->Enable(false);
 	step_button_->Enable(false);
@@ -364,7 +389,8 @@ void MachineInspectorWindow::BuildUi()
 	auto *debug_buttons = new wxBoxSizer(wxHORIZONTAL);
 	debug_buttons->Add(run_button_, 0, wxRIGHT, 6);
 	debug_buttons->Add(pause_button_, 0, wxRIGHT, 6);
-	debug_buttons->Add(step_button_, 0, wxRIGHT, 12);
+	debug_buttons->Add(step_button_, 0, wxRIGHT, 6);
+	debug_buttons->Add(step_over_button_, 0, wxRIGHT, 12);
 	debug_buttons->Add(debug_status_label_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 12);
 	debug_buttons->Add(debug_hit_label_, 1, wxALIGN_CENTER_VERTICAL);
 
@@ -528,6 +554,10 @@ void MachineInspectorWindow::BuildUi()
 	memory_address_input_->Bind(wxEVT_TEXT_ENTER, &MachineInspectorWindow::OnMemoryGo, this);
 	breakpoint_list_->Bind(wxEVT_LISTBOX, &MachineInspectorWindow::OnBreakpointSelection, this);
 	watchpoint_list_->Bind(wxEVT_LISTBOX, &MachineInspectorWindow::OnWatchpointSelection, this);
+	/* Keys on the frame and on the two read-only views, which are where the
+	   focus lands while stepping. A text entry keeps its own keys. */
+	Bind(wxEVT_CHAR_HOOK, &MachineInspectorWindow::OnDebugKey, this);
+
 	swi_filter_min_input_->Bind(wxEVT_TEXT_ENTER, &MachineInspectorWindow::OnTraceConfigChanged, this);
 	swi_filter_max_input_->Bind(wxEVT_TEXT_ENTER, &MachineInspectorWindow::OnTraceConfigChanged, this);
 }
@@ -590,7 +620,18 @@ void MachineInspectorWindow::ApplySnapshot(const MachineSnapshot &snapshot)
 	}
 
 	if (disasm_follow_pc_checkbox_->GetValue()) {
-		RefreshDisassembly(snapshot.pc);
+		/*
+		 * Back from the PC, not at it.
+		 *
+		 * Starting the view at the PC put the instruction about to run on the
+		 * top line, so the instructions that led to it - the ones you want
+		 * when you have just stopped somewhere unexpected - were off the top
+		 * and had to be fetched by typing a lower address in by hand. Asked
+		 * for in discussion #223. Clamped so it cannot wrap below zero.
+		 */
+		const uint32_t back = kDisasmLeadIn * 4u;
+
+		RefreshDisassembly(snapshot.pc >= back ? snapshot.pc - back : 0u);
 	}
 }
 
@@ -860,6 +901,21 @@ void MachineInspectorWindow::UpdateDebuggerUi(const MachineSnapshot &snapshot)
 	run_button_->Enable(paused);
 	pause_button_->Enable(!paused);
 	step_button_->Enable(paused);
+	step_over_button_->Enable(paused);
+
+	/*
+	 * ★ Re-lay-out the row after changing the labels.
+	 *
+	 * Both labels are in a horizontal sizer, the status one sized to its
+	 * content. Setting a longer string does not re-run the sizer, so the label
+	 * kept the width it was created with and the two ran into each other:
+	 * "Paused: manual pause at PC 0xFNo watchpoint hit", reported in
+	 * discussion #223. Asking the parent to lay out again costs nothing at
+	 * this rate and puts both labels where they belong.
+	 */
+	if (debug_status_label_->GetParent() != nullptr) {
+		debug_status_label_->GetParent()->Layout();
+	}
 }
 
 void MachineInspectorWindow::OnTraceConfigChanged(wxCommandEvent &)
@@ -1076,7 +1132,8 @@ void MachineInspectorWindow::DrainTraceEvents()
 void MachineInspectorWindow::RefreshDisassembly(uint32_t address)
 {
 	disasm_current_address_ = address;
-	SetTextIfChanged(disasm_view_, wxString::FromUTF8(emulator_disassemble_at(address, 32)));
+	SetTextIfChanged(disasm_view_,
+	    wxString::FromUTF8(emulator_disassemble_at(address, kDisasmLines)));
 }
 
 void MachineInspectorWindow::RefreshMemoryView(uint32_t address)
@@ -1187,6 +1244,89 @@ void MachineInspectorWindow::OnStep(wxCommandEvent &)
 {
 	emulator_.DebuggerStep();
 	RefreshSnapshot();
+}
+
+void MachineInspectorWindow::OnStepOver(wxCommandEvent &)
+{
+	emulator_.DebuggerStepOver();
+	RefreshSnapshot();
+}
+
+/*
+ * A rendering option moved.
+ *
+ * The options live in the disassembler rather than in this window, because the
+ * debug socket's "dis" renders through the same code and one machine should not
+ * disassemble two different ways depending on who asked. The view is redrawn at
+ * once so the effect of the click is visible without waiting for a refresh.
+ */
+void MachineInspectorWindow::OnDisasmStyleChanged(wxCommandEvent &)
+{
+	ArmDisasmOptions opts;
+
+	memset(&opts, 0, sizeof(opts));
+	opts.hex_immediates = disasm_hex_checkbox_->GetValue() ? 1 : 0;
+	opts.apcs_registers = disasm_apcs_checkbox_->GetValue() ? 1 : 0;
+	opts.collapse_reglists = disasm_ranges_checkbox_->GetValue() ? 1 : 0;
+	opts.resolve_pc_relative = disasm_resolve_checkbox_->GetValue() ? 1 : 0;
+	arm_disasm_set_options(&opts);
+
+	RefreshDisassembly(disasm_current_address_);
+}
+
+/*
+ * Keys for the things done most often while stepping through code.
+ *
+ * Asked for in discussion #223: reaching for the mouse between every step is
+ * what makes stepping tedious. Enter toggles rather than having separate keys
+ * for run and pause, for the same reason.
+ */
+void MachineInspectorWindow::OnDebugKey(wxKeyEvent &event)
+{
+	const bool paused = last_snapshot_.debug_paused != 0;
+
+	/*
+	 * ★ Not while something is being typed into.
+	 *
+	 * CHAR_HOOK sees the key before the focused control does, which is what
+	 * makes it work on the read-only views - but it would also swallow the
+	 * space bar and Return from the address and breakpoint boxes, so an
+	 * address could not be typed or submitted. The focused window decides:
+	 * anything that takes text keeps its keys.
+	 */
+	const wxWindow *focus = FindFocus();
+
+	if (dynamic_cast<const wxTextEntry *>(focus) != nullptr) {
+		event.Skip();
+		return;
+	}
+
+	switch (event.GetKeyCode()) {
+	case WXK_RETURN:
+	case WXK_NUMPAD_ENTER:
+		if (paused) {
+			emulator_.DebuggerResume();
+		} else {
+			emulator_.DebuggerPause();
+		}
+		RefreshSnapshot();
+		return;
+
+	case WXK_SPACE:
+		if (paused) {
+			if (event.ShiftDown()) {
+				emulator_.DebuggerStepOver();
+			} else {
+				emulator_.DebuggerStep();
+			}
+			RefreshSnapshot();
+		}
+		return;
+
+	default:
+		event.Skip();
+		return;
+	}
 }
 
 void MachineInspectorWindow::OnAddBreakpoint(wxCommandEvent &)
