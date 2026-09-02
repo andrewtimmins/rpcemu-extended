@@ -225,6 +225,7 @@ wxBEGIN_EVENT_TABLE(MainFrame, wxFrame)
 	EVT_TIMER(ID_TIMER_GUEST_RESIZE, MainFrame::OnGuestResizeTimer)
 	EVT_TIMER(ID_TIMER_TEST_CLOSE, MainFrame::OnTestCloseTimer)
 	EVT_TIMER(ID_TIMER_TEST_FULLSCREEN, MainFrame::OnTestFullscreenTimer)
+	EVT_TIMER(ID_TIMER_TEST_INSPECTOR, MainFrame::OnTestInspectorTimer)
 	EVT_DISPLAY_CHANGED(MainFrame::OnDisplayChanged)
 wxEND_EVENT_TABLE()
 
@@ -244,6 +245,7 @@ MainFrame::MainFrame()
 	, guest_resize_timer_(this, ID_TIMER_GUEST_RESIZE)
 	, test_close_timer_(this, ID_TIMER_TEST_CLOSE)
 	, test_fullscreen_timer_(this, ID_TIMER_TEST_FULLSCREEN)
+	, test_inspector_timer_(this, ID_TIMER_TEST_INSPECTOR)
 {
 	config_deep_copy(&config_copy_, &config);
 	pconfig_copy = &config_copy_;
@@ -879,6 +881,15 @@ void MainFrame::StartEmulator()
 		if (seconds > 0) {
 			rpclog("MainFrame: RPCEMU_TEST_CLOSE_AFTER=%ld\n", seconds);
 			test_close_timer_.StartOnce((int) (seconds * 1000));
+		}
+	}
+
+	if (const char *after = getenv("RPCEMU_TEST_INSPECTOR_AFTER")) {
+		const long seconds = strtol(after, nullptr, 10);
+
+		if (seconds > 0) {
+			rpclog("MainFrame: RPCEMU_TEST_INSPECTOR_AFTER=%ld\n", seconds);
+			test_inspector_timer_.StartOnce((int) (seconds * 1000));
 		}
 	}
 
@@ -2140,6 +2151,73 @@ void MainFrame::OnTestFullscreenTimer(wxTimerEvent &event)
 		ExitFullScreen();
 		rpclog("TEST_FULLSCREEN: left, window now %dx%d, guest %dx%d\n",
 		       GetSize().x, GetSize().y, guest.x, guest.y);
+		break;
+
+	default:
+		break;
+	}
+}
+
+void MainFrame::OnTestInspectorTimer(wxTimerEvent &event)
+{
+	(void)event;
+
+	switch (test_inspector_step_++) {
+	case 0: {
+		/*
+		 * Something for the controls to disagree with. Set through the emulator
+		 * the way the debug socket would, so this is the machine's own state and
+		 * not something the window was told.
+		 */
+		DebugTraceConfig cfg{};
+
+		cfg.trap_data_abort = 1;
+		cfg.swi_trace_enabled = 1;
+		cfg.swi_filter_max = 0xffffffffu;
+		emulator_->SetDebugTraceConfig(cfg);
+		rpclog("TEST_INSPECTOR: machine set to trap data aborts and log SWIs\n");
+		test_inspector_timer_.StartOnce(2000);
+		break;
+	}
+
+	case 1: {
+		wxCommandEvent open(wxEVT_MENU);
+
+		OnMachineInspector(open);
+		rpclog("TEST_INSPECTOR: opened\n");
+		test_inspector_timer_.StartOnce(2000);
+		break;
+	}
+
+	case 2:
+		if (machine_inspector_window_ != nullptr) {
+			machine_inspector_window_->LogTraceControlsAgainstMachine("first open");
+			machine_inspector_window_->Close(true);
+			rpclog("TEST_INSPECTOR: closed\n");
+		} else {
+			rpclog("TEST_INSPECTOR: no inspector window to close\n");
+		}
+		test_inspector_timer_.StartOnce(2000);
+		break;
+
+	case 3: {
+		/* Destroy() is deferred, so the window from step 2 has gone by now and
+		   this really is a new one - which is the case #221 is about. */
+		wxCommandEvent open(wxEVT_MENU);
+
+		OnMachineInspector(open);
+		rpclog("TEST_INSPECTOR: reopened\n");
+		test_inspector_timer_.StartOnce(2000);
+		break;
+	}
+
+	case 4:
+		if (machine_inspector_window_ != nullptr) {
+			machine_inspector_window_->LogTraceControlsAgainstMachine("reopened");
+		} else {
+			rpclog("TEST_INSPECTOR: no inspector window on reopen\n");
+		}
+		rpclog("TEST_INSPECTOR: done\n");
 		break;
 
 	default:
