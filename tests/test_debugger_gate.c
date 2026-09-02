@@ -253,6 +253,54 @@ test_combinations(void)
 	check_gate("all clear", 0);
 }
 
+
+/*
+ * A step leaves the machine RUNNING until the step finishes, and any front end
+ * that samples the debugger at that moment sees "not stopped".
+ *
+ * WHY THIS EXISTS. This is not a fault - it is what stepping means, and the
+ * pause arrives a moment later through the instruction hook. It is here because
+ * the Machine Inspector used to read the machine on a half-second timer and
+ * refresh itself immediately after asking for a step, so it caught exactly this
+ * transient and greyed out every button that needs a stopped machine. Nothing
+ * re-read until the next tick, which capped stepping at about two instructions
+ * a second and was reported that way in discussion #223.
+ *
+ * The window now refreshes when the debugger's state actually changes rather
+ * than on a clock. This locks down the fact that made the old arrangement
+ * wrong, so nobody reintroduces "ask for a step, then sample" and wonders why
+ * the buttons flicker.
+ */
+static void
+test_step_is_not_immediately_paused(void)
+{
+	DebuggerStatus status;
+
+	printf("A step is not a pause\n");
+
+	reset_debugger();
+	debugger_request_pause(DebugPauseReason_User);
+	debugger_instruction_hook(0x8000, 0xe1a00000);
+
+	debugger_get_status(&status);
+	check("stopped to begin with", status.paused != 0);
+
+	debugger_single_step(1);
+	debugger_get_status(&status);
+	check("asking for a step leaves the machine running", status.paused == 0);
+	check("and says a step is in progress", status.step_active != 0);
+	check_gate("mid-step", 1);
+
+	/* The instruction runs, and the pause lands on the far side of it. */
+	debugger_instruction_hook(0x8000, 0xe1a00000);
+	debugger_after_instruction(0x8000, 0xe1a00000);
+	debugger_instruction_hook(0x8004, 0xe1a00000);
+
+	debugger_get_status(&status);
+	check("stopped again once the step has been taken", status.paused != 0);
+	check("and the step is over", status.step_active == 0);
+}
+
 int
 main(void)
 {
@@ -264,6 +312,7 @@ main(void)
 	test_pause_and_step();
 	test_traps();
 	test_combinations();
+	test_step_is_not_immediately_paused();
 
 	printf("\n%s\n", failures ? "FAILED" : "All tests passed");
 

@@ -52,6 +52,19 @@ public:
 	 */
 	bool LogTraceControlsAgainstMachine(const char *when);
 
+	/**
+	 * The debugger has started or stopped; read the machine again now.
+	 *
+	 * This window's own refresh is a half-second timer, which is fine for
+	 * watching a running machine and far too slow for stepping: the snapshot
+	 * taken immediately after a step still says "running", because the step has
+	 * not finished yet, so every button that needs a stopped machine greys out
+	 * and nothing re-reads until the tick. Jon Abbott measured that in
+	 * discussion #223 as a consistent half second per step with Step unclickable
+	 * in between.
+	 */
+	void RefreshFromStateChange();
+
 private:
 	enum {
 		ID_AUTO_REFRESH = wxID_HIGHEST + 1,
