@@ -130,18 +130,26 @@ jobs:
   # It also fetches the ROM the boot below needs, which seeds the cache every
   # other job reads: this job finishes before build-gate lets any build start, so
   # by then the entry exists and the five platform jobs cannot race to write it.
+  # A note on the timeouts in this file, because they caused two red runs on
+  # 2 September 2026 with nothing in the tree changed. They are tripwires
+  # against a hung step, not budgets: raising one costs nothing on a normal run
+  # and only changes when the job gives up. "Install dependencies" had four
+  # minutes where apt normally takes three, so one slow Azure mirror failed the
+  # step - and this job gates every other one, so a single slow apt reddened the
+  # whole matrix. Eight minutes is about twice the normal cost, which is the
+  # right shape for a tripwire.
   sanitisers:
     needs: release-preflight
     if: always() && needs.release-preflight.result != 'failure'
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
 
       - name: Install dependencies
-        timeout-minutes: 4
+        timeout-minutes: 8
         run: bash setup-build-env.sh
 
       # The interpreter, not the recompiler: ASan instruments compiled code, and
@@ -396,7 +404,7 @@ jobs:
     needs: build-gate
     if: always() && needs.build-gate.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 16
+    timeout-minutes: 21
     steps:
       - uses: actions/checkout@v7
         with:
@@ -409,7 +417,7 @@ jobs:
       #
       # amd64 alone; the check below says why.
       - name: Install dependencies
-        timeout-minutes: 3
+        timeout-minutes: 8
         run: bash setup-build-env.sh --podules
 
       # The assembled guest modules are committed, so a user needs no
@@ -532,14 +540,14 @@ jobs:
     needs: build-gate
     if: always() && needs.build-gate.result == 'success'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 16
+    timeout-minutes: 21
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
 
       - name: Install dependencies
-        timeout-minutes: 3
+        timeout-minutes: 8
         run: bash setup-build-env.sh
 
       - name: Build and package (arm64, both binaries)
@@ -1031,14 +1039,14 @@ jobs:
     # it. The eight JIT differential tests build here now, checking the arm64
     # backend against the interpreter on the architecture it emits code for.
     runs-on: macos-14
-    timeout-minutes: 14
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
 
       - name: Install dependencies
-        timeout-minutes: 3
+        timeout-minutes: 8
         run: |
           # Both slices need the SAME version of every dependency: lipo fuses
           # them, and a library from two upstream releases is not one library.
