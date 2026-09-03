@@ -83,7 +83,7 @@ mode an exception return is about to restore is not answerable from the CPSR.
 | `pause` | `{ok, paused}` — pause is **deferred** (takes effect at the next instruction); poll `status` |
 | `resume` (alias `continue`) | `{ok, paused:false}` |
 | `step [n]` / `step into [n]` | `{ok, stepped, mode}` — steps `n` instructions then re-pauses |
-| `step over` | `{ok, mode}` — runs a call to completion; poll `status` |
+| `step over` | `{ok, mode}` — runs a call or a SWI to completion; poll `status` |
 | `step out` | `{ok, mode}` — runs until the current function returns; poll `status` |
 | `runto <addr>` | `{ok}` — runs until the address is reached; poll `status` |
 | `bt [depth]` (alias `backtrace`) | `{ok, truncated, frames:[{level,pc,lr,sp,fp,symbol,offset}]}` — see *Backtraces* below |
@@ -92,7 +92,7 @@ mode an exception return is about to restore is not answerable from the CPSR.
 | `sym lookup <addr>` | `{ok, address, symbol, offset}` — `symbol` is `null` if nothing covers the address |
 | `sym find <name>` | `{ok, symbol, address}` |
 | `trace [max]` | `{ok, dropped, events:[{seq,type,pc,opcode,arg0,arg1,arg2}]}` — `max` capped 128 |
-| `trace config [key=value …]` | `{ok, …}` — keys `data_abort`, `prefetch_abort`, `undefined`, `log_exceptions`, `swi_log`, `swi_halt`, `swi_min`, `swi_max`, `step_skip_irq`, `step_skip_os`. No arguments reports the current setting |
+| `trace config [key=value …]` | `{ok, …}` — keys `data_abort`, `prefetch_abort`, `undefined`, `log_exceptions`, `swi_log`, `swi_halt`, `swi_min`, `swi_max`, `step_skip_irq`, `step_skip_os`, `step_skip_swi`. No arguments reports the current setting |
 | `state save <path>` | `{ok, saved}` — snapshot the whole machine to a host file |
 | `state load <path>` | `{ok, loaded}` — restore one; a snapshot that does not match the machine is refused with `{ok:false, error}` and the machine carries on untouched |
 | `reset` | `{ok, reset}` — reset the machine, as the reset button would |

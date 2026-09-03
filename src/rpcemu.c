@@ -855,16 +855,27 @@ debugger_run_to_temp(uint32_t address)
 }
 
 /**
- * Step one instruction, but run subroutine calls to completion.
+ * Step one instruction, but run subroutine calls and SWIs to completion.
  *
- * Anything that is not a call is an ordinary single step. A call gets a
- * temporary breakpoint at the following instruction instead, so the whole
- * subroutine runs at full speed and execution comes back where the person
+ * Anything else is an ordinary single step. A call or a SWI gets a temporary
+ * breakpoint at the following instruction instead, so the whole subroutine or
+ * handler runs at full speed and execution comes back where the person
  * stepping expects it.
+ *
+ * A SWI counts because the alternative is being dropped on the hardware vector
+ * at &00000008 and then walking through the kernel's dispatcher, which is
+ * nobody's idea of stepping over a call. Discussion #223 asked for it, and the
+ * reply to it said this already worked, which it did not: is_call is set for BL
+ * and nothing else.
  *
  * Falls back to a plain step whenever the instruction cannot be read or is not
  * a recognised call. Stepping into is always safe; running away is not, so an
  * uncertain case must degrade towards the step.
+ *
+ * The one thing this cannot do is bring back a call that never returns - a SWI
+ * ending in OS_Exit or an error, or a subroutine that unwinds past its caller.
+ * The temporary breakpoint is then never reached and the machine runs on, which
+ * is what Pause is for.
  *
  * @return Non-zero if the machine was started
  */
@@ -880,7 +891,7 @@ debugger_step_over(void)
 	}
 
 	if (!mem_debug_read(pc, 4, &opcode) ||
-	    !arm_decode(opcode, pc, &info) || !info.is_call) {
+	    !arm_decode(opcode, pc, &info) || !(info.is_call || info.is_swi)) {
 		debugger_single_step(1);
 		return 1;
 	}
@@ -1331,17 +1342,60 @@ debugger_memory_access(uint32_t address, uint32_t size, int is_write, uint32_t v
 	}
 }
 
+/**
+ * Has a step just executed a SWI it should be running to completion?
+ *
+ * Asked once a step has finished its instruction and is about to stop. The
+ * address filters in debugger_step_skipping() cannot answer this: the OS's own
+ * SWIs are in the ROM and are covered by them, but a SWI belonging to a module
+ * in RAM is not, and that is the one somebody debugging their own module keeps
+ * landing in.
+ *
+ * Deliberately not asked when something else already wants the machine stopped.
+ * A halting SWI trap, the debugger's own breakpoint SWI and a breakpoint inside
+ * the handler are all "an SWI you've actively trapped" (discussion #223), and
+ * an explicit request outranks a filter.
+ *
+ * @param opcode The instruction that has just executed
+ * @return Non-zero if a run-to has been armed and the machine should carry on
+ */
+static int
+debugger_step_runs_the_swi_on(uint32_t opcode)
+{
+	if (!debugger_trace_config.step_skip_swi) {
+		return 0;
+	}
+	if ((opcode & 0x0f000000u) != 0x0f000000u) {
+		return 0;		/* not a SWI */
+	}
+	if (debugger_paused || debugger_pause_requested) {
+		return 0;		/* something is already stopping here */
+	}
+
+	/*
+	 * The instruction's own address, which is NOT the pc argument: PC is
+	 * arm.reg[15] - 8 read after the instruction has run, and a SWI has by
+	 * then moved R15 to the hardware vector. debugger_last_pc is what the
+	 * hook recorded on the way in. Getting this wrong is what made the
+	 * breakpoint SWI report an address eight bytes out.
+	 */
+	debugger_temp_bp_active = 1;
+	debugger_temp_bp_address = debugger_last_pc + 4;
+	return 1;
+}
+
 void
 debugger_after_instruction(uint32_t pc, uint32_t opcode)
 {
 	NOT_USED(pc);
-	NOT_USED(opcode);
 
 	if (debugger_step_remaining > 0) {
 		debugger_step_remaining--;
 		if (debugger_step_remaining == 0) {
-			debugger_pause_requested = 1;
-			debugger_pending_reason = DebugPauseReason_Step;
+			if (!debugger_step_runs_the_swi_on(opcode)) {
+				debugger_pause_requested = 1;
+				debugger_pending_reason = DebugPauseReason_Step;
+			}
 		}
 	}
 	debugger_step_active = (debugger_step_remaining > 0) ? 1 : 0;

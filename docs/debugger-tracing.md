@@ -87,16 +87,18 @@ SWI tracing records every operating-system call the guest makes. Options:
   disassembler table, plus any loaded from a file - see
   [disassembly.md](disassembly.md).
 
-## Stepping: passing through interrupts and the OS
+## Stepping: passing through interrupts, the OS and SWIs
 
-Two settings on the Trace tab, under **While stepping, pass through**:
+Three settings on the Trace tab, under **While stepping, pass through**:
 
 - **IRQ and FIQ** — a step that lands in interrupt or fast-interrupt mode keeps
   going until the machine is back out.
 - **the OS (ROM)** — the same for anything at or above `&F0000000`, where the
   ROM lives, and for the hardware vector page below `&40`.
+- **SWIs** — a step that executes a SWI runs it to completion and stops at the
+  instruction after it.
 
-Both are off unless asked for. They exist because stepping through your own code
+All three are off unless asked for. They exist because stepping through your own code
 on a running RISC OS means landing in the timer interrupt every few
 instructions, and the way out - step, step, step until the PC comes back - is
 exactly the tedium the setting removes. Measured on a RISC OS 5.31 desktop: one
@@ -108,13 +110,23 @@ is, and they are in low RAM rather than above `&F0000000`. A filter written on
 the ROM address alone let every step stop on a vector, which is no more use than
 the ROM was.
 
+The SWI setting is the one that is not about an address. The first two cover the
+OS's own SWIs, because their handlers are in the ROM, but not a SWI belonging to
+a module loaded into RAM - a filing system, or the module being debugged - and
+that is the one you land inside while reading your own code. This one is written
+on the instruction, so it holds wherever the handler lives.
+
 **Only steps are filtered.** A breakpoint or a watchpoint is an explicit request
 for a particular address and fires wherever it is, ROM and interrupt handlers
-included; a trapped exception is the thing being hunted. Filtering those would
-hide what was asked for.
+included; a trapped exception is the thing being hunted; and a SWI you have
+trapped, with **Halt on SWI** or with `SWI &FFFFFF` in your own source, stops
+even while SWIs are being passed through. Filtering those would hide what was
+asked for.
 
 One consequence worth knowing: if the machine never reaches unfiltered code, the
 step never completes and the machine runs on. **Pause** still gets control back.
+The same is true of a SWI that never returns - `OS_Exit`, or a non-X SWI taking
+an error - since there is then no instruction after it to stop at.
 
 ## Auto-step
 
@@ -136,7 +148,7 @@ state actually changes.
 
 **Save session...** and **Load session...** on the Trace tab write the whole
 debugging setup to a file: the breakpoints and watchpoints, the exception traps,
-the SWI tracing and its filter, the two stepping filters, how the disassembly is
+the SWI tracing and its filter, the three stepping filters, how the disassembly is
 rendered, the auto-step rate, and the path of any SWI name file that is loaded.
 
 It is plain text, one setting per line, because it is the sort of file that

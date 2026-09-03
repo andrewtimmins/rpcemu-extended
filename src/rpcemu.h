@@ -259,6 +259,24 @@ typedef struct DebugTraceConfig {
 	 * breakpoints do not.
 	 */
 	uint8_t step_skip_os;
+
+	/**
+	 * While stepping, let a SWI run to completion.
+	 *
+	 * The other two filters are written on where the PC is, which covers the
+	 * OS's own SWIs because their handlers are in the ROM. It does not cover a
+	 * SWI belonging to a module loaded into RAM - the debugger's own, a
+	 * filing system, or the very module being debugged - and a step into one
+	 * of those lands in its handler.
+	 *
+	 * This one is written on the instruction instead: a step that executes a
+	 * SWI runs to the instruction after it, whatever the handler is and
+	 * wherever it lives. "Unless it's an SWI you've actively trapped, these
+	 * all execute to completion" - discussion #223. Trapped is the exception
+	 * that still stops: a breakpoint inside the handler, a halting SWI trap,
+	 * and the debugger's own breakpoint SWI all fire as they otherwise would.
+	 */
+	uint8_t step_skip_swi;
 	uint32_t swi_filter_min;	/**< Inclusive SWI-number range (0..0xffffffff = all) */
 	uint32_t swi_filter_max;
 } DebugTraceConfig;
