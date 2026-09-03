@@ -2375,6 +2375,26 @@ void MainFrame::OnTestInspectorTimer(wxTimerEvent &event)
 		} else {
 			rpclog("TEST_INSPECTOR: no inspector window on reopen\n");
 		}
+		test_inspector_timer_.StartOnce(2000);
+		break;
+
+	case 5:
+		/*
+		 * Auto-step and the session file. Both are window behaviour - a timer
+		 * and two file dialogs - so this is the only place they meet a real
+		 * machine. Asked for in discussion #223.
+		 */
+		if (machine_inspector_window_ != nullptr) {
+			const wxString path = wxFileName::CreateTempFileName("rpcdbg");
+
+			machine_inspector_window_->TestAutoStep(20, 25);
+			rpclog("TEST_INSPECTOR: session round trip %s\n",
+			    machine_inspector_window_->TestSessionRoundTrip(path)
+			        ? "ok" : "FAILED");
+			wxRemoveFile(path);
+		} else {
+			rpclog("TEST_INSPECTOR: no inspector window for the session test\n");
+		}
 		rpclog("TEST_INSPECTOR: done\n");
 		break;
 

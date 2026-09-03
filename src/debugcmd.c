@@ -245,7 +245,8 @@ dc_cmd_trace_config(char *r, char *args)
 		if (eq == NULL) {
 			dc_error("usage: trace config [data_abort=0|1] [prefetch_abort=0|1] "
 			         "[undefined=0|1] [log_exceptions=0|1] [swi_log=0|1] "
-			         "[swi_halt=0|1] [swi_min=<hex>] [swi_max=<hex>]");
+			         "[swi_halt=0|1] [swi_min=<hex>] [swi_max=<hex>] "
+			         "[step_skip_irq=0|1] [step_skip_os=0|1]");
 			return;
 		}
 		*eq = '\0';
@@ -259,6 +260,8 @@ dc_cmd_trace_config(char *r, char *args)
 		else if (strcmp(tok, "swi_halt") == 0)       { cfg.swi_trace_halt = v ? 1 : 0; }
 		else if (strcmp(tok, "swi_min") == 0)        { cfg.swi_filter_min = (uint32_t) strtoul(eq + 1, NULL, 16); }
 		else if (strcmp(tok, "swi_max") == 0)        { cfg.swi_filter_max = (uint32_t) strtoul(eq + 1, NULL, 16); }
+		else if (strcmp(tok, "step_skip_irq") == 0)  { cfg.step_skip_irq = v ? 1 : 0; }
+		else if (strcmp(tok, "step_skip_os") == 0)   { cfg.step_skip_os = v ? 1 : 0; }
 		else {
 			dc_error("unknown trace config key");
 			return;
@@ -270,10 +273,65 @@ dc_cmd_trace_config(char *r, char *args)
 	snprintf(r, DC_RESP_SZ,
 	    "{\"ok\":true,\"data_abort\":%u,\"prefetch_abort\":%u,\"undefined\":%u,"
 	    "\"log_exceptions\":%u,\"swi_log\":%u,\"swi_halt\":%u,"
-	    "\"swi_min\":\"%08x\",\"swi_max\":\"%08x\"}",
+	    "\"swi_min\":\"%08x\",\"swi_max\":\"%08x\","
+	    "\"step_skip_irq\":%u,\"step_skip_os\":%u}",
 	    cfg.trap_data_abort, cfg.trap_prefetch_abort, cfg.trap_undefined,
 	    cfg.log_exceptions, cfg.swi_trace_enabled, cfg.swi_trace_halt,
-	    (unsigned) cfg.swi_filter_min, (unsigned) cfg.swi_filter_max);
+	    (unsigned) cfg.swi_filter_min, (unsigned) cfg.swi_filter_max,
+	    cfg.step_skip_irq, cfg.step_skip_os);
+}
+
+/**
+ * swi load <path> | swi clear
+ *
+ * The names a module's own SWIs disassemble under. The built-in table is the
+ * OS's; anything else is site knowledge, so it comes from a file. Same shape as
+ * "sym", deliberately, because it is the same idea applied to SWI numbers.
+ */
+static void
+dc_cmd_swi(char *r, char *args)
+{
+	char *sub = strtok(args, " \t");
+
+	if (!sub) {
+		dc_error("usage: swi load <path> | swi clear");
+		return;
+	}
+
+	if (strcmp(sub, "clear") == 0) {
+		arm_disasm_clear_swi_names();
+		snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"count\":0}");
+		return;
+	}
+
+	if (strcmp(sub, "load") == 0) {
+		char *path = strtok(NULL, "");	/* rest of the line: paths have spaces */
+		unsigned count = 0;
+		const char *error;
+
+		if (path != NULL) {
+			while (*path == ' ' || *path == '\t') {
+				path++;
+			}
+		}
+		if (path == NULL || *path == '\0') {
+			dc_error("usage: swi load <path>");
+			return;
+		}
+
+		error = arm_disasm_load_swi_names(path, &count);
+		if (error != NULL) {
+			char buf[DC_ERROR_MAX_MSG];
+
+			snprintf(buf, sizeof(buf), "cannot load SWI names: %s", error);
+			dc_error(buf);
+			return;
+		}
+		snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"count\":%u}", count);
+		return;
+	}
+
+	dc_error("usage: swi load <path> | swi clear");
 }
 
 /**
@@ -303,6 +361,7 @@ dc_cmd_help(char *r)
 	    "\"step [count] | step into [count] | step over | step out\","
 	    "\"runto <hexaddr>\",\"bt [depth]\","
 	    "\"sym load <path> | sym clear | sym lookup <hexaddr> | sym find <name>\","
+	    "\"swi load <path> | swi clear\","
 	    "\"state save|load <path>\","
 	    "\"clipboard get|set [text]\""
 	    "]}");
@@ -1253,6 +1312,8 @@ dc_dispatch(char *line)
 			return;
 		}
 		snprintf(resp, DC_RESP_SZ, "{\"ok\":true}");
+	} else if (strcmp(verb, "swi") == 0) {
+		dc_cmd_swi(resp, args ? args : (char *) "");
 	} else if (strcmp(verb, "sym") == 0) {
 		dc_cmd_sym(resp, args ? args : (char *) "");
 	} else if (strcmp(verb, "bt") == 0 || strcmp(verb, "backtrace") == 0) {

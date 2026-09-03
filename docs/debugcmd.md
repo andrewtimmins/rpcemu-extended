@@ -94,10 +94,11 @@ mode an exception return is about to restore is not answerable from the CPSR.
 | `runto <addr>` | `{ok}` — runs until the address is reached; poll `status` |
 | `bt [depth]` (alias `backtrace`) | `{ok, truncated, frames:[{level,pc,lr,sp,fp,symbol,offset}]}` — see *Backtraces* below |
 | `sym load <path>` / `sym clear` | `{ok, count}` — host path, not a guest one |
+| `swi load <path>` / `swi clear` | `{ok, count}` — SWI names for the disassembler, host path. See [disassembly.md](disassembly.md) |
 | `sym lookup <addr>` | `{ok, address, symbol, offset}` — `symbol` is `null` if nothing covers the address |
 | `sym find <name>` | `{ok, symbol, address}` |
 | `trace [max]` | `{ok, dropped, events:[{seq,type,pc,opcode,arg0,arg1,arg2}]}` — `max` capped 128 |
-| `trace config [key=value …]` | `{ok, …}` — keys `data_abort`, `prefetch_abort`, `undefined`, `log_exceptions`, `swi_log`, `swi_halt`, `swi_min`, `swi_max`. No arguments reports the current setting |
+| `trace config [key=value …]` | `{ok, …}` — keys `data_abort`, `prefetch_abort`, `undefined`, `log_exceptions`, `swi_log`, `swi_halt`, `swi_min`, `swi_max`, `step_skip_irq`, `step_skip_os`. No arguments reports the current setting |
 | `state save <path>` | `{ok, saved}` — snapshot the whole machine to a host file |
 | `state load <path>` | `{ok, loaded}` — restore one; a snapshot that does not match the machine is refused with `{ok:false, error}` and the machine carries on untouched |
 | `reset` | `{ok, reset}` — reset the machine, as the reset button would |
@@ -193,6 +194,13 @@ in the kernel reads as an answer and is not one.
 There is no way to read symbols out of the running guest. That would mean
 depending on RISC OS kernel workspace layout, which differs between versions,
 and a name that cannot be trusted is worth less than a bare address.
+
+`swi load` is the same idea for SWI numbers, and is deliberately the same shape.
+It differs in one respect: a line that is not a number-and-name pair is skipped
+rather than failing the file, because a SWI list is usually a handful of lines
+maintained by hand next to the module, not a generated table of thousands where
+a silent partial load would mis-attribute everything. The format is in
+[disassembly.md](disassembly.md).
 
 `state` and `reset` are here rather than anywhere else because a snapshot has to
 be taken between instructions on the emulator thread, which is the thread this
