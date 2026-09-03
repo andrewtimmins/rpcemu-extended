@@ -72,7 +72,7 @@ static uint32_t cardromsize = 0;
 static uint32_t chunkbase;
 static uint32_t filebase;
 
-static const char description[] = "RPCEmu USB";
+const char usbcard_description[] = "RPCEmu USB";
 
 /*
  * A product type of our own, so the card is identifiable even to something that
@@ -173,7 +173,7 @@ usbcard_init(void)
 	   ends the directory - the same shape the graphics card's ROM has. */
 	chunkbase = 0x10;
 	filebase = chunkbase + 8 * (files + 1) + 4;
-	cardromsize = filebase + ((sizeof(description) + 3) & ~3u);
+	cardromsize = filebase + ((sizeof(usbcard_description) + 3) & ~3u);
 	cardrom = calloc(cardromsize, 1);
 	if (cardrom == NULL) {
 		fatal("usbcard_init: Out of Memory");
@@ -190,9 +190,9 @@ usbcard_init(void)
 
 	cardrom[12] = USBCARD_IRQ_BIT;	/* IRQ status bit mask */
 
-	memcpy(cardrom + filebase, description, sizeof(description));
-	makechunk(0xf5, filebase, sizeof(description));	/* Device data, description */
-	filebase += (sizeof(description) + 3) & ~3u;
+	memcpy(cardrom + filebase, usbcard_description, sizeof(usbcard_description));
+	makechunk(0xf5, filebase, sizeof(usbcard_description));	/* Device data, description */
+	filebase += (sizeof(usbcard_description) + 3) & ~3u;
 
 	for (i = 0; i < files; i++) {
 		char filepath[512];

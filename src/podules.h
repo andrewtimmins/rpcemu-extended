@@ -97,6 +97,15 @@ void runpoduletimers(int t);
 void podules_reset(void);
 void podules_get_snapshot(PodulesStateSnapshot *snapshot);
 
+/* The cards the machine fits itself. One statement of which slots they take,
+   asked by both the emulator and the machine editor - see podules.c. The two
+   flags are the machine's configuration, passed in rather than read, because
+   the editor asks about a machine other than the running one. */
+uint32_t podules_builtin_slot_mask(int gfxcard_enabled, int network_enabled);
+const char *podules_builtin_slot_name(int slot, int gfxcard_enabled,
+                                      int network_enabled);
+int podules_first_user_slot(int gfxcard_enabled, int network_enabled);
+
 /* Plugin-ABI registry (Arculator-compatible podules) */
 void podule_build_list(void);
 const podule_header_t *podule_find(const char *short_name);

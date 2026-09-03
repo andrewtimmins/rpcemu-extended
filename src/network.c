@@ -39,7 +39,7 @@
 /* Variables for supporting a podule header data */
 static uint8_t *romdata = NULL; /**< Podule header data and the like */
 static uint32_t poduleromsize = 0;
-static const char description[] = "RPCEmu Ethernet";
+const char network_description[] = "RPCEmu Ethernet";
 static uint32_t chunkbase;
 static uint32_t filebase;
 
@@ -84,7 +84,7 @@ network_rom_init(void)
 	// Build podule header
 	chunkbase = 0x10;
 	filebase = chunkbase + (8 * 2) + 4; // required size for two entries
-	poduleromsize = filebase + ((sizeof(description) + 3) & ~3u); // Word align description string
+	poduleromsize = filebase + ((sizeof(network_description) + 3) & ~3u); // Word align description string
 
 	/* Alongside poduleroms in the data directory - extracted there from the
 	   copy embedded in this binary. See support_files.h. */
@@ -129,9 +129,9 @@ network_rom_init(void)
 
 	romdata[12] = 1; // IRQ Status Bit Mask
 
-	memcpy(romdata + filebase, description, sizeof(description));
-	makechunk(0xf5, filebase, sizeof(description)); // 0xf5 = Device Data, Description
-	filebase += (sizeof(description) + 3) & ~3u;
+	memcpy(romdata + filebase, network_description, sizeof(network_description));
+	makechunk(0xf5, filebase, sizeof(network_description)); // 0xf5 = Device Data, Description
+	filebase += (sizeof(network_description) + 3) & ~3u;
 
 	// If the driver module was opened successfully, load it and add to the podule
 	if (f != NULL) {

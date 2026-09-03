@@ -140,6 +140,7 @@ enum TimerId {
 	ID_TIMER_TEST_CLOSE,
 	ID_TIMER_TEST_FULLSCREEN,
 	ID_TIMER_TEST_INSPECTOR,
+	ID_TIMER_TEST_PODULES,
 };
 
 enum StatusBarField {
@@ -441,6 +442,7 @@ private:
 	 * own controls - see MachineInspectorWindow::LogTraceControlsAgainstMachine().
 	 */
 	void OnTestInspectorTimer(wxTimerEvent &event);
+	void OnTestPodulesTimer(wxTimerEvent &event);
 
 	/**
 	 * A frame arrived from the guest. Notices a change of desktop size and, for
@@ -623,6 +625,7 @@ private:
 
 	/* RPCEMU_TEST_INSPECTOR_AFTER only. */
 	wxTimer test_inspector_timer_;
+	wxTimer test_podules_timer_;
 	int test_inspector_step_ = 0;
 
 	/** The size last asked of the guest, or (0,0) when nothing is outstanding. */

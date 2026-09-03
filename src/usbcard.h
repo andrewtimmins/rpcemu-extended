@@ -44,4 +44,7 @@ void usbcard_init(void);
 /** Put the card in the backplane and start the controller. */
 void usbcard_reset(void);
 
+/* The card's description chunk, as *Podules prints it. */
+extern const char usbcard_description[];
+
 #endif /* USBCARD_H */

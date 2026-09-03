@@ -905,6 +905,8 @@ void MachineEditDialog::BuildUi()
 	});
 	gfxcard_check_->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent &event) {
 		gfxcard_boot_check_->Enable(gfxcard_check_->GetValue());
+		/* The card takes a slot, so the backplane changes shape with it. */
+		RebuildPoduleChoices();
 		/* The card carries 15MB of its own, which changes which fixed screen
 		   sizes are possible. Somebody fitting it should see the larger modes
 		   appear without saving and reopening the dialog. */
@@ -1284,6 +1286,7 @@ void MachineEditDialog::UpdateGfxCardAvailability()
 			gfxcard_boot_check_->Enable(gfxcard_check_->GetValue());
 			gfxcard_boot_check_->SetToolTip(gfxcard_boot_tooltip_);
 		}
+		RebuildPoduleChoices();
 		return;
 	}
 
@@ -1296,6 +1299,9 @@ void MachineEditDialog::UpdateGfxCardAvailability()
 		gfxcard_boot_check_->Enable(false);
 		gfxcard_boot_check_->SetToolTip(wxString::FromUTF8(msg));
 	}
+
+	/* A ROM that cannot drive the card has just given its slot back. */
+	RebuildPoduleChoices();
 }
 
 void MachineEditDialog::UpdateRomModelCompatibility()
@@ -1432,29 +1438,17 @@ wxSizer *MachineEditDialog::BuildPoduleSection(wxWindow *parent)
 	auto *grid = new wxFlexGridSizer(0, 3, 6, 8);
 	grid->AddGrowableCol(1, 1);
 
+	/*
+	 * A row per slot, and every row a drop-down - including the slots the
+	 * machine fills itself, which are shown holding their card and disabled.
+	 *
+	 * Issue #254: the built-in rows used to be static text naming the wrong
+	 * cards in the wrong order, and which slots they were depended on the
+	 * machine's configuration in a way nothing here knew about.
+	 * RebuildPoduleChoices() now asks the emulator, and it can lock and
+	 * unlock a row as the graphics card and networking are switched.
+	 */
 	for (int i = 0; i < PODULE_CONFIG_SLOTS; i++) {
-		/*
-		 * The low slots carry the cards RPCEmu fits itself and are shown
-		 * rather than offered. The vectors stay indexed by slot number so
-		 * that everything else can go on saying "slot i" and mean it.
-		 */
-		if (i < PODULE_CONFIG_FIRST_USER_SLOT) {
-			grid->Add(new wxStaticText(p, wxID_ANY,
-			              wxString::Format("Slot %d:", i)),
-			          0, wxALIGN_CENTER_VERTICAL);
-			grid->Add(new wxStaticText(p, wxID_ANY,
-			              i == 0 ? "USB card (built in)"
-			                     : "RPCEmu support card (built in)"),
-			          1, wxALIGN_CENTER_VERTICAL);
-			grid->Add(new wxStaticText(p, wxID_ANY, ""), 0);
-
-			podule_combos_.push_back(nullptr);
-			podule_config_btns_.push_back(nullptr);
-			podule_selection_.push_back("");
-			podule_item_names_.emplace_back();
-			continue;
-		}
-
 		grid->Add(new wxStaticText(p, wxID_ANY, wxString::Format("Slot %d:", i)),
 		          0, wxALIGN_CENTER_VERTICAL);
 
@@ -1478,9 +1472,11 @@ wxSizer *MachineEditDialog::BuildPoduleSection(wxWindow *parent)
 	box->Add(grid, 0, wxEXPAND);
 
 	auto *note = new wxStaticText(p, wxID_ANY,
-	    "Eight expansion-card slots. Slot 0 (Support) and the network card are "
-	    "built-in. A podule can only be assigned to one slot; changes take "
-	    "effect after reset.");
+	    "Eight expansion-card slots. The Support and USB cards are always "
+	    "fitted, and the graphics and network cards take the slots above them "
+	    "when they are enabled; those slots are shown but cannot be changed. A "
+	    "podule can only be assigned to one slot; changes take effect after "
+	    "reset.");
 	note->Wrap(500);
 	note->SetForegroundColour(kHdColourMuted);
 	note->SetFont(note->GetFont().Smaller());
@@ -1490,9 +1486,79 @@ wxSizer *MachineEditDialog::BuildPoduleSection(wxWindow *parent)
 	return box;
 }
 
+/*
+ * Which slots this machine fills itself, for the settings currently on screen.
+ *
+ * Not a copy of the rule: podules_builtin_slot_mask() is the rule, and this
+ * only works out what to pass it. The graphics card check box can be present
+ * but disabled, when the selected ROM cannot drive the card, and a machine like
+ * that does not fit one.
+ */
+bool MachineEditDialog::PoduleGfxCardOn() const
+{
+	return gfxcard_check_ != nullptr && gfxcard_check_->IsEnabled() &&
+	       gfxcard_check_->GetValue();
+}
+
+bool MachineEditDialog::PoduleNetworkOn() const
+{
+	return network_combo_ != nullptr && network_combo_->GetSelection() > 0;
+}
+
+/*
+ * Move any podule that has ended up in a slot the machine wants for itself.
+ *
+ * This happens to a configuration written before issue #254 was fixed, and
+ * whenever networking or the graphics card is switched on with a podule already
+ * sitting in the slot that card is about to take. The alternative is what the
+ * emulator used to do, which was to drop the card and say so only in the log.
+ *
+ * The card's own settings are keyed by slot, so they are carried across with
+ * it; leaving them behind would silently reset a configured podule to its
+ * defaults.
+ */
+void MachineEditDialog::RelocateReservedPodules(bool gfx_on, bool net_on)
+{
+	const uint32_t builtin = podules_builtin_slot_mask(gfx_on ? 1 : 0,
+	                                                   net_on ? 1 : 0);
+
+	for (size_t i = 0; i < podule_selection_.size(); i++) {
+		if (podule_selection_[i].IsEmpty() ||
+		    (builtin & (1u << i)) == 0) {
+			continue;
+		}
+
+		int dest = -1;
+		for (size_t j = 0; j < podule_selection_.size(); j++) {
+			if ((builtin & (1u << j)) == 0 && podule_selection_[j].IsEmpty()) {
+				dest = static_cast<int>(j);
+				break;
+			}
+		}
+
+		const wxString short_name = podule_selection_[i];
+		const wxString from = wxString::Format("%s.%d", short_name,
+		                                       static_cast<int>(i));
+		podule_selection_[i] = "";
+
+		if (dest < 0) {
+			podule_kv_.erase(from);	/* nowhere to put it: the backplane is full */
+			continue;
+		}
+
+		podule_selection_[dest] = short_name;
+
+		auto it = podule_kv_.find(from);
+		if (it != podule_kv_.end()) {
+			podule_kv_[wxString::Format("%s.%d", short_name, dest)] = it->second;
+			podule_kv_.erase(it);
+		}
+	}
+}
+
 /* Rebuild every slot's dropdown for the 8-slot backplane view:
-    - slot 0 is the built-in RPCEmu Support ROM (locked),
-    - slot 1 is the network card when networking is enabled (locked),
+    - the slots the machine fits its own cards into are shown locked, named by
+      the emulator rather than by a second opinion kept here,
     - the rest are user-assignable, and a podule chosen in one slot is hidden
       from the others (one slot per podule). */
 void MachineEditDialog::RebuildPoduleChoices()
@@ -1501,32 +1567,34 @@ void MachineEditDialog::RebuildPoduleChoices()
 		return;
 	}
 
-	const bool network_on = network_combo_ != nullptr && network_combo_->GetSelection() > 0;
+	const bool gfx_on = PoduleGfxCardOn();
+	const bool network_on = PoduleNetworkOn();
+
+	RelocateReservedPodules(gfx_on, network_on);
 
 	for (size_t i = 0; i < podule_combos_.size(); i++) {
 		wxChoice *combo = podule_combos_[i];
 
 		if (combo == nullptr) {
-			continue;	/* a built-in card's slot */
+			continue;
 		}
 		std::vector<wxString> &names = podule_item_names_[i];
 
 		combo->Clear();
 		names.clear();
 
-		/* Built-in (reserved) slots: shown locked, not user-assignable. */
-		wxString builtin;
-		if (i == 0) {
-			builtin = "RPCEmu Support (built-in)";
-		} else if (i == 1 && network_on) {
-			builtin = "RPCEmu Ethernet (built-in)";
-		}
-		if (!builtin.IsEmpty()) {
-			combo->Append(builtin);
+		/* The cards the machine fits itself: shown, locked, and named with the
+		   same string RISC OS prints for *Podules. */
+		const char *builtin_name = podules_builtin_slot_name(
+		    static_cast<int>(i), gfx_on ? 1 : 0, network_on ? 1 : 0);
+		if (builtin_name != nullptr) {
+			combo->Append(wxString::Format("%s (built in)",
+			                               wxString::FromUTF8(builtin_name)));
 			names.push_back("");
 			combo->SetSelection(0);
 			combo->Disable();
-			if (i < podule_config_btns_.size()) {
+			if (i < podule_config_btns_.size() &&
+			    podule_config_btns_[i] != nullptr) {
 				podule_config_btns_[i]->Enable(false);
 			}
 			podule_selection_[i] = ""; /* never a user podule */
@@ -1578,6 +1646,38 @@ void MachineEditDialog::RebuildPoduleChoices()
 	}
 }
 
+void MachineEditDialog::TestSetGfxCard(bool on)
+{
+	if (gfxcard_check_ == nullptr || !gfxcard_check_->IsEnabled()) {
+		return;
+	}
+	gfxcard_check_->SetValue(on);
+	RebuildPoduleChoices();
+}
+
+void MachineEditDialog::LogPoduleRows(const char *what) const
+{
+	rpclog("TEST_PODULES: %s: graphics card %s, networking %s\n", what,
+	       PoduleGfxCardOn() ? "on" : "off",
+	       PoduleNetworkOn() ? "on" : "off");
+
+	for (size_t i = 0; i < podule_combos_.size(); i++) {
+		const wxChoice *combo = podule_combos_[i];
+		wxString shown = "(no control)";
+		bool changeable = false;
+
+		if (combo != nullptr) {
+			shown = combo->GetStringSelection();
+			changeable = combo->IsEnabled();
+		}
+
+		rpclog("TEST_PODULES: slot %d: \"%s\" %s, selection \"%s\"\n",
+		       (int) i, shown.utf8_str().data(),
+		       changeable ? "assignable" : "locked",
+		       podule_selection_[i].utf8_str().data());
+	}
+}
+
 void MachineEditDialog::OnPoduleConfigure(int slot)
 {
 	if (slot < 0 || slot >= static_cast<int>(podule_selection_.size())) {
@@ -1624,9 +1724,12 @@ void MachineEditDialog::LoadPoduleSettings(wxFileConfig &settings)
 	settings.SetPath("/Podules");
 	for (int i = 0; i < PODULE_CONFIG_SLOTS &&
 	     i < static_cast<int>(podule_selection_.size()); i++) {
+		/* Every slot, not just the ones a user could pick today: a file
+		   written before issue #254 can name a slot the machine now wants for
+		   itself, and RebuildPoduleChoices() moves that card up rather than
+		   letting it disappear. */
 		wxString val;
-		if (i >= PODULE_CONFIG_FIRST_USER_SLOT &&
-		    settings.Read(wxString::Format("slot%d", i), &val) && !val.IsEmpty()) {
+		if (settings.Read(wxString::Format("slot%d", i), &val) && !val.IsEmpty()) {
 			podule_selection_[i] = val;
 		} else {
 			podule_selection_[i] = "";

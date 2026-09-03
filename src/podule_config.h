@@ -41,18 +41,22 @@ extern "C" {
 #define PODULE_CONFIG_SLOTS 8
 
 /**
- * The first slot a user may put a podule in.
+ * The two slots that are taken on every machine.
  *
- * Slots 0 and 1 carry the two cards RPCEmu fits itself: the USB card in 0,
- * because the only RISC OS driver for its chip addresses podule 0 and nothing
- * else, and the support card in 1, which carries HostFS, the scroll wheel and
- * the rest of the module ROM.
+ * Slot 0 is the support card, which carries HostFS, the scroll wheel and the
+ * rest of the module ROM. Slot 1 is the USB card. Both are fitted whatever the
+ * configuration says, so no user podule can ever go in either.
  *
- * They are not offered in the interface and are refused if a configuration
- * names them, because a card put on top of either would take away something the
- * machine depends on - and a driver claiming a shared card's interrupt wedges
- * the machine outright, which is how this arrangement came about.
+ * The graphics card and the network card take the next slots up when they are
+ * enabled, so the first free slot is 2, 3 or 4 depending on the machine. Ask
+ * podules_first_user_slot() rather than assuming; this pair is only the part
+ * that never moves. Issue #254 was four different answers to that question in
+ * four different files.
  */
+#define PODULE_SLOT_SUPPORT 0
+#define PODULE_SLOT_USB     1
+
+/** The lowest slot a user podule could occupy on any configuration. */
 #define PODULE_CONFIG_FIRST_USER_SLOT 2
 #define PODULE_CONFIG_NAME_LEN 16
 
