@@ -52,6 +52,14 @@ public:
 	 */
 	bool LogTraceControlsAgainstMachine(const char *when);
 
+	/*
+	 * Driven by RPCEMU_TEST_INSPECTOR_AFTER. Auto-step and the session file are
+	 * both window behaviour - a timer and two file dialogs - so no unit test can
+	 * reach them; these are how they get exercised against a real machine.
+	 */
+	bool TestSessionRoundTrip(const wxString &path);
+	void TestAutoStep(int rate, int ticks);
+
 	/**
 	 * The debugger has started or stopped; read the machine again now.
 	 *
@@ -84,6 +92,11 @@ private:
 		ID_WATCHPOINT_REMOVE,
 		ID_TRACE_CONFIG,
 		ID_TRACE_CLEAR,
+		ID_AUTOSTEP,
+		ID_AUTOSTEP_TIMER,
+		ID_SETTINGS_SAVE,
+		ID_SETTINGS_LOAD,
+		ID_SWI_NAMES,
 	};
 
 	/*
@@ -114,8 +127,39 @@ private:
 	void OnStep(wxCommandEvent &event);
 	void OnStepOver(wxCommandEvent &event);
 
+	/**
+	 * Auto-step: keep stepping at a chosen rate while the machine is paused.
+	 *
+	 * "so you can set it to auto step every 1/4 second and watch it execute
+	 * slowly. This would really help when you're watching code, waiting for
+	 * something to happen but don't want to keep hitting the Step button" -
+	 * discussion #223.
+	 */
+	void OnAutoStep(wxCommandEvent &event);
+	void OnAutoStepTimer(wxTimerEvent &event);
+	void AutoStepTick();
+
+	/**
+	 * Save and load everything that makes up a debugging session: the
+	 * breakpoints, the watchpoints, the trapping and tracing settings and how
+	 * the disassembly is rendered.
+	 *
+	 * Asked for as import/export in discussion #223, "so you can resume
+	 * debugging easily" - a module being debugged is reloaded at a different
+	 * address every time, but the settings around it do not change.
+	 */
+	void OnSaveSettings(wxCommandEvent &event);
+	void OnLoadSettings(wxCommandEvent &event);
+	void OnLoadSwiNames(wxCommandEvent &event);
+
+	/* The session file itself, without the dialogs, so it can be driven by a
+	   test as well as by somebody clicking. */
+	bool SaveSessionTo(const wxString &path);
+	bool LoadSessionFrom(const wxString &path);
+
 	/** A disassembly rendering option moved; push the set to arm_disasm. */
 	void OnDisasmStyleChanged(wxCommandEvent &event);
+	void ApplyDisasmOptions();
 
 	/** Enter runs or pauses, Space steps, Shift+Space steps over. */
 	void OnDebugKey(wxKeyEvent &event);
@@ -183,6 +227,9 @@ private:
 	/* How the disassembly is written down, from discussion #223. These drive
 	   arm_disasm's global options, so they change the debug socket's output
 	   too, which is deliberate: one machine, one rendering. */
+	wxCheckBox *disasm_lower_checkbox_ = nullptr;
+	/* Remembered so a saved session can name it and reload it. */
+	wxString swi_names_path_;
 	wxCheckBox *disasm_hex_checkbox_ = nullptr;
 	wxCheckBox *disasm_apcs_checkbox_ = nullptr;
 	wxCheckBox *disasm_ranges_checkbox_ = nullptr;
@@ -197,6 +244,9 @@ private:
 	wxButton *pause_button_ = nullptr;
 	wxButton *step_button_ = nullptr;
 	wxButton *step_over_button_ = nullptr;
+	wxCheckBox *autostep_checkbox_ = nullptr;
+	wxSpinCtrl *autostep_rate_spin_ = nullptr;
+	wxTimer autostep_timer_{this, ID_AUTOSTEP_TIMER};
 	wxListBox *breakpoint_list_ = nullptr;
 	wxTextCtrl *breakpoint_input_ = nullptr;
 	wxButton *breakpoint_remove_button_ = nullptr;
@@ -214,6 +264,8 @@ private:
 	wxCheckBox *log_exceptions_checkbox_ = nullptr;
 	wxCheckBox *swi_trace_checkbox_ = nullptr;
 	wxCheckBox *swi_halt_checkbox_ = nullptr;
+	wxCheckBox *step_skip_irq_checkbox_ = nullptr;
+	wxCheckBox *step_skip_os_checkbox_ = nullptr;
 	wxTextCtrl *swi_filter_min_input_ = nullptr;
 	wxTextCtrl *swi_filter_max_input_ = nullptr;
 	wxTextCtrl *trace_view_ = nullptr;

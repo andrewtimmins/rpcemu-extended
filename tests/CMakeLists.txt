@@ -222,6 +222,15 @@ rpcemu_add_test(test_debugger_gate)
 # hand, and so are the seven legal modes: this is a new arm on a switch that
 # every mode change in the emulator passes through, and the way to get it wrong
 # is to catch a mode that used to work.
+# Every setting the Machine Inspector writes to a session file, it must also
+# read back. The two halves are a hundred lines apart with the key name spelled
+# out as a string literal in each, so no compiler can pair them up; a reader
+# that was never written loses the setting silently, and the file still looks
+# right. Source-level rather than behavioural because both halves live inside a
+# wxWidgets window, which a unit test cannot construct.
+rpcemu_add_shell_test(check_session_keys check-session-keys.sh
+                      ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui/machine_inspector_window.cpp)
+
 # Which libraries build-macos.sh may fuse into one universal bundle. macOS
 # only, because that is the only platform the script runs on.
 #
@@ -1084,7 +1093,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 67)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 68)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 10")	# JIT differential
 endif()
