@@ -343,7 +343,16 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-14, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 2
+    # Eight, and Windows is why. This creates a venv and pip-installs the MCP
+    # server's dependencies from PyPI, which pulls pydantic and its compiled
+    # core; two minutes killed the Windows leg on 3 September 2026 part way
+    # through "import pydantic", reported as a KeyboardInterrupt and the run as
+    # cancelled rather than failed - which reads like somebody pressed stop.
+    #
+    # The other two legs fit, but not by much: ubuntu took 89 seconds of the 120
+    # and macOS 29. A cap that close to the normal cost is a liability rather
+    # than caution; this is a tripwire against a hung pip, not a budget.
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v7
 
