@@ -533,6 +533,28 @@ test_rendering_options(void)
 	opts.hex_immediates = 1;
 	check_opts(&opts, 0xE92D409F, AT, "STMDB sp!, {a1-v1, v4, lr}");
 
+	/*
+	 * Lower case, and the two things it must NOT touch.
+	 *
+	 * A SWI's name and a symbol annotation are identifiers belonging to
+	 * somebody else: "os_writec" is not a lower-case rendering of "OS_WriteC",
+	 * it is the wrong name. That is the whole difficulty of this option and
+	 * the reason it was not done with the other three.
+	 */
+	memset(&opts, 0, sizeof(opts));
+	opts.lowercase = 1;
+	check_opts(&opts, 0xE3A00080, AT, "mov r0, #128");
+	check_opts(&opts, 0xE92D409F, AT, "stmdb r13!, {r0, r1, r2, r3, r4, r7, r14}");
+	check_opts(&opts, 0x0A00001C, AT, "beq 0x00008078");
+	check_opts(&opts, 0xEF000011, AT, "swi OS_Exit");
+	check_opts(&opts, 0xEF020011, AT, "swi XOS_Exit");
+	check_opts(&opts, 0xEF012345, AT, "swi 0x012345");
+
+	/* With hex as well, since the digits are ours to lower but the name is not. */
+	opts.hex_immediates = 1;
+	check_opts(&opts, 0xE3A000FF, AT, "mov r0, #&ff");
+	check_opts(&opts, 0xEF000011, AT, "swi OS_Exit");
+
 	/* And setting NULL restores every default. */
 	arm_disasm_set_options(&opts);
 	arm_disasm_set_options(NULL);
@@ -541,6 +563,74 @@ test_rendering_options(void)
 	check("NULL puts every option back to its default",
 	      opts.hex_immediates == 0 && opts.apcs_registers == 0 &&
 	      opts.collapse_reglists == 0 && opts.resolve_pc_relative == 0);
+}
+
+/*
+ * SWI names from a file.
+ *
+ * A debugger that says "SWI 0x042C40" where a module's own SWI should be is of
+ * limited use, and the built-in table only knows RISC OS's own. Asked for in
+ * discussion #223. A name from the file must beat the built-in table, so a
+ * chunk can be renamed as well as added, and a malformed line must be skipped
+ * rather than take the rest of the file with it.
+ */
+static void
+test_user_swi_names(void)
+{
+	const char *path = "test-swi-names.csv";
+	unsigned count = 0;
+	const char *err;
+	FILE *f;
+
+	printf("SWI names from a file\n");
+
+	check_text(0xEF042C40, "SWI 0x042C40");	/* a number, to begin with */
+
+	f = fopen(path, "w");
+	if (f == NULL) {
+		check("could not write the test file", 0);
+		return;
+	}
+	fputs("# a comment, and a blank line follow\n\n", f);
+	fputs("0x42c40,ADFFS_Info\n", f);
+	fputs("  273473 ,  ADFFS_Decimal  \n", f);   /* decimal, and the same number */
+	fputs("not a number,ignored\n", f);          /* skipped, not fatal */
+	fputs("0x11,MyOwnExit\n", f);                 /* beats the built-in table */
+	fputs("\t# an indented comment\n", f);
+	fputs("&42C42,ADFFS_Ampersand\n", f);        /* the way RISC OS writes hex */
+	fclose(f);
+
+	err = arm_disasm_load_swi_names(path, &count);
+	check("the file loads", err == NULL);
+	check("and reports how many names it took", count == 4);
+
+	check_text(0xEF042C40, "SWI ADFFS_Info");
+	check_text(0xEF042C41, "SWI ADFFS_Decimal");
+	check_text(0xEF000011, "SWI MyOwnExit");
+
+	/*
+	 * "&62C40" is what RISC OS documents, module headers and assembler
+	 * listings write, and strtoul() has never heard of it. The line was being
+	 * skipped in silence - the file loaded, said so, and the name was simply
+	 * not there.
+	 */
+	check_text(0xEF042C42, "SWI ADFFS_Ampersand");
+
+	/*
+	 * A file lists the chunk base, as a module header declares it; the code
+	 * being read calls the X form. Matching only on the number as written
+	 * meant the common case - reading a caller - found nothing.
+	 */
+	check_text(0xEF062C40, "SWI XADFFS_Info");
+	check_text(0xEF062C42, "SWI XADFFS_Ampersand");
+
+	arm_disasm_clear_swi_names();
+	check_text(0xEF000011, "SWI OS_Exit");
+
+	err = arm_disasm_load_swi_names("no-such-file-here.csv", &count);
+	check("a missing file is reported, not fatal", err != NULL);
+
+	remove(path);
 }
 
 int
@@ -559,6 +649,7 @@ main(void)
 	test_unknown();
 	test_symbol_annotation();
 	test_rendering_options();
+	test_user_swi_names();
 
 	printf("\n%s\n", failures ? "FAILED" : "All tests passed");
 

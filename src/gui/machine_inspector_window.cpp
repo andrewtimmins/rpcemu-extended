@@ -27,6 +27,8 @@
 #include <vector>
 
 #include <wx/spinctrl.h>
+#include <wx/filedlg.h>
+#include <wx/textfile.h>
 
 #include "emulator_snapshot.h"
 
@@ -135,6 +137,11 @@ wxBEGIN_EVENT_TABLE(MachineInspectorWindow, wxFrame)
 	EVT_BUTTON(ID_STEP, MachineInspectorWindow::OnStep)
 	EVT_BUTTON(ID_STEP_OVER, MachineInspectorWindow::OnStepOver)
 	EVT_CHECKBOX(ID_DISASM_STYLE, MachineInspectorWindow::OnDisasmStyleChanged)
+	EVT_CHECKBOX(ID_AUTOSTEP, MachineInspectorWindow::OnAutoStep)
+	EVT_TIMER(ID_AUTOSTEP_TIMER, MachineInspectorWindow::OnAutoStepTimer)
+	EVT_BUTTON(ID_SETTINGS_SAVE, MachineInspectorWindow::OnSaveSettings)
+	EVT_BUTTON(ID_SETTINGS_LOAD, MachineInspectorWindow::OnLoadSettings)
+	EVT_BUTTON(ID_SWI_NAMES, MachineInspectorWindow::OnLoadSwiNames)
 	EVT_BUTTON(ID_BREAKPOINT_ADD, MachineInspectorWindow::OnAddBreakpoint)
 	EVT_BUTTON(ID_BREAKPOINT_REMOVE, MachineInspectorWindow::OnRemoveBreakpoint)
 	EVT_BUTTON(ID_WATCHPOINT_ADD, MachineInspectorWindow::OnAddWatchpoint)
@@ -310,6 +317,10 @@ void MachineInspectorWindow::BuildUi()
 
 	/* How the disassembly is written down: see ArmDisasmOptions. Off by
 	   default, so the view reads as it always has until asked otherwise. */
+	disasm_lower_checkbox_ = new wxCheckBox(disasm_panel, ID_DISASM_STYLE, "lower");
+	disasm_lower_checkbox_->SetToolTip(
+	    "Lower case, to match assembler source. SWI names and symbols keep "
+	    "their own case.");
 	disasm_hex_checkbox_ = new wxCheckBox(disasm_panel, ID_DISASM_STYLE, "Hex");
 	disasm_hex_checkbox_->SetToolTip("Immediates as &80 rather than 128");
 	disasm_apcs_checkbox_ = new wxCheckBox(disasm_panel, ID_DISASM_STYLE, "APCS");
@@ -327,10 +338,18 @@ void MachineInspectorWindow::BuildUi()
 	disasm_controls->Add(disasm_address_input_, 0, wxRIGHT, 6);
 	disasm_controls->Add(disasm_go_button, 0, wxRIGHT, 6);
 	disasm_controls->Add(disasm_follow_pc_checkbox_, 0, wxRIGHT, 12);
+	disasm_controls->Add(disasm_lower_checkbox_, 0, wxRIGHT, 6);
 	disasm_controls->Add(disasm_hex_checkbox_, 0, wxRIGHT, 6);
 	disasm_controls->Add(disasm_apcs_checkbox_, 0, wxRIGHT, 6);
 	disasm_controls->Add(disasm_ranges_checkbox_, 0, wxRIGHT, 6);
-	disasm_controls->Add(disasm_resolve_checkbox_, 0);
+	disasm_controls->Add(disasm_resolve_checkbox_, 0, wxRIGHT, 12);
+
+	auto *swi_names_button = new wxButton(disasm_panel, ID_SWI_NAMES,
+	    "SWI names...", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
+	swi_names_button->SetToolTip(
+	    "Load a CSV of SWI numbers and names, so a module's own SWIs "
+	    "disassemble by name instead of by number");
+	disasm_controls->Add(swi_names_button, 0);
 
 	disasm_view_ = new wxTextCtrl(disasm_panel, wxID_ANY, wxEmptyString,
 	                              wxDefaultPosition, wxDefaultSize,
@@ -398,6 +417,19 @@ void MachineInspectorWindow::BuildUi()
 	debug_buttons->Add(pause_button_, 0, wxRIGHT, 6);
 	debug_buttons->Add(step_button_, 0, wxRIGHT, 6);
 	debug_buttons->Add(step_over_button_, 0, wxRIGHT, 12);
+
+	autostep_checkbox_ = new wxCheckBox(debug_panel, ID_AUTOSTEP, "Auto");
+	autostep_checkbox_->SetToolTip(
+	    "Keep stepping at the rate beside this, so code can be watched running "
+	    "slowly without holding down Step");
+	autostep_rate_spin_ = new wxSpinCtrl(debug_panel, wxID_ANY, "4",
+	                                     wxDefaultPosition, wxSize(70, -1),
+	                                     wxSP_ARROW_KEYS, 1, 200, 4);
+	autostep_rate_spin_->SetToolTip("Steps per second");
+	debug_buttons->Add(autostep_checkbox_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 4);
+	debug_buttons->Add(autostep_rate_spin_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 2);
+	debug_buttons->Add(new wxStaticText(debug_panel, wxID_ANY, "/sec"), 0,
+	    wxALIGN_CENTER_VERTICAL | wxRIGHT, 12);
 	debug_buttons->Add(debug_status_label_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 12);
 	debug_buttons->Add(debug_hit_label_, 1, wxALIGN_CENTER_VERTICAL);
 
@@ -495,6 +527,25 @@ void MachineInspectorWindow::BuildUi()
 	swi_box->Add(new wxStaticText(trace_panel, wxID_ANY, ".."), 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 2);
 	swi_box->Add(swi_filter_max_input_, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 2);
 
+	auto *step_box = new wxStaticBoxSizer(wxHORIZONTAL, trace_panel,
+	    "While stepping, pass through");
+	step_skip_irq_checkbox_ = new wxCheckBox(trace_panel, ID_TRACE_CONFIG,
+	    "IRQ and FIQ");
+	step_skip_irq_checkbox_->SetToolTip(
+	    "A step that lands in an interrupt keeps going until it is back out. "
+	    "Breakpoints still fire there.");
+	step_skip_os_checkbox_ = new wxCheckBox(trace_panel, ID_TRACE_CONFIG,
+	    "the OS (ROM)");
+	step_skip_os_checkbox_->SetToolTip(
+	    "The same for anything at or above &F0000000, which is the ROM.");
+	step_box->Add(step_skip_irq_checkbox_, 0, wxALL, 4);
+	step_box->Add(step_skip_os_checkbox_, 0, wxALL, 4);
+	step_box->AddStretchSpacer();
+	step_box->Add(new wxButton(trace_panel, ID_SETTINGS_SAVE, "Save session..."),
+	    0, wxALL, 2);
+	step_box->Add(new wxButton(trace_panel, ID_SETTINGS_LOAD, "Load session..."),
+	    0, wxALL, 2);
+
 	/* A floor on the log, so the tab opens showing a useful number of lines
 	   rather than three; the sash below the code views takes it further. */
 	trace_view_ = new wxTextCtrl(trace_panel, wxID_ANY, wxEmptyString,
@@ -516,6 +567,7 @@ void MachineInspectorWindow::BuildUi()
 	auto *trace_sizer = new wxBoxSizer(wxVERTICAL);
 	trace_sizer->Add(exception_box, 0, wxEXPAND | wxALL, 8);
 	trace_sizer->Add(swi_box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+	trace_sizer->Add(step_box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
 	trace_sizer->Add(trace_view_, 1, wxEXPAND | wxLEFT | wxRIGHT, 8);
 	trace_sizer->Add(trace_footer, 0, wxEXPAND | wxALL, 8);
 	trace_panel->SetSizer(trace_sizer);
@@ -988,6 +1040,8 @@ void MachineInspectorWindow::SeedTraceConfig(const MachineSnapshot &snapshot)
 	log_exceptions_checkbox_->SetValue(cfg.log_exceptions != 0);
 	swi_trace_checkbox_->SetValue(cfg.swi_trace_enabled != 0);
 	swi_halt_checkbox_->SetValue(cfg.swi_trace_halt != 0);
+	step_skip_irq_checkbox_->SetValue(cfg.step_skip_irq != 0);
+	step_skip_os_checkbox_->SetValue(cfg.step_skip_os != 0);
 
 	/* The full range is "no filter", which is what an empty box means, so it
 	   is left showing its hint rather than 0 and FFFFFFFF. */
@@ -1040,6 +1094,8 @@ void MachineInspectorWindow::ApplyTraceConfig()
 	cfg.log_exceptions = log_exceptions_checkbox_->GetValue() ? 1 : 0;
 	cfg.swi_trace_enabled = swi_trace_checkbox_->GetValue() ? 1 : 0;
 	cfg.swi_trace_halt = swi_halt_checkbox_->GetValue() ? 1 : 0;
+	cfg.step_skip_irq = step_skip_irq_checkbox_->GetValue() ? 1 : 0;
+	cfg.step_skip_os = step_skip_os_checkbox_->GetValue() ? 1 : 0;
 
 	bool ok = false;
 	const uint32_t min = ParseAddress(swi_filter_min_input_->GetValue(), &ok);
@@ -1289,6 +1345,11 @@ void MachineInspectorWindow::OnStepOver(wxCommandEvent &)
  */
 void MachineInspectorWindow::OnDisasmStyleChanged(wxCommandEvent &)
 {
+	ApplyDisasmOptions();
+}
+
+void MachineInspectorWindow::ApplyDisasmOptions()
+{
 	ArmDisasmOptions opts;
 
 	memset(&opts, 0, sizeof(opts));
@@ -1296,6 +1357,7 @@ void MachineInspectorWindow::OnDisasmStyleChanged(wxCommandEvent &)
 	opts.apcs_registers = disasm_apcs_checkbox_->GetValue() ? 1 : 0;
 	opts.collapse_reglists = disasm_ranges_checkbox_->GetValue() ? 1 : 0;
 	opts.resolve_pc_relative = disasm_resolve_checkbox_->GetValue() ? 1 : 0;
+	opts.lowercase = disasm_lower_checkbox_->GetValue() ? 1 : 0;
 	arm_disasm_set_options(&opts);
 
 	RefreshDisassembly(disasm_current_address_);
@@ -1354,6 +1416,466 @@ void MachineInspectorWindow::OnDebugKey(wxKeyEvent &event)
 		event.Skip();
 		return;
 	}
+}
+
+/*
+ * Auto-step. Driven by a timer rather than a loop, so the window stays alive and
+ * the machine can be stopped mid-run by unticking the box.
+ */
+void MachineInspectorWindow::OnAutoStep(wxCommandEvent &)
+{
+	if (autostep_checkbox_->GetValue()) {
+		const int rate = autostep_rate_spin_->GetValue();
+
+		autostep_timer_.Start(1000 / (rate > 0 ? rate : 1));
+	} else {
+		autostep_timer_.Stop();
+	}
+}
+
+void MachineInspectorWindow::OnAutoStepTimer(wxTimerEvent &)
+{
+	AutoStepTick();
+}
+
+void MachineInspectorWindow::AutoStepTick()
+{
+	RefreshSnapshot();
+
+	/*
+	 * A step already in flight. Asking for another now would queue steps faster
+	 * than the machine retires them, so this tick is simply dropped and the
+	 * rate becomes "as fast as the machine manages, up to the rate asked for".
+	 *
+	 * This case has to be tested BEFORE the resumed-elsewhere case below,
+	 * because a machine mid-step reads as not paused. Getting that order wrong
+	 * is not a small bug: the first tick steps, the second sees "not paused",
+	 * concludes somebody hit Run and switches itself off - so auto-step took
+	 * exactly one step and then stopped. Measured that way before this was
+	 * split in two. See test_step_is_not_immediately_paused() in
+	 * tests/test_debugger_gate.c, which is about the same transient.
+	 */
+	if (last_snapshot_.debug_step_active != 0) {
+		return;
+	}
+
+	/*
+	 * Only while stopped. A machine that has been resumed from elsewhere - the
+	 * Run button, the debug socket, a breakpoint being cleared - should not be
+	 * quietly single-stepped from under whoever did it, so the box turns itself
+	 * off rather than fighting.
+	 */
+	if (last_snapshot_.debug_paused == 0) {
+		autostep_timer_.Stop();
+		autostep_checkbox_->SetValue(false);
+		return;
+	}
+
+	emulator_.DebuggerStep();
+}
+
+/*
+ * A debugging session written to a file: the breakpoints, the watchpoints, the
+ * trapping and tracing settings, and how the disassembly is rendered.
+ *
+ * Plain text, one setting per line, because it is the sort of file somebody
+ * will want to edit and put in a repository beside the code being debugged.
+ * Unknown keys are ignored, so a file from a later version loads what it can.
+ */
+void MachineInspectorWindow::OnSaveSettings(wxCommandEvent &)
+{
+	wxFileDialog dlg(this, "Save debugging session", wxEmptyString,
+	                 "session.rpcdbg",
+	                 "RPCEmu debugging session (*.rpcdbg)|*.rpcdbg|All files (*)|*",
+	                 wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+
+	if (dlg.ShowModal() != wxID_OK) {
+		return;
+	}
+
+	if (!SaveSessionTo(dlg.GetPath())) {
+		wxMessageBox("That file could not be written.", "Save failed",
+		    wxOK | wxICON_ERROR, this);
+	}
+}
+
+bool MachineInspectorWindow::SaveSessionTo(const wxString &path)
+{
+	wxTextFile file(path);
+
+	if (file.Exists()) {
+		if (!file.Open()) {
+			return false;
+		}
+		file.Clear();
+	} else if (!file.Create()) {
+		return false;
+	}
+
+	file.AddLine("# RPCEmu debugging session");
+	file.AddLine(wxString::Format("trap_undefined %d",
+	    trap_undefined_checkbox_->GetValue() ? 1 : 0));
+	file.AddLine(wxString::Format("trap_prefetch %d",
+	    trap_prefetch_checkbox_->GetValue() ? 1 : 0));
+	file.AddLine(wxString::Format("trap_data_abort %d",
+	    trap_data_abort_checkbox_->GetValue() ? 1 : 0));
+	file.AddLine(wxString::Format("log_exceptions %d",
+	    log_exceptions_checkbox_->GetValue() ? 1 : 0));
+	file.AddLine(wxString::Format("swi_trace %d",
+	    swi_trace_checkbox_->GetValue() ? 1 : 0));
+	file.AddLine(wxString::Format("swi_halt %d",
+	    swi_halt_checkbox_->GetValue() ? 1 : 0));
+	file.AddLine("swi_filter_min " + swi_filter_min_input_->GetValue());
+	file.AddLine("swi_filter_max " + swi_filter_max_input_->GetValue());
+	file.AddLine(wxString::Format("step_skip_irq %d",
+	    step_skip_irq_checkbox_->GetValue() ? 1 : 0));
+	file.AddLine(wxString::Format("step_skip_os %d",
+	    step_skip_os_checkbox_->GetValue() ? 1 : 0));
+	file.AddLine(wxString::Format("disasm_lower %d",
+	    disasm_lower_checkbox_->GetValue() ? 1 : 0));
+	file.AddLine(wxString::Format("disasm_hex %d",
+	    disasm_hex_checkbox_->GetValue() ? 1 : 0));
+	file.AddLine(wxString::Format("disasm_apcs %d",
+	    disasm_apcs_checkbox_->GetValue() ? 1 : 0));
+	file.AddLine(wxString::Format("disasm_ranges %d",
+	    disasm_ranges_checkbox_->GetValue() ? 1 : 0));
+	file.AddLine(wxString::Format("disasm_pcrel %d",
+	    disasm_resolve_checkbox_->GetValue() ? 1 : 0));
+	file.AddLine(wxString::Format("autostep_rate %d",
+	    autostep_rate_spin_->GetValue()));
+	if (!swi_names_path_.IsEmpty()) {
+		file.AddLine("swi_names " + swi_names_path_);
+	}
+
+	/* The breakpoints and watchpoints as the machine has them, not as this
+	   window last drew them. */
+	for (uint32_t i = 0; i < last_snapshot_.debug_breakpoint_count; i++) {
+		const DebugBreakpointInfo &bp = last_snapshot_.debug_breakpoints[i];
+
+		file.AddLine(wxString::Format("breakpoint %08X", bp.address));
+	}
+	for (uint32_t i = 0; i < last_snapshot_.debug_watchpoint_count; i++) {
+		const DebugWatchpointInfo &wp = last_snapshot_.debug_watchpoints[i];
+
+		file.AddLine(wxString::Format("watchpoint %08X %u %d %d %d",
+		    wp.address, wp.size, wp.on_read ? 1 : 0, wp.on_write ? 1 : 0,
+		    wp.log_only ? 1 : 0));
+	}
+
+	return file.Write();
+}
+
+void MachineInspectorWindow::OnLoadSettings(wxCommandEvent &)
+{
+	wxFileDialog dlg(this, "Load debugging session", wxEmptyString, wxEmptyString,
+	                 "RPCEmu debugging session (*.rpcdbg)|*.rpcdbg|All files (*)|*",
+	                 wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+
+	if (dlg.ShowModal() != wxID_OK) {
+		return;
+	}
+
+	if (!LoadSessionFrom(dlg.GetPath())) {
+		wxMessageBox("That file could not be read.", "Load failed",
+		    wxOK | wxICON_ERROR, this);
+	}
+}
+
+bool MachineInspectorWindow::LoadSessionFrom(const wxString &path)
+{
+	wxTextFile file;
+
+	if (!file.Open(path)) {
+		return false;
+	}
+
+	/* Replaced rather than merged: a session file describes a whole setup, and
+	   leaving yesterday's breakpoints in place beside it would be a third thing
+	   that is neither. */
+	emulator_.DebuggerClearBreakpoints();
+	emulator_.DebuggerClearWatchpoints();
+
+	for (wxString line = file.GetFirstLine(); !file.Eof();
+	     line = file.GetNextLine()) {
+		wxString key;
+		long value = 0;
+
+		line.Trim(true).Trim(false);
+		if (line.IsEmpty() || line.StartsWith("#")) {
+			continue;
+		}
+		key = line.BeforeFirst(' ');
+		const wxString rest = line.AfterFirst(' ').Trim(false);
+
+		auto flag = [&](wxCheckBox *box) {
+			if (rest.ToLong(&value)) {
+				box->SetValue(value != 0);
+			}
+		};
+
+		if (key == "trap_undefined")   flag(trap_undefined_checkbox_);
+		else if (key == "trap_prefetch")    flag(trap_prefetch_checkbox_);
+		else if (key == "trap_data_abort")  flag(trap_data_abort_checkbox_);
+		else if (key == "log_exceptions")   flag(log_exceptions_checkbox_);
+		else if (key == "swi_trace")        flag(swi_trace_checkbox_);
+		else if (key == "swi_halt")         flag(swi_halt_checkbox_);
+		else if (key == "step_skip_irq")    flag(step_skip_irq_checkbox_);
+		else if (key == "step_skip_os")     flag(step_skip_os_checkbox_);
+		else if (key == "disasm_lower")     flag(disasm_lower_checkbox_);
+		else if (key == "disasm_hex")       flag(disasm_hex_checkbox_);
+		else if (key == "disasm_apcs")      flag(disasm_apcs_checkbox_);
+		else if (key == "disasm_ranges")    flag(disasm_ranges_checkbox_);
+		else if (key == "disasm_pcrel")     flag(disasm_resolve_checkbox_);
+		else if (key == "swi_filter_min")   swi_filter_min_input_->SetValue(rest);
+		else if (key == "swi_filter_max")   swi_filter_max_input_->SetValue(rest);
+		else if (key == "autostep_rate") {
+			if (rest.ToLong(&value) && value > 0) {
+				autostep_rate_spin_->SetValue((int) value);
+			}
+		} else if (key == "swi_names") {
+			unsigned count = 0;
+
+			/* Not an error worth a dialog: the file may simply have moved
+			   since the session was saved, and everything else in it is
+			   still worth having. */
+			if (arm_disasm_load_swi_names(rest.utf8_str(), &count) == NULL) {
+				swi_names_path_ = rest;
+			} else {
+				rpclog("Machine Inspector: session names a SWI list that "
+				    "cannot be read: %s\n", (const char *) rest.utf8_str());
+			}
+		} else if (key == "breakpoint") {
+			bool ok = false;
+			const uint32_t address = ParseAddress(rest, &ok);
+
+			if (ok) {
+				emulator_.DebuggerAddBreakpoint(address);
+			}
+		} else if (key == "watchpoint") {
+			unsigned long addr = 0, size = 0;
+			int rd = 0, wr = 0, log = 0;
+
+			if (sscanf(rest.utf8_str().data(), "%lx %lu %d %d %d",
+			           &addr, &size, &rd, &wr, &log) == 5) {
+				emulator_.DebuggerAddWatchpoint((uint32_t) addr,
+				    (uint32_t) size, rd != 0, wr != 0, log != 0);
+			}
+		}
+		/* Anything else is from a version that knows more than this one. */
+	}
+
+	/* Push both sets of settings out, then read the machine back so the window
+	   shows what actually took. */
+	ApplyTraceConfig();
+	ApplyDisasmOptions();
+	RefreshSnapshot();
+
+	return true;
+}
+
+/*
+ * SWI names for the module being debugged.
+ *
+ * Asked for in discussion #223: the built-in table covers the OS, so a call
+ * into somebody's own module disassembles as "SWI &62C40" and has to be looked
+ * up by hand every time. A CSV is the format because that is what the tools
+ * that already know these numbers - a module's own headers, an assembler
+ * listing - can be made to produce in one line of anything.
+ */
+void MachineInspectorWindow::OnLoadSwiNames(wxCommandEvent &)
+{
+	wxFileDialog dlg(this, "Load SWI names", wxEmptyString, wxEmptyString,
+	                 "SWI name list (*.csv;*.txt)|*.csv;*.txt|All files (*)|*",
+	                 wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+
+	if (dlg.ShowModal() != wxID_OK) {
+		return;
+	}
+
+	unsigned count = 0;
+	const char *error = arm_disasm_load_swi_names(dlg.GetPath().utf8_str(),
+	                                              &count);
+
+	if (error == NULL) {
+		swi_names_path_ = dlg.GetPath();
+	} else {
+		wxMessageBox(wxString::Format("%s\n\nEach line is a SWI number and a "
+		    "name, separated by a comma:\n\n  &42C40,MyModule_Doit\n"
+		    "  &42C41,MyModule_Undo\n\nNumbers may be written &hex, 0xhex or "
+		    "decimal. Give the chunk base as the module declares it - the X "
+		    "form is matched too, and rendered with its X. Blank lines and "
+		    "lines starting with # are ignored.", error),
+		    "SWI names not loaded", wxOK | wxICON_ERROR, this);
+		return;
+	}
+
+	rpclog("Machine Inspector: %u SWI names loaded from %s\n", count,
+	    (const char *) dlg.GetPath().utf8_str());
+
+	/* Redraw at once: the point of loading them is to read the code on
+	   screen. */
+	RefreshDisassembly(disasm_current_address_);
+}
+
+/*
+ * Save a session, change everything, load it back, and say whether it came
+ * back. Reports each setting rather than a single pass/fail, so a reader of the
+ * log can see WHICH one was lost.
+ */
+bool MachineInspectorWindow::TestSessionRoundTrip(const wxString &path)
+{
+	/* Something distinctive, and not the default of anything. */
+	trap_data_abort_checkbox_->SetValue(true);
+	swi_trace_checkbox_->SetValue(true);
+	step_skip_irq_checkbox_->SetValue(true);
+	step_skip_os_checkbox_->SetValue(true);
+	disasm_lower_checkbox_->SetValue(true);
+	disasm_apcs_checkbox_->SetValue(true);
+	swi_filter_min_input_->SetValue("40000");
+	autostep_rate_spin_->SetValue(17);
+	emulator_.DebuggerClearBreakpoints();
+	emulator_.DebuggerAddBreakpoint(0x00008abc);
+	RefreshSnapshot();
+
+	if (!SaveSessionTo(path)) {
+		rpclog("TEST_INSPECTOR: session could not be saved to %s\n",
+		    (const char *) path.utf8_str());
+		return false;
+	}
+
+	/* Wipe every one of them, so anything that survives is the file's doing. */
+	trap_data_abort_checkbox_->SetValue(false);
+	swi_trace_checkbox_->SetValue(false);
+	step_skip_irq_checkbox_->SetValue(false);
+	step_skip_os_checkbox_->SetValue(false);
+	disasm_lower_checkbox_->SetValue(false);
+	disasm_apcs_checkbox_->SetValue(false);
+	swi_filter_min_input_->SetValue("0");
+	autostep_rate_spin_->SetValue(1);
+	ApplyTraceConfig();
+
+	if (!LoadSessionFrom(path)) {
+		rpclog("TEST_INSPECTOR: session could not be read back\n");
+		return false;
+	}
+
+	struct {
+		const char *what;
+		int got;
+	} checks[] = {
+		{ "trap_data_abort", trap_data_abort_checkbox_->GetValue() ? 1 : 0 },
+		{ "swi_trace",       swi_trace_checkbox_->GetValue() ? 1 : 0 },
+		{ "step_skip_irq",   step_skip_irq_checkbox_->GetValue() ? 1 : 0 },
+		{ "step_skip_os",    step_skip_os_checkbox_->GetValue() ? 1 : 0 },
+		{ "disasm_lower",    disasm_lower_checkbox_->GetValue() ? 1 : 0 },
+		{ "disasm_apcs",     disasm_apcs_checkbox_->GetValue() ? 1 : 0 },
+		{ "swi_filter_min",  swi_filter_min_input_->GetValue() == "40000" },
+		{ "autostep_rate",   autostep_rate_spin_->GetValue() == 17 },
+	};
+	int ok = 1;
+
+	for (size_t i = 0; i < sizeof(checks) / sizeof(checks[0]); i++) {
+		rpclog("TEST_INSPECTOR: session %-16s %s\n", checks[i].what,
+		    checks[i].got ? "restored" : "LOST");
+		if (!checks[i].got) {
+			ok = 0;
+		}
+	}
+
+	/* The breakpoint is read back from the machine, not from the window, so
+	   this also says the load reached the emulator and not just the controls. */
+	RefreshSnapshot();
+	{
+		const int found = (last_snapshot_.debug_breakpoint_count == 1 &&
+		    last_snapshot_.debug_breakpoints[0].address == 0x00008abc);
+
+		rpclog("TEST_INSPECTOR: session breakpoint      %s\n",
+		    found ? "restored" : "LOST");
+		if (!found) {
+			ok = 0;
+		}
+	}
+
+	/* And the trace config as the MACHINE holds it, which is the whole point of
+	   loading a session rather than just filling in a form. */
+	if (!LogTraceControlsAgainstMachine("after loading a session")) {
+		ok = 0;
+	}
+
+	emulator_.DebuggerClearBreakpoints();
+
+	return ok != 0;
+}
+
+/*
+ * Tick auto-step by hand and count what the machine actually retired. The
+ * complaint in discussion #223 was about how many instructions a second the
+ * window could manage, so the measurement is instructions, not ticks.
+ */
+void MachineInspectorWindow::TestAutoStep(int rate, int ticks)
+{
+	uint32_t first;
+	int moved = 0;
+	wxLongLong started;
+
+	emulator_.DebuggerPause();
+	RefreshSnapshot();
+	first = last_snapshot_.regs[15];
+
+	autostep_rate_spin_->SetValue(rate);
+	autostep_checkbox_->SetValue(true);
+	started = wxGetLocalTimeMillis();
+
+	for (int i = 0; i < ticks; i++) {
+		const uint32_t before = last_snapshot_.regs[15];
+
+		AutoStepTick();
+
+		/* A step is asynchronous: the emulator thread has to execute the
+		   instruction. Sample until it lands rather than reading the PC back
+		   immediately, which is the mistake this whole area is about. */
+		for (int waited = 0; waited < 50; waited++) {
+			wxMilliSleep(2);
+			RefreshSnapshot();
+			if (last_snapshot_.debug_step_active == 0 &&
+			    last_snapshot_.debug_paused != 0) {
+				break;
+			}
+		}
+		if (last_snapshot_.regs[15] != before) {
+			moved++;
+		}
+	}
+
+	autostep_checkbox_->SetValue(false);
+	autostep_timer_.Stop();
+
+	{
+		/*
+		 * How long a step takes from the window, which is the question asked in
+		 * discussion #223 - "about 1/2s for each step". Reported per step, not
+		 * as a total, so it can be compared against that directly. The rate
+		 * asked for is the CEILING; this is what the machine managed.
+		 */
+		const long elapsed = (wxGetLocalTimeMillis() - started).ToLong();
+
+		rpclog("TEST_INSPECTOR: auto-step %d ticks at %d/sec moved the PC %d "
+		    "times, %08x -> %08x, %ldms total, %ldms per step\n",
+		    ticks, rate, moved, first, last_snapshot_.regs[15], elapsed,
+		    moved > 0 ? elapsed / moved : 0L);
+	}
+
+	/*
+	 * And the safety property: a machine resumed from elsewhere must switch
+	 * auto-step off rather than single-step it from under whoever resumed it.
+	 */
+	autostep_checkbox_->SetValue(true);
+	autostep_timer_.Start(1000);
+	emulator_.DebuggerResume();
+	RefreshSnapshot();
+	AutoStepTick();
+	rpclog("TEST_INSPECTOR: auto-step on a running machine turned itself %s\n",
+	    autostep_checkbox_->GetValue() ? "ON, WHICH IS WRONG" : "off");
 }
 
 void MachineInspectorWindow::OnAddBreakpoint(wxCommandEvent &)

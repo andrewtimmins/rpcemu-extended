@@ -79,7 +79,7 @@ branch target with the name it lands in.
 
 ## How it is written down
 
-Four options change the rendering without changing what is decoded, set through
+Five options change the rendering without changing what is decoded, set through
 `arm_disasm_set_options()` and exposed as checkboxes beside the Machine
 Inspector's disassembly view. They came out of discussion #223, from somebody
 reading the disassembly against his own assembler source: a listing that does
@@ -92,6 +92,7 @@ every line.
 | `apcs_registers` | `MOV PC, R14` | `MOV pc, lr` |
 | `collapse_reglists` | `{R0, R1, R2, R3, R7}` | `{R0-R3, R7}` |
 | `resolve_pc_relative` | `LDR R11, [PC, #-120]` | `LDR R11, &00007F90` |
+| `lowercase` | `LDMIA R13!, {R0-R3, PC}` | `ldmia r13!, {r0-r3, pc}` |
 
 `hex_immediates` governs the whole line - branch targets, SWI numbers and MSR
 immediates as well as operands - because a listing mixing `&80` with `0x374C` is
@@ -112,9 +113,49 @@ thread writes them when a checkbox moves while the emulator thread may be
 reading: the fields are single bytes, and the worst a race can do is render one
 line with a mixture of old and new settings.
 
-Not done yet, from the same discussion: a lower-case rendering. It cannot be a
-post-pass over the finished string, because SWI names and symbol annotations
-must keep their case, so it needs the mnemonic and operand tables doubled up.
+`lowercase` **is** a post-pass over the finished string, but not a blind one.
+Lower-casing the whole line would turn `SWI OS_WriteC` into `swi os_writec`,
+and `os_writec` is not a lower-case style of `OS_WriteC` - it is wrong, because
+that is somebody's identifier and not a mnemonic. So as the line is built, the
+spans holding a SWI name and a symbol annotation are recorded, and `apply_case()`
+lowers everything outside them. Doubling the mnemonic and operand tables was the
+alternative and would have to be kept in step for ever; four recorded spans do
+not.
+
+The `X` of an X-form SWI belongs to the name for this purpose. `XOS_Exit` is one
+identifier, so the protected span starts one character to the left of the name
+proper - the first version of this ate the `X` and printed `xOS_Exit`.
+
+## SWI names for your own modules
+
+The built-in table is the OS's. A call into a module of your own disassembles as
+`SWI &42C40`, which has to be looked up by hand every time, so names can be
+loaded from a file:
+
+```
+# a module's own SWIs
+&42C40,MyModule_Doit
+&42C41,MyModule_Undo
+```
+
+One SWI per line, the number and the name separated by a comma. Numbers may be
+written `&hex` as RISC OS writes them, `0xhex`, or plain decimal. Blank lines and
+lines beginning with `#` are ignored, and so is any line that is not a
+number-and-name pair - a file that is half wrong loads the half that is right
+rather than failing altogether.
+
+Give the **chunk base**, as the module header declares it. The X bit is ignored
+when matching, so `&42C40` in the file also names `&62C40` in the code, and the
+`X` is still printed from the opcode: the line reads `SWI XMyModule_Doit`. Listing
+both forms would double the file for no information.
+
+Names from a file are searched before the built-in table, so an OS SWI can be
+renamed as well as a new one added.
+
+Load them with the **SWI names...** button beside the disassembly view, or with
+`swi load <path>` on the [debug socket](debugcmd.md); `swi clear` forgets them.
+A saved inspector session records the path and reloads it - see
+[debugger-tracing.md](debugger-tracing.md).
 
 ## Testing
 
