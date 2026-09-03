@@ -14,17 +14,34 @@ device implementations are self-contained and new ones are easy to add.
 Open **Settings → Machine…** (or **Edit** a machine in the startup selector) and choose
 the **Podules** tab. It shows the eight Risc PC expansion-card slots:
 
-- **Slot 0** is the built-in **RPCEmu Support** ROM and is locked. Everything in
-  `poduleroms/` is scanned into that one card, which is how the guest-side modules
-  arrive without anything being installed on the hard disc: HostFS and its filer,
-  scroll-wheel support, the shared clipboard, the RPCEmuSupport module (the host
-  command channel) and SyncClock. See [Where the ROMs live](#where-the-roms-live).
-- **Slot 1** is the **network card** when networking is enabled (locked while on).
-- **Slots 2–7** (and slot 1 when networking is off) are yours to assign.
+The machine fits some of those slots itself, from the bottom up, and they are shown
+holding their card rather than offered:
+
+| Slot | Card | When |
+| --- | --- | --- |
+| 0 | **RPCEmu Support** | Always |
+| 1 | **RPCEmu USB** | Always |
+| next | **RPCEmu Graphics** | When the High-Resolution Graphics Card is enabled |
+| next | **RPCEmu Ethernet** | When networking is enabled |
+
+So the first slot you can assign is **2** on a machine with neither, **3** with one of
+them, and **4** with both. `*Podules` in RISC OS lists them in the same order and by the
+same names, because the interface is reading the description each card puts in its own
+ROM.
+
+Everything in `poduleroms/` is scanned into the Support card, which is how the
+guest-side modules arrive without anything being installed on the hard disc: HostFS and
+its filer, scroll-wheel support, the shared clipboard, the RPCEmuSupport module (the host
+command channel) and SyncClock. See [Where the ROMs live](#where-the-roms-live).
 
 Pick a podule per slot from the drop-down. A podule can only occupy **one** slot — once
 chosen it disappears from the other slots' lists. Some podules have extra options
 (e.g. which host MIDI device to use); those slots get a **Configure** (`…`) button.
+
+Switching the graphics card or networking on takes the next slot up, and a podule
+already in it moves along with its settings; a configuration written before v1.1.19 that
+named one of those slots is moved the same way on load. Before v1.1.19 that card was
+dropped instead, with nothing but a line in `rpclog.txt` to say so (issue #254).
 
 Changes are saved into the machine's `.cfg` (an `[Podules]` section, plus a
 `[PoduleConfig/…]` section for per-device options) and take effect after the emulator is

@@ -58,6 +58,9 @@ dlclose(void *lib)
 #include "rpcemu.h"
 #include "support_files.h"
 #include "iomd.h"
+#include "network.h"
+#include "podulerom.h"
+#include "usbcard.h"
 #include "podules.h"
 #include "podule_config.h"
 
@@ -66,11 +69,13 @@ dlclose(void *lib)
   Risc PC Technical Reference Manual
 */
 
-/*Podules -
-  0 is reserved for extension ROMs
-  1 is for additional IDE interface
-  2-3 are free
-  4-7 are not implemented (yet)*/
+/*
+ * The eight expansion-card slots.
+ *
+ * Which of them the machine fills itself is answered by
+ * podules_builtin_slot_mask() below, and nowhere else. The comment that used to
+ * sit here described an arrangement RPCEmu has not had for years.
+ */
 static podule podules[8];
 static int freepodule;
 
@@ -449,47 +454,174 @@ const podule_callbacks_t podule_callbacks_def =
 };
 
 /* ----------------------------------------------------------------------------
+ * The cards the machine fits itself
+ * -------------------------------------------------------------------------- */
+
+/*
+ * Issue #254. The machine editor said slot 0 was the USB card and slot 1 the
+ * support card, its own footnote said slot 0 was Support and the network card
+ * was built in, an unreachable branch beside it said slot 1 was Ethernet,
+ * podule_config.h said the opposite of the first, and podules.md said something
+ * else again. What the machine actually does was in none of them, and a podule
+ * configured into a slot a built-in card had taken was dropped with nothing but
+ * a line in rpclog.txt to say so.
+ *
+ * So it is written down once, here, and everything else asks.
+ *
+ * The order is not chosen here, it is recorded from resetrpc(): podulerom_reset(),
+ * usbcard_reset(), gfxcard_init(), then network_init(), each taking the lowest
+ * free slot from addpodule(). The support and USB cards are fitted to every
+ * machine; the other two depend on the configuration, which is why this takes
+ * arguments rather than reading the global config - the machine editor asks it
+ * about a machine that is not the one running.
+ */
+uint32_t
+podules_builtin_slot_mask(int gfxcard_enabled, int network_enabled)
+{
+	uint32_t mask = (1u << PODULE_SLOT_SUPPORT) | (1u << PODULE_SLOT_USB);
+	int next = PODULE_SLOT_USB + 1;
+
+	if (gfxcard_enabled) {
+		mask |= 1u << next;
+		next++;
+	}
+	if (network_enabled) {
+		mask |= 1u << next;
+	}
+
+	return mask;
+}
+
+/**
+ * Name of the built-in card in a slot, as *Podules prints it.
+ *
+ * The three native cards hand over their own description chunk, so the name in
+ * the interface is the same string RISC OS reads out of the card's ROM rather
+ * than a second copy of it that can drift.
+ *
+ * @param slot            Backplane slot, 0-7
+ * @param gfxcard_enabled Non-zero if the graphics card is fitted
+ * @param network_enabled Non-zero if the network card is fitted
+ * @return The card's description, or NULL if the slot is free for a user podule
+ */
+const char *
+podules_builtin_slot_name(int slot, int gfxcard_enabled, int network_enabled)
+{
+	int next = PODULE_SLOT_USB + 1;
+
+	if (slot == PODULE_SLOT_SUPPORT) {
+		return podulerom_description;
+	}
+	if (slot == PODULE_SLOT_USB) {
+		return usbcard_description;
+	}
+	if (gfxcard_enabled) {
+		if (slot == next) {
+			/* From gfxroms/RPCEmuGfx, which carries its own description
+			   chunk rather than building one the way the others do. */
+			return "RPCEmu Graphics";
+		}
+		next++;
+	}
+	if (network_enabled && slot == next) {
+		return network_description;
+	}
+
+	return NULL;
+}
+
+/**
+ * The lowest slot a user podule can be fitted to.
+ *
+ * @param gfxcard_enabled Non-zero if the graphics card is fitted
+ * @param network_enabled Non-zero if the network card is fitted
+ * @return Slot number, or PODULE_CONFIG_SLOTS if the backplane is full
+ */
+int
+podules_first_user_slot(int gfxcard_enabled, int network_enabled)
+{
+	const uint32_t mask = podules_builtin_slot_mask(gfxcard_enabled,
+	                                                network_enabled);
+	int i;
+
+	for (i = 0; i < PODULE_CONFIG_SLOTS; i++) {
+		if ((mask & (1u << i)) == 0) {
+			return i;
+		}
+	}
+
+	return PODULE_CONFIG_SLOTS;
+}
+
+/* ----------------------------------------------------------------------------
  * Header podule installation
  * -------------------------------------------------------------------------- */
 
+/**
+ * Is a backplane slot already carrying a card?
+ *
+ * @param n Slot number, 0-7
+ * @return Non-zero if occupied
+ */
+static int
+podule_slot_occupied(int n)
+{
+	const podule *p = &podules[n];
+
+	return p->api.header != NULL ||
+	       p->readb != NULL || p->readw != NULL || p->readl != NULL ||
+	       p->writeb != NULL || p->writew != NULL || p->writel != NULL;
+}
+
 /* Install a header podule at an explicit backplane slot (0-7), so the dialog's
-   "Slot N" maps directly to expansion-card N. Skips the slot if it is already
-   occupied (e.g. by a built-in extension-ROM or network podule). */
+   "Slot N" maps directly to expansion-card N, moving it up to the next free
+   slot if a built-in card is already there. */
 static void
 add_header_podule(const podule_header_t *header, int backplane_slot)
 {
+	const int config_slot = backplane_slot;
 	podule *slot;
 
-	if (backplane_slot < 0 || backplane_slot >= 8) {
+	if (backplane_slot < 0 || backplane_slot >= PODULE_CONFIG_SLOTS) {
 		return;
 	}
 
 	/*
-	 * The built-in cards own the low slots and are not up for negotiation.
-	 * An old configuration may still name one - they used to be allocated in
-	 * call order and a user podule could land there - so this is a refusal
-	 * rather than an assertion.
+	 * A card whose slot is already taken is moved up rather than thrown away.
+	 *
+	 * Issue #254: the machine fits the graphics and network cards into the
+	 * slots above the support and USB cards, so on a machine with networking
+	 * on, slot 2 is Ethernet - and a podule configured there used to be
+	 * dropped with only a line in rpclog.txt, which is how hubersn's CC Lark
+	 * came to be missing. The interface no longer offers a taken slot, but an
+	 * older configuration will still name one, and losing the card is a worse
+	 * answer than fitting it one slot along.
+	 *
+	 * The configured slot is kept for the config section name, so the card's
+	 * own settings follow it and are not orphaned by the move.
 	 */
-	if (backplane_slot < PODULE_CONFIG_FIRST_USER_SLOT) {
-		rpclog("podules: slot %d belongs to a built-in card, so '%s' is not "
-		       "fitted; move it to slot %d or above\n", backplane_slot,
-		       header->short_name, PODULE_CONFIG_FIRST_USER_SLOT);
+	while (backplane_slot < PODULE_CONFIG_SLOTS &&
+	       podule_slot_occupied(backplane_slot)) {
+		backplane_slot++;
+	}
+
+	if (backplane_slot >= PODULE_CONFIG_SLOTS) {
+		rpclog("podules: no free slot for '%s'; the backplane is full\n",
+		       header->short_name);
 		return;
+	}
+
+	if (backplane_slot != config_slot) {
+		rpclog("podules: slot %d is taken by a built-in card, so '%s' is "
+		       "fitted in slot %d instead\n", config_slot,
+		       header->short_name, backplane_slot);
 	}
 
 	slot = &podules[backplane_slot];
-	if (slot->api.header != NULL ||
-	    slot->readb != NULL || slot->readw != NULL || slot->readl != NULL ||
-	    slot->writeb != NULL || slot->writew != NULL || slot->writel != NULL) {
-		rpclog("podules: slot %d already occupied, skipping '%s'\n",
-		       backplane_slot, header->short_name);
-		return;
-	}
-
 	memset(slot, 0, sizeof(*slot));
 	slot->api.header = header;
 	slot->api.p = NULL;
-	slot->config_slot = backplane_slot;
+	slot->config_slot = config_slot;
 
 	if (header->functions.init) {
 		if (header->functions.init(&slot->api) != 0) {
@@ -522,7 +654,34 @@ add_header_podule(const podule_header_t *header, int backplane_slot)
 void
 podules_init_headers(void)
 {
+	uint32_t predicted, actual = 0;
+	int network_on = 0;
 	int i;
+
+#ifdef RPCEMU_NETWORKING
+	network_on = (config.network_type != NetworkType_Off);
+#endif
+
+	/*
+	 * The built-in cards are all in by now, so this is the one moment the
+	 * prediction the machine editor was shown can be checked against the
+	 * backplane it was a prediction about. They differ when a card asked for
+	 * could not be fitted - the graphics card gives up if it cannot allocate
+	 * its framestore, and networking gives up if the host refuses it - and in
+	 * that case every card above it has moved down a slot. Worth a line in the
+	 * log, because the interface will still be naming the slots the other way.
+	 */
+	for (i = 0; i < PODULE_CONFIG_SLOTS; i++) {
+		if (podule_slot_occupied(i)) {
+			actual |= 1u << i;
+		}
+	}
+	predicted = podules_builtin_slot_mask(config.gfxcard_enabled, network_on);
+	if (predicted != actual) {
+		rpclog("podules: built-in cards occupy %02x, not the %02x this "
+		       "configuration asks for; a card it names did not start\n",
+		       (unsigned) actual, (unsigned) predicted);
+	}
 
 	for (i = 0; i < PODULE_CONFIG_SLOTS; i++) {
 		const char *short_name = podule_cfg_get_slot(i);

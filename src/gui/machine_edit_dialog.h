@@ -47,6 +47,18 @@ public:
 	wxString GetNewName() const { return new_name_; }
 	bool WasRenamed() const { return renamed_; }
 
+	/*
+	 * Write every podule row to the log: the slot, what it says, whether it can
+	 * be changed. A wx control's own state cannot be read by a script on macOS,
+	 * so this is how the Podules tab is measured rather than reasoned about -
+	 * see RPCEMU_TEST_PODULES_AFTER in docs/testing.md.
+	 */
+	void LogPoduleRows(const char *what) const;
+
+	/* Switch the graphics card as a user would, so a test can watch the
+	   backplane change shape under it. Test hook only. */
+	void TestSetGfxCard(bool on);
+
 private:
 	enum class HardDiscState {
 		Missing,
@@ -97,6 +109,9 @@ private:
 	void LoadPoduleSettings(wxFileConfig &settings);
 	void SavePoduleSettings(wxFileConfig &settings);
 	void RebuildPoduleChoices();
+	bool PoduleGfxCardOn() const;
+	bool PoduleNetworkOn() const;
+	void RelocateReservedPodules(bool gfx_on, bool net_on);
 	void OnPoduleChanged(wxCommandEvent &event);
 	void OnPoduleConfigure(int slot);
 	void LoadSettings();

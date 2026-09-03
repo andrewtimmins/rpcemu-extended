@@ -53,6 +53,7 @@ machine starting:
 | `RPCEMU_TEST_CLOSE_AFTER` | Asks the window to close, exactly as the close button does, so the confirmation is put to the user rather than answered for them |
 | `RPCEMU_TEST_FULLSCREEN_AFTER` | Enters full screen and leaves it again, logging the window size and the state of the menu, tool and status bars at each step (issues #173, #206) |
 | `RPCEMU_TEST_INSPECTOR_AFTER` | Sets the machine trapping and tracing, opens the Machine Inspector, closes it, opens it again, and logs whether the Trace tab's controls agree with the machine each time (issue #221) |
+| `RPCEMU_TEST_PODULES_AFTER` | Builds the Edit Machine dialog without showing it and logs every podule slot - what it says, whether it can be changed, and what is selected - as configured, then with the graphics card switched on and off again, so the slots the machine fits itself can be watched moving (issue #254) |
 | `RPCEMU_TEST_DISPLAY_TIMING` | Not a delay: set it to 1 and every guest mode change logs where its time went - what the guest asked for, how long the window waited before following, each step of the resize, and whether the GPU or the CPU is drawing (issue #220) |
 
 They need a real display, so none of them work headless. Grep the machine's log

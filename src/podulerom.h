@@ -25,6 +25,10 @@
 #include "podules.h"
 
 extern void podulerom_mouse_wheel_change(int dy);
+
+/* The card's description chunk, which is what RISC OS prints for *Podules.
+   Shared so that the machine editor can name the slot the same way. */
+extern const char podulerom_description[];
 extern void initpodulerom(void);
 extern void podulerom_reset(void);
 

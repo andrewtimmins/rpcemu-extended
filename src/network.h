@@ -38,6 +38,9 @@ void network_swi(uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3,
                  uint32_t r4, uint32_t r5, uint32_t *retr0, uint32_t *retr1);
 
 void network_init(void);
+
+/* The card's description chunk, as *Podules prints it. */
+extern const char network_description[];
 void network_reset(void);
 void network_savestate(FILE *f);
 void network_loadstate(FILE *f);

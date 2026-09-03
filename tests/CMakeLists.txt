@@ -213,6 +213,16 @@ add_executable(test_debugger_gate test_debugger_gate.c test_stubs.c)
 target_link_libraries(test_debugger_gate PRIVATE rpcemu_core m)
 rpcemu_add_test(test_debugger_gate)
 
+# Which expansion-card slots the machine fits its own cards into. Issue #254:
+# five places described that arrangement, no two the same, and none of them what
+# the machine did - so a podule configured into a slot a built-in card had taken
+# was dropped with only a line in rpclog.txt. There is one statement of it now,
+# and this pins it, the names it reports, and that the built-in cards leave no
+# gap for a user podule to fall into.
+add_executable(test_podule_slots test_podule_slots.c test_stubs.c)
+target_link_libraries(test_podule_slots PRIVATE rpcemu_core m)
+rpcemu_add_test(test_podule_slots)
+
 # A reserved CPU mode. Nine of the sixteen mode values the CPSR can hold are
 # reserved, and writing one is UNPREDICTABLE on hardware; updatemode() used to
 # answer with fatal(), so the emulator exited and took the state that would have
@@ -1093,7 +1103,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 68)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 69)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 10")	# JIT differential
 endif()

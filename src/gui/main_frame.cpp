@@ -261,6 +261,7 @@ wxBEGIN_EVENT_TABLE(MainFrame, wxFrame)
 	EVT_TIMER(ID_TIMER_TEST_CLOSE, MainFrame::OnTestCloseTimer)
 	EVT_TIMER(ID_TIMER_TEST_FULLSCREEN, MainFrame::OnTestFullscreenTimer)
 	EVT_TIMER(ID_TIMER_TEST_INSPECTOR, MainFrame::OnTestInspectorTimer)
+	EVT_TIMER(ID_TIMER_TEST_PODULES, MainFrame::OnTestPodulesTimer)
 	EVT_DISPLAY_CHANGED(MainFrame::OnDisplayChanged)
 wxEND_EVENT_TABLE()
 
@@ -281,6 +282,7 @@ MainFrame::MainFrame()
 	, test_close_timer_(this, ID_TIMER_TEST_CLOSE)
 	, test_fullscreen_timer_(this, ID_TIMER_TEST_FULLSCREEN)
 	, test_inspector_timer_(this, ID_TIMER_TEST_INSPECTOR)
+	, test_podules_timer_(this, ID_TIMER_TEST_PODULES)
 {
 	config_deep_copy(&config_copy_, &config);
 	pconfig_copy = &config_copy_;
@@ -925,6 +927,15 @@ void MainFrame::StartEmulator()
 		if (seconds > 0) {
 			rpclog("MainFrame: RPCEMU_TEST_INSPECTOR_AFTER=%ld\n", seconds);
 			test_inspector_timer_.StartOnce((int) (seconds * 1000));
+		}
+	}
+
+	if (const char *after = getenv("RPCEMU_TEST_PODULES_AFTER")) {
+		const long seconds = strtol(after, nullptr, 10);
+
+		if (seconds > 0) {
+			rpclog("MainFrame: RPCEMU_TEST_PODULES_AFTER=%ld\n", seconds);
+			test_podules_timer_.StartOnce((int) (seconds * 1000));
 		}
 	}
 
@@ -2314,6 +2325,36 @@ void MainFrame::OnTestFullscreenTimer(wxTimerEvent &event)
 	default:
 		break;
 	}
+}
+
+/*
+ * The Podules tab, measured rather than described (issue #254).
+ *
+ * The dialog is built but never shown: everything being checked is decided in
+ * its constructor, and a modal dialog with nobody to close it would hang the
+ * run. It reports each slot to the machine's rpclog.txt, and then the same
+ * again with the graphics card switched on, because the whole point of the fix
+ * is that the built-in cards move when the machine's configuration changes.
+ */
+void MainFrame::OnTestPodulesTimer(wxTimerEvent &event)
+{
+	(void) event;
+
+	const wxString config_path =
+	    ConfigPathsAbsoluteConfigPath(wxString::FromUTF8(config_get_path()));
+
+	MachineEditDialog dlg(this, config_path,
+	                      emulator_ == nullptr || !emulator_->IsRunning(),
+	                      emulator_ != nullptr && emulator_->IsRunning());
+
+	dlg.LogPoduleRows("as configured");
+	dlg.TestSetGfxCard(true);
+	dlg.LogPoduleRows("with the graphics card switched on");
+	dlg.TestSetGfxCard(false);
+	dlg.LogPoduleRows("and switched off again");
+
+	rpclog("TEST_PODULES: done\n");
+	dlg.Destroy();
 }
 
 void MainFrame::OnTestInspectorTimer(wxTimerEvent &event)

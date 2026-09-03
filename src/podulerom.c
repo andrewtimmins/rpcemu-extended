@@ -45,7 +45,7 @@ static int podulerom_skip_module(const char *name);
 static uint32_t chunkbase;
 static uint32_t filebase;
 
-static const char description[] = "RPCEmu Support";
+const char podulerom_description[] = "RPCEmu Support";
 
 // Variables for Support Podule functions (currently Scroll Wheel)
 static podule *self = NULL;
@@ -210,7 +210,7 @@ initpodulerom(void)
 	/* Build podulerom header */
 	chunkbase = 0x10;
 	filebase = chunkbase + 8 * file + 8;
-	poduleromsize = filebase + ((sizeof(description) + 3) & ~3u); /* Word align description string */
+	poduleromsize = filebase + ((sizeof(podulerom_description) + 3) & ~3u); /* Word align description string */
 	podulerom = calloc(poduleromsize, 1);
 	if (podulerom == NULL) {
 		fatal("initpodulerom: Out of Memory");
@@ -227,9 +227,9 @@ initpodulerom(void)
 
 	podulerom[12] = 1; // IRQ Status Bit Mask
 
-	memcpy(podulerom + filebase, description, sizeof(description));
-	makechunk(0xf5, filebase, sizeof(description)); // 0xf5 = Device Data, Description
-	filebase += (sizeof(description) + 3) & ~3u;
+	memcpy(podulerom + filebase, podulerom_description, sizeof(podulerom_description));
+	makechunk(0xf5, filebase, sizeof(podulerom_description)); // 0xf5 = Device Data, Description
+	filebase += (sizeof(podulerom_description) + 3) & ~3u;
 
 	/* Add each file into the podule's rom */
 	for (i = 0; i < file; i++) {
