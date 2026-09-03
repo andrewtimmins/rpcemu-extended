@@ -332,7 +332,16 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-14, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 2
+    # Eight, and Windows is why. This creates a venv and pip-installs the MCP
+    # server's dependencies from PyPI, which pulls pydantic and its compiled
+    # core; two minutes killed the Windows leg on 3 September 2026 part way
+    # through "import pydantic", reported as a KeyboardInterrupt and the run as
+    # cancelled rather than failed - which reads like somebody pressed stop.
+    #
+    # The other two legs fit, but not by much: ubuntu took 89 seconds of the 120
+    # and macOS 29. A cap that close to the normal cost is a liability rather
+    # than caution; this is a tripwire against a hung pip, not a budget.
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v7
 
@@ -972,10 +981,30 @@ jobs:
           # The Intel and Apple Silicon Homebrews update independently, so
           # "brew update" is what holds them to one formula revision.
           # Retried because it fetches from github.com.
+          #
+          # ★ A failed update is no longer fatal.
+          #
+          # It used to exit 1, because two slices built against different
+          # upstream revisions could not be fused: build-macos.sh refused the
+          # pair. That is no longer true - staged_library_agreement() compares
+          # the formula rather than the version, says so in the log when the two
+          # runners have drifted, and fuses them, because a fat dylib is two
+          # independent binaries and each architecture loads its own half.
+          #
+          # So this exit 1 was left guarding an invariant that no longer exists,
+          # and a transient github.com failure would still have killed the whole
+          # matrix for nothing. The worst a failed update can now do is leave
+          # the two slices on different revisions of the same formula, which is
+          # reported rather than silent.
           for attempt in 1 2 3; do
             arch -x86_64 /usr/local/bin/brew update && break
             echo "brew update failed (attempt $attempt of 3)"
-            [ "$attempt" = 3 ] && exit 1
+            if [ "$attempt" = 3 ]; then
+              echo "::warning::brew update failed three times; the x86_64 and" \
+                   "arm64 slices may be built against different revisions." \
+                   "The fuse step reports it if so."
+              break
+            fi
             sleep $((attempt * 15))
           done
           arch -x86_64 /usr/local/bin/brew install cmake ninja pkg-config wxwidgets sdl2 libvncserver libusb
