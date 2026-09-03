@@ -21,6 +21,16 @@ the exception handler, exactly as it would at a breakpoint, so you can inspect
 registers and memory at the point of the fault. (IRQ and FIQ are ordinary
 interrupts and are not trappable here; a SWI is caught by SWI tracing below.)
 
+**The address reported is the instruction that faulted, not the handler.** The
+halt has to be deferred - `exception()` needs to finish building the handler's
+state before the machine can usefully stop - so the machine really is sitting at
+the vector, and the registers and the mode are the handler's. But the vector
+address is the same for every data abort in the session and tells you nothing,
+whereas the aborting instruction is the whole question, so that is what the
+pause reports and what the disassembly view follows. Asked for in discussion
+#223, where the previous behaviour was described as landing "in the OS somewhere
+rather than at my instruction".
+
 Exceptions can also be **logged** to the Trace tab without halting — useful for
 seeing, for example, the harmless app-space probes RISC OS performs during boot.
 
@@ -74,7 +84,86 @@ SWI tracing records every operating-system call the guest makes. Options:
 - **Halt on SWI** — pause when a matching SWI is executed.
 - **Filter** — restrict tracing/halting to an inclusive SWI-number range (the
   full range means all SWIs). SWI names are decoded from the built-in
-  disassembler table.
+  disassembler table, plus any loaded from a file - see
+  [disassembly.md](disassembly.md).
+
+## Stepping: passing through interrupts and the OS
+
+Two settings on the Trace tab, under **While stepping, pass through**:
+
+- **IRQ and FIQ** — a step that lands in interrupt or fast-interrupt mode keeps
+  going until the machine is back out.
+- **the OS (ROM)** — the same for anything at or above `&F0000000`, where the
+  ROM lives, and for the hardware vector page below `&40`.
+
+Both are off unless asked for. They exist because stepping through your own code
+on a running RISC OS means landing in the timer interrupt every few
+instructions, and the way out - step, step, step until the PC comes back - is
+exactly the tedium the setting removes. Measured on a RISC OS 5.31 desktop: one
+step from inside the ROM, with both settings on, arrived at `&000086D4` in
+application space.
+
+The vector page is in the list because the vectors are as much the OS as the ROM
+is, and they are in low RAM rather than above `&F0000000`. A filter written on
+the ROM address alone let every step stop on a vector, which is no more use than
+the ROM was.
+
+**Only steps are filtered.** A breakpoint or a watchpoint is an explicit request
+for a particular address and fires wherever it is, ROM and interrupt handlers
+included; a trapped exception is the thing being hunted. Filtering those would
+hide what was asked for.
+
+One consequence worth knowing: if the machine never reaches unfiltered code, the
+step never completes and the machine runs on. **Pause** still gets control back.
+
+## Auto-step
+
+**Auto** beside the step buttons keeps stepping at the rate in the box next to
+it, from 1 to 200 steps a second, so code can be watched running slowly without
+holding down Step. The rate is a ceiling: if the machine has not finished the
+previous step the tick is dropped rather than queued.
+
+It switches itself off if the machine is resumed from anywhere else - the Run
+button, the debug socket, a breakpoint being cleared - rather than
+single-stepping it from under whoever resumed it.
+
+Measured on a RISC OS 5.31 desktop on Apple Silicon: 25 steps in 173ms, about
+**6ms a step**. Discussion #223 reported roughly half a second a step before the
+inspector stopped polling on a timer and started refreshing when the debugger's
+state actually changes.
+
+## Saving a session
+
+**Save session...** and **Load session...** on the Trace tab write the whole
+debugging setup to a file: the breakpoints and watchpoints, the exception traps,
+the SWI tracing and its filter, the two stepping filters, how the disassembly is
+rendered, the auto-step rate, and the path of any SWI name file that is loaded.
+
+It is plain text, one setting per line, because it is the sort of file that
+wants editing by hand and keeping in a repository beside the code being
+debugged:
+
+```
+# RPCEmu debugging session
+trap_data_abort 1
+step_skip_irq 1
+disasm_lower 1
+swi_names /home/me/MyModule/swis.csv
+breakpoint 000086D4
+watchpoint 0000A100 4 0 1 0
+```
+
+Loading **replaces** rather than merges: a session file describes a whole setup,
+and leaving yesterday's breakpoints in place beside it would be a third thing
+that is neither. Unknown keys are ignored, so a file written by a later version
+loads what it can, and a named SWI file that has since moved is logged rather
+than turned into a dialog - everything else in the session is still worth
+having.
+
+The two halves of that file - the writer and the reader - spell each key out as
+a string literal a hundred lines apart, which no compiler can pair up. A reader
+that was never written would lose the setting in silence, with the file still
+looking right, so `tests/check-session-keys.sh` compares the two lists.
 
 ## Logging watchpoints
 

@@ -240,8 +240,25 @@ typedef struct DebugTraceConfig {
 	uint8_t log_exceptions;		/**< Also emit exception events to the ring */
 	uint8_t swi_trace_enabled;	/**< Emit SWI events to the ring */
 	uint8_t swi_trace_halt;		/**< Halt on a matching SWI */
-	uint8_t reserved0;
-	uint8_t reserved1;
+
+	/**
+	 * While stepping, do not stop inside an interrupt.
+	 *
+	 * "When debugging main code in games, you're not interested in seeing OS or
+	 * IRQ code execute" - discussion #223. A step that lands in IRQ or FIQ mode
+	 * keeps going until it is back out. Breakpoints and watchpoints still fire
+	 * wherever they are set: an explicit request is not noise.
+	 */
+	uint8_t step_skip_irq;
+
+	/**
+	 * While stepping, do not stop in the OS.
+	 *
+	 * Anything at or above 0xf0000000, where the ROM lives, and the hardware
+	 * vector page below 0x40. Same rule as above: stepping skips it,
+	 * breakpoints do not.
+	 */
+	uint8_t step_skip_os;
 	uint32_t swi_filter_min;	/**< Inclusive SWI-number range (0..0xffffffff = all) */
 	uint32_t swi_filter_max;
 } DebugTraceConfig;

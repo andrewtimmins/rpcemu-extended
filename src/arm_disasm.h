@@ -91,7 +91,38 @@ typedef struct {
 	 * from the instruction alone.
 	 */
 	uint8_t resolve_pc_relative;
+
+	/**
+	 * Render in lower case: `mov r0, #&80`.
+	 *
+	 * Mnemonics, registers, conditions and hex digits follow it. What does NOT
+	 * is a SWI's name or a symbol annotation - those are somebody else's
+	 * identifiers and changing their case makes them wrong, not just
+	 * differently styled.
+	 */
+	uint8_t lowercase;
 } ArmDisasmOptions;
+
+/**
+ * Add SWI names from a file, consulted before the built-in table.
+ *
+ * A debugger that says "SWI 0x62c40" where your own module's SWI should be is
+ * of limited use, and the built-in table can only ever know about RISC OS's
+ * own. Asked for in discussion #223 for exactly that: debugging third-party
+ * code whose SWI chunk means nothing here.
+ *
+ * The format is one `number,name` per line, the number in C notation so both
+ * `0x62c40` and `404032` work, `#` and blank lines ignored. A name given here
+ * wins over the built-in table, so a chunk can be renamed as well as added.
+ *
+ * @param path  File to read
+ * @param count Filled in with the number of names loaded, if not NULL
+ * @return NULL on success, or a static string saying what was wrong
+ */
+const char *arm_disasm_load_swi_names(const char *path, unsigned *count);
+
+/** Forget every name loaded by arm_disasm_load_swi_names(). */
+void arm_disasm_clear_swi_names(void);
 
 /** Replace the rendering options. NULL restores the defaults (all clear). */
 void arm_disasm_set_options(const ArmDisasmOptions *opts);

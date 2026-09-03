@@ -452,6 +452,21 @@ static uint32_t debugger_halt_pc = 0;
 static uint32_t debugger_halt_opcode = 0;
 static uint32_t debugger_last_pc = 0;
 static uint32_t debugger_last_opcode = 0;
+/*
+ * Where the instruction that caused a trapped exception was.
+ *
+ * The halt itself is deferred so exception() can finish setting the vector up,
+ * which means the machine stops at the handler's first instruction - and that
+ * is the address the halt used to report. "Seeing the instruction before the
+ * CPU jumps to the hardware vector would be more useful" (discussion #223), and
+ * it is: the handler is the same handful of addresses every time, while the
+ * instruction that faulted is the question. Recorded here and used as the halt
+ * PC when the pause lands.
+ */
+static uint32_t debugger_fault_pc = 0;
+static uint32_t debugger_fault_opcode = 0;
+static int debugger_fault_pc_valid = 0;
+
 static uint32_t debugger_hit_address = 0;
 static uint32_t debugger_hit_value = 0;
 static uint8_t debugger_hit_size = 0;
@@ -1170,6 +1185,41 @@ debugger_breakpoint_should_halt(DebugBreakpointInfo *bp)
 	return 1;
 }
 
+/**
+ * Is this an address a step should pass straight through?
+ *
+ * Both halves are off unless asked for. See step_skip_irq and step_skip_os.
+ */
+static int
+debugger_step_skipping(uint32_t pc)
+{
+	if (debugger_trace_config.step_skip_irq) {
+		const uint32_t m = arm.mode & 0xf;
+
+		if (m == IRQ || m == FIQ) {
+			return 1;
+		}
+	}
+	if (debugger_trace_config.step_skip_os) {
+		/*
+		 * The ROM, and the hardware vector page.
+		 *
+		 * The vectors are as much the OS as the ROM is, and they are in low
+		 * RAM rather than above 0xf0000000, so a filter written on the ROM
+		 * address alone lets every step land on one. Measured: stepping out of
+		 * the ROM idle loop with only the ROM filtered stopped at 0x00000008,
+		 * which is no more use to somebody debugging their own code than the
+		 * ROM was. Sixteen words - the eight vectors and the eight addresses
+		 * behind them - and nothing else in zero page, which is workspace and
+		 * would never be stepped through anyway.
+		 */
+		if (pc < 0x40u || pc >= 0xf0000000u) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 int
 debugger_instruction_hook(uint32_t pc, uint32_t opcode)
 {
@@ -1207,9 +1257,39 @@ debugger_instruction_hook(uint32_t pc, uint32_t opcode)
 
 	if (debugger_pause_requested) {
 		DebugPauseReason reason = debugger_pending_reason;
+
 		if (reason == DebugPauseReason_None) {
 			reason = DebugPauseReason_User;
 		}
+
+		/*
+		 * A step that has landed somewhere the user said they did not want to
+		 * see. Keep going rather than stopping: another step is armed and the
+		 * machine runs on until it is back in code they care about.
+		 *
+		 * Only for stepping. A breakpoint or a watchpoint is an explicit
+		 * request for THIS address and fires wherever it is, and a trapped
+		 * exception is the thing being hunted - filtering those would be
+		 * hiding what was asked for.
+		 */
+		if (reason == DebugPauseReason_Step && debugger_step_skipping(pc)) {
+			debugger_pause_requested = 0;
+			debugger_pending_reason = DebugPauseReason_None;
+			debugger_step_remaining = 1;
+			debugger_step_active = 1;
+			debugger_refresh_hook_active();
+			return 0;
+		}
+
+		/* An exception trap reports the instruction that faulted, not the
+		   handler this has stopped at. */
+		if (reason == DebugPauseReason_Exception && debugger_fault_pc_valid) {
+			debugger_enter_pause(reason, debugger_fault_pc,
+			    debugger_fault_opcode);
+			debugger_fault_pc_valid = 0;
+			return 1;
+		}
+
 		debugger_enter_pause(reason, pc, opcode);
 		return 1;
 	}
@@ -1380,10 +1460,19 @@ debugger_exception_hook(uint32_t mmode, uint32_t address, uint32_t pc)
 	}
 
 	/* Deferred halt: let exception() finish setting up the vector, then the
-	   core stops at the handler's first instruction via the instruction hook. */
+	   core stops at the handler's first instruction via the instruction hook.
+	   The address REPORTED, though, is the instruction that faulted - see
+	   debugger_fault_pc. */
 	if (trap && !debugger_paused && !debugger_pause_requested) {
 		debugger_pause_requested = 1;
 		debugger_pending_reason = DebugPauseReason_Exception;
+		debugger_fault_pc = pc;
+		/* The instruction hook saw this instruction a moment ago if it was
+		   running at all; if it was not, there is no honest answer and zero
+		   says so rather than showing the handler's first word as the
+		   faulting one. */
+		debugger_fault_opcode = (debugger_last_pc == pc) ? debugger_last_opcode : 0;
+		debugger_fault_pc_valid = 1;
 		debugger_refresh_hook_active();
 	}
 }

@@ -34,6 +34,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 
@@ -70,6 +71,198 @@ static const char *reg_names_apcs[16] = {
 
 /* See ArmDisasmOptions. Zeroed, so the defaults are the plain ARM rendering. */
 static ArmDisasmOptions disasm_opts;
+
+/*
+ * SWI names loaded from a file, searched before the built-in table so a chunk
+ * can be renamed as well as added. Grown as needed and freed by
+ * arm_disasm_clear_swi_names().
+ */
+typedef struct {
+	uint32_t number;
+	char *name;
+} UserSwiName;
+
+/* Bit 17 of a SWI number: the error-returning "X" form. */
+#define SWI_X_BIT 0x20000u
+
+static UserSwiName *user_swis;
+static size_t user_swi_count;
+static size_t user_swi_alloc;
+
+/*
+ * Spans of the rendered line that lower case must not touch: a SWI's name and a
+ * symbol annotation. They are identifiers belonging to somebody else, and
+ * "os_writec" is not a different style of "OS_WriteC", it is wrong.
+ *
+ * Recorded as the line is built and consumed by apply_case() at the end. File
+ * static, like the options, and reset at the start of every render.
+ */
+#define DISASM_MAX_KEEP 4
+static struct {
+	size_t start;
+	size_t len;
+} keep_case[DISASM_MAX_KEEP];
+static unsigned keep_case_count;
+
+static void
+keep_case_reset(void)
+{
+	keep_case_count = 0;
+}
+
+static void
+keep_case_add(size_t start, size_t len)
+{
+	if (keep_case_count < DISASM_MAX_KEEP && len > 0) {
+		keep_case[keep_case_count].start = start;
+		keep_case[keep_case_count].len = len;
+		keep_case_count++;
+	}
+}
+
+/** Lower case the rendered line, leaving the protected spans alone. */
+static void
+apply_case(char *buf)
+{
+	size_t i;
+
+	if (!disasm_opts.lowercase || buf == NULL) {
+		return;
+	}
+
+	for (i = 0; buf[i] != '\0'; i++) {
+		unsigned k;
+		int protected_here = 0;
+
+		for (k = 0; k < keep_case_count; k++) {
+			if (i >= keep_case[k].start &&
+			    i < keep_case[k].start + keep_case[k].len) {
+				protected_here = 1;
+				break;
+			}
+		}
+		if (!protected_here && buf[i] >= 'A' && buf[i] <= 'Z') {
+			buf[i] = (char) (buf[i] - 'A' + 'a');
+		}
+	}
+}
+
+const char *
+arm_disasm_load_swi_names(const char *path, unsigned *count)
+{
+	FILE *f;
+	char line[256];
+	unsigned loaded = 0;
+
+	if (count != NULL) {
+		*count = 0;
+	}
+	if (path == NULL) {
+		return "no file named";
+	}
+
+	f = fopen(path, "r");
+	if (f == NULL) {
+		return "could not be opened";
+	}
+
+	while (fgets(line, sizeof(line), f) != NULL) {
+		char *comma;
+		char *name;
+		char *end;
+		unsigned long number;
+		size_t len;
+
+		char *number_text = line;
+
+		/* Comments and blank lines, indented or not. */
+		while (*number_text == ' ' || *number_text == '\t') {
+			number_text++;
+		}
+		if (*number_text == '#' || *number_text == '\n' ||
+		    *number_text == '\r' || *number_text == '\0') {
+			continue;
+		}
+
+		comma = strchr(number_text, ',');
+		if (comma == NULL) {
+			continue;	/* not a pair; skipped rather than fatal */
+		}
+		*comma = '\0';
+
+		/*
+		 * "&62C40" as well as "0x62C40" and plain decimal. The ampersand is how
+		 * every RISC OS document, module header and assembler listing writes a
+		 * hex number, so it is the form somebody will type first; strtoul() has
+		 * never heard of it and would silently skip the line.
+		 */
+		if (*number_text == '&') {
+			number = strtoul(number_text + 1, &end, 16);
+			if (end == number_text + 1) {
+				continue;
+			}
+		} else {
+			number = strtoul(number_text, &end, 0);
+			if (end == number_text) {
+				continue;	/* no number where one was wanted */
+			}
+		}
+
+		name = comma + 1;
+		while (*name == ' ' || *name == '\t') {
+			name++;
+		}
+		len = strlen(name);
+		while (len > 0 && (name[len - 1] == '\n' || name[len - 1] == '\r' ||
+		                   name[len - 1] == ' ' || name[len - 1] == '\t')) {
+			name[--len] = '\0';
+		}
+		if (len == 0) {
+			continue;
+		}
+
+		if (user_swi_count == user_swi_alloc) {
+			const size_t want = user_swi_alloc ? user_swi_alloc * 2 : 32;
+			UserSwiName *bigger = realloc(user_swis, want * sizeof(*bigger));
+
+			if (bigger == NULL) {
+				fclose(f);
+				return "ran out of memory";
+			}
+			user_swis = bigger;
+			user_swi_alloc = want;
+		}
+
+		user_swis[user_swi_count].name = strdup(name);
+		if (user_swis[user_swi_count].name == NULL) {
+			fclose(f);
+			return "ran out of memory";
+		}
+		user_swis[user_swi_count].number = (uint32_t) number;
+		user_swi_count++;
+		loaded++;
+	}
+
+	fclose(f);
+	if (count != NULL) {
+		*count = loaded;
+	}
+	return NULL;
+}
+
+void
+arm_disasm_clear_swi_names(void)
+{
+	size_t i;
+
+	for (i = 0; i < user_swi_count; i++) {
+		free(user_swis[i].name);
+	}
+	free(user_swis);
+	user_swis = NULL;
+	user_swi_count = 0;
+	user_swi_alloc = 0;
+}
 
 /** The register naming in force. */
 #define reg_names (disasm_opts.apcs_registers ? reg_names_apcs : reg_names_arm)
@@ -1510,7 +1703,27 @@ lookup_swi_name(uint32_t swi_num)
 {
 	/* Strip the X bit for lookup */
 	uint32_t base_swi = swi_num & 0x1FFFF;
+	/* The X bit on its own, for the file's benefit: see below. */
+	uint32_t no_x = swi_num & ~SWI_X_BIT;
 	size_t i;
+
+	/*
+	 * Names from a file first, so a chunk can be renamed as well as added.
+	 *
+	 * Matched with the X bit ignored on BOTH sides, because a module header
+	 * declares its chunk base - the number without the X - while the code being
+	 * read almost always calls the X form. Requiring the file to list both
+	 * would double every line of it for no information. The X prefix is still
+	 * printed from the opcode, so an X call renders "XMyModule_Doit" against a
+	 * file that said "MyModule_Doit".
+	 */
+	for (i = 0; i < user_swi_count; i++) {
+		if (user_swis[i].number == swi_num ||
+		    (user_swis[i].number & ~SWI_X_BIT) == no_x ||
+		    user_swis[i].number == base_swi) {
+			return user_swis[i].name;
+		}
+	}
 
 	for (i = 0; i < SWI_TABLE_SIZE; i++) {
 		if (swi_table[i].number == base_swi) {
@@ -1535,18 +1748,28 @@ disasm_swi(uint32_t opcode, uint32_t address, char *buf, size_t buflen)
 	(void) address;
 
 	/* Check for X form (error-returning) */
-	is_x = (imm & 0x20000) != 0;
+	is_x = (imm & SWI_X_BIT) != 0;
 	name = lookup_swi_name(imm);
 
 	if (name) {
-		/* Known SWI - show name */
+		/* Known SWI - show name. The name's span is recorded so lower case
+		   leaves it alone: it is an identifier, not styling. */
+		int n;
+
 		if (is_x) {
-			return snprintf(buf, buflen, "SWI%s X%s",
-			                cond_names[cond], name);
+			n = snprintf(buf, buflen, "SWI%s X%s",
+			             cond_names[cond], name);
+			/* The X belongs to the name: XOS_WriteC is what the SWI is
+			   called, and "xOS_WriteC" is not a lower-case rendering of
+			   it. Protect one character further left. */
+			keep_case_add((size_t) (n - (int) strlen(name) - 1),
+			              strlen(name) + 1);
 		} else {
-			return snprintf(buf, buflen, "SWI%s %s",
-			                cond_names[cond], name);
+			n = snprintf(buf, buflen, "SWI%s %s",
+			             cond_names[cond], name);
+			keep_case_add((size_t) (n - (int) strlen(name)), strlen(name));
 		}
+		return n;
 	} else {
 		/* Unknown SWI - show number */
 		if (imm < 0x200) {
@@ -2351,6 +2574,7 @@ arm_disasm_sym(uint32_t opcode, uint32_t address, char *buffer, size_t buflen,
 		return NULL;
 	}
 
+	keep_case_reset();
 	cls = arm_classify(opcode);
 
 	switch (cls) {
@@ -2432,9 +2656,15 @@ arm_disasm_sym(uint32_t opcode, uint32_t address, char *buffer, size_t buflen,
 					snprintf(buffer + len, buflen - len,
 					         "  ; %s", name);
 				}
+				/* Everything from the comment marker on is the
+				   symbol's, and its case is not ours to change. */
+				keep_case_add(len, strlen(buffer) - len);
 			}
 		}
 	}
+
+	/* Last, so it sees the finished line and every protected span. */
+	apply_case(buffer);
 
 	return buffer;
 }

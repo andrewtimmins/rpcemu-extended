@@ -30,6 +30,7 @@
 #include <string.h>
 
 #include "rpcemu.h"
+#include "arm.h"		/* arm.mode, and the mode numbers the filter tests */
 
 static int failures;
 
@@ -301,6 +302,158 @@ test_step_is_not_immediately_paused(void)
 	check("and the step is over", status.step_active == 0);
 }
 
+/*
+ * A step lands where the user said they did not want to look, and keeps going.
+ *
+ * WHY THIS EXISTS. Asked for in discussion #223: stepping through application
+ * code is useless when every few steps drops into the timer interrupt or into
+ * the middle of the ROM, and the way out - step, step, step until the PC comes
+ * back - is exactly the tedium the filter is meant to remove.
+ *
+ * The filter must apply to STEPS ONLY. A breakpoint set inside the ROM is an
+ * explicit request for that address; silently not stopping there would be the
+ * same silent failure the gate test above exists to prevent, and worse, because
+ * the person set the breakpoint deliberately. So the last two cases here matter
+ * as much as the first two.
+ */
+static void
+test_step_filters(void)
+{
+	DebuggerStatus status;
+	DebugTraceConfig cfg;
+
+	printf("Stepping past IRQs and the OS\n");
+
+	/* Interrupt mode, filter on. */
+	reset_debugger();
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.step_skip_irq = 1;
+	debugger_set_trace_config(&cfg);
+
+	debugger_request_pause(DebugPauseReason_User);
+	debugger_instruction_hook(0x8000, 0xe1a00000);
+	arm.mode = IRQ;
+	debugger_single_step(1);
+	debugger_after_instruction(0x8000, 0xe1a00000);
+	debugger_instruction_hook(0x8004, 0xe1a00000);
+
+	debugger_get_status(&status);
+	check("a step into IRQ mode does not stop", status.paused == 0);
+	check("and another step is armed", status.step_active != 0);
+
+	/* Back in user code, and it stops. */
+	arm.mode = USER;
+	debugger_after_instruction(0x8004, 0xe1a00000);
+	debugger_instruction_hook(0x8008, 0xe1a00000);
+
+	debugger_get_status(&status);
+	check("it stops once the mode is back to the user's", status.paused != 0);
+	check("at the first instruction outside the interrupt",
+	    status.halt_pc == 0x8008);
+
+	/* The OS half of the same idea, on the address rather than the mode. */
+	reset_debugger();
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.step_skip_os = 1;
+	debugger_set_trace_config(&cfg);
+	arm.mode = USER;
+
+	debugger_request_pause(DebugPauseReason_User);
+	debugger_instruction_hook(0x8000, 0xe1a00000);
+	debugger_single_step(1);
+	debugger_after_instruction(0x8000, 0xe1a00000);
+	debugger_instruction_hook(0xfc001000, 0xe1a00000);
+
+	debugger_get_status(&status);
+	check("a step into the ROM does not stop", status.paused == 0);
+
+	/* The vector page is the OS too, and is in low RAM rather than the ROM;
+	   filtering on the ROM address alone let every step land on a vector. */
+	debugger_after_instruction(0xfc001000, 0xe1a00000);
+	debugger_instruction_hook(0x00000008, 0xea000000);
+	debugger_get_status(&status);
+	check("nor does it stop on a hardware vector", status.paused == 0);
+
+	debugger_after_instruction(0x00000008, 0xea000000);
+	debugger_instruction_hook(0x8004, 0xe1a00000);
+	debugger_get_status(&status);
+	check("it stops on the way back out", status.paused != 0);
+	check("at the address returned to", status.halt_pc == 0x8004);
+
+	/* And now the half that must NOT be filtered. */
+	reset_debugger();
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.step_skip_os = 1;
+	cfg.step_skip_irq = 1;
+	debugger_set_trace_config(&cfg);
+	arm.mode = IRQ;
+	debugger_add_breakpoint(0xfc002000);
+	debugger_instruction_hook(0xfc002000, 0xe1a00000);
+
+	debugger_get_status(&status);
+	check("a breakpoint in the ROM still fires", status.paused != 0);
+	check("and reports its own address", status.halt_pc == 0xfc002000);
+
+	reset_debugger();
+	arm.mode = USER;
+}
+
+/*
+ * A trapped exception reports the instruction that faulted, not the vector.
+ *
+ * WHY THIS EXISTS. The halt is deferred on purpose - exception() has to finish
+ * building the handler's state before the machine can usefully stop - so the
+ * instruction hook that actually performs the halt is looking at the handler's
+ * first instruction, several thousand instructions away from anything the
+ * person debugging wrote. Reporting THAT address is technically where the
+ * machine is and practically useless, which is what discussion #223 said: the
+ * useful answer is which instruction aborted.
+ */
+static void
+test_exception_reports_the_faulting_instruction(void)
+{
+	DebuggerStatus status;
+	DebugTraceConfig cfg;
+
+	printf("A trapped exception reports the faulting instruction\n");
+
+	reset_debugger();
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.trap_data_abort = 1;
+	debugger_set_trace_config(&cfg);
+
+	/* The load that aborts, seen by the hook first. */
+	debugger_instruction_hook(0x9000, 0xe5901000);
+	debugger_exception_hook(ABORT, 0x14, 0x9000);
+
+	check_gate("exception pending", 1);
+
+	/* exception() has now vectored, and the hook next sees the handler. */
+	debugger_instruction_hook(0x00000014, 0xea000000);
+
+	debugger_get_status(&status);
+	check("stopped", status.paused != 0);
+	check("the reason is an exception",
+	    status.reason == DebugPauseReason_Exception);
+	check("the address is the load, not the vector", status.halt_pc == 0x9000);
+	check("and the opcode is the load's", status.halt_opcode == 0xe5901000);
+
+	/* A second, untrapped exception must not re-report the first one's
+	   address: the recorded PC is consumed by the halt it caused. */
+	reset_debugger();
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.trap_undefined = 1;
+	debugger_set_trace_config(&cfg);
+	debugger_instruction_hook(0xa000, 0xe7f000f0);
+	debugger_exception_hook(UNDEFINED, 0x08, 0xa000);
+	debugger_instruction_hook(0x00000008, 0xea000000);
+	debugger_get_status(&status);
+	check("an undefined instruction reports its own address",
+	    status.halt_pc == 0xa000);
+
+	reset_debugger();
+}
+
 int
 main(void)
 {
@@ -313,6 +466,8 @@ main(void)
 	test_traps();
 	test_combinations();
 	test_step_is_not_immediately_paused();
+	test_step_filters();
+	test_exception_reports_the_faulting_instruction();
 
 	printf("\n%s\n", failures ? "FAILED" : "All tests passed");
 
