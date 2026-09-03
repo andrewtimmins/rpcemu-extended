@@ -1477,6 +1477,41 @@ debugger_bad_mode(uint32_t mode, uint32_t pc)
 }
 
 /**
+ * Called from opSWI() when the guest executes the debugger's breakpoint SWI.
+ *
+ * The SWI is swallowed by the caller whatever this returns, so a machine with
+ * no debugger runs straight past one rather than taking an error for a SWI
+ * RISC OS has never heard of.
+ *
+ * Halts immediately, like debugger_bad_mode() and unlike the exception and SWI
+ * traps: there is no handler to reach and the instruction that asked to stop is
+ * the interesting one, so debugger_halt_pc names it. The SWI has already been
+ * consumed by the time the machine stops, so resuming or stepping continues at
+ * the instruction after it - which is what "step over it when resumed" asks
+ * for.
+ *
+ * @param pc Address of the SWI itself
+ * @return 1 if the machine was halted, 0 if there was nothing to halt into
+ */
+int
+debugger_break_swi(uint32_t pc)
+{
+	debugger_trace_push(TraceEvent_Swi, pc, 0, RPCEMU_SWI_BREAKPOINT,
+	    arm.reg[0], arm.reg[cpsr]);
+
+	if (!config.debug_enabled) {
+		return 0;
+	}
+	if (debugger_paused) {
+		return 1;
+	}
+
+	rpclog("Debugger: breakpoint SWI at %08x\n", (unsigned) pc);
+	debugger_enter_pause(DebugPauseReason_BreakSwi, pc, 0xefffffffu);
+	return 1;
+}
+
+/**
  * Write a message to the RPCEmu log file rpclog.txt
  *
  * @param format printf style format of message

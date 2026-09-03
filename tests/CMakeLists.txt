@@ -192,6 +192,15 @@ if(APPLE)
     rpcemu_add_shell_test(test_fuse_libs test_fuse_libs.sh)
 endif()
 
+# The breakpoint SWI a guest can put in its own source. It must halt, must be
+# swallowed so RISC OS never takes an error for an unknown SWI, and must name
+# the SWI's own address rather than R15 which leads it by eight - the first
+# version reported the address plus eight. Links rpcemu_core for the real
+# opSWI().
+add_executable(test_break_swi test_break_swi.c test_stubs.c)
+target_link_libraries(test_break_swi PRIVATE rpcemu_core m)
+rpcemu_add_test(test_break_swi)
+
 add_executable(test_bad_mode test_bad_mode.c test_stubs.c)
 target_link_libraries(test_bad_mode PRIVATE rpcemu_core m)
 rpcemu_add_test(test_bad_mode)
@@ -733,7 +742,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 44)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 45)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 8")	# JIT differential
 endif()

@@ -81,6 +81,24 @@ emulator_fill_snapshot(MachineSnapshot *snapshot)
 	}
 
 	snapshot->cpsr = arm.reg[cpsr];
+
+	/* Only the five exception modes bank an SPSR. Reading arm.spsr in User or
+	   System mode would report whatever the last exception left there, which is
+	   worse than reporting nothing. */
+	switch (arm.mode & 0xf) {
+	case FIQ:
+	case IRQ:
+	case SUPERVISOR:
+	case ABORT:
+	case UNDEFINED:
+		snapshot->spsr = arm.spsr[arm.mode & 0xf];
+		snapshot->spsr_valid = 1;
+		break;
+	default:
+		snapshot->spsr = 0;
+		snapshot->spsr_valid = 0;
+		break;
+	}
 	snapshot->mode = arm.mode;
 
 	const uint32_t pc = PC;

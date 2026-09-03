@@ -236,7 +236,14 @@ wxWindow *MachineInspectorWindow::BuildStatePanel(wxWindow *parent)
 	mode_label_ = new wxStaticText(panel, wxID_ANY, "Mode");
 	mmu_label_ = new wxStaticText(panel, wxID_ANY, "MMU");
 	core_label_ = new wxStaticText(panel, wxID_ANY, "Core");
+	spsr_label_ = new wxStaticText(panel, wxID_ANY, "SPSR --------");
+	ApplyMonoFont(spsr_label_);
+	spsr_label_->SetToolTip(
+	    "The saved PSR of the current mode, and the mode a return through it "
+	    "would enter. User and System have none.");
+
 	psr_box->Add(cpsr_label_, 0, wxLEFT | wxBOTTOM, 4);
+	psr_box->Add(spsr_label_, 0, wxLEFT | wxBOTTOM, 4);
 	psr_box->Add(mode_label_, 0, wxLEFT | wxBOTTOM, 4);
 	psr_box->Add(mmu_label_, 0, wxLEFT | wxBOTTOM, 4);
 	psr_box->Add(core_label_, 0, wxLEFT | wxBOTTOM, 4);
@@ -687,6 +694,18 @@ void MachineInspectorWindow::ApplyProcessorState(const MachineSnapshot &snapshot
 	}
 
 	cpsr_label_->SetLabel(wxString::Format("CPSR %08X", snapshot.cpsr));
+
+	/*
+	 * The SPSR, and - the useful part - the mode a return through it would
+	 * enter. Tracing a fault back through an exception return means knowing
+	 * where it is about to go, and the number alone does not say.
+	 */
+	if (snapshot.spsr_valid) {
+		spsr_label_->SetLabel(wxString::Format("SPSR %08X -> %s",
+		    snapshot.spsr, ModeToString(snapshot.spsr)));
+	} else {
+		spsr_label_->SetLabel("SPSR -------- (none in this mode)");
+	}
 	mode_label_->SetLabel(wxString::Format("%s %s (%s)",
 	    ModeToString(snapshot.mode),
 	    ARM_MODE_32(snapshot.mode) ? "32-bit" : "26-bit",
