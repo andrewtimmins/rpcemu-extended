@@ -246,7 +246,8 @@ dc_cmd_trace_config(char *r, char *args)
 			dc_error("usage: trace config [data_abort=0|1] [prefetch_abort=0|1] "
 			         "[undefined=0|1] [log_exceptions=0|1] [swi_log=0|1] "
 			         "[swi_halt=0|1] [swi_min=<hex>] [swi_max=<hex>] "
-			         "[step_skip_irq=0|1] [step_skip_os=0|1]");
+			         "[step_skip_irq=0|1] [step_skip_os=0|1] "
+			         "[step_skip_swi=0|1]");
 			return;
 		}
 		*eq = '\0';
@@ -262,6 +263,7 @@ dc_cmd_trace_config(char *r, char *args)
 		else if (strcmp(tok, "swi_max") == 0)        { cfg.swi_filter_max = (uint32_t) strtoul(eq + 1, NULL, 16); }
 		else if (strcmp(tok, "step_skip_irq") == 0)  { cfg.step_skip_irq = v ? 1 : 0; }
 		else if (strcmp(tok, "step_skip_os") == 0)   { cfg.step_skip_os = v ? 1 : 0; }
+		else if (strcmp(tok, "step_skip_swi") == 0)  { cfg.step_skip_swi = v ? 1 : 0; }
 		else {
 			dc_error("unknown trace config key");
 			return;
@@ -274,11 +276,11 @@ dc_cmd_trace_config(char *r, char *args)
 	    "{\"ok\":true,\"data_abort\":%u,\"prefetch_abort\":%u,\"undefined\":%u,"
 	    "\"log_exceptions\":%u,\"swi_log\":%u,\"swi_halt\":%u,"
 	    "\"swi_min\":\"%08x\",\"swi_max\":\"%08x\","
-	    "\"step_skip_irq\":%u,\"step_skip_os\":%u}",
+	    "\"step_skip_irq\":%u,\"step_skip_os\":%u,\"step_skip_swi\":%u}",
 	    cfg.trap_data_abort, cfg.trap_prefetch_abort, cfg.trap_undefined,
 	    cfg.log_exceptions, cfg.swi_trace_enabled, cfg.swi_trace_halt,
 	    (unsigned) cfg.swi_filter_min, (unsigned) cfg.swi_filter_max,
-	    cfg.step_skip_irq, cfg.step_skip_os);
+	    cfg.step_skip_irq, cfg.step_skip_os, cfg.step_skip_swi);
 }
 
 /**

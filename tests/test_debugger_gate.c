@@ -399,6 +399,132 @@ test_step_filters(void)
 }
 
 /*
+ * A step that executes a SWI runs it to completion.
+ *
+ * WHY THIS EXISTS. The two filters above are written on where the PC is, which
+ * covers the OS's own SWIs because their handlers are in the ROM. Discussion
+ * #223 asked for the other half: "unless it's an SWI you've actively trapped,
+ * these all execute to completion" - which has to hold for a SWI belonging to a
+ * module in RAM as well, since that is the one somebody debugging their own
+ * module keeps landing inside.
+ *
+ * Two things here are easy to get wrong and are pinned. The return address is
+ * taken from what the hook recorded on the way in, not from the PC afterwards:
+ * a SWI has moved R15 to the hardware vector by the time the instruction is
+ * over, and using it would arm the run-to somewhere in the kernel. And a SWI
+ * that something else has stopped on must not be run through - that is what
+ * "actively trapped" means.
+ */
+static void
+test_stepping_past_swis(void)
+{
+	DebuggerStatus status;
+	DebugTraceConfig cfg;
+
+	printf("Stepping past SWIs\n");
+
+	reset_debugger();
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.step_skip_swi = 1;
+	debugger_set_trace_config(&cfg);
+	arm.mode = USER;
+
+	/* Paused on a SWI, and one step of it. */
+	debugger_request_pause(DebugPauseReason_User);
+	debugger_instruction_hook(0x8000, 0xef000002);	/* SWI OS_Write0 */
+	debugger_single_step(1);
+	debugger_after_instruction(0x00000008, 0xef000002);
+
+	debugger_get_status(&status);
+	check("a step that executes a SWI does not stop", status.paused == 0);
+
+	/* Wherever the handler goes, it is passed through. */
+	debugger_instruction_hook(0x00000008, 0xea000000);
+	debugger_instruction_hook(0x01c04f30, 0xe1a00000);	/* a module, in RAM */
+	debugger_get_status(&status);
+	check("nor inside a handler in RAM, which no address filter covers",
+	    status.paused == 0);
+
+	/* And it stops at the instruction after the SWI. */
+	debugger_instruction_hook(0x8004, 0xe1a00000);
+	debugger_get_status(&status);
+	check("it stops when the SWI returns", status.paused != 0);
+	check("at the instruction after the SWI, not eight bytes on",
+	    status.halt_pc == 0x8004);
+
+	/* Off by default: an unconfigured debugger steps into the vector. */
+	reset_debugger();
+	memset(&cfg, 0, sizeof(cfg));
+	debugger_set_trace_config(&cfg);
+
+	debugger_request_pause(DebugPauseReason_User);
+	debugger_instruction_hook(0x8000, 0xef000002);
+	debugger_single_step(1);
+	debugger_after_instruction(0x00000008, 0xef000002);
+	debugger_instruction_hook(0x00000008, 0xea000000);
+
+	debugger_get_status(&status);
+	check("with the filter off the step lands on the vector",
+	    status.paused != 0 && status.halt_pc == 0x00000008);
+
+	/* A trapped SWI outranks the filter. This is the halting SWI trap's
+	   deferred pause, which is requested while the instruction is running. */
+	reset_debugger();
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.step_skip_swi = 1;
+	debugger_set_trace_config(&cfg);
+
+	debugger_request_pause(DebugPauseReason_User);
+	debugger_instruction_hook(0x8000, 0xef000002);
+	debugger_single_step(1);
+	debugger_request_pause(DebugPauseReason_Swi);
+	debugger_after_instruction(0x00000008, 0xef000002);
+	debugger_instruction_hook(0x00000008, 0xea000000);
+
+	debugger_get_status(&status);
+	check("a trapped SWI still stops", status.paused != 0);
+	check("at its handler, which is what the trap is for",
+	    status.halt_pc == 0x00000008);
+
+	/* A breakpoint inside the handler is an explicit request for that
+	   address and fires even though the SWI is being passed through. */
+	reset_debugger();
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.step_skip_swi = 1;
+	debugger_set_trace_config(&cfg);
+	debugger_add_breakpoint(0x01c04f30);
+
+	debugger_request_pause(DebugPauseReason_User);
+	debugger_instruction_hook(0x8000, 0xef000002);
+	debugger_single_step(1);
+	debugger_after_instruction(0x00000008, 0xef000002);
+	debugger_instruction_hook(0x01c04f30, 0xe1a00000);
+
+	debugger_get_status(&status);
+	check("a breakpoint in the handler still fires", status.paused != 0);
+	check("and reports its own address", status.halt_pc == 0x01c04f30);
+
+	/* Anything that is not a SWI is stepped as usual. */
+	reset_debugger();
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.step_skip_swi = 1;
+	debugger_set_trace_config(&cfg);
+
+	debugger_request_pause(DebugPauseReason_User);
+	debugger_instruction_hook(0x8000, 0xe1a00000);
+	debugger_single_step(1);
+	debugger_after_instruction(0x8000, 0xe1a00000);
+	debugger_instruction_hook(0x8004, 0xe1a00000);
+
+	debugger_get_status(&status);
+	check("an ordinary instruction still steps one at a time",
+	    status.paused != 0 && status.halt_pc == 0x8004);
+
+	reset_debugger();
+	arm.mode = USER;
+}
+
+/*
  * A trapped exception reports the instruction that faulted, not the vector.
  *
  * WHY THIS EXISTS. The halt is deferred on purpose - exception() has to finish
@@ -467,6 +593,7 @@ main(void)
 	test_combinations();
 	test_step_is_not_immediately_paused();
 	test_step_filters();
+	test_stepping_past_swis();
 	test_exception_reports_the_faulting_instruction();
 
 	printf("\n%s\n", failures ? "FAILED" : "All tests passed");

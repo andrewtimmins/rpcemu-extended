@@ -541,8 +541,16 @@ void MachineInspectorWindow::BuildUi()
 	    "the OS (ROM)");
 	step_skip_os_checkbox_->SetToolTip(
 	    "The same for anything at or above &F0000000, which is the ROM.");
+	step_skip_swi_checkbox_ = new wxCheckBox(trace_panel, ID_TRACE_CONFIG,
+	    "SWIs");
+	step_skip_swi_checkbox_->SetToolTip(
+	    "A step that executes a SWI runs it to completion and stops at the "
+	    "instruction after it, whether its handler is in the ROM or in a "
+	    "module in RAM. A trapped SWI, and a breakpoint inside the handler, "
+	    "still stop.");
 	step_box->Add(step_skip_irq_checkbox_, 0, wxALL, 4);
 	step_box->Add(step_skip_os_checkbox_, 0, wxALL, 4);
+	step_box->Add(step_skip_swi_checkbox_, 0, wxALL, 4);
 	step_box->AddStretchSpacer();
 	step_box->Add(new wxButton(trace_panel, ID_SETTINGS_SAVE, "Save session..."),
 	    0, wxALL, 2);
@@ -1283,6 +1291,7 @@ void MachineInspectorWindow::SeedTraceConfig(const MachineSnapshot &snapshot)
 	swi_halt_checkbox_->SetValue(cfg.swi_trace_halt != 0);
 	step_skip_irq_checkbox_->SetValue(cfg.step_skip_irq != 0);
 	step_skip_os_checkbox_->SetValue(cfg.step_skip_os != 0);
+	step_skip_swi_checkbox_->SetValue(cfg.step_skip_swi != 0);
 
 	/* The full range is "no filter", which is what an empty box means, so it
 	   is left showing its hint rather than 0 and FFFFFFFF. */
@@ -1337,6 +1346,7 @@ void MachineInspectorWindow::ApplyTraceConfig()
 	cfg.swi_trace_halt = swi_halt_checkbox_->GetValue() ? 1 : 0;
 	cfg.step_skip_irq = step_skip_irq_checkbox_->GetValue() ? 1 : 0;
 	cfg.step_skip_os = step_skip_os_checkbox_->GetValue() ? 1 : 0;
+	cfg.step_skip_swi = step_skip_swi_checkbox_->GetValue() ? 1 : 0;
 
 	bool ok = false;
 	const uint32_t min = ParseAddress(swi_filter_min_input_->GetValue(), &ok);
@@ -1772,6 +1782,8 @@ bool MachineInspectorWindow::SaveSessionTo(const wxString &path)
 	    step_skip_irq_checkbox_->GetValue() ? 1 : 0));
 	file.AddLine(wxString::Format("step_skip_os %d",
 	    step_skip_os_checkbox_->GetValue() ? 1 : 0));
+	file.AddLine(wxString::Format("step_skip_swi %d",
+	    step_skip_swi_checkbox_->GetValue() ? 1 : 0));
 	file.AddLine(wxString::Format("disasm_lower %d",
 	    disasm_lower_checkbox_->GetValue() ? 1 : 0));
 	file.AddLine(wxString::Format("disasm_hex %d",
@@ -1862,6 +1874,7 @@ bool MachineInspectorWindow::LoadSessionFrom(const wxString &path)
 		else if (key == "swi_halt")         flag(swi_halt_checkbox_);
 		else if (key == "step_skip_irq")    flag(step_skip_irq_checkbox_);
 		else if (key == "step_skip_os")     flag(step_skip_os_checkbox_);
+		else if (key == "step_skip_swi")    flag(step_skip_swi_checkbox_);
 		else if (key == "disasm_lower")     flag(disasm_lower_checkbox_);
 		else if (key == "disasm_hex")       flag(disasm_hex_checkbox_);
 		else if (key == "disasm_apcs")      flag(disasm_apcs_checkbox_);
@@ -1970,6 +1983,7 @@ bool MachineInspectorWindow::TestSessionRoundTrip(const wxString &path)
 	swi_trace_checkbox_->SetValue(true);
 	step_skip_irq_checkbox_->SetValue(true);
 	step_skip_os_checkbox_->SetValue(true);
+	step_skip_swi_checkbox_->SetValue(true);
 	disasm_lower_checkbox_->SetValue(true);
 	disasm_apcs_checkbox_->SetValue(true);
 	swi_filter_min_input_->SetValue("40000");
@@ -1989,6 +2003,7 @@ bool MachineInspectorWindow::TestSessionRoundTrip(const wxString &path)
 	swi_trace_checkbox_->SetValue(false);
 	step_skip_irq_checkbox_->SetValue(false);
 	step_skip_os_checkbox_->SetValue(false);
+	step_skip_swi_checkbox_->SetValue(false);
 	disasm_lower_checkbox_->SetValue(false);
 	disasm_apcs_checkbox_->SetValue(false);
 	swi_filter_min_input_->SetValue("0");
@@ -2008,6 +2023,7 @@ bool MachineInspectorWindow::TestSessionRoundTrip(const wxString &path)
 		{ "swi_trace",       swi_trace_checkbox_->GetValue() ? 1 : 0 },
 		{ "step_skip_irq",   step_skip_irq_checkbox_->GetValue() ? 1 : 0 },
 		{ "step_skip_os",    step_skip_os_checkbox_->GetValue() ? 1 : 0 },
+		{ "step_skip_swi",   step_skip_swi_checkbox_->GetValue() ? 1 : 0 },
 		{ "disasm_lower",    disasm_lower_checkbox_->GetValue() ? 1 : 0 },
 		{ "disasm_apcs",     disasm_apcs_checkbox_->GetValue() ? 1 : 0 },
 		{ "swi_filter_min",  swi_filter_min_input_->GetValue() == "40000" },

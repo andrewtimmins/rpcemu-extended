@@ -64,6 +64,7 @@ check(const char *what, int ok)
 #define OP_B		0xEA000000u	/* B  pc+8    - not a call */
 #define OP_MOV		0xE1A00000u	/* MOV R0, R0 - not a call */
 #define OP_MOV_PC_LR	0xE1A0F00Eu	/* MOV PC, LR - a return, not a call */
+#define OP_SWI		0xEF000002u	/* SWI OS_Write0 - a call into the OS */
 
 /**
  * Put the machine at `pc`, executing `opcode`, and stopped.
@@ -136,6 +137,36 @@ test_step_over_a_call(void)
 	debugger_resume();
 	debugger_instruction_hook(CODE + 4, OP_MOV);
 	check("the target does not fire a second time", !is_paused());
+}
+
+/*
+ * A SWI is stepped over too.
+ *
+ * WHY THIS EXISTS. It was not, and the reply to discussion #223 said it was.
+ * arm_decode() sets is_call for BL and for nothing else, so step over a SWI
+ * fell through to a plain single step and dropped the person debugging on the
+ * hardware vector at &00000008, several thousand instructions of kernel
+ * dispatch away from the code they were reading.
+ */
+static void
+test_step_over_a_swi(void)
+{
+	printf("Stepping over a SWI\n");
+
+	halt_at(CODE, OP_SWI);
+	check("step over a SWI is accepted", debugger_step_over());
+	check("... and runs the machine", !is_paused());
+	check("... to a target rather than stepping into the vector",
+	      !is_stepping());
+
+	/* The vector, and then a handler in RAM: neither stops it. */
+	debugger_instruction_hook(0x00000008, OP_B);
+	check("... not stopping on the vector", !is_paused());
+	debugger_instruction_hook(0x01c04f30, OP_MOV);
+	check("... nor in a handler in RAM", !is_paused());
+
+	debugger_instruction_hook(CODE + 4, OP_MOV);
+	check("... and stops at the instruction after the SWI", is_paused());
 }
 
 static void
@@ -318,6 +349,7 @@ main(void)
 	}
 
 	test_step_over_a_call();
+	test_step_over_a_swi();
 	test_step_over_a_non_call();
 	test_step_over_needs_a_stopped_machine();
 	test_step_out();

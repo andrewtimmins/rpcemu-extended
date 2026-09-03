@@ -266,6 +266,7 @@ private:
 	wxCheckBox *swi_halt_checkbox_ = nullptr;
 	wxCheckBox *step_skip_irq_checkbox_ = nullptr;
 	wxCheckBox *step_skip_os_checkbox_ = nullptr;
+	wxCheckBox *step_skip_swi_checkbox_ = nullptr;
 	wxTextCtrl *swi_filter_min_input_ = nullptr;
 	wxTextCtrl *swi_filter_max_input_ = nullptr;
 	wxTextCtrl *trace_view_ = nullptr;
