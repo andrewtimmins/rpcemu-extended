@@ -993,6 +993,10 @@ void MainFrame::EnterFullScreen()
 		SetStatusBar(nullptr);
 		bar->Destroy();
 	}
+	/* ★ ShowFullScreen FIRST, then the flag - see the long note in
+	   ExitFullScreen(). IsFullScreen() is overridden to answer with
+	   full_screen_, and wx's own ShowFullScreen() returns immediately if it
+	   already agrees with the state being asked for. */
 	ShowFullScreen(true, wxFULLSCREEN_ALL);
 	full_screen_ = true;
 	LogBarState("entered");
@@ -1074,16 +1078,47 @@ void MainFrame::ExitFullScreen()
 	   before/after entering and before/after leaving. */
 	LogBarState("before leaving");
 
-	/* Cleared first: SizeWindowToGuest() below does nothing while it is set, and
-	   it is the thing that puts the window back. */
-	full_screen_ = false;
-
 	if (panel_ != nullptr) {
 		panel_->SetFullScreen(false);
 	}
-	/* Both bars come back with it: see the note in EnterFullScreen() for why
-	   nothing here shows them by hand any more. */
+
+	/*
+	 * ★ full_screen_ IS STILL SET HERE, AND MUST BE.
+	 *
+	 * IsFullScreen() is overridden in this class to answer with full_screen_,
+	 * and it is virtual, so wx's own code asks us. wxFrame::ShowFullScreen()
+	 * begins:
+	 *
+	 *     if ( IsFullScreen() == show )
+	 *         return false;
+	 *
+	 * Clearing the flag before this call therefore told wx we were already out
+	 * of full screen, and the whole exit path was skipped: the tool bar never
+	 * got its Show(true), the menu was never re-attached with
+	 * ::SetMenu(hwnd, m_hMenu), and wxTopLevelWindowMSW never restored
+	 * m_fsOldWindowStyle - which is the title bar. On Windows the window came
+	 * back with no title bar, no menu bar and no tool bar, and stayed that way
+	 * for the rest of the session, because nothing else ever puts them back.
+	 *
+	 * That is issue #219, and #206 before it. The reporter's log named it: the
+	 * native menu was "attached" before entering and "GONE" on all three later
+	 * readings, while wx still believed the menu bar was shown. The status bar
+	 * was the one thing that came back, and only because ExitFullScreen()
+	 * rebuilds that itself a few lines below.
+	 *
+	 * It also explains the earlier report against 1.1.14 that leaving full
+	 * screen "appeared to do nothing at all" - it did nothing at all - which
+	 * was worked around by calling SizeWindowToGuest() below rather than by
+	 * finding this.
+	 *
+	 * EnterFullScreen() has the mirror of this: it sets full_screen_ AFTER its
+	 * ShowFullScreen(true), for the same reason. Neither order is tidiness.
+	 */
 	ShowFullScreen(false);
+
+	/* Now it can be cleared: wx has finished, and SizeWindowToGuest() below
+	   does nothing while it is set. */
+	full_screen_ = false;
 	if (GetStatusBar() == nullptr) {
 		BuildStatusBar();
 	}
