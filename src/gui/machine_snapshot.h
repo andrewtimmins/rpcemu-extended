@@ -38,6 +38,14 @@ typedef struct MachineSnapshot {
 
 	uint32_t regs[16];
 	uint32_t cpsr;
+
+	/* The saved PSR of the mode the machine is in, and whether that mode has
+	   one. User and System do not; the five exception modes each have their
+	   own. Asked for in discussion #223 by somebody tracing an ADFFS fault
+	   through 36 places that write SPSR and 14 that return through it - the
+	   mode a return is about to restore is not visible any other way. */
+	uint32_t spsr;
+	int spsr_valid;
 	uint32_t mode;
 	uint32_t pc;
 

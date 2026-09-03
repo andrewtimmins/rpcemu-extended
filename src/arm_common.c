@@ -584,6 +584,25 @@ opSWI(uint32_t opcode)
 		swinum = arm.reg[12] & 0xdffff;
 	}
 
+	/*
+	 * The debugger's breakpoint SWI, which a guest puts in its own source to
+	 * stop the machine where it stands. Checked before anything else and on
+	 * the whole comment field, not the masked swinum above, and swallowed
+	 * either way so RISC OS never sees a SWI it does not know. See
+	 * RPCEMU_SWI_BREAKPOINT.
+	 *
+	 * Ungated: the point of it is that it works without anything being
+	 * switched on first. One comparison against a constant per SWI.
+	 */
+	if ((opcode & 0x00ffffffu) == RPCEMU_SWI_BREAKPOINT) {
+		/* PC, not arm.reg[15]: R15 leads the instruction by eight, and the
+		   address wanted is the SWI's own so the halt names the line the
+		   programmer wrote. */
+		debugger_break_swi(PC);
+		arm.reg[cpsr] &= ~VFLAG;
+		return 0;
+	}
+
 	/* Debugger: trace/halt on SWI (gated to stay free when tracing is off) */
 	if (debugger_swi_trace_active) {
 		debugger_swi_hook(swinum, opcode);

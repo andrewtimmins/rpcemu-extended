@@ -24,6 +24,27 @@ interrupts and are not trappable here; a SWI is caught by SWI tracing below.)
 Exceptions can also be **logged** to the Trace tab without halting — useful for
 seeing, for example, the harmless app-space probes RISC OS performs during boot.
 
+## A breakpoint in your own source
+
+`SWI &FFFFFF` — the instruction word `&EFFFFFFF` — halts the machine in the
+debugger. The emulator swallows it, so RISC OS never sees a SWI it does not
+know, no error is raised, and execution resumes at the instruction after it.
+With the debugger disabled (`debug_enabled=0`) it is still swallowed and nothing
+else happens, so code carrying one runs unchanged.
+
+The pause reason reads *breakpoint SWI* and the halt PC is the SWI's own
+address. It needs nothing switched on first: putting the instruction in the
+source is the request.
+
+It exists because an address breakpoint is awkward for module code, where the
+address moves every time the module is rebuilt and reloaded. Suggested in
+discussion #223 by somebody who had been getting the same effect by trapping a
+SWI in his own module's handler.
+
+The number is in the unallocated range and is matched on the whole 24-bit
+comment field, not on the masked SWI number `opSWI()` works with — several
+ordinary SWIs share that masked value and must not be caught by it.
+
 ## A reserved CPU mode
 
 The mode field of the CPSR has sixteen possible values and the architecture

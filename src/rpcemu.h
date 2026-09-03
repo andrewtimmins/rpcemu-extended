@@ -119,8 +119,32 @@ typedef enum {
 	/* A guest write asked for one of the nine mode values the architecture
 	   reserves. Not a trap the user turns on: it is always wrong, and the
 	   emulator used to answer it by ending the process. */
-	DebugPauseReason_BadMode = 7
+	DebugPauseReason_BadMode = 7,
+	/* The guest executed the debugger's breakpoint SWI. Not a trap the user
+	   switches on: the instruction is in their own code and putting it there
+	   is the request. */
+	DebugPauseReason_BreakSwi = 8
 } DebugPauseReason;
+
+/**
+ * The SWI a guest can execute to stop the machine in the debugger.
+ *
+ * `SWI &FFFFFF`, the instruction word `0xEFFFFFFF`, chosen because it is in the
+ * unallocated range and so cannot collide with anything RISC OS or a module
+ * offers. Suggested in discussion #223 by somebody who had been getting the
+ * same effect by trapping a SWI in his own module's handler - a breakpoint you
+ * can put in the source is worth a great deal when the address moves every time
+ * the code is rebuilt.
+ *
+ * The emulator swallows it: it never reaches RISC OS, so no "SWI not known"
+ * error, and execution resumes at the instruction after it. With the debugger
+ * disabled it is swallowed and nothing else happens, so code carrying one still
+ * runs.
+ *
+ * Matched on the whole 24-bit comment field rather than on opSWI()'s masked
+ * `swinum`, which folds bits out and would let other SWIs alias onto it.
+ */
+#define RPCEMU_SWI_BREAKPOINT	0x00ffffffu
 
 typedef struct {
 	uint32_t address;
@@ -663,6 +687,14 @@ extern uint32_t debugger_drain_trace_events(DebugTraceEvent *out, uint32_t max, 
 extern void debugger_exception_hook(uint32_t mmode, uint32_t address, uint32_t pc);
 extern int debugger_swi_hook(uint32_t swinum, uint32_t opcode);
 extern int debugger_bad_mode(uint32_t mode, uint32_t pc);
+
+/**
+ * The guest executed RPCEMU_SWI_BREAKPOINT.
+ *
+ * @param pc Address of the SWI itself
+ * @return 1 if the machine was halted, 0 if there was no debugger to halt into
+ */
+extern int debugger_break_swi(uint32_t pc);
 
 /* host GUI bridge */
 extern void rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize, int yl, int yh, int double_size, int host_xsize, int host_ysize);
