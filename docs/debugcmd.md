@@ -74,6 +74,11 @@ response has an `"ok"` boolean; failures carry `"error"`.
 | `ping` | `{ok, paused, model, dynarec}` |
 | `regs` | `{ok, paused, pc, cpsr, mode, flags, regs:[16 hex]}` |
 | `reg set <0-15\|pc\|cpsr> <hex>` | `{ok, reg, value}` — refused unless paused |
+`regs` also returns `spsr`: the saved PSR of the current mode as a hex string,
+or `null` in User and System mode, which bank none. Reporting the array's
+contents there would be whatever the last exception left behind. Knowing the
+mode an exception return is about to restore is not answerable from the CPSR.
+
 | `status` | `{ok, paused, pause_requested, reason, halt_pc, halt_opcode, last_pc, hit_address, hit_value, hit_size, hit_is_write, step_active, trace_pending, pc_symbol, pc_offset, symbols_loaded, breakpoints:[…], watchpoints:[…]}` — see below |
 | `mem <addr> <len> [phys]` | `{ok, addr, physical, len, data:"<hex>"}` — `len` capped 4096; virtual unless `phys` |
 | `mem write <addr> <hexbytes> [phys]` | `{ok, addr, written, requested}` — reports how many landed rather than failing the whole request |
@@ -201,7 +206,9 @@ way the first one after a boot is; send a throwaway command before trusting an
 empty result.
 
 `status.reason` / pause reasons: `0`=none `1`=user `2`=breakpoint `3`=watchpoint
-`4`=step `5`=exception `6`=SWI `7`=reserved CPU mode. Trace `type`: `0`=exception
+`4`=step `5`=exception `6`=SWI `7`=reserved CPU mode `8`=breakpoint SWI
+(`SWI &FFFFFF` in the guest's own code; see
+[debugger-tracing.md](debugger-tracing.md)). Trace `type`: `0`=exception
 `1`=SWI `2`=watchpoint; for an exception, `arg0` is `0`=undefined instruction
 `1`=prefetch abort `2`=data abort `3`=reserved CPU mode.
 

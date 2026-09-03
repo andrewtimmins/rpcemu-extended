@@ -425,11 +425,34 @@ dc_cmd_regs(char *r)
 	size_t n;
 	int i;
 
+	/* The SPSR, for the five modes that bank one. User and System do not, and
+	   reporting whatever the last exception left in the array would be worse
+	   than reporting nothing - so it comes back null for those. Asked for in
+	   discussion #223: walking an exception return means knowing the mode it is
+	   about to restore, and the CPSR does not say. */
+	{
+		char spsr[24];
+
+		switch (arm.mode & 0xf) {
+		case FIQ:
+		case IRQ:
+		case SUPERVISOR:
+		case ABORT:
+		case UNDEFINED:
+			snprintf(spsr, sizeof(spsr), "\"%08x\"",
+			    (unsigned) arm.spsr[arm.mode & 0xf]);
+			break;
+		default:
+			snprintf(spsr, sizeof(spsr), "null");
+			break;
+		}
+
 	n = (size_t) snprintf(r, DC_RESP_SZ,
 	    "{\"ok\":true,\"paused\":%s,\"pc\":\"%08x\",\"cpsr\":\"%08x\","
+	    "\"spsr\":%s,"
 	    "\"mode\":%u,\"flags\":\"%c%c%c%c\",\"regs\":[",
 	    debugger_is_paused() ? "true" : "false",
-	    (unsigned) PC, (unsigned) arm.reg[cpsr], (unsigned) arm.mode,
+	    (unsigned) PC, (unsigned) arm.reg[cpsr], spsr, (unsigned) arm.mode,
 	    (arm.reg[cpsr] & NFLAG) ? 'N' : '-',
 	    (arm.reg[cpsr] & ZFLAG) ? 'Z' : '-',
 	    (arm.reg[cpsr] & CFLAG) ? 'C' : '-',
@@ -439,6 +462,7 @@ dc_cmd_regs(char *r)
 		    i ? "," : "", (unsigned) arm.reg[i]);
 	}
 	snprintf(r + n, DC_RESP_SZ - n, "]}");
+	}
 }
 
 static void

@@ -167,6 +167,7 @@ private:
 	wxStaticText *flag_label_[7] = {};
 	wxStaticText *mode_label_ = nullptr;
 	wxStaticText *cpsr_label_ = nullptr;
+	wxStaticText *spsr_label_ = nullptr;
 	wxStaticText *mmu_label_ = nullptr;
 	wxStaticText *core_label_ = nullptr;
 	uint32_t previous_regs_[16] = {};
