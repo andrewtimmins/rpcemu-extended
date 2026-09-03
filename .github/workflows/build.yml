@@ -343,7 +343,16 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-14, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 2
+    # Eight, and Windows is why. This creates a venv and pip-installs the MCP
+    # server's dependencies from PyPI, which pulls pydantic and its compiled
+    # core; two minutes killed the Windows leg on 3 September 2026 part way
+    # through "import pydantic", reported as a KeyboardInterrupt and the run as
+    # cancelled rather than failed - which reads like somebody pressed stop.
+    #
+    # The other two legs fit, but not by much: ubuntu took 89 seconds of the 120
+    # and macOS 29. A cap that close to the normal cost is a liability rather
+    # than caution; this is a tripwire against a hung pip, not a budget.
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v7
 
@@ -971,7 +980,10 @@ jobs:
     # need x86_64 libraries (from a Rosetta x86_64 Homebrew - the arm64 Homebrew
     # in /opt/homebrew can't provide them) and Rosetta 2 to run the JIT test.
     runs-on: macos-14
-    timeout-minutes: 48
+    # 34 for the install plus 22 for the build, and room for Rosetta and the
+    # artifact upload. A step cap above its job cap achieves nothing: the job
+    # dies first.
+    timeout-minutes: 62
     steps:
       - uses: actions/checkout@v7
         with:
@@ -981,13 +993,33 @@ jobs:
         run: softwareupdate --install-rosetta --agree-to-license
 
       - name: Install x86_64 Homebrew + dependencies
-        # Twenty, not ten. This provisions a whole second Homebrew under
-        # Rosetta, updates it with three retries and backoff, and then installs
-        # seven formulae; ten minutes left no room for a slow github.com and
-        # timed out on 2 September 2026 with nothing in the tree changed. As
-        # with the other install steps, this is a tripwire against a hung step
-        # rather than a budget.
-        timeout-minutes: 20
+        # Thirty-four, and the reason is not a slow network.
+        #
+        # This provisions a whole second Homebrew under Rosetta, updates it, and
+        # installs seven formulae. Ten minutes timed out on 2 September 2026 and
+        # twenty timed out on 3 September, both with nothing in the tree
+        # changed - but the second failure was not a stall. The log shows it
+        # COMPILING: libtiff 3m51, pcre2 3m17, sdl3 6m00, sdl2-compat 2m02, and
+        # still going at the cap.
+        #
+        # Why it compiles rather than pouring a bottle: "brew update" below
+        # moves this Homebrew to the newest formula revision, and a revision
+        # published hours ago has no x86_64 bottle yet. The arm64 Homebrew that
+        # ships in the runner image is pinned older, so it pours. That is the
+        # same drift that broke the fuse step on 2 September, seen from the
+        # other end.
+        #
+        # So this is still a tripwire and not a budget - it is just that the
+        # thing being timed can legitimately be half an hour of compiling. It
+        # will come back down on its own as bottles are published.
+        #
+        # If it fires again at this number, the fix is not another raise. It is
+        # either to cache the x86_64 Cellar between runs, or to stop calling
+        # "brew update" at all: it was there to hold both slices to one formula
+        # revision, and build-macos.sh no longer needs that - it compares the
+        # formula and forgives the version. Both are bigger changes than a
+        # tripwire deserves, which is why this is a raise today.
+        timeout-minutes: 34
         run: |
           # A separate Intel Homebrew installs into /usr/local (the arm64
           # Homebrew lives in /opt/homebrew); both coexist. The install script
