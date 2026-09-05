@@ -301,7 +301,7 @@ main(void)
 		memset(base, 0, sizeof(base));
 		memcpy(base, "\x00\xff\xff\xff\xff\xff\xff\x00", 8);
 		base[18] = 1;			/* EDID version 1 */
-		edid_build_from_base(block, base, 2560, 1440, 60);
+		edid_build_from_base(block, base, 2560, 1440, 2560, 1440, 60);
 		check(edid_block_is_valid(block), "the block built for the test is sound");
 		edid_publish(block);
 
