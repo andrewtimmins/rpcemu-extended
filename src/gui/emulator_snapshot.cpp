@@ -107,8 +107,13 @@ emulator_fill_snapshot(MachineSnapshot *snapshot)
 
 	for (int i = 0; i < 8; i++) {
 		const uint32_t addr = (pc + static_cast<uint32_t>(i * 4)) & arm.r15_mask;
+		uint32_t word = 0;
+
+		/* Side-effect-free, for the reason given in emulator_disassemble_at():
+		   this runs on EVERY snapshot, so the live read fired watchpoints
+		   around the PC continuously for as long as the inspector was open. */
 		snapshot->pipeline_addr[i] = addr;
-		snapshot->pipeline_data[i] = mem_read32(addr);
+		snapshot->pipeline_data[i] = mem_debug_read(addr, 4, &word) ? word : 0;
 	}
 
 	snapshot->mmu_enabled = mmu;
@@ -208,21 +213,41 @@ emulator_take_snapshot()
 	return snapshot;
 }
 
-std::vector<uint8_t>
-emulator_read_memory(uint32_t address, uint32_t length)
+MemoryRead
+emulator_read_memory(uint32_t address, uint32_t length, bool physical)
 {
 	if (length > 4096) {
 		length = 4096;
 	}
 
-	std::vector<uint8_t> data;
-	data.reserve(length);
+	MemoryRead result;
+	result.data.reserve(length);
+	result.mapped.reserve(length);
 
+	/*
+	 * Translated unless a physical read was asked for, which is what dc_read8()
+	 * in debugcmd.c has always done. This read did not translate at all, so the
+	 * hex view answered with whatever sat at that PHYSICAL address while every
+	 * other address in the window - the PC, the registers, the disassembly,
+	 * breakpoints - meant a virtual one. Same number, two different places, and
+	 * that is issue #258.
+	 *
+	 * Byte at a time, and deliberately: a run of bytes can cross a page
+	 * boundary into an unmapped page, so mapped-ness is per byte and not a
+	 * property of the request.
+	 */
 	for (uint32_t i = 0; i < length; i++) {
-		data.push_back(mem_phys_read8_debug(address + i));
+		const uint32_t addr = address + i;
+		uint32_t phys = addr;
+		const int ok = physical ? 1 : mem_debug_translate(addr, &phys);
+
+		result.mapped.push_back(ok ? 1u : 0u);
+		result.data.push_back(ok
+		    ? static_cast<uint8_t>(mem_phys_read8_debug(phys))
+		    : static_cast<uint8_t>(0));
 	}
 
-	return data;
+	return result;
 }
 
 std::string
@@ -248,7 +273,24 @@ emulator_disassemble_at(uint32_t address, int count)
 
 	for (int i = 0; i < count; i++) {
 		const uint32_t addr = address + static_cast<uint32_t>(i * 4);
-		const uint32_t opcode = mem_read32(addr);
+		uint32_t opcode = 0;
+
+		/*
+		 * mem_debug_read(), not mem_read32(). The live read calls
+		 * debugger_memory_access(), so merely DISPLAYING code fired any
+		 * watchpoint covering it, and an address on an I/O page went through
+		 * readmemfl() with whatever side effect that carries. Looking at the
+		 * machine must not change it.
+		 */
+		if (!mem_debug_read(addr, 4, &opcode)) {
+			char line[256];
+
+			snprintf(line, sizeof(line), "%08X%c %s  %s\n",
+			         addr, addr == pc ? '<' : ':', "--------",
+			         "<unmapped>");
+			result += line;
+			continue;
+		}
 
 		arm_disasm(opcode, addr, disasm_buf, sizeof(disasm_buf));
 
