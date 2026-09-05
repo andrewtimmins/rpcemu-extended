@@ -444,6 +444,59 @@ rom_patch_display_clock(size_t rom_bytes)
  *
  * @param rom_bytes Number of bytes actually loaded into the ROM image
  */
+/* Where the block was found and what it was built from, so the same block can
+   be rebuilt without re-scanning when the configured screen size changes. The
+   offset is into the loaded ROM image, which stays mapped for the life of the
+   machine. */
+static uint8_t edid_base_block[EDID_BLOCK_SIZE];
+static size_t edid_rom_offset;
+static int edid_base_known;
+
+/*
+ * The largest mode this monitor should claim it can show.
+ *
+ * Deliberately NOT the configured screen size. That is one desktop; this is the
+ * monitor's capability, and RISC OS will only accept a mode the monitor declares
+ * - so bounding the advertisement by the configured size makes every larger size
+ * in the emulator's own chooser unselectable. The chooser is bounded by display
+ * memory, so this is too, and the two then agree.
+ *
+ * The host display's FULL geometry is the ceiling, not its work area: full
+ * screen exists, and the work area is a fact about where a window may sit, not
+ * about what the screen can show. With no host display to ask - a headless run -
+ * there is nothing to bound by beyond the framestore.
+ */
+static void
+rom_patch_edid_ceiling(unsigned native_x, unsigned native_y,
+                       unsigned *max_x, unsigned *max_y)
+{
+	unsigned host_x = 0, host_y = 0;
+	unsigned fitted_x = 0, fitted_y = 0;
+
+	if (!rpcemu_get_host_display(&host_x, &host_y)) {
+		host_x = EDID_NATIVE_MAX_X;
+		host_y = EDID_NATIVE_MAX_Y;
+	}
+	if (host_x > EDID_NATIVE_MAX_X) {
+		host_x = EDID_NATIVE_MAX_X;
+	}
+	if (host_y > EDID_NATIVE_MAX_Y) {
+		host_y = EDID_NATIVE_MAX_Y;
+	}
+
+	/* Budgeted at the shallowest depth, exactly as the chooser is: a mode that
+	   fits at 8bpp is one the user may legitimately pick, and the depth at that
+	   size is the guest's business afterwards. */
+	if (!display_mode_fit(host_x, host_y, DISPLAY_BPP_SHALLOWEST,
+	                      rpcemu_display_memory(), &fitted_x, &fitted_y)) {
+		fitted_x = native_x;
+		fitted_y = native_y;
+	}
+
+	*max_x = fitted_x > native_x ? fitted_x : native_x;
+	*max_y = fitted_y > native_y ? fitted_y : native_y;
+}
+
 static void
 rom_patch_monitor_edid(size_t rom_bytes)
 {
@@ -452,10 +505,13 @@ rom_patch_monitor_edid(size_t rom_bytes)
 	size_t found = (size_t) -1;
 	size_t hits = 0;
 	unsigned native_x, native_y;
+	unsigned max_x = 0, max_y = 0;
 	unsigned bound_x = 0, bound_y = 0;
 	uint8_t base[EDID_BLOCK_SIZE];
 	uint8_t block[EDID_BLOCK_SIZE];
 	size_t byte;
+
+	edid_base_known = 0;
 
 	/* Word-aligned scan (the table is word-aligned in the driver). */
 	for (byte = 0; byte + EDID_BLOCK_SIZE <= words * 4; byte += 4) {
@@ -512,16 +568,25 @@ rom_patch_monitor_edid(size_t rom_bytes)
 	}
 
 	memcpy(base, &rb[found], EDID_BLOCK_SIZE);
-	edid_build_from_base(block, base, native_x, native_y, EDID_NATIVE_HZ);
+	rom_patch_edid_ceiling(native_x, native_y, &max_x, &max_y);
+	edid_build_from_base(block, base, native_x, native_y,
+	                     max_x, max_y, EDID_NATIVE_HZ);
 	memcpy(&rb[found], block, EDID_BLOCK_SIZE);
+
+	/* Kept so a later screen-size change can rebuild without re-scanning. */
+	memcpy(edid_base_block, base, EDID_BLOCK_SIZE);
+	edid_rom_offset = found;
+	edid_base_known = 1;
 
 	/* Publish it: the graphics card serves this same block over DDC, because
 	   RISC OS re-reads the EDID from the display driver when the driver
 	   changes and would otherwise end up with a different monitor. */
 	edid_publish(block);
 
-	rpclog("rom_patch: applied: monitor EDID replaced, native %ux%u@%u (block at 0x%06x)\n",
-	       native_x, native_y, EDID_NATIVE_HZ, (unsigned) found);
+	rpclog("rom_patch: applied: monitor EDID replaced, native %ux%u@%u, "
+	       "advertising up to %ux%u (block at 0x%06x)\n",
+	       native_x, native_y, EDID_NATIVE_HZ, max_x, max_y,
+	       (unsigned) found);
 }
 
 /* -------------------------------------------------------------------------
@@ -617,6 +682,61 @@ rom_patch_ncos_post(void)
 		rom[0x26f0 >> 2] = 0xe3b00000; /* MOVS r0, #0 */
 		rom[0x2750 >> 2] = 0xe3b00000; /* MOVS r0, #0 */
 	}
+}
+
+/*
+ * Rebuild the monitor EDID for the screen size now configured, and republish it.
+ *
+ * Called when the configured size changes while the machine is running, so the
+ * block the graphics card serves over DDC describes the monitor the machine is
+ * being asked for rather than the one it booted with.
+ *
+ * What this does NOT do is make RISC OS re-read it. The kernel builds its mode
+ * table from the EDID when the display driver starts and does not poll, so the
+ * new block is picked up on the next driver change or the next boot. That is why
+ * the size chooser still tells the user to restart when the size it wants is one
+ * the block in force does not declare: this keeps the two copies honest, it does
+ * not make the change live.
+ */
+void
+rom_patch_refresh_monitor_edid(void)
+{
+	uint8_t *rb = (uint8_t *) rom;
+	unsigned native_x, native_y;
+	unsigned max_x = 0, max_y = 0;
+	unsigned bound_x = 0, bound_y = 0;
+	uint8_t block[EDID_BLOCK_SIZE];
+
+	if (!edid_base_known) {
+		return;		/* No EDID in this ROM (RISC OS 3/4), nothing to do. */
+	}
+
+	if (!rpcemu_edid_bound(&bound_x, &bound_y)) {
+		bound_x = EDID_NATIVE_DEFAULT_X;
+		bound_y = EDID_NATIVE_DEFAULT_Y;
+	}
+	if (bound_x > EDID_NATIVE_MAX_X) {
+		bound_x = EDID_NATIVE_MAX_X;
+	}
+	if (bound_y > EDID_NATIVE_MAX_Y) {
+		bound_y = EDID_NATIVE_MAX_Y;
+	}
+
+	if (!display_mode_fit(bound_x, bound_y, DISPLAY_BPP_SHALLOWEST,
+	                      rpcemu_display_memory(), &native_x, &native_y)) {
+		return;
+	}
+
+	rom_patch_edid_ceiling(native_x, native_y, &max_x, &max_y);
+	edid_build_from_base(block, edid_base_block, native_x, native_y,
+	                     max_x, max_y, EDID_NATIVE_HZ);
+	memcpy(&rb[edid_rom_offset], block, EDID_BLOCK_SIZE);
+	edid_publish(block);
+
+	rpclog("rom_patch: monitor EDID rebuilt, native %ux%u@%u, "
+	       "advertising up to %ux%u (takes effect on the next display driver "
+	       "start or restart)\n",
+	       native_x, native_y, EDID_NATIVE_HZ, max_x, max_y);
 }
 
 /* -------------------------------------------------------------------------

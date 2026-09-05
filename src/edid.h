@@ -31,15 +31,44 @@
  * (which adjusts byte 0x14 and the checksum at runtime) keeps the checksum
  * valid.
  *
+ * The preferred mode and the ceiling on what else is advertised are separate
+ * arguments, and have to be: the preferred mode is the one desktop the machine
+ * is configured for, while the ceiling is what this monitor could show if asked.
+ * Bounding the list by the preferred mode instead - which is what this did until
+ * the two were split - meant a machine configured for 1280x1024 advertised
+ * nothing larger, so every bigger size the mode chooser offered was refused by
+ * RISC OS as "unsuitable for displaying the desktop". The chooser is bounded by
+ * display memory, so the ceiling must be too, or the two disagree again.
+ *
  * @param out    Destination 128-byte block
  * @param base   Source 128-byte block to inherit non-timing fields from
  * @param x      Preferred mode width in pixels
  * @param y      Preferred mode height in pixels
+ * @param max_x  Widest mode to advertise; never less than @x
+ * @param max_y  Tallest mode to advertise; never less than @y
  * @param hz     Preferred mode vertical refresh in Hz
  */
 void edid_build_from_base(uint8_t out[EDID_BLOCK_SIZE],
                           const uint8_t base[EDID_BLOCK_SIZE],
-                          unsigned x, unsigned y, unsigned hz);
+                          unsigned x, unsigned y,
+                          unsigned max_x, unsigned max_y, unsigned hz);
+
+/**
+ * Does this block declare @width x @height, by any of the four mechanisms a
+ * block can use to say so - the established bitmap, a standard timing, the
+ * Established Timings III descriptor, or one of the detailed timings?
+ *
+ * Decoded from the block rather than recomputed from whatever was passed to
+ * edid_build_from_base(), so a caller asking "would RISC OS accept this size?"
+ * gets the same answer the guest will arrive at.
+ *
+ * @param block  128-byte block to read
+ * @param width  Mode width in pixels
+ * @param height Mode height in pixels
+ * @return non-zero if the block declares that mode
+ */
+int edid_block_declares(const uint8_t block[EDID_BLOCK_SIZE],
+                        unsigned width, unsigned height);
 
 /**
  * Validate that a 128-byte buffer is a structurally sound EDID 1.x block

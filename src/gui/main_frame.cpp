@@ -74,6 +74,7 @@
 extern "C" {
 #include "rpcemu.h"
 #include "display_mode.h"
+#include "edid.h"
 #include "hostclipboard.h"
 #include "machine_lock.h"
 }
@@ -1592,6 +1593,49 @@ void MainFrame::OnModeVerifyTimer(wxTimerEvent &event)
 	rpclog("Display: the guest refused %dx%d\n", requested.x, requested.y);
 
 	/*
+	 * Two quite different faults arrive here and they need opposite advice, so
+	 * ask the block the guest is actually reading which one this is.
+	 *
+	 * If our own EDID does not declare the size, the refusal is ours: the block
+	 * was built around the size configured at the time, and the one just picked
+	 * is now stored but will not be advertised until the monitor is rebuilt at
+	 * the next start. A restart is the cure and the size must stay in the menu,
+	 * because it is the size this machine is now configured for.
+	 *
+	 * If the block DOES declare it and RISC OS still said no, the monitor
+	 * definition in force is not ours - the guest's !Boot has loaded a
+	 * definition file over the top - and no restart will help. That is the case
+	 * this dialogue was originally written for.
+	 */
+	const uint8_t *in_force = edid_published();
+	const bool ours_declares_it =
+	    in_force != nullptr &&
+	    edid_block_declares(in_force, (unsigned) requested.x,
+	                        (unsigned) requested.y) != 0;
+
+	if (!ours_declares_it) {
+		rpclog("Display: %dx%d is not declared by the monitor EDID in force; "
+		       "stored, and offered again after a restart\n",
+		       requested.x, requested.y);
+
+		const wxString needs_restart = wxString::Format(
+		    "RISC OS would not switch to %d x %d yet, and is still using "
+		    "%d x %d.\n\n"
+		    "This machine's monitor was set up when it started, for the "
+		    "screen size in force then, and it does not offer this size. "
+		    "The setting has been saved.\n\n"
+		    "Restart the machine and it will start at %d x %d.",
+		    requested.x, requested.y,
+		    guest.x > 0 ? guest.x : requested.x,
+		    guest.y > 0 ? guest.y : requested.y,
+		    requested.x, requested.y);
+
+		wxMessageBox(needs_restart, "Screen Size Needs A Restart",
+		             wxOK | wxICON_INFORMATION, this);
+		return;
+	}
+
+	/*
 	 * Struck off the list.
 	 *
 	 * RISC OS accepts only the screen modes the monitor definition in force
@@ -1617,10 +1661,11 @@ void MainFrame::OnModeVerifyTimer(wxTimerEvent &event)
 	 * because its !Boot loads one over the top. Remove that and the emulator's
 	 * own monitor definition applies, which declares the whole list.
 	 *
-	 * Note what is NOT offered: a restart. Advertising the chosen size as the
-	 * monitor's native mode does not make RISC OS boot into it - the desktop mode
-	 * comes from CMOS and the monitor definition only vets it - so suggesting a
-	 * restart would be sending somebody round a loop that does not arrive.
+	 * Note what is NOT offered: a restart. This branch is reached only when our
+	 * own EDID DOES declare the size and RISC OS refused it anyway, so the
+	 * definition in force is the guest's own and restarting changes nothing -
+	 * it would send somebody round a loop that does not arrive. The case where a
+	 * restart IS the cure is handled above, before this point.
 	 */
 	wxMessageBox(
 	    wxString::Format(
