@@ -188,6 +188,44 @@ used, so a machine that only builds the emulator (CI included) is unaffected.
 `--podules` insists on building them, treating a missing toolchain as an error
 rather than skipping it; `--no-podules` leaves them alone.
 
+### MultiFS is a submodule
+
+One of them is not in this repository. **MultiFS**, the filing system that reads
+USB media, and **MultiFSFiler**, which puts the disc on the icon bar, live in
+[riscos-multifs](https://github.com/andrewtimmins/riscos-multifs) and are a
+submodule at `riscos-progs/MultiFS`. They are ordinary RISC OS modules that need
+nothing of the emulator, so they can be installed on a real machine with a USB
+stack, and keeping them separate is what makes that honest rather than a claim.
+
+**Building the emulator does not need it.** The assembled modules are committed
+in `usbroms/` as they always were, and a clone without the submodule builds and
+runs exactly as before.
+
+It is needed to change MultiFS, or to run the three checks that cover it. Fetch
+it with:
+
+```bash
+git submodule update --init riscos-progs/MultiFS
+```
+
+or clone with `--recurse-submodules` in the first place. Without it:
+
+- `build.sh` says so and uses the committed ROMs;
+- `tests/check-guest-modules.sh` skips MultiFS with a note;
+- `test_module_headers` skips its two entries;
+- the `test_multifs_fat12` test is not registered at all.
+
+Each of those degrades quietly by design, so that a user building the emulator is
+not made to fetch a repository they have no use for. CI is the other case
+entirely: every checkout in `.github/workflows/build.yml` sets
+`submodules: recursive`, because a check that silently skips itself in CI is
+worth less than no check at all.
+
+MultiFS builds under its own names, `MultiFS,ffa` and `MultiFSFiler,ffa`. The
+`70-` and `80-` prefixes on the copies in `usbroms/` are this emulator's load
+order for the USB card's ROM and are applied on the way in - see
+`usbroms/README.txt`.
+
 ---
 
 ## Continuous integration and releases

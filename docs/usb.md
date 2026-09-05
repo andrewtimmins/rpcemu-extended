@@ -400,7 +400,7 @@ volume name.
 
 ```
 *Cat MultiFS::0.$
-Dir. MultiFS::USB STICK.$
+Dir. MultiFS::USB_STICK.$
 RPCTEST      WR/WR
 ```
 
@@ -415,246 +415,41 @@ share with anything else.
 
 ### What MultiFS does and does not do
 
-Reading works: MBR and partition table, boot record and geometry, cluster
-chains, directory walking, path lookup, long file names, wildcards, `*Cat`,
-`*Type`, and free space. Writing works for files that already exist.
+MultiFS has its own repository, **[riscos-multifs](https://github.com/andrewtimmins/riscos-multifs)**,
+and is a submodule of this one. It is an ordinary RISC OS filing system rather
+than part of the emulator: every SWI it calls is RISC OS's own, so it runs on a
+real machine with a USB stack just as well as it runs here. The full reference -
+the formats, long names, file types, free space, the exFAT and NTFS notes, and
+the commands - is [docs/multifs.md](https://github.com/andrewtimmins/riscos-multifs/blob/main/docs/multifs.md)
+there, and is not repeated here so that the two cannot drift apart.
 
-**FAT32** is what every stick worth the name is formatted as, and it is the case
-tested against real hardware. **FAT16** is written and reads through the same
-code, but has not been tried on a real FAT16 volume. **exFAT** is read and
-written too, and is what larger cards are often formatted as out of the box; it
-has a section of its own below. **NTFS** is read and never written.
+What matters from this side:
 
-**FAT12** is read and written as well. It was refused outright until 26 August
-2026, and the reason is worth keeping: a FAT16 entry is two bytes and a FAT32
-entry is four, so both divide into a 512-byte sector and reading one is an
-aligned load of a known width. A FAT12 entry is a byte and a half. It shares one
-of its two bytes with the entry beside it, which half it owns depends on whether
-its cluster number is odd, and because 512 is not a multiple of three halves one
-entry in every 341 has its two bytes in *different sectors*. On a 1.44MB floppy
-that happens six times over, so it is an ordinary case rather than an edge one.
+- **FAT12, FAT16, FAT32 and exFAT are read and written. NTFS is read only**, and
+  writing it is refused rather than half-attempted.
+- **Long names work in both directions**, so a file written on a PC keeps its
+  name here and one written here keeps its name when the stick goes back. Dot
+  and slash change places, RISC OS separating directories with a dot and an
+  extension with a slash.
+- **RISC OS file types survive on FAT**, by the convention Fat32Fs established.
+  See the credits in the README for whose convention it is and why it is shared
+  rather than invented. Types are not yet kept on exFAT.
+- **The disc name is sanitised**, so a stick labelled `USB STICK` appears as
+  `USB_STICK`. A space would otherwise end the argument half way through a path.
+- **Media change is noticed** within about a second of a stick leaving, whether
+  it is unplugged physically or detached in *Settings > USB*.
+- `*MultiFSInfo`, `*MultiFSDiscs`, `*MultiFSFree`, `*MultiFSDir`, `*MultiFSFind`
+  and `*MultiFSProbe` report what the module can see, which is the first thing
+  to reach for when a stick does not appear.
 
-Every FAT12 access therefore goes a byte at a time, through the same cached
-sector the rest of the FAT code uses, and the straddle stops being a case at all:
-each byte comes from whichever sector holds it and nothing has to know the two
-were neighbours. Writing reads the shared byte before changing it and puts back
-only the four bits that belong to the entry, because writing the whole byte would
-take the neighbouring entry's four bits with it - which is not a wrong answer but
-a damaged volume.
-
-None of that is checkable by reading the source, so `tests/test_multifs_fat12.c`
-loads the assembled module into the emulator's RAM and *runs* it: every entry on
-a 2,829-cluster volume read back through `fat12_get`, all six straddling entries
-named individually, and every write checked for having left both neighbours and
-every other byte of the volume alone. It was also run against a 1.44MB volume
-formatted by `newfs_msdos` and written by macOS's own msdos driver, where each
-file's chain, followed with MultiFS's `fat_next`, came out exactly as long as the
-size in its directory entry demands.
-
-What has *not* happened is a FAT12 stick in a running guest: the medium reaches
-MultiFS through SCSIFS and the emulated OHCI card, which passes through to real
-hardware, and no FAT12-formatted USB device has been put in front of it. FAT12 is
-a floppy-era format, so a stick carrying one is unusual to begin with. The
-arithmetic is verified by execution; the trip through the USB stack is the same
-one FAT16 and FAT32 already take.
-
-**Long names** are read from the VFAT entries that precede each 8.3 entry, so a
-file the host calls `Quarterly Report.txt` appears as `Quarterly Report/txt`
-rather than `QUARTE~1/TXT`. Dot and slash change places, because RISC OS
-separates directories with a dot and a name from its extension with a slash,
-which is the other way round from the disc's own world. A character that will
-not fit in a byte becomes a question mark. Once a file has a long name its 8.3
-alias is no longer offered, so `*Type MultiFS::0.$.QUARTE~1/TXT` will not find
-it.
-
-**The disc name is sanitised.** A FAT label may hold spaces and characters that
-mean something else entirely in a RISC OS path - a space ends an argument, a dot
-separates directories, and the rest are wildcards. Anything awkward becomes an
-underscore, so a stick labelled `USB STICK` appears as `USB_STICK`. This is not
-cosmetic: before it, a canonical path fell apart at the space and a Filer window
-opened on a subdirectory silently listed the root.
-
-**Media change is noticed.** The volume table used to be built once and believed
-for ever, so a stick that had been pulled out kept its icon and its root
-directory. The medium is now re-read before the table is handed out, at most
-twice a second, and the icon goes within about a second of the stick leaving and
-comes back within a few seconds of one arriving - whether it is unplugged
-physically or detached in *Settings > USB*.
-
-**`*MultiFSInfo`** reports the filing system, disc name, drive, capacity, free,
-used and cluster size, and sets `MultiFS$Format`, `$Label`, `$Drive`, `$Cluster`,
-`$Size`, `$Free` and `$Used` to the same values for anything else that wants them.
-
-**Wildcards work** in a path: `*` for any run of characters and `#` for exactly
-one, so `*Copy MultiFS::0.$.Report* ...` finds what it should. Lookup used to be
-an exact comparison, which answered "not found" for every pattern and gave no
-hint that the wildcard rather than the name was the problem.
-
-### How long a name can be
-
-Long names are read to the FAT maximum of **255 characters**, and a file with a
-name that long can be opened, read and copied off.
-
-What cannot be done is *typing* one: a RISC OS command line is limited to 256
-bytes, so `*Type MultiFS::0.$.` plus a 240-character name is refused with
-"command too long, ignored" before MultiFS is ever asked. That is the command
-line's limit rather than the filing system's, and a wildcard gets round it -
-`*Copy MultiFS::0.$.Report* ...` reaches a name no command could spell out. The
-desktop is not affected, because the Filer holds the name rather than retyping it.
-
-Two other things make a name look missing when it is not. A dot in the name
-becomes a slash here, so `Quarterly Report.txt` is `Quarterly Report/txt` and
-typing the original will not find it. And a name containing a space cannot be
-given to `*Type` or `*Cat` at all, because the command line splits on spaces -
-again the CLI rather than us.
-
-Writing works, and so does everything that goes with it. A file can be saved
-onto a stick, copied onto one, saved over, made shorter or longer, renamed,
-deleted, and created inside a subdirectory; directories can be made and
-removed. The entry is allocated with a unique 8.3 alias and a long-name run in
-front of it, so the name a file is given in RISC OS is the name it has when the
-stick is put back into a PC. Files are stamped with the time they were written,
-and they keep their RISC OS file type.
-
-Deleting strikes out the long-name fragments as well as the entry itself,
-walking backwards over them; leave them behind and the next file written into
-that directory inherits somebody else's name. A directory has to be empty
-before it will go, and the root will not go at all.
-
-The disc's menu carries **Disc info**, which opens a window showing the volume
-name, format, drive, capacity, free and used space and the cluster size. The
-numbers come from `*MultiFSInfo -q`, which sets a `MultiFS$*` variable for each
-of them and prints nothing - a filer is a Wimp task and anything it writes to
-the screen lands on top of the desktop.
-
-Free space is kept in step as files are written and deleted, and the count is
-written back into the FAT32 **FSInfo** sector so that the next system to look is
-not told what was true when the stick was plugged in. Windows believes that
-field. If a stick has been written by something that did not maintain it, or by
-a version of MultiFS from before this was fixed, `*MultiFSFree -r` walks the
-whole FAT, works the figure out properly and writes it back. That takes a few
-minutes on a large stick, which is why it is asked for rather than done
-routinely.
-
-**File types** have nowhere to live on FAT, so MultiFS follows the established
-RISC OS convention rather than inventing one: an impossible creation date, the 1st of
-January 2107, marks an entry as carrying a type, and the type itself is spread
-across the creation time. Only the *creation* stamp is given up for this - the
-last-written stamp, which is the one RISC OS and every other system shows, is
-a real date. `*SetType` works, and a file copied within a stick keeps its type.
-Media carrying the older convention is read correctly too - the one abandoned
-when Windows 10 started using the bytes it was borrowing.
-
-One trap is worth recording, because it does not look like the filing system's
-fault from any layer above. `FSEntry_Open` reason 1 is documented as "create and
-open for update" and looks like the way a file comes into existence; FileSwitch
-has not used it since RISC OS 2, as RPCEmu's own `src/hostfs.c` notes. Objects
-are created through **`FSEntry_File 7`** and then opened for update. A filing
-system that answers only reason 1 can be written to but never written to *first*,
-and the symptom is `Can't open` from `*Save` and `0 files copied` from `*Copy`
-without MultiFS ever being reached.
-
-FAT records timestamps in local time, which is what MultiFS writes and what
-Windows expects. Linux mounted without a `tz=` option treats them as UTC on a
-machine whose hardware clock is UTC, so it will show a file written here an hour
-ahead through British summer time. That disagreement is between Linux and
-Windows and predates any of this.
-
-## exFAT
-
-exFAT volumes are read and written too. It is a different filing system that
-happens to keep a 32-bit FAT: below the directory layer the cluster arithmetic is
-FAT32's and is shared, and above it nothing is. There are no 8.3 names, no
-deleted-marker of &E5, no long-name fragments and no fixed root. An object is a
-**set** of consecutive entries - a File entry saying how many follow, a Stream
-Extension carrying the length and first cluster, then File Name entries of
-fifteen UTF-16 characters each - tied together by a checksum over the whole set
-and a hash of the up-cased name. Both are computed here, so a stick written in
-RISC OS passes `fsck.exfat` and Windows will find the files by name.
-
-Free space works differently as well. An exFAT volume records no free count
-anywhere; the **allocation bitmap** is the answer, one bit per cluster. That is
-far cheaper than a FAT to count - a couple of seconds where the FAT32 walk on the
-same stick takes over three minutes - so there is no fast path to want and none
-is kept.
-
-Two things to know about exFAT specifically:
-
-- A file may be a **contiguous run** rather than a chain, and then its FAT
-  entries are not maintained and hold whatever was there before. Following them
-  reads another file's data and reports no error at all. MultiFS carries that
-  flag from the entry through to the open file handle. Everything it writes
-  itself is a chain, which is always legal.
-- **File types are not kept on exFAT yet**, so a file written there reads back as
-  Data. The convention used on FAT borrows the creation timestamp, and whether
-  the same borrowing is agreed on exFAT has not been established -
-  guessing would produce media that disagree with themselves.
-
-## NTFS
-
-NTFS volumes are **read, and only read**. Files and directories are listed, names
-come back in full, and file contents are read whether they are large or small.
-Every attempt to change anything is refused with "MultiFS can read NTFS but not
-write it".
-
-That is a deliberate line rather than an unfinished one. Writing NTFS safely
-means maintaining the `$LogFile` journal, the `$Bitmap` and the `$MFT`'s own
-allocation, all consistently; a half-correct writer does not leave a slightly
-wrong volume, it leaves one chkdsk cannot put back together. The refusal is
-enforced twice over - at each entry point, so the message says why, and inside
-`write_sector` itself, so a path nobody thought to guard still cannot put a byte
-on the medium.
-
-NTFS shares almost nothing with FAT. There is no FAT, no directory of fixed slots
-and no cluster chain. Everything is a file, including the list of files, and every
-file is a record in the **Master File Table** made of typed **attributes**. A
-small file's contents live inside its own record; a large one's are described by a
-**run list** of (length, cluster) pairs where each cluster number is a *signed
-offset from the one before it*. A directory is a B+ tree of index entries.
-
-Three things are worth knowing if this is ever picked up again:
-
-- **Fixups.** The last two bytes of every 512-byte sector of an MFT record and of
-  an index block are not data: they hold a copy of the record's update sequence
-  number, with the real bytes kept in an array at the front. They must be put back
-  before the record is read. Skip it and the first 510 bytes are perfectly fine,
-  so it looks like it works right up until a structure crosses that boundary.
-- **The "clusters per" fields in the boot record are signed.** A positive value is
-  a count of clusters; a negative one is the log2 of a byte count, so &F6 is -10
-  and means 1024 bytes. Read as a count it gives a 246-cluster record.
-- The tree is not walked in order. Every index entry lives in exactly one node, so
-  reading the index root and then each index block in turn yields every entry
-  exactly once, which is all a listing or a lookup by name needs.
-
-Not done on NTFS: free space (it needs `$Bitmap`, so the disc info window and
-`*MultiFSFree` have nothing useful to say), and the volume label, which is read
-from `$Volume` by anything thorough and is simply reported as "NTFS" here.
-
-Not done:
-
-- **Untyped files are not guessed at from their extension.** A file that carries
-  no type of its own reads back as Data rather than having `.txt` turned into
-  Text. Consulting MimeMap would do it; a table that guesses wrongly is worse
-  than one honest answer, so it is left until MimeMap is asked properly.
-Free space comes from the FAT32 FSInfo sector when that sector's signatures are
-intact and its count is plausible, and from counting the FAT when it is not.
-Counting is exact and costs one read per FAT sector, which on a 14.5GB stick is
-some fifteen thousand of them, so the fast path is worth having. FAT12 is counted
-an entry at a time rather than a sector at a time, for the straddling reason
-above; a FAT12 volume holds at most 4,084 clusters, so the whole count is about a
-dozen reads.
-
-Counting the FAT gave an error rather than a number until 26 August 2026: the
-routine fell off the end of the FAT case straight into the NTFS one, which
-replaced the count with the volume record and went looking for an MFT that a FAT
-volume has not got. FAT32 hid it, because a volume with an intact FSInfo sector
-never reaches the count. FAT16 has no FSInfo sector, so it never got a free space
-figure at all - which is also why this went unnoticed, no FAT16 volume having
-been tried.
-
-`*MultiFSDiscs`, `*MultiFSFree`, `*MultiFSDir`, `*MultiFSFind` and `*MultiFSProbe`
-report what the module can see, which is the first thing to reach for when a
-stick does not appear.
+FAT32 is the case tested against real hardware here, through the emulated OHCI
+card and a real stick passed through from the host. FAT12's arithmetic is
+verified a different way, and by this repository rather than that one:
+`tests/test_multifs_fat12.c` loads the assembled module into the emulator's own
+RAM and executes its FAT12 routines instruction by instruction against an image
+built in the test. That test cannot live in the MultiFS repository, because it
+needs the emulator's ARM interpreter to run at all - which is the reason MultiFS
+is a submodule here rather than a set of committed binaries.
 
 ### Two things that will waste your afternoon
 

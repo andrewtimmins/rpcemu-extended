@@ -901,20 +901,35 @@ rpcemu_add_test(test_gfxrom "${RPCEMU_GFXROM}")
 # fat_next and fat_raw under the emulator's own interpreter against a FAT12
 # image, with only the two sector routines stubbed.
 #
-# Registered only where the ARM binutils are, which is the condition
-# tests/check-guest-modules.sh already runs under: without an assembler there is
-# nothing to execute. RPCEMU_EXPECTED_TESTS accounts for it separately below, so
-# a machine with no ARM tools is not a test count mismatch.
+# Registered only where BOTH the ARM binutils and the MultiFS source are, and
+# RPCEMU_EXPECTED_TESTS accounts for it separately below so that a machine
+# missing either is not a test count mismatch.
+#
+# The binutils are the condition tests/check-guest-modules.sh already runs
+# under: without an assembler there is nothing to execute. The source is a
+# separate question now that MultiFS is its own project
+# (github.com/andrewtimmins/riscos-multifs) and a submodule here - an
+# uninitialised submodule leaves the directory in place and empty, so the
+# Makefile is what is tested for rather than the directory.
+#
+# This test cannot move to that repository with the rest of MultiFS: it runs the
+# module's instructions on the emulator's own ARM interpreter, so it needs
+# rpcemu_core, which only exists here. It is the reason the submodule is worth
+# having rather than vendoring the built images.
 find_program(RPCEMU_ARM_AS NAMES arm-linux-gnueabi-as arm-none-eabi-as)
-if(RPCEMU_ARM_AS)
+set(RPCEMU_MULTIFS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../riscos-progs/MultiFS")
+if(RPCEMU_ARM_AS AND EXISTS "${RPCEMU_MULTIFS_DIR}/Makefile")
     set(RPCEMU_ARM_TESTS TRUE)
     add_executable(test_multifs_fat12 test_multifs_fat12.c test_stubs.c)
     target_link_libraries(test_multifs_fat12 PRIVATE rpcemu_core m)
-    rpcemu_add_test(test_multifs_fat12
-                    "${CMAKE_CURRENT_SOURCE_DIR}/../riscos-progs/MultiFS")
+    rpcemu_add_test(test_multifs_fat12 "${RPCEMU_MULTIFS_DIR}")
     message(STATUS "RPCEmu: MultiFS FAT12 test enabled (${RPCEMU_ARM_AS})")
-else()
+elseif(NOT RPCEMU_ARM_AS)
     message(STATUS "RPCEmu: no ARM assembler, skipping the MultiFS FAT12 test")
+else()
+    message(STATUS "RPCEmu: the MultiFS submodule is not checked out, skipping "
+                   "its FAT12 test. Fetch it with: git submodule update --init "
+                   "riscos-progs/MultiFS")
 endif()
 
 # The OHCI controller's isochronous transfer descriptors: the one place the
@@ -1111,7 +1126,7 @@ if(RPCEMU_PYTHON_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 1")	# abort watcher
 endif()
 if(RPCEMU_ARM_TESTS)
-    math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 1")	# MultiFS FAT12
+    math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 1")	# MultiFS FAT12 (needs the submodule too)
 endif()
 if(APPLE)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 1")	# build-macos.sh library fusing

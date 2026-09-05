@@ -79,6 +79,11 @@ echo "Using ${PREFIX}* binutils"
 # Each entry is: source directory : the images it produces : where they are kept.
 # Kept as a list rather than discovered, so a module that stops being built is a
 # mismatch rather than something that silently drops out of the check.
+#
+# An image may be written "built=installed" where the two names differ. Only
+# MultiFS needs it: it is its own project and builds under its own names, and
+# the numeric prefix that orders the USB card's ROM is applied here, on the way
+# in. Everything else installs under the name it builds under.
 MODULES=(
 	"riscos-progs/HostFS:hostfs,ffa hostfsfiler,ffa:poduleroms"
 	"riscos-progs/RPCEmuSupport:rpcemusupport,ffa:poduleroms"
@@ -87,7 +92,7 @@ MODULES=(
 	"riscos-progs/RPCEmuPCIEmulator:rpcemupciemulator,ffa:poduleroms"
 	"riscos-progs/RPCEmuGfx:RPCEmuGfx,ffa:gfxroms"
 	"riscos-progs/EtherRPCEm:EtherRPCEm,ffa:netroms"
-	"riscos-progs/MultiFS:70-multifs,ffa 80-multifsfiler,ffa:usbroms"
+	"riscos-progs/MultiFS:MultiFS,ffa=70-multifs,ffa MultiFSFiler,ffa=80-multifsfiler,ffa:usbroms"
 )
 
 # ScrollWheel is deliberately absent: its makefile wants clang, which is not part
@@ -99,9 +104,16 @@ MODULES=(
 # exactly the failure the script was written to catch: a module whose committed
 # image nothing compared against its source. It goes in usbroms/ rather than
 # poduleroms/ because it is carried in the USB card's own ROM.
+#
+# MultiFS is also the one entry whose source is a SUBMODULE
+# (github.com/andrewtimmins/riscos-multifs). An uninitialised submodule leaves
+# an empty directory behind, so it is skipped with a message rather than
+# treated as a missing module - but see the note at the end about CI, because a
+# check that skips itself is worth less than no check at all if nobody notices.
 
 failures=0
 checked=0
+skipped=0
 
 for entry in "${MODULES[@]}"; do
 	dir="${entry%%:*}"
@@ -115,6 +127,19 @@ for entry in "${MODULES[@]}"; do
 		continue
 	fi
 
+	# A submodule that has not been checked out: the directory is there and
+	# empty. Not an error - a user building the emulator has no reason to
+	# fetch it - but say so, loudly enough that a CI run missing it is
+	# noticed rather than read as a pass.
+	if [ ! -f "$dir/Makefile" ]; then
+		echo "==> $dir"
+		echo "    SKIPPED: no Makefile here."
+		echo "    If this is a submodule, fetch it with:"
+		echo "        git submodule update --init $dir"
+		skipped=$((skipped + 1))
+		continue
+	fi
+
 	echo "==> $dir"
 	(
 		cd "$dir"
@@ -123,11 +148,14 @@ for entry in "${MODULES[@]}"; do
 	)
 
 	for image in $images; do
-		built="$dir/$image"
-		committed="$dest/$image"
+		# "built=installed", or just the one name when they agree.
+		built_name="${image%%=*}"
+		installed_name="${image#*=}"
+		built="$dir/$built_name"
+		committed="$dest/$installed_name"
 
 		if [ ! -f "$built" ]; then
-			echo "error: $dir did not produce $image" >&2
+			echo "error: $dir did not produce $built_name" >&2
 			failures=$((failures + 1))
 			continue
 		fi
@@ -141,12 +169,12 @@ for entry in "${MODULES[@]}"; do
 
 		if [ "$COMPARE" = false ]; then
 			cp -f "$built" "$committed"
-			echo "    $image rebuilt into $dest/"
+			echo "    $built_name rebuilt into $dest/$installed_name"
 			continue
 		fi
 
 		if cmp -s "$built" "$committed"; then
-			echo "    $image matches $dest/"
+			echo "    $installed_name matches $dir/$built_name"
 		else
 			echo "error: $committed does not match a rebuild of $dir" >&2
 			echo "       built:     $(wc -c < "$built") bytes" >&2
@@ -159,6 +187,12 @@ for entry in "${MODULES[@]}"; do
 done
 
 echo ""
+if [ "$skipped" -ne 0 ]; then
+	echo "guest modules: $skipped module(s) skipped for want of their source."
+	echo "CI must NOT skip any: the workflow checks out submodules, and a skip"
+	echo "there means that has broken and nothing is checking those images."
+fi
+
 if [ "$failures" -ne 0 ]; then
 	echo "guest modules: $failures problem(s) across $checked image(s)" >&2
 	exit 1

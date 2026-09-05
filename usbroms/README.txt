@@ -18,9 +18,15 @@ the same way poduleroms/ works for the support card.
   60-scsifs,ffa       The filing system that presents a SCSI disc, as SCSI::0.
   70-multifs,ffa      Ours. Reads and writes FAT and exFAT media through SCSIFS,
                       which is what a USB stick is and what FileCore will not
-                      mount, and reads NTFS. Source in riscos-progs/MultiFS/.
+                      mount, and reads NTFS.
   80-multifsfiler,ffa Ours. Puts the disc on the icon bar and opens it with the
-                      Filer. Source alongside MultiFS.
+                      Filer.
+
+MultiFS is its own project, github.com/andrewtimmins/riscos-multifs, and a
+submodule at riscos-progs/MultiFS. It is a plain RISC OS filing system and runs
+on a real machine with a USB stack, so it builds under its own names, MultiFS,ffa
+and MultiFSFiler,ffa, and the numbering below is applied on the way in here.
+Numbering a card ROM is this emulator's business and is not that project's.
 
 The first six are not ours and none is GPL, so RPCEmu's COPYING does not cover
 them. They are a mixture of Apache 2.0 and BSD, some of it the original four

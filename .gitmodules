@@ -1,0 +1,3 @@
+[submodule "riscos-progs/MultiFS"]
+	path = riscos-progs/MultiFS
+	url = https://github.com/andrewtimmins/riscos-multifs.git

@@ -210,8 +210,14 @@ describing what the machine runs.
 
 ```bash
 ./setup-build-env.sh --podules        # arm-linux-gnueabi binutils
-bash tests/check-guest-modules.sh     # rebuild all eight images and compare
+git submodule update --init           # MultiFS lives in its own repository
+bash tests/check-guest-modules.sh     # rebuild all ten images and compare
 ```
+
+MultiFS is a submodule (see COMPILE.md). Without it checked out the script skips
+that module and says so rather than failing, which is right for a working tree
+that has no use for it and wrong for CI - so the workflow checks submodules out
+and a skip there means something has broken.
 
 A difference is an error naming the file. `--rebuild-only` copies the rebuilds
 over the committed images instead, for when the source has deliberately moved on.

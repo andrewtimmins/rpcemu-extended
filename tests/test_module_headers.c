@@ -369,6 +369,9 @@ main(int argc, char *argv[])
 		  "riscos-progs/RPCEmuGfx/rpcemugfx.s" },
 		{ "netroms/EtherRPCEm,ffa",
 		  "riscos-progs/EtherRPCEm/etherrpcem.s" },
+		/* MultiFS is a submodule (riscos-multifs). With it not checked
+		   out these two skip, which the source gate below already does
+		   correctly - the skip is expected there, not a fault. */
 		{ "usbroms/70-multifs,ffa",
 		  "riscos-progs/MultiFS/multifs.s" },
 		{ "usbroms/80-multifsfiler,ffa",

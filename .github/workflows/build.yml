@@ -84,6 +84,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
+          submodules: recursive
 
       - name: The tag and the VERSION file must agree
         run: |
@@ -147,6 +148,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
+          submodules: recursive
 
       - name: Install dependencies
         timeout-minutes: 8
@@ -269,6 +271,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
+          submodules: recursive
 
       # No style: input. index.xml sets its own page and index CSS variants, and
       # style: would prepend a second set of them.
@@ -355,6 +358,8 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: recursive
 
       # The runner's own Python, not a pinned one: what a user has is what this
       # should be testing.
@@ -415,9 +420,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 21
     steps:
+      # submodules: recursive is not optional here, and it is on every checkout
+      # in this file for the same reason. MultiFS is a submodule
+      # (github.com/andrewtimmins/riscos-multifs), and everything that checks it
+      # - the guest module comparison below, the module header test and the
+      # FAT12 test that runs its instructions - SKIPS SILENTLY when the source
+      # is not there. Without this line those three would go on reporting
+      # success while checking nothing at all, which is the exact failure the
+      # guest module check was written to catch.
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
+          submodules: recursive
 
       # --podules adds the ARM binutils, so this job builds the guest modules
       # under riscos-progs/ as well as the emulator. Without them build.sh says
@@ -554,6 +568,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
+          submodules: recursive
 
       - name: Install dependencies
         timeout-minutes: 8
@@ -655,6 +670,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
+          submodules: recursive
 
       - name: Set up MSYS2 / MinGW-w64
         timeout-minutes: 5
@@ -826,6 +842,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
+          submodules: recursive
 
       - name: Set up MSYS2 / CLANGARM64
         timeout-minutes: 11
@@ -988,6 +1005,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
+          submodules: recursive
 
       - name: Install Rosetta 2
         run: softwareupdate --install-rosetta --agree-to-license
@@ -1101,6 +1119,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
+          submodules: recursive
 
       - name: Install dependencies
         timeout-minutes: 8
@@ -1145,6 +1164,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
+          submodules: recursive
 
       - name: Download x86_64 slice
         uses: actions/download-artifact@v8
@@ -1303,6 +1323,8 @@ jobs:
       # The notes come from the file release-preflight insisted on, so the
       # release reads correctly the moment it appears.
       - uses: actions/checkout@v7
+        with:
+          submodules: recursive
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v8

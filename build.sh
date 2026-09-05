@@ -444,16 +444,29 @@ build_podules() {
 	# after it, and the filer has to be resident before the desktop starts or
 	# the Filer's Service_StartFiler goes unanswered. The numbers in the names
 	# are the load order - see usbroms/README.txt.
+	#
+	# MultiFS lives in its own repository, github.com/andrewtimmins/riscos-multifs,
+	# and is a submodule here. It is an ordinary RISC OS module that runs on any
+	# machine with a USB stack, so it builds under its own names and the load
+	# order is applied on the way in - the numbering is this card's business and
+	# is not that project's.
+	#
+	# Tested for its Makefile rather than the directory: an uninitialised
+	# submodule leaves the directory there and empty.
 	local multifs_dir="riscos-progs/MultiFS"
-	if [ -d "$multifs_dir" ]; then
+	if [ -f "$multifs_dir/Makefile" ]; then
 		echo "Building MultiFS card ROMs..."
 		(
 			cd "$multifs_dir"
 			make clean
 			make AS=arm-linux-gnueabi-as LD=arm-linux-gnueabi-ld OBJCOPY=arm-linux-gnueabi-objcopy
-			cp -f "70-multifs,ffa" "80-multifsfiler,ffa" "$SCRIPT_DIR/usbroms/"
+			cp -f "MultiFS,ffa" "$SCRIPT_DIR/usbroms/70-multifs,ffa"
+			cp -f "MultiFSFiler,ffa" "$SCRIPT_DIR/usbroms/80-multifsfiler,ffa"
 		)
 		echo "✓ MultiFS ROMs copied to usbroms/"
+	else
+		echo "- MultiFS: submodule not checked out, using the committed ROMs"
+		echo "  (git submodule update --init riscos-progs/MultiFS)"
 	fi
 
 	# EtherRPCEm is the guest half of the emulated network card. It goes in
