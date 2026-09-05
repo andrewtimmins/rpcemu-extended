@@ -52,6 +52,15 @@ public:
 	 */
 	bool LogTraceControlsAgainstMachine(const char *when);
 
+	/**
+	 * Check the memory view reads the address space it claims to (issue #258).
+	 *
+	 * Driven by RPCEMU_TEST_INSPECTOR_AFTER against a booted machine, because
+	 * none of this can be constructed in a unit test: it needs real page tables
+	 * and a real MMU. Returns true when every check agreed.
+	 */
+	bool LogMemoryViewAgainstMachine(const char *when);
+
 	/*
 	 * Driven by RPCEMU_TEST_INSPECTOR_AFTER. Auto-step and the session file are
 	 * both window behaviour - a timer and two file dialogs - so no unit test can
@@ -237,6 +246,7 @@ private:
 
 	wxTextCtrl *memory_address_input_ = nullptr;
 	wxSpinCtrl *memory_bytes_spin_ = nullptr;
+	wxCheckBox *memory_physical_checkbox_ = nullptr;
 
 	wxStaticText *debug_status_label_ = nullptr;
 	wxStaticText *debug_hit_label_ = nullptr;
@@ -282,6 +292,12 @@ private:
 
 	uint32_t disasm_current_address_ = 0;
 	uint32_t memory_current_address_ = 0;
+	/* Whether memory_current_address_ has been chosen, rather than using zero
+	   as the sentinel for "not yet". Zero is a perfectly good address to want
+	   to look at, and using it as the sentinel meant a deliberate 0 was
+	   replaced by R13 on the very next snapshot - the flicker reported in
+	   issue #258. */
+	bool memory_address_chosen_ = false;
 	MachineSnapshot last_snapshot_{};
 
 	wxDECLARE_EVENT_TABLE();
