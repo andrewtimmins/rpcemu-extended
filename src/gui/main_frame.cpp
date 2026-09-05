@@ -1872,6 +1872,10 @@ void MainFrame::OnTestInspectorTimer(wxTimerEvent &event)
 	case 4:
 		if (machine_inspector_window_ != nullptr) {
 			machine_inspector_window_->LogTraceControlsAgainstMachine("reopened");
+			/* Issue #258: the memory view read physical addresses while every
+			   other address in the window meant a virtual one. Needs a booted
+			   machine, because it needs real page tables. */
+			machine_inspector_window_->LogMemoryViewAgainstMachine("reopened");
 		} else {
 			rpclog("TEST_INSPECTOR: no inspector window on reopen\n");
 		}
