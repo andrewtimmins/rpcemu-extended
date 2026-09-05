@@ -57,6 +57,7 @@ extern "C" {
 #include "network-nat.h"
 #include "podulerom.h"
 #include "romload.h"
+#include "rom_patch.h"
 #include "savestate.h"
 #include "sound.h"
 #include "vidc20.h"
@@ -938,6 +939,11 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 		   the only place that can then check whether the guest adopted the mode.
 		   See MainFrame::RequestGuestMode(). */
 		config_save(&config);
+		/* The monitor the machine is being asked for has changed, so rebuild the
+		   block the graphics card serves over DDC. RISC OS reads the EDID when
+		   its display driver starts, so this reaches the guest on the next
+		   driver start or restart rather than at once. */
+		rom_patch_refresh_monitor_edid();
 		break;
 	case EmuCommandType::ClipboardEnabled:
 		config.clipboard_enabled ^= 1;

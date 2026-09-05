@@ -143,6 +143,8 @@ static const timing_bit_t established_timings3[] = {
    the second is free for the mode bitmap. */
 #define DESC_PREFERRED		0x36u
 #define DESC_SECOND		0x48u
+#define DESC_THIRD		0x5au
+#define DESC_FOURTH		0x6cu
 
 /**
  * Set the bits of a timing bitmap for every listed mode that fits.
@@ -247,13 +249,38 @@ set_standard_timing(uint8_t *p, unsigned x, unsigned aspect, unsigned hz)
 	p[1] = (uint8_t) (((aspect & 0x03) << 6) | ((hz - 60) & 0x3f));
 }
 
+/* Modes no timing bitmap can express, largest first.
+   DMT has no entry for any of them, and a standard timing cannot describe them
+   either: that field stores (width / 8) - 31 in a byte, so it stops at 2288
+   pixels wide. A detailed timing descriptor is the only way to declare one, and
+   there are exactly two spare descriptor slots, so at most the largest two that
+   fit are advertised. Without this the mode chooser offers 2560x1440 and RISC OS
+   refuses it, which is the 1440p half of the display reports. */
+static const struct { unsigned x, y; } detail_only_modes[] = {
+	{ 3840, 2160 },
+	{ 3440, 1440 },
+	{ 2560, 1440 },
+};
+
 void
 edid_build_from_base(uint8_t out[EDID_BLOCK_SIZE],
                      const uint8_t base[EDID_BLOCK_SIZE],
-                     unsigned x, unsigned y, unsigned hz)
+                     unsigned x, unsigned y,
+                     unsigned max_x, unsigned max_y, unsigned hz)
 {
 	unsigned sum = 0;
 	int i;
+
+	/* The ceiling can never be below the preferred mode: the monitor plainly
+	   shows the mode it says is native, and a caller that passes a smaller
+	   ceiling means "no ceiling worth applying" rather than "hide the native
+	   mode". */
+	if (max_x < x) {
+		max_x = x;
+	}
+	if (max_y < y) {
+		max_y = y;
+	}
 
 	memcpy(out, base, EDID_BLOCK_SIZE);
 
@@ -271,7 +298,7 @@ edid_build_from_base(uint8_t out[EDID_BLOCK_SIZE],
 	out[0x25] = 0;
 	set_timing_bits(&out[0x23], 3, established_timings,
 	                (unsigned) (sizeof(established_timings) /
-	                            sizeof(established_timings[0])), x, y);
+	                            sizeof(established_timings[0])), max_x, max_y);
 
 	/* Standard timings: a ladder of widescreen/legacy modes.
 	 *
@@ -310,7 +337,7 @@ edid_build_from_base(uint8_t out[EDID_BLOCK_SIZE],
 		unsigned slot = 0, e;
 
 		for (e = 0; e < sizeof(ladder) / sizeof(ladder[0]) && slot < slots; e++) {
-			if (ladder[e].x > x || ladder[e].y > y) {
+			if (ladder[e].x > max_x || ladder[e].y > max_y) {
 				continue;
 			}
 			set_standard_timing(&out[0x26 + slot * 2], ladder[e].x,
@@ -341,7 +368,34 @@ edid_build_from_base(uint8_t out[EDID_BLOCK_SIZE],
 		set_timing_bits(&d[ET3_BITMAP_OFFSET], ET3_BITMAP_BYTES,
 		                established_timings3,
 		                (unsigned) (sizeof(established_timings3) /
-		                            sizeof(established_timings3[0])), x, y);
+		                            sizeof(established_timings3[0])),
+		                max_x, max_y);
+	}
+
+	/* Descriptors 3 and 4 = the largest modes that fit the ceiling but which no
+	   bitmap can express. Both slots are dummies (tag 0x10, all zero) in every
+	   ROM block seen, so this displaces nothing, and a slot is left inherited
+	   when there is nothing to put in it rather than being blanked. The
+	   preferred mode is skipped: it already has descriptor 1. */
+	{
+		const unsigned slot_at[2] = { DESC_THIRD, DESC_FOURTH };
+		unsigned used = 0;
+		size_t m;
+
+		for (m = 0; m < sizeof(detail_only_modes) /
+		                sizeof(detail_only_modes[0]) && used < 2; m++) {
+			const unsigned dx = detail_only_modes[m].x;
+			const unsigned dy = detail_only_modes[m].y;
+
+			if (dx > max_x || dy > max_y) {
+				continue;
+			}
+			if (dx == x && dy == y) {
+				continue;	/* already the preferred timing */
+			}
+			build_detailed_timing(&out[slot_at[used]], dx, dy, hz);
+			used++;
+		}
 	}
 
 	/* Recompute the checksum so the whole block sums to a multiple of 256.
@@ -352,6 +406,105 @@ edid_build_from_base(uint8_t out[EDID_BLOCK_SIZE],
 		sum += out[i];
 	}
 	out[0x7f] = (uint8_t) ((256 - (sum & 0xff)) & 0xff);
+}
+
+/*
+ * Read a block back and say whether it declares one particular mode.
+ *
+ * Decoding rather than remembering: the question "will RISC OS accept this
+ * size?" has to be answered from the block the guest is actually reading, or a
+ * caller ends up re-implementing the builder's rules and the two drift. The
+ * established bitmap and the standard-timing ladder are read straight out of
+ * the base block's fixed offsets; the other two mechanisms live in descriptors,
+ * which have to be walked because their order is not fixed.
+ */
+static void
+detailed_timing_size(const uint8_t d[18], unsigned *x, unsigned *y)
+{
+	*x = (unsigned) d[2] | (((unsigned) d[4] & 0xf0u) << 4);
+	*y = (unsigned) d[5] | (((unsigned) d[7] & 0xf0u) << 4);
+}
+
+int
+edid_block_declares(const uint8_t block[EDID_BLOCK_SIZE],
+                    unsigned width, unsigned height)
+{
+	/* The seventeen established-bitmap modes, at their fixed bit positions. */
+	static const struct { unsigned w, h, byte, bit; } established[] = {
+		{  720, 400, 0x23, 7 }, {  640, 480, 0x23, 5 },
+		{  640, 480, 0x23, 3 }, {  640, 480, 0x23, 2 },
+		{  800, 600, 0x23, 1 }, {  800, 600, 0x23, 0 },
+		{  800, 600, 0x24, 7 }, {  800, 600, 0x24, 6 },
+		{  832, 624, 0x24, 5 }, { 1024, 768, 0x24, 3 },
+		{ 1024, 768, 0x24, 2 }, { 1024, 768, 0x24, 1 },
+		{ 1280, 1024, 0x24, 0 }, { 1152, 870, 0x25, 7 },
+	};
+	/* A standard timing stores the width and an aspect code; the height is
+	   derived, so it is never in the block. */
+	static const unsigned aspect_num[4] = { 16, 4, 5, 16 };
+	static const unsigned aspect_den[4] = { 10, 3, 4,  9 };
+	unsigned i;
+
+	if (block == NULL || width == 0 || height == 0) {
+		return 0;
+	}
+
+	for (i = 0; i < sizeof(established) / sizeof(established[0]); i++) {
+		if (established[i].w == width && established[i].h == height &&
+		    (block[established[i].byte] &
+		     (1u << established[i].bit)) != 0) {
+			return 1;
+		}
+	}
+
+	for (i = 0x26; i < 0x36; i += 2) {
+		unsigned w, h, aspect;
+
+		if (block[i] == 0x01 && block[i + 1] == 0x01) {
+			continue;	/* unused slot */
+		}
+		w = ((unsigned) block[i] + 31u) * 8u;
+		aspect = ((unsigned) block[i + 1] >> 6) & 0x03u;
+		h = w * aspect_den[aspect] / aspect_num[aspect];
+
+		if (w == width && h == height) {
+			return 1;
+		}
+	}
+
+	for (i = 0; i < 4; i++) {
+		const uint8_t *d = block + DESC_PREFERRED + i * 18;
+
+		/* A descriptor with a zero pixel clock is a display descriptor;
+		   byte 3 is then its tag. Anything else is a detailed timing. */
+		if (d[0] != 0 || d[1] != 0) {
+			unsigned dx = 0, dy = 0;
+
+			detailed_timing_size(d, &dx, &dy);
+			if (dx == width && dy == height) {
+				return 1;
+			}
+			continue;
+		}
+
+		if (d[3] == ET3_TAG && d[4] == 0) {
+			const uint8_t *bitmap = d + ET3_BITMAP_OFFSET;
+			unsigned e;
+
+			for (e = 0; e < sizeof(established_timings3) /
+			                sizeof(established_timings3[0]); e++) {
+				if (established_timings3[e].x == width &&
+				    established_timings3[e].y == height &&
+				    established_timings3[e].byte < ET3_BITMAP_BYTES &&
+				    (bitmap[established_timings3[e].byte] &
+				     (1u << established_timings3[e].bit)) != 0) {
+					return 1;
+				}
+			}
+		}
+	}
+
+	return 0;
 }
 
 /* The block in force, for anything that must answer for the same monitor. Kept
