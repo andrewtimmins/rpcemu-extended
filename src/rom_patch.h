@@ -42,6 +42,16 @@ extern "C" {
  */
 void rom_patch_apply(size_t rom_bytes);
 
+/**
+ * Rebuild and republish the monitor EDID for the screen size now configured.
+ *
+ * For a size changed while the machine runs. The rebuilt block is what the
+ * graphics card serves over DDC from now on; RISC OS reads the EDID when its
+ * display driver starts, so the change reaches the guest on the next driver
+ * start or the next boot, not immediately.
+ */
+void rom_patch_refresh_monitor_edid(void);
+
 #ifdef __cplusplus
 }
 #endif

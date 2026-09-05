@@ -245,7 +245,7 @@ check_edid_est3_scales_with_the_preferred_mode(void)
 	uint8_t block[EDID_BLOCK_SIZE];
 	size_t i;
 
-	printf("\nthe mode bitmap scales with the preferred mode\n");
+	printf("\nthe mode bitmap scales with the advertising ceiling\n");
 
 	for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
 		char label[80];
@@ -254,7 +254,8 @@ check_edid_est3_scales_with_the_preferred_mode(void)
 		memset(base, 0, sizeof(base));
 		memset(base + 1, 0xff, 6);
 		base[18] = 1;
-		edid_build_from_base(block, base, cases[i].pref_w, cases[i].pref_h, 60);
+		edid_build_from_base(block, base, cases[i].pref_w, cases[i].pref_h,
+		                     cases[i].pref_w, cases[i].pref_h, 60);
 
 		if (edid_est3_bitmap(block) == NULL) {
 			printf("  native %ux%u: FAIL (no 0xF7 descriptor in the block)\n",
@@ -341,7 +342,7 @@ check_edid_advertises_every_mode(void)
 	   larger than the preferred one in either direction is deliberately left
 	   out. Asking at 2560x1440 is therefore asking "of everything the chooser
 	   can pick, is anything missing that would fit?". */
-	edid_build_from_base(block, base, 2560, 1440, 60);
+	edid_build_from_base(block, base, 2560, 1440, 2560, 1440, 60);
 
 	printf("\nevery mode the chooser can pick is one the EDID advertises\n");
 
@@ -396,6 +397,158 @@ check_edid_advertises_every_mode(void)
 		}
 		printf("  %-44s ok\n", label);
 	}
+}
+
+/*
+ * The bug this pair exists for.
+ *
+ * check_edid_advertises_every_mode() builds its block at 2560x1440, the largest
+ * mode there is, where nothing can be above the ceiling and the invariant it
+ * checks cannot fail. Every real machine has a preferred mode well below that,
+ * and until the ceiling became its own argument the list was bounded by the
+ * preferred mode - so a machine configured for 1280x1024 advertised nothing
+ * larger, the chooser went on offering the bigger sizes, and RISC OS refused
+ * every one of them as "unsuitable for displaying the desktop".
+ *
+ * So: build at a SMALL preferred mode with a LARGE ceiling, and check the list
+ * follows the ceiling. With the ceiling argument removed these all fail.
+ */
+static void
+check_small_preferred_mode_still_advertises_the_ceiling(void)
+{
+	static const struct { unsigned w, h; } want[] = {
+		{ 1920, 1080 },		/* Derek's case: standard-timing ladder */
+		{ 1920, 1200 },		/* Established Timings III */
+		{ 1680, 1050 },
+		{ 1280, 1024 },		/* the preferred mode itself */
+		{ 1024,  768 },		/* established bitmap */
+	};
+	uint8_t base[EDID_BLOCK_SIZE];
+	uint8_t block[EDID_BLOCK_SIZE];
+	size_t i;
+
+	memset(base, 0, sizeof(base));
+	memset(base + 1, 0xff, 6);
+	base[18] = 1;
+
+	/* A 1920x1200 monitor, a machine configured for 1280x1024. */
+	edid_build_from_base(block, base, 1280, 1024, 1920, 1200, 60);
+
+	printf("\na small preferred mode still advertises up to the ceiling\n");
+
+	if (!edid_block_is_valid(block)) {
+		printf("  FAIL (block checksum/header invalid)\n");
+		failures++;
+		return;
+	}
+
+	for (i = 0; i < sizeof(want) / sizeof(want[0]); i++) {
+		char label[80];
+
+		snprintf(label, sizeof(label), "%ux%u offered below a 1920x1200 ceiling",
+		         want[i].w, want[i].h);
+		if (!edid_advertises(block, want[i].w, want[i].h)) {
+			printf("  %-52s FAIL\n", label);
+			failures++;
+			continue;
+		}
+		printf("  %-52s ok\n", label);
+	}
+
+	/* And the ceiling still means something: above it, nothing is offered. */
+	if (edid_advertises(block, 1920, 1440)) {
+		printf("  %-52s FAIL\n", "1920x1440 withheld above the ceiling");
+		failures++;
+	} else {
+		printf("  %-52s ok\n", "1920x1440 withheld above the ceiling");
+	}
+}
+
+/*
+ * 2560x1440 and its neighbours cannot be said by any bitmap - DMT has no such
+ * mode and a standard timing stops at 2288 pixels wide - so they are carried in
+ * the two spare detailed-timing descriptors. Without that, picking 1440p from
+ * the chooser is refused by RISC OS however large the ceiling is, which is the
+ * 1440p half of the display reports.
+ */
+static void
+check_detail_only_modes_are_declared(void)
+{
+	uint8_t base[EDID_BLOCK_SIZE];
+	uint8_t block[EDID_BLOCK_SIZE];
+
+	memset(base, 0, sizeof(base));
+	memset(base + 1, 0xff, 6);
+	base[18] = 1;
+
+	printf("\nmodes no bitmap can express are carried as detailed timings\n");
+
+	/* A 1440p monitor, machine configured for 1920x1080. */
+	edid_build_from_base(block, base, 1920, 1080, 2560, 1440, 60);
+
+	if (!edid_block_is_valid(block)) {
+		printf("  FAIL (block checksum/header invalid)\n");
+		failures++;
+		return;
+	}
+	if (!edid_block_declares(block, 2560, 1440)) {
+		printf("  %-52s FAIL\n", "2560x1440 declared below a 1440p ceiling");
+		failures++;
+	} else {
+		printf("  %-52s ok\n", "2560x1440 declared below a 1440p ceiling");
+	}
+	/* The preferred mode keeps its own descriptor either way. */
+	if (!edid_block_declares(block, 1920, 1080)) {
+		printf("  %-52s FAIL\n", "1920x1080 still declared as preferred");
+		failures++;
+	} else {
+		printf("  %-52s ok\n", "1920x1080 still declared as preferred");
+	}
+	/* Above the ceiling it stays out. */
+	if (edid_block_declares(block, 3840, 2160)) {
+		printf("  %-52s FAIL\n", "3840x2160 withheld above the ceiling");
+		failures++;
+	} else {
+		printf("  %-52s ok\n", "3840x2160 withheld above the ceiling");
+	}
+}
+
+/*
+ * edid_block_declares() is what the size chooser asks before deciding whether a
+ * refusal was the emulator's fault or the guest's, so it has to agree with the
+ * decoder this file already had. Two independent readers of the same block: if
+ * they disagree, one of them is wrong and the dialogue gives the wrong advice.
+ */
+static void
+check_declares_agrees_with_the_test_decoder(void)
+{
+	uint8_t base[EDID_BLOCK_SIZE];
+	uint8_t block[EDID_BLOCK_SIZE];
+	size_t i;
+
+	memset(base, 0, sizeof(base));
+	memset(base + 1, 0xff, 6);
+	base[18] = 1;
+	edid_build_from_base(block, base, 1280, 1024, 1920, 1200, 60);
+
+	printf("\nedid_block_declares() agrees with the test's own decoder\n");
+
+	for (i = 0; i < display_mode_count(); i++) {
+		unsigned w = 0, h = 0;
+		int mine, theirs;
+
+		if (!display_mode_get(i, &w, &h)) {
+			continue;
+		}
+		mine = edid_block_declares(block, w, h) ? 1 : 0;
+		theirs = edid_advertises(block, w, h) ? 1 : 0;
+		if (mine != theirs) {
+			printf("  %ux%u: FAIL (edid_block_declares says %d, decoder says %d)\n",
+			       w, h, mine, theirs);
+			failures++;
+		}
+	}
+	printf("  every mode in the table agrees\n");
 }
 
 int
@@ -474,6 +627,9 @@ main(void)
 	expect_nothing("host smaller than any mode", 320, 200, 4, 8);
 
 	check_edid_advertises_every_mode();
+	check_small_preferred_mode_still_advertises_the_ceiling();
+	check_detail_only_modes_are_declared();
+	check_declares_agrees_with_the_test_decoder();
 	check_edid_est3_scales_with_the_preferred_mode();
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
