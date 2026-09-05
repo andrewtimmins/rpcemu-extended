@@ -1064,8 +1064,10 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 		break;
 	}
 	case EmuCommandType::ReadMemory: {
+		/* Virtual, like every other address crossing this boundary. This path
+		   has no callers today; EmulatorHost::ReadMemory() is unreferenced. */
 		std::vector<uint8_t> data =
-		    emulator_read_memory(command.debug_address, command.debug_count);
+		    emulator_read_memory(command.debug_address, command.debug_count).data;
 		{
 			std::lock_guard<std::mutex> lock(memory_mutex_);
 			memory_result_ = std::move(data);

@@ -35,6 +35,7 @@
 extern "C" {
 #include "arm.h"
 #include "arm_common.h"	/* ARM_MODE_32: bit 4 of the mode says 26- or 32-bit */
+#include "mem.h"	/* mem_debug_read: the translated, side-effect-free read */
 }
 
 #include <cstring>
@@ -369,6 +370,11 @@ void MachineInspectorWindow::BuildUi()
 	                                    wxDefaultPosition, wxSize(80, -1),
 	                                    wxSP_ARROW_KEYS, 16, 4096, 256);
 	memory_bytes_spin_->SetToolTip("Number of bytes to display");
+	memory_physical_checkbox_ = new wxCheckBox(memory_panel, wxID_ANY, "Physical");
+	memory_physical_checkbox_->SetToolTip(
+	    "Read the address as a physical one. Off, it is a virtual address and "
+	    "goes through the MMU, which is what every other address in this window "
+	    "means. Matches the debug socket's 'mem <addr> <len> [phys]'.");
 	auto *memory_go_button = new wxButton(memory_panel, ID_MEMORY_GO, "Go");
 	auto *memory_refresh_button = new wxButton(memory_panel, ID_MEMORY_REFRESH, "Refresh");
 
@@ -377,6 +383,7 @@ void MachineInspectorWindow::BuildUi()
 	memory_controls->Add(memory_address_input_, 0, wxRIGHT, 6);
 	memory_controls->Add(new wxStaticText(memory_panel, wxID_ANY, "Bytes:"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
 	memory_controls->Add(memory_bytes_spin_, 0, wxRIGHT, 6);
+	memory_controls->Add(memory_physical_checkbox_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
 	memory_controls->Add(memory_go_button, 0, wxRIGHT, 6);
 	memory_controls->Add(memory_refresh_button, 0);
 
@@ -619,6 +626,10 @@ void MachineInspectorWindow::BuildUi()
 
 	disasm_address_input_->Bind(wxEVT_TEXT_ENTER, &MachineInspectorWindow::OnDisasmGo, this);
 	memory_address_input_->Bind(wxEVT_TEXT_ENTER, &MachineInspectorWindow::OnMemoryGo, this);
+	/* The same number in the other address space, so re-read it rather than
+	   leaving the previous space's bytes on screen under the new setting. */
+	memory_physical_checkbox_->Bind(wxEVT_CHECKBOX,
+	    [this](wxCommandEvent &) { RefreshMemoryView(memory_current_address_); });
 	breakpoint_list_->Bind(wxEVT_LISTBOX, &MachineInspectorWindow::OnBreakpointSelection, this);
 	watchpoint_list_->Bind(wxEVT_LISTBOX, &MachineInspectorWindow::OnWatchpointSelection, this);
 	/* Keys on the frame and on the two read-only views, which are where the
@@ -687,11 +698,8 @@ void MachineInspectorWindow::ApplySnapshot(const MachineSnapshot &snapshot)
 
 	/* Something useful in the memory pane on the first snapshot rather than an
 	   empty box: the stack is what a stopped machine is usually asked about. */
-	if (memory_current_address_ == 0 && snapshot.regs[13] != 0) {
-		memory_current_address_ = snapshot.regs[13] & ~0xfu;
-		memory_address_input_->SetValue(wxString::Format("%08X",
-		    memory_current_address_));
-		RefreshMemoryView(memory_current_address_);
+	if (!memory_address_chosen_ && snapshot.regs[13] != 0) {
+		RefreshMemoryView(snapshot.regs[13] & ~0xfu);
 	}
 
 	if (disasm_follow_pc_checkbox_->GetValue()) {
@@ -1094,6 +1102,68 @@ bool MachineInspectorWindow::LogTraceControlsAgainstMachine(const char *when)
 	return agree;
 }
 
+bool MachineInspectorWindow::LogMemoryViewAgainstMachine(const char *when)
+{
+	const MachineSnapshot snapshot = emulator_.TakeSnapshot();
+	bool agree = true;
+
+	/* Somewhere the MMU actually moves, so an untranslated read is visibly
+	   different rather than accidentally right. Virtual 0 is RISC OS's vector
+	   table and is mapped on any booted machine. */
+	const uint32_t probe[] = { 0x00000000u, 0x00008000u, snapshot.regs[13] & ~0xfu };
+
+	for (uint32_t addr : probe) {
+		const MemoryRead virt = emulator_read_memory(addr, 4, false);
+		const MemoryRead phys = emulator_read_memory(addr, 4, true);
+		uint32_t expect = 0;
+		const int expect_ok = mem_debug_read(addr, 4, &expect);
+		uint32_t got = 0;
+
+		for (int i = 0; i < 4; i++) {
+			got |= static_cast<uint32_t>(virt.data[i]) << (i * 8);
+		}
+
+		/* The view's virtual read must be the same thing the debugger's own
+		   translated read gives. If this disagrees the view is reading some
+		   other address space, which is the bug. */
+		const bool matches = expect_ok
+		    ? (virt.mapped[0] != 0 && got == expect)
+		    : (virt.mapped[0] == 0);
+
+		if (!matches) {
+			agree = false;
+		}
+		rpclog("TEST_INSPECTOR: %s: &%08X virtual=%08X(mapped=%d) "
+		       "physical=%02X%02X%02X%02X debugger=%08X(ok=%d)%s\n",
+		       when, addr, got, virt.mapped[0],
+		       phys.data[3], phys.data[2], phys.data[1], phys.data[0],
+		       expect, expect_ok, matches ? "" : "  DISAGREE");
+
+		/* And the two spaces must not be silently the same number, or the
+		   check above proves nothing on this machine. */
+		if (virt.data != phys.data) {
+			rpclog("TEST_INSPECTOR: %s: &%08X translation is visible "
+			       "(virtual and physical differ)\n", when, addr);
+		}
+	}
+
+	/* The zero sentinel: a deliberate 0 must survive the next snapshot rather
+	   than being replaced by R13. */
+	RefreshMemoryView(0);
+	ApplySnapshot(emulator_.TakeSnapshot());
+	if (memory_current_address_ != 0) {
+		agree = false;
+		rpclog("TEST_INSPECTOR: %s: address 0 was replaced by &%08X  DISAGREE\n",
+		       when, memory_current_address_);
+	} else {
+		rpclog("TEST_INSPECTOR: %s: address 0 stayed 0 across a snapshot\n", when);
+	}
+
+	rpclog("TEST_INSPECTOR: %s: memory view %s the machine\n", when,
+	       agree ? "agrees with" : "DISAGREES with");
+	return agree;
+}
+
 void MachineInspectorWindow::ApplyTraceConfig()
 {
 	DebugTraceConfig cfg{};
@@ -1232,6 +1302,7 @@ void MachineInspectorWindow::RefreshDisassembly(uint32_t address)
 void MachineInspectorWindow::RefreshMemoryView(uint32_t address)
 {
 	memory_current_address_ = address;
+	memory_address_chosen_ = true;
 	memory_address_input_->SetValue(wxString::Format("%08X", address));
 
 	int num_bytes = memory_bytes_spin_->GetValue();
@@ -1239,7 +1310,11 @@ void MachineInspectorWindow::RefreshMemoryView(uint32_t address)
 		num_bytes = 16;
 	}
 
-	const std::vector<uint8_t> data = emulator_read_memory(address, static_cast<uint32_t>(num_bytes));
+	const bool physical = memory_physical_checkbox_ != nullptr &&
+	                      memory_physical_checkbox_->GetValue();
+	const MemoryRead read = emulator_read_memory(address,
+	    static_cast<uint32_t>(num_bytes), physical);
+	const std::vector<uint8_t> &data = read.data;
 	if (data.empty()) {
 		memory_view_->SetValue("Failed to read memory");
 		return;
@@ -1252,9 +1327,19 @@ void MachineInspectorWindow::RefreshMemoryView(uint32_t address)
 		wxString ascii_part;
 		for (int i = 0; i < bytes_per_line; i++) {
 			if (offset + static_cast<size_t>(i) < data.size()) {
-				const uint8_t byte = data[offset + static_cast<size_t>(i)];
-				hex_part += wxString::Format("%02X ", byte);
-				ascii_part += (byte >= 32 && byte < 127) ? wxString(static_cast<char>(byte)) : ".";
+				const size_t at = offset + static_cast<size_t>(i);
+				const uint8_t byte = data[at];
+
+				/* An unmapped byte is not a zero. Printing it as 00 is what
+				   made a wrong address look like a page of zeros rather than
+				   like a question the machine cannot answer. */
+				if (at < read.mapped.size() && read.mapped[at] == 0) {
+					hex_part += "-- ";
+					ascii_part += " ";
+				} else {
+					hex_part += wxString::Format("%02X ", byte);
+					ascii_part += (byte >= 32 && byte < 127) ? wxString(static_cast<char>(byte)) : ".";
+				}
 			} else {
 				hex_part += "   ";
 				ascii_part += " ";
