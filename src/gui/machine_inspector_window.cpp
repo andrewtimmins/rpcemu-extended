@@ -784,6 +784,11 @@ void MachineInspectorWindow::BuildUi()
 	split_outer->SplitHorizontally(split_main, notebook);
 	split_outer->SetSashGravity(0.7);
 
+	/* Kept so a session can put the sashes back where they were. */
+	split_outer_ = split_outer;
+	split_main_ = split_main;
+	split_code_ = split_code;
+
 	auto *main = new wxBoxSizer(wxVERTICAL);
 	main->Add(controls, 0, wxEXPAND | wxALL, 8);
 	main->Add(debug_buttons, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
@@ -2643,6 +2648,26 @@ bool MachineInspectorWindow::SaveSessionTo(const wxString &path)
 		file.AddLine("swi_names " + swi_names_path_);
 	}
 
+	/*
+	 * The window and its sashes.
+	 *
+	 * A session is "how I had the debugger set up", and how the panes were
+	 * divided is as much a part of that as which SWIs were being traced -
+	 * somebody who has dragged the disassembly tall to read a long function
+	 * wants that back with the breakpoints. Asked for by JonAbbott2 on
+	 * discussion #223.
+	 */
+	file.AddLine(wxString::Format("window_pos %d %d",
+	    GetPosition().x, GetPosition().y));
+	file.AddLine(wxString::Format("window_size %d %d",
+	    GetSize().x, GetSize().y));
+	file.AddLine(wxString::Format("sash_outer %d",
+	    split_outer_->GetSashPosition()));
+	file.AddLine(wxString::Format("sash_main %d",
+	    split_main_->GetSashPosition()));
+	file.AddLine(wxString::Format("sash_code %d",
+	    split_code_->GetSashPosition()));
+
 	/* The breakpoints and watchpoints as the machine has them, not as this
 	   window last drew them. */
 	for (uint32_t i = 0; i < last_snapshot_.debug_breakpoint_count; i++) {
@@ -2741,6 +2766,37 @@ bool MachineInspectorWindow::LoadSessionFrom(const wxString &path)
 				rpclog("Machine Inspector: session names a SWI list that "
 				    "cannot be read: %s\n", (const char *) rest.utf8_str());
 			}
+		} else if (key == "window_pos" || key == "window_size") {
+			int a = 0, b = 0;
+
+			if (sscanf(rest.utf8_str().data(), "%d %d", &a, &b) == 2) {
+				if (key == "window_pos") {
+					SetPosition(wxPoint(a, b));
+				} else if (a > 200 && b > 200) {
+					/* Refuse a size that would leave nothing usable: a
+					   session written on another machine, or hand-edited,
+					   should not be able to make the window unreadable. */
+					SetSize(wxSize(a, b));
+				}
+			}
+		} else if (key == "sash_outer" || key == "sash_main" ||
+		           key == "sash_code") {
+			/*
+			 * Deferred, because the sash is clamped against the window's
+			 * current size and the window may still be being resized by the
+			 * lines above. Setting it now would have it silently pulled back
+			 * to a minimum pane size.
+			 */
+			if (rest.ToLong(&value) && value > 0) {
+				wxSplitterWindow *const split =
+				    key == "sash_outer" ? split_outer_ :
+				    key == "sash_main" ? split_main_ : split_code_;
+				const int position = (int) value;
+
+				CallAfter([split, position] {
+					split->SetSashPosition(position);
+				});
+			}
 		} else if (key == "breakpoint") {
 			bool ok = false;
 			const uint32_t address = ParseAddress(rest, &ok);
@@ -2831,6 +2887,9 @@ bool MachineInspectorWindow::TestSessionRoundTrip(const wxString &path)
 	disasm_apcs_checkbox_->SetValue(true);
 	swi_filter_min_input_->SetValue("40000");
 	autostep_rate_spin_->SetValue(17);
+	/* The sashes too, since a session now carries them. A value nothing else
+	   would produce, and well inside the minimum pane sizes. */
+	split_code_->SetSashPosition(211);
 	emulator_.DebuggerClearBreakpoints();
 	emulator_.DebuggerAddBreakpoint(0x00008abc);
 	RefreshSnapshot();
@@ -2851,6 +2910,7 @@ bool MachineInspectorWindow::TestSessionRoundTrip(const wxString &path)
 	disasm_apcs_checkbox_->SetValue(false);
 	swi_filter_min_input_->SetValue("0");
 	autostep_rate_spin_->SetValue(1);
+	split_code_->SetSashPosition(140);
 	ApplyTraceConfig();
 
 	if (!LoadSessionFrom(path)) {
@@ -2872,6 +2932,10 @@ bool MachineInspectorWindow::TestSessionRoundTrip(const wxString &path)
 		{ "swi_filter_min",  swi_filter_min_input_->GetValue() == "40000" },
 		{ "autostep_rate",   autostep_rate_spin_->GetValue() == 17 },
 	};
+
+	/* The sash is put back by a CallAfter, because it has to be applied after
+	   any window resize in the same file has settled - so it is checked after
+	   the loop below rather than in it. */
 	int ok = 1;
 
 	for (size_t i = 0; i < sizeof(checks) / sizeof(checks[0]); i++) {
@@ -2892,6 +2956,22 @@ bool MachineInspectorWindow::TestSessionRoundTrip(const wxString &path)
 		rpclog("TEST_INSPECTOR: session breakpoint      %s\n",
 		    found ? "restored" : "LOST");
 		if (!found) {
+			ok = 0;
+		}
+	}
+
+	/*
+	 * The sash, once the deferred restore has run. wxYield lets the CallAfter
+	 * the loader queued actually happen; without it this reads the value from
+	 * before the load and would pass or fail for the wrong reason.
+	 */
+	wxYield();
+	{
+		const int at = split_code_->GetSashPosition();
+
+		rpclog("TEST_INSPECTOR: session sash_code       %s (%d)\n",
+		    at == 211 ? "restored" : "LOST", at);
+		if (at != 211) {
 			ok = 0;
 		}
 	}
