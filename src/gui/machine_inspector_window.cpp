@@ -516,7 +516,8 @@ void MachineInspectorWindow::BuildUi()
 	autostep_checkbox_ = new wxCheckBox(debug_panel, ID_AUTOSTEP, "Auto");
 	autostep_checkbox_->SetToolTip(
 	    "Keep stepping at the rate beside this, so code can be watched running "
-	    "slowly without holding down Step");
+	    "slowly without holding down Step. Ticking it stops a running machine "
+	    "first; pressing Run turns it off again.");
 	autostep_rate_spin_ = new wxSpinCtrl(debug_panel, wxID_ANY, "4",
 	                                     wxDefaultPosition, wxSize(70, -1),
 	                                     wxSP_ARROW_KEYS, 1, 200, 4);
@@ -1351,6 +1352,9 @@ void MachineInspectorWindow::UpdateDebuggerUi(const MachineSnapshot &snapshot)
 		                          state,
 		                          FormatHex(snapshot.debug_last_pc));
 	}
+	if (!autostep_stopped_note_.empty()) {
+		status += "   " + autostep_stopped_note_;
+	}
 	debug_status_label_->SetLabel(status);
 
 	if (snapshot.debug_hit_size > 0) {
@@ -1950,9 +1954,26 @@ void MachineInspectorWindow::OnAutoStep(wxCommandEvent &)
 	if (autostep_checkbox_->GetValue()) {
 		const int rate = autostep_rate_spin_->GetValue();
 
+		autostep_stopped_note_.clear();
+
+		/*
+		 * Ticked while the machine is running: stop it, then step.
+		 *
+		 * This used to do nothing visible. The first tick saw a machine that
+		 * was not paused, concluded somebody else had resumed it, and unticked
+		 * the box - so ticking Auto on a running machine turned itself off and
+		 * said nothing about why. Reported by JonAbbott2 on discussion #223,
+		 * who expected exactly what the name says: enable it and the machine
+		 * advances an instruction at a time.
+		 */
+		if (last_snapshot_.debug_paused == 0 &&
+		    last_snapshot_.debug_pause_requested == 0) {
+			emulator_.DebuggerPause();
+		}
 		autostep_timer_.Start(1000 / (rate > 0 ? rate : 1));
 	} else {
 		autostep_timer_.Stop();
+		autostep_stopped_note_.clear();
 	}
 }
 
@@ -1989,11 +2010,20 @@ void MachineInspectorWindow::AutoStepTick()
 	 * off rather than fighting.
 	 */
 	if (last_snapshot_.debug_paused == 0) {
+		/* A pause of our own asking, still on its way: pause is deferred to
+		   the next instruction, so a tick or two lands here first. */
+		if (last_snapshot_.debug_pause_requested != 0) {
+			return;
+		}
 		autostep_timer_.Stop();
 		autostep_checkbox_->SetValue(false);
+		/* Said out loud. Silently unticking itself is what made this feature
+		   look broken rather than declined. */
+		autostep_stopped_note_ = "Auto step stopped: the machine was resumed";
 		return;
 	}
 
+	autostep_stopped_note_.clear();
 	emulator_.DebuggerStep();
 }
 
@@ -2405,6 +2435,59 @@ void MachineInspectorWindow::TestAutoStep(int rate, int ticks)
 	AutoStepTick();
 	rpclog("TEST_INSPECTOR: auto-step on a running machine turned itself %s\n",
 	    autostep_checkbox_->GetValue() ? "ON, WHICH IS WRONG" : "off");
+
+	/*
+	 * And the case a person actually hits: TICKING Auto while the machine is
+	 * running. That is not the same as the check above, which sets the box
+	 * from code and never runs the handler - and the difference is the whole
+	 * of discussion #223's "I couldn't figure out how to step using the Auto
+	 * step feature". It used to do nothing at all: the box unticked itself on
+	 * the first tick and said nothing. Now it stops the machine and steps it.
+	 */
+	{
+		wxCommandEvent ticked(wxEVT_CHECKBOX, ID_AUTOSTEP);
+		uint32_t before;
+		int moved_after_tick = 0;
+
+		emulator_.DebuggerResume();
+		RefreshSnapshot();
+
+		autostep_checkbox_->SetValue(true);
+		OnAutoStep(ticked);
+
+		/* The pause is deferred to the next instruction, so tick as the timer
+		   would until it lands. */
+		for (int i = 0; i < 200 && last_snapshot_.debug_paused == 0; i++) {
+			wxMilliSleep(5);
+			AutoStepTick();
+		}
+		rpclog("TEST_INSPECTOR: auto-step ticked on a running machine: "
+		    "machine %s, box %s\n",
+		    last_snapshot_.debug_paused ? "stopped" : "STILL RUNNING",
+		    autostep_checkbox_->GetValue() ? "still ticked" : "UNTICKED ITSELF");
+
+		before = last_snapshot_.regs[15];
+		for (int i = 0; i < 5; i++) {
+			AutoStepTick();
+			for (int waited = 0; waited < 50; waited++) {
+				wxMilliSleep(2);
+				RefreshSnapshot();
+				if (last_snapshot_.debug_step_active == 0 &&
+				    last_snapshot_.debug_paused != 0) {
+					break;
+				}
+			}
+			if (last_snapshot_.regs[15] != before) {
+				moved_after_tick++;
+				before = last_snapshot_.regs[15];
+			}
+		}
+		rpclog("TEST_INSPECTOR: and then stepped %d times out of 5\n",
+		    moved_after_tick);
+
+		autostep_checkbox_->SetValue(false);
+		autostep_timer_.Stop();
+	}
 }
 
 void MachineInspectorWindow::OnAddBreakpoint(wxCommandEvent &)
