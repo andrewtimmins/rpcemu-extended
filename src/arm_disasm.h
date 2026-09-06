@@ -198,6 +198,34 @@ typedef struct {
 typedef const char *(*ArmSymbolLookup)(uint32_t addr, uint32_t *offset, void *ctx);
 
 /**
+ * Read a word of the machine's memory, for annotating what an instruction
+ * would load.
+ *
+ * The disassembler is otherwise pure: an instruction and its address are all
+ * it needs, which is what lets the tests drive it with no machine at all. This
+ * is the one thing it cannot work out for itself - the VALUE at a literal
+ * pool address - and it is the difference between "LDR R0, &10030" and knowing
+ * that R0 is about to become &125640. Asked for on discussion #223.
+ *
+ * Registered once with arm_disasm_set_memory_reader(); without one the
+ * annotation is simply left off, which is what the tests see.
+ *
+ * @param addr   Address to read, already resolved
+ * @param value  Set to the word there if it can be read
+ * @param ctx    Opaque caller context
+ * @return Non-zero if the word was read, zero if the address is not readable
+ */
+typedef int (*ArmMemoryRead)(uint32_t addr, uint32_t *value, void *ctx);
+
+/**
+ * Register the memory reader used to annotate literal pool loads.
+ *
+ * Pass NULL to remove it. Must not have side effects: it is called while
+ * rendering, which happens for every line of a disassembly view.
+ */
+void arm_disasm_set_memory_reader(ArmMemoryRead reader, void *ctx);
+
+/**
  * Describe an ARM instruction without rendering it.
  *
  * Always fills in `out` - an unrecognised encoding yields ARM_CLASS_UNKNOWN

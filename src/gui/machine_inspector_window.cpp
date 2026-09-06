@@ -109,19 +109,6 @@ wxString ModeToShortString(uint32_t mode)
 	return wxString::Format("%s%s", name, ARM_MODE_32(mode) ? "32" : "26");
 }
 
-wxString ModeToString(uint32_t mode)
-{
-	switch (mode & 0xf) {
-	case USER: return "User";
-	case FIQ: return "FIQ";
-	case IRQ: return "IRQ";
-	case SUPERVISOR: return "Supervisor";
-	case ABORT: return "Abort";
-	case UNDEFINED: return "Undefined";
-	case SYSTEM: return "System";
-	default: return wxString::Format("Unknown (0x%X)", mode & 0xf);
-	}
-}
 
 wxString NetworkTypeToString(NetworkType type)
 {
@@ -855,8 +842,21 @@ void MachineInspectorWindow::ApplySnapshot(const MachineSnapshot &snapshot)
 		 * for in discussion #223. Clamped so it cannot wrap below zero.
 		 */
 		const uint32_t back = kDisasmLeadIn * 4u;
+		/*
+		 * Where the machine STOPPED, not where R15 now points.
+		 *
+		 * They are the same for a step, a breakpoint or a manual pause. They
+		 * are not the same for a trapped abort: the exception has been taken
+		 * by then, so R15 is on the hardware vector while halt_pc is the
+		 * instruction that faulted - which the debugger already works out and
+		 * the status line already prints. The view followed R15 and so opened
+		 * on the vector, which is not where anybody wants to be looking.
+		 * Reported by JonAbbott2 on discussion #223.
+		 */
+		const uint32_t follow = (snapshot.debug_paused != 0)
+		    ? snapshot.debug_halt_pc : snapshot.pc;
 
-		RefreshDisassembly(snapshot.pc >= back ? snapshot.pc - back : 0u);
+		RefreshDisassembly(follow >= back ? follow - back : 0u);
 	}
 }
 
@@ -1351,6 +1351,56 @@ void MachineInspectorWindow::LogMemoryWordsAgainstBytes(const char *when)
 	       static_cast<const char *>(bytes_line.mb_str()));
 	rpclog("TEST_INSPECTOR: %s: words %s\n", when,
 	       static_cast<const char *>(words_line.mb_str()));
+}
+
+/*
+ * Where the disassembly opened, against where the machine stopped.
+ *
+ * Only interesting when the two could differ, which is a trapped exception:
+ * R15 is on the hardware vector by then and halt_pc is the instruction that
+ * faulted. Discussion #223.
+ */
+void MachineInspectorWindow::LogDisassemblyFollowsHalt(const char *when)
+{
+	RefreshSnapshot();
+
+	/*
+	 * And the literal pool annotation, probed where every machine has one:
+	 * the vector table at zero is eight "LDR PC, [PC, #n]" and nothing else,
+	 * so with PC-rel ticked each line should carry both the address it reaches
+	 * and the word there.
+	 */
+	{
+		const bool was_set = disasm_resolve_checkbox_->GetValue();
+		const uint32_t was_at = disasm_current_address_;
+
+		disasm_resolve_checkbox_->SetValue(true);
+		ApplyDisasmOptions();
+		RefreshDisassembly(0);
+		rpclog("TEST_INSPECTOR: %s: vector 0 with PC-rel on: %s\n", when,
+		       static_cast<const char *>(disasm_view_->GetLineText(0).mb_str()));
+
+		disasm_resolve_checkbox_->SetValue(false);
+		ApplyDisasmOptions();
+		RefreshDisassembly(0);
+		rpclog("TEST_INSPECTOR: %s: and with it off:        %s\n", when,
+		       static_cast<const char *>(disasm_view_->GetLineText(0).mb_str()));
+
+		disasm_resolve_checkbox_->SetValue(was_set);
+		ApplyDisasmOptions();
+		RefreshDisassembly(was_at);
+	}
+
+	rpclog("TEST_INSPECTOR: %s: paused=%d reason=%u halt_pc=%08x R15=%08x "
+	       "disassembly opens at %08x%s\n",
+	       when, last_snapshot_.debug_paused,
+	       (unsigned) last_snapshot_.debug_pause_reason,
+	       last_snapshot_.debug_halt_pc, last_snapshot_.pc,
+	       disasm_current_address_,
+	       (last_snapshot_.debug_paused &&
+	        last_snapshot_.debug_halt_pc != last_snapshot_.pc)
+	           ? "  <- halt and R15 differ, which is the case that matters"
+	           : "");
 }
 
 bool MachineInspectorWindow::LogFpRegistersAgainstMachine(const char *when)

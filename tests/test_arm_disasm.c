@@ -37,6 +37,22 @@
 
 static int failures;
 
+/*
+ * A machine with one word in it, for the literal pool annotation. &12345678
+ * lives at &800C and nothing else is readable.
+ */
+static int
+stub_read_word(uint32_t addr, uint32_t *value, void *ctx)
+{
+	(void) ctx;
+
+	if (addr != 0x0000800Cu) {
+		return 0;
+	}
+	*value = 0x12345678u;
+	return 1;
+}
+
 static void
 check(const char *what, int ok)
 {
@@ -511,6 +527,25 @@ test_rendering_options(void)
 	check_opts(&opts, 0xE51CB078, AT, "LDR R11, [R12, #-120]");
 	/* Writeback: the address moves, so the registers stay on show. */
 	check_opts(&opts, 0xE53FB078, AT, "LDR R11, [PC, #-120]!");
+
+	/*
+	 * What a literal pool load will fetch, when there is a machine to ask.
+	 *
+	 * The disassembler is otherwise pure, so the reader is a stub here: it
+	 * answers for one address and refuses everything else, which checks both
+	 * that the annotation appears and - the half that matters more - that a
+	 * refusal leaves the line alone rather than printing a guess.
+	 */
+	arm_disasm_set_memory_reader(stub_read_word, NULL);
+	check_opts(&opts, 0xE59FB004, AT, "LDR R11, &0000800C  ;=&12345678");
+	/* A store reads nothing: the value there is not what it is about to
+	   become. */
+	check_opts(&opts, 0xE58FB004, AT, "STR R11, &0000800C");
+	/* An address the reader will not answer for keeps the plain form. */
+	check_opts(&opts, 0xE51FB078, AT, "LDR R11, &00007F90");
+	arm_disasm_set_memory_reader(NULL, NULL);
+	/* And with no reader at all, which is how every other test here runs. */
+	check_opts(&opts, 0xE59FB004, AT, "LDR R11, &0000800C");
 
 	/*
 	 * ADR, which is an ADD or a SUB off the PC. Same option, same reasoning,
