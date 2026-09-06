@@ -33,7 +33,7 @@
 #ifndef LFS_COMPAT_H
 #define LFS_COMPAT_H
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__OpenBSD__)
 #include <sys/types.h>
 #define off64_t   off_t
 #define fopen64   fopen

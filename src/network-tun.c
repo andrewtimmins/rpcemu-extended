@@ -34,8 +34,12 @@
 #include <pwd.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#ifdef __linux__
 #include <linux/if_tun.h>
 #include <linux/sockios.h>
+#elif __OpenBSD__
+#include <net/if_tun.h>
+#endif
 #include <net/if.h>
 #include <netinet/in.h>
 #include <sys/ioctl.h>
@@ -106,7 +110,7 @@ tun_alloc(void)
 
 	assert(config.network_type == NetworkType_EthernetBridging ||
 	       config.network_type == NetworkType_IPTunnelling);
-
+#if !defined(__OpenBSD__)
 	if (config.network_type == NetworkType_IPTunnelling && config.ipaddress == NULL) {
 		error("IP address not configured");
 		return -1;
@@ -209,7 +213,7 @@ tun_alloc(void)
 		error("Error setting %s non-blocking: %s", ifr.ifr_name, strerror(errno));
 		return -1;
 	}
-
+#endif // !__OpenBSD__
 	return fd;
 }
 
