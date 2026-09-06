@@ -287,6 +287,17 @@ typedef struct {
 	DebugPauseReason reason;
 	uint32_t halt_pc;
 	uint32_t halt_opcode;
+	/**
+	 * The instruction that branched to a prefetch abort, or zero.
+	 *
+	 * A prefetch abort is the one exception whose "faulting instruction" does
+	 * not exist: the address could not be fetched, so there is nothing there
+	 * to disassemble. What somebody wants is the instruction that sent
+	 * execution there, and that is the one the core executed immediately
+	 * before. Set only for a prefetch abort, and only when the instruction
+	 * hook was running - which trapping one guarantees. Discussion #223.
+	 */
+	uint32_t halt_from_pc;
 	uint32_t last_pc;
 	uint32_t last_opcode;
 	uint32_t hit_address;

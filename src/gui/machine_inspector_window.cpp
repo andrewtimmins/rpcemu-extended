@@ -920,8 +920,19 @@ void MachineInspectorWindow::ApplySnapshot(const MachineSnapshot &snapshot)
 		 * on the vector, which is not where anybody wants to be looking.
 		 * Reported by JonAbbott2 on discussion #223.
 		 */
-		const uint32_t follow = (snapshot.debug_paused != 0)
-		    ? snapshot.debug_halt_pc : snapshot.pc;
+		/*
+		 * A prefetch abort is the one case where the halt address itself is
+		 * no use: the machine stopped because that address could not be
+		 * fetched, so there is nothing there to disassemble. The instruction
+		 * that branched to it is what somebody wants to see, and that is what
+		 * halt_from_pc carries. Discussion #223, "is it possible to step back
+		 * to the instruction that caused a prefetch abort".
+		 */
+		const uint32_t follow =
+		    (snapshot.debug_paused != 0 && snapshot.debug_halt_from_pc != 0)
+		        ? snapshot.debug_halt_from_pc
+		        : (snapshot.debug_paused != 0) ? snapshot.debug_halt_pc
+		                                       : snapshot.pc;
 
 		RefreshDisassembly(follow >= back ? follow - back : 0u);
 	}
@@ -1221,7 +1232,15 @@ void MachineInspectorWindow::UpdateDebuggerUi(const MachineSnapshot &snapshot)
 	}
 
 	wxString status;
-	if (paused) {
+	if (paused && snapshot.debug_halt_from_pc != 0) {
+		/* Named explicitly rather than left to be inferred from the
+		   disassembly: the view is showing an address the halt did not stop
+		   at, and that has to be said. */
+		status = wxString::Format(
+		    "Paused: %s at PC %s, which was branched to from %s",
+		    reason, FormatHex(snapshot.debug_halt_pc),
+		    FormatHex(snapshot.debug_halt_from_pc));
+	} else if (paused) {
 		status = wxString::Format("Paused: %s at PC %s, opcode %s",
 		                          reason,
 		                          FormatHex(snapshot.debug_halt_pc),
