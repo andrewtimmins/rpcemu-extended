@@ -4000,6 +4000,27 @@ bool MainFrame::ConfirmCloseOrSwitch()
 void MainFrame::AskAboutClosing()
 {
 	/*
+	 * ★ Nothing to ask once the close has been settled.
+	 *
+	 * This runs from a CallAfter, which is right: it keeps the dialogue out of
+	 * a handler that is tearing the window down. What that does not account for
+	 * is a close that cannot be vetoed. OnClose() obeys one of those whatever
+	 * the answer would have been and runs the whole teardown, Destroy()
+	 * included, and the queued CallAfter is still queued. It then arrives at a
+	 * frame that is being deleted and opens a modal dialogue on it, and the
+	 * free aborts inside libmalloc: "RPCEmu quit unexpectedly" on every quit,
+	 * which was issue #184 on the 1.x line.
+	 *
+	 * Checked first, before anything is shown, because by this point there is
+	 * nothing left to decide.
+	 */
+	if (shutting_down_ || close_confirmed_) {
+		rpclog("MainFrame: close already settled, so nothing is asked\n");
+		close_question_pending_ = false;
+		return;
+	}
+
+	/*
 	 * ★ Drop the "a question is already up" flag on EVERY way out of here.
 	 *
 	 * ConfirmCloseOrSwitch() sets it so that one click on the close button, which
@@ -4043,6 +4064,14 @@ void MainFrame::AskAboutClosing()
 		       answer, wxID_YES);
 
 		if (answer != wxID_YES) {
+			return;
+		}
+
+		/* The dialogue ran a modal loop, so the world may have moved while it
+		   was up: a forced close arriving in the meantime has already torn the
+		   window down and this answer is about a window that is going anyway. */
+		if (shutting_down_) {
+			rpclog("MainFrame: the close was forced while the question was up\n");
 			return;
 		}
 	}
