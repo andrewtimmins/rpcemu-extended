@@ -414,6 +414,60 @@ test_fpregs(void)
 	refused("fpreg set 0 1");
 }
 
+/*
+ * "pc" and "15" name one register and do not mean one number.
+ *
+ * R15 reads eight ahead of the instruction being executed, so an address and
+ * the register that points at it differ by a pipeline. Every value the
+ * debugger REPORTS is the address - `regs.pc`, `status.halt_pc`, the
+ * disassembly, the breakpoints - while `regs.regs[15]` is the raw register.
+ * Writing had only one of those meanings, the raw one, under the name that
+ * everywhere else has the other: "reg set pc 5000" resumed the machine at
+ * 4ff8, two instructions into whatever preceded the address asked for, and
+ * reading it back returned a different number from the one just written.
+ *
+ * Nothing warns. The machine runs perfectly well from the wrong place.
+ */
+static void
+test_setting_the_pc(void)
+{
+	printf("Setting the PC\n");
+
+	/* A register write is refused while the machine runs, so stop it the way
+	   tests/test_stepping.c does - there is no emulator thread here to stop
+	   itself. */
+	arm.r15_mask = 0xfffffffcu;
+	arm.reg[15] = 0x8000u + 8u;
+	debugger_request_pause(DebugPauseReason_User);
+	debugger_instruction_hook(0x8000u, 0xe1a00000u);
+
+	/* The address given is where the machine will resume, and reading it back
+	   gives the same number. R15 itself lands eight beyond it. */
+	ok_with("reg set pc 5000", "\"r15\":\"00005008\"");
+	ok_with("regs", "\"pc\":\"00005000\"");
+
+	/* The raw register still means the raw register, which is the other half
+	   of what `regs` reports. */
+	ok_with("reg set 15 5000", "\"reg\":15");
+	ok_with("regs", "\"pc\":\"00004ff8\"");
+
+	/*
+	 * In a 26-bit mode R15 carries the flags and the mode as well as the
+	 * address, and a bare write would clear them - which is a fault nobody
+	 * would connect to having set the PC. Only the address bits move.
+	 */
+	arm.r15_mask = 0x03fffffcu;
+	arm.reg[15] = 0xf000800bu;
+	ok_with("reg set pc 5000", "\"r15\":\"f000500b\"");
+	ok_with("reg set pc 5000", "\"value\":\"00005000\"");
+
+	arm.r15_mask = 0xfffffffcu;
+	/* And still only while stopped: a write racing the emulator thread would
+	   be overwritten by the next instruction anyway. */
+	debugger_resume();
+	refused("reg set pc 5000");
+}
+
 static void
 test_memory_and_disassembly(void)
 {
@@ -618,6 +672,7 @@ main(int argc, char *argv[])
 	test_symbols();
 	test_memory_and_disassembly();
 	test_fpregs();
+	test_setting_the_pc();
 
 	closesocket(client_fd);
 	debugcmd_close();
