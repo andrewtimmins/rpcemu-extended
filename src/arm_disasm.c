@@ -406,7 +406,32 @@ disasm_data_processing(uint32_t opcode, uint32_t address, char *buf, size_t bufl
 	char shifter[64];
 	int len;
 
-	(void) address;
+	/*
+	 * ADR: an address built from the PC.
+	 *
+	 * "ADD R1, PC, #&5000" is how an assembler emits ADR, and read as an
+	 * addition it says nothing - the useful part is the address it produces,
+	 * which the instruction carries in full. Asked for by JonAbbott2 on
+	 * discussion #223, and the same argument as the PC-relative load below
+	 * that already resolves, so it follows the same option.
+	 *
+	 * ADD and SUB only, an immediate operand only, Rn = R15, and S clear: with
+	 * S set it is arithmetic whose flags somebody is reading, not an address
+	 * being formed, and it must keep its own name. The +8 is R15 reading a
+	 * pipeline ahead of the instruction.
+	 */
+	if (disasm_opts.resolve_pc_relative && imm && !s && rn == 15 &&
+	    (op == 4 || op == 2)) {
+		const uint32_t rot = (uint32_t) ((opcode >> 8) & 0xF) * 2u;
+		const uint32_t byte = opcode & 0xFFu;
+		const uint32_t value = rot == 0 ? byte
+		    : ((byte >> rot) | (byte << (32u - rot)));
+		const uint32_t target = (op == 4) ? address + 8u + value
+		                                  : address + 8u - value;
+
+		return snprintf(buf, buflen, "ADR%s %s, &%08X",
+		                cond_names[cond], reg_names[rd], (unsigned) target);
+	}
 
 	decode_shifter(opcode, shifter, sizeof(shifter), imm);
 

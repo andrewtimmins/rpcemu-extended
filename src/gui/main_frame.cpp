@@ -2471,6 +2471,7 @@ void MainFrame::OnTestInspectorTimer(wxTimerEvent &event)
 			/* Discussion #257: the FPA's registers, which the debugger could
 			   not show at all until they were plumbed through the snapshot. */
 			machine_inspector_window_->LogFpRegistersAgainstMachine("reopened");
+			machine_inspector_window_->LogMemoryWordsAgainstBytes("reopened");
 		} else {
 			rpclog("TEST_INSPECTOR: no inspector window on reopen\n");
 		}

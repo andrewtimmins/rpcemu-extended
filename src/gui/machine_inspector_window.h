@@ -74,6 +74,15 @@ public:
 	 */
 	bool LogFpRegistersAgainstMachine(const char *when);
 
+	/** Colour the line the machine is about to execute (discussion #223). */
+	void HighlightCurrentInstruction();
+
+	/** Point the memory view at what a register holds (discussion #223). */
+	void ShowRegisterInMemoryView(int reg);
+
+	/** Log the memory view as bytes and as words, for comparison. */
+	void LogMemoryWordsAgainstBytes(const char *when);
+
 	/*
 	 * Driven by RPCEMU_TEST_INSPECTOR_AFTER. Auto-step and the session file are
 	 * both window behaviour - a timer and two file dialogs - so no unit test can
@@ -103,6 +112,7 @@ private:
 		ID_DISASM_FOLLOW_PC,
 		ID_MEMORY_GO,
 		ID_MEMORY_REFRESH,
+		ID_MEMORY_WORDS,
 		ID_RUN,
 		ID_PAUSE,
 		ID_STEP,
@@ -231,7 +241,6 @@ private:
 	wxStaticText *reg_value_[16] = {};
 	wxStaticText *reg_name_[16] = {};
 	wxStaticText *flag_label_[7] = {};
-	wxStaticText *mode_label_ = nullptr;
 	wxStaticText *cpsr_label_ = nullptr;
 	wxStaticText *spsr_label_ = nullptr;
 	wxStaticText *mmu_label_ = nullptr;
@@ -248,6 +257,7 @@ private:
 	wxString autostep_stopped_note_;
 	wxTextCtrl *disasm_view_ = nullptr;
 	wxTextCtrl *memory_view_ = nullptr;
+	wxCheckBox *memory_words_checkbox_ = nullptr;
 	wxTextCtrl *peripheral_view_ = nullptr;
 	wxTextCtrl *accel_view_ = nullptr;
 

@@ -512,6 +512,24 @@ test_rendering_options(void)
 	/* Writeback: the address moves, so the registers stay on show. */
 	check_opts(&opts, 0xE53FB078, AT, "LDR R11, [PC, #-120]!");
 
+	/*
+	 * ADR, which is an ADD or a SUB off the PC. Same option, same reasoning,
+	 * same +8. Asked for on discussion #223.
+	 */
+	check_opts(NULL,  0xE28F1C50, AT, "ADD R1, PC, #0x5000");
+	check_opts(&opts, 0xE28F1C50, AT, "ADR R1, &0000D008");
+	check_opts(&opts, 0xE24F0004, AT, "ADR R0, &00008004");
+	check_opts(&opts, 0x028F1C50, AT, "ADREQ R1, &0000D008");
+	/* Not an address being formed: S set means the flags are being read, and
+	   the instruction has to keep its own name. */
+	check_opts(&opts, 0xE29F1C50, AT, "ADDS R1, PC, #0x5000");
+	/* Not off the PC, and not an immediate: nothing to resolve either way. */
+	check_opts(&opts, 0xE2821C50, AT, "ADD R1, R2, #0x5000");
+	check_opts(&opts, 0xE08F1002, AT, "ADD R1, PC, R2");
+	/* The other data-processing operations off the PC are arithmetic, not an
+	   address: only ADD and SUB have an ADR form. */
+	check_opts(&opts, 0xE20F1C50, AT, "AND R1, PC, #0x5000");
+
 	/* Hex notation is one setting for the whole line, not just the operands
 	   that happen to be immediates: a branch target, a SWI number and an MSR
 	   immediate all follow it. Mixing "&80" with "0x374C" in one disassembly
