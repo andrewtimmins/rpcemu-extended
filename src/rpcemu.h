@@ -808,6 +808,31 @@ extern int debugger_bad_mode(uint32_t mode, uint32_t pc);
 
 extern int debugger_set_register(int reg, uint32_t value);
 
+/** How many register banks debugger_get_banked_registers() reports. */
+#define DEBUG_BANK_COUNT 6
+
+/**
+ * One processor mode's banked registers, as a debugger shows them.
+ *
+ * Only the registers that are actually banked. R0-R7 are shared by every mode
+ * and R15 is the PC, so repeating them per mode would be noise; R8-R12 are
+ * shared by every mode except FIQ, which is why they appear here only for FIQ.
+ */
+typedef struct {
+	uint32_t mode;		/**< Full mode value, e.g. 0x11 for FIQ32 */
+	const char *name;	/**< "USR", "FIQ", "IRQ", "SVC", "ABT", "UND" */
+	uint32_t r13;
+	uint32_t r14;
+	uint32_t spsr;
+	uint8_t has_spsr;	/**< User and System bank none */
+	uint8_t is_current;	/**< This is the mode the machine is in */
+	uint8_t banks_r8_r12;	/**< FIQ only; r8_r12 is meaningful */
+	uint8_t reserved;
+	uint32_t r8_r12[5];
+} DebugBankedRegs;
+
+extern uint32_t debugger_get_banked_registers(DebugBankedRegs *out, uint32_t max);
+
 /**
  * The guest executed RPCEMU_SWI_BREAKPOINT.
  *

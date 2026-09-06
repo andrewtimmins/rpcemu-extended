@@ -59,6 +59,12 @@ typedef struct MachineSnapshot {
 	uint32_t fpsr;
 	uint32_t fpcr;
 
+	/* Every mode's banked registers, User first. The name pointers are into
+	   static storage in rpcemu.c, so copying this between threads is safe.
+	   Discussion #223. */
+	DebugBankedRegs debug_banks[DEBUG_BANK_COUNT];
+	uint32_t debug_bank_count;
+
 	uint32_t pipeline_addr[8];
 	uint32_t pipeline_data[8];
 

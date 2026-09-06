@@ -267,6 +267,15 @@ add_executable(test_bad_mode test_bad_mode.c test_stubs.c)
 target_link_libraries(test_bad_mode PRIVATE rpcemu_core m)
 rpcemu_add_test(test_bad_mode)
 
+# The banked registers, as the debugger has to show them. The rule that makes
+# this worth a test: the mode the machine is IN has its registers in arm.reg[]
+# and a stale bank array, so a reader that loops over the arrays is wrong for
+# exactly the mode being debugged. Reads them from two different modes and
+# requires the same answers. Discussion #223.
+add_executable(test_banked_regs test_banked_regs.c test_stubs.c)
+target_link_libraries(test_banked_regs PRIVATE rpcemu_core m)
+rpcemu_add_test(test_banked_regs)
+
 # Breakpoint condition expressions. Compiles debugexpr.c directly - it reads the
 # machine only through a caller-supplied environment, so a test substitutes its
 # own registers and memory and needs no emulator.
@@ -1118,7 +1127,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 69)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 70)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 10")	# JIT differential
 endif()

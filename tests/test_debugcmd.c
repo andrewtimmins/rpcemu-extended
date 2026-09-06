@@ -428,6 +428,41 @@ test_fpregs(void)
  *
  * Nothing warns. The machine runs perfectly well from the wrong place.
  */
+/*
+ * The banked registers over the wire.
+ *
+ * tests/test_banked_regs.c settles the banking rules themselves against the
+ * real updatemode(); this checks the shape of the reply and the one thing a
+ * client cannot work out for itself - which mode is current, and so which row
+ * is showing live registers rather than a stored copy.
+ */
+static void
+test_bankregs(void)
+{
+	printf("Banked registers\n");
+
+	prog32 = 1;
+	updatemode(0x10 | SUPERVISOR);
+	arm.reg[13] = 0x5C000013u;
+	arm.reg[14] = 0x5C000014u;
+
+	ok_with("bankregs", "\"banks\"");
+	/* User first, and it never has an SPSR to report. */
+	ok_with("bankregs", "{\"mode\":\"USR\",\"mode_value\":\"10\"");
+	ok_with("bankregs", "\"spsr\":null");
+	/* The current mode is marked, and shows the live registers. */
+	ok_with("bankregs",
+	    "\"mode\":\"SVC\",\"mode_value\":\"13\",\"current\":true,"
+	    "\"r13\":\"5c000013\",\"r14\":\"5c000014\"");
+	/* FIQ is the one mode that reports R8-R12 of its own. */
+	ok_with("bankregs", "\"mode\":\"FIQ\"");
+	ok_with("bankregs", "\"r8_r12\":[");
+
+	/* Read-only, like fpregs: writing a bank the machine is not in would be
+	   overwritten the next time that mode is entered. */
+	refused("bankreg set svc 13 0");
+}
+
 static void
 test_setting_the_pc(void)
 {
@@ -672,6 +707,7 @@ main(int argc, char *argv[])
 	test_symbols();
 	test_memory_and_disassembly();
 	test_fpregs();
+	test_bankregs();
 	test_setting_the_pc();
 
 	closesocket(client_fd);
