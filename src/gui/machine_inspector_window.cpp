@@ -180,6 +180,7 @@ wxBEGIN_EVENT_TABLE(MachineInspectorWindow, wxFrame)
 	EVT_BUTTON(ID_MEMORY_GO, MachineInspectorWindow::OnMemoryGo)
 	EVT_BUTTON(ID_MEMORY_REFRESH, MachineInspectorWindow::OnMemoryRefresh)
 	EVT_CHECKBOX(ID_MEMORY_WORDS, MachineInspectorWindow::OnMemoryRefresh)
+	EVT_CHOICE(ID_BANK_CHOICE, MachineInspectorWindow::OnBankChoice)
 	EVT_BUTTON(ID_MEMORY_WRITE, MachineInspectorWindow::OnMemoryWrite)
 	EVT_BUTTON(ID_RUN, MachineInspectorWindow::OnRun)
 	EVT_BUTTON(ID_PAUSE, MachineInspectorWindow::OnPause)
@@ -391,6 +392,55 @@ wxWindow *MachineInspectorWindow::BuildStatePanel(wxWindow *parent)
 
 	fpsr_row->Add(fpsr_label_, 0, wxRIGHT, 12);
 	fpsr_row->Add(fpcr_label_, 0);
+
+	/*
+	 * One banked mode at a time, chosen from the list.
+	 *
+	 * All six at once is twelve rows in a column that has none to spare, and
+	 * JonAbbott2 said as much when he asked for this on discussion #223 -
+	 * "perhaps make them selectable so you can view the modes you're
+	 * debugging". The debug socket's bankregs hands over all of them at once
+	 * for anything that wants the lot.
+	 *
+	 * The current mode is marked in the list, because which row is showing
+	 * live registers rather than a stored copy is the thing that is easy to
+	 * get wrong when reading these.
+	 */
+	auto *bank_box = new wxStaticBoxSizer(wxVERTICAL, panel, "Banked registers");
+
+	bank_choice_ = new wxChoice(panel, ID_BANK_CHOICE);
+	/* The same order debugger_get_banked_registers() reports, so the selection
+	   indexes straight into the snapshot. Plain names, with "current" said in
+	   the values below instead: putting it in the list would rebuild the list
+	   every time the machine changed mode and fight the user's selection. */
+	for (const char *name : { "USR", "FIQ", "IRQ", "SVC", "ABT", "UND" }) {
+		bank_choice_->Append(name);
+	}
+	bank_choice_->SetSelection(0);
+	bank_choice_->SetToolTip(
+	    "Which mode's banked registers to show. Every mode has its own R13 and "
+	    "R14; FIQ also has its own R8-R12, which the others share with User.");
+	bank_regs_label_ = new wxStaticText(panel, wxID_ANY, "R13 --------  R14 --------");
+	ApplyMonoFont(bank_regs_label_);
+	bank_spsr_label_ = new wxStaticText(panel, wxID_ANY, "SPSR --------");
+	ApplyMonoFont(bank_spsr_label_);
+	bank_extra_label_ = new wxStaticText(panel, wxID_ANY, wxEmptyString);
+	ApplyMonoFont(bank_extra_label_);
+
+	/*
+	 * Two rows, not four. This column is a splitter pane with a fixed height
+	 * and the Status box below has to stay visible: laid out one item per line
+	 * this pushed it off the bottom, which is the same fault the floating
+	 * point registers had before they moved into the register grid.
+	 */
+	auto *bank_row = new wxBoxSizer(wxHORIZONTAL);
+
+	bank_row->Add(bank_choice_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+	bank_row->Add(bank_regs_label_, 0, wxALIGN_CENTER_VERTICAL);
+	bank_box->Add(bank_row, 0, wxALL, 4);
+	bank_box->Add(bank_spsr_label_, 0, wxLEFT | wxBOTTOM, 4);
+	bank_box->Add(bank_extra_label_, 0, wxLEFT | wxBOTTOM, 4);
+	sizer->Add(bank_box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 6);
 
 	psr_box->Add(cpsr_label_, 0, wxLEFT | wxBOTTOM, 4);
 	psr_box->Add(spsr_label_, 0, wxLEFT | wxBOTTOM, 4);
@@ -801,12 +851,30 @@ void MachineInspectorWindow::BuildUi()
 		const int wanted = state_panel->GetBestSize().x + 12;
 		const int height = split_outer->GetClientSize().y;
 
-		/* The notebook opens at the height its own contents need, so nothing on
-		   the page is squeezed, and the code above it takes what is left. Below
-		   that it keeps a usable share and the page scrolls off, which is the
-		   right way round on a small screen. */
-		split_outer->SetSashPosition(std::max(height / 2,
-		    height - notebook->GetBestSize().y));
+		/*
+		 * The notebook opens at the height its own contents need, so nothing on
+		 * the page is squeezed, and the code above it takes what is left. Below
+		 * that it keeps a usable share and the page scrolls off, which is the
+		 * right way round on a small screen.
+		 *
+		 * With one exception, added when the banked registers arrived: if the
+		 * state column needs more than that, it gets it. Measured, because
+		 * guessing at this cost three runs - the column wanted 419 pixels and
+		 * the pane was giving it 394, which is exactly the half-the-window
+		 * floor below, so the last line of the Status box sat half off the
+		 * bottom. The notebook keeps its own minimum pane size whatever
+		 * happens.
+		 */
+		int sash = std::max(height / 2, height - notebook->GetBestSize().y);
+		const int column_wants = state_panel->GetBestVirtualSize().y + 8;
+
+		if (column_wants > sash) {
+			sash = column_wants;
+		}
+		if (sash > height - 120) {
+			sash = height - 120;	/* split_outer's minimum pane size */
+		}
+		split_outer->SetSashPosition(sash);
 		split_main->SetSashPosition(wanted);
 		split_code->SetSashPosition(split_code->GetClientSize().y * 3 / 5);
 	});
@@ -1000,12 +1068,14 @@ void MachineInspectorWindow::ApplyProcessorState(const MachineSnapshot &snapshot
 	} else {
 		spsr_label_->SetLabel("SPSR --------  none in this mode");
 	}
-	mmu_label_->SetLabel(wxString::Format("MMU %s",
-	    snapshot.mmu_enabled ? "enabled" : "disabled"));
-	core_label_->SetLabel(wxString::Format("%s, idle %s, %.0f MIPS",
+	/* One line, not two: this column is short of them, and neither half is
+	   worth a row of its own. */
+	mmu_label_->SetLabel(wxString::Format("MMU %s   %s, idle %s, %.0f MIPS",
+	    snapshot.mmu_enabled ? "enabled" : "disabled",
 	    snapshot.dynarec ? "Dynarec" : "Interpreter",
 	    snapshot.cpu_idle_enabled ? "on" : "off",
 	    snapshot.perf_mips));
+	core_label_->Show(false);
 
 	/*
 	 * The FPA's registers, coloured on the same rule as the ARM ones: what
@@ -1049,6 +1119,41 @@ void MachineInspectorWindow::ApplyProcessorState(const MachineSnapshot &snapshot
 	fpsr_label_->SetLabel(wxString::Format("FPSR %08X%s", snapshot.fpsr,
 	    (snapshot.fpsr >> 24) == 0x81 ? " (FPA10)" : ""));
 	fpcr_label_->SetLabel(wxString::Format("FPCR %08X", snapshot.fpcr));
+
+	/*
+	 * The selected bank. Which mode is current is said here rather than in the
+	 * list, and it is the part worth saying: that mode's registers are the
+	 * live ones, and every other row is what was stored when its mode was last
+	 * left.
+	 */
+	{
+		const int chosen = bank_choice_->GetSelection();
+
+		if (chosen >= 0 &&
+		    static_cast<uint32_t>(chosen) < snapshot.debug_bank_count) {
+			const DebugBankedRegs &b = snapshot.debug_banks[chosen];
+
+			bank_regs_label_->SetLabel(wxString::Format(
+			    "R13 %08X  R14 %08X%s", b.r13, b.r14,
+			    b.is_current ? "  (current mode)" : ""));
+			bank_spsr_label_->SetLabel(b.has_spsr
+			    ? wxString::Format("SPSR %08X", b.spsr)
+			    : wxString("SPSR --------  none in this mode"));
+			/*
+			 * R8-R12 for the two modes that own a copy: FIQ has its own, and
+			 * User holds the one every other mode shares. For the rest the
+			 * row is hidden rather than filled with a note, because a row
+			 * that says nothing still costs the height.
+			 */
+			bank_extra_label_->Show(b.banks_r8_r12 != 0);
+			if (b.banks_r8_r12) {
+				bank_extra_label_->SetLabel(wxString::Format(
+				    "R8-R12 %08X %08X %08X %08X %08X",
+				    b.r8_r12[0], b.r8_r12[1], b.r8_r12[2], b.r8_r12[3],
+				    b.r8_r12[4]));
+			}
+		}
+	}
 
 	/* One refresh for the lot: colouring a label does not repaint it. */
 	for (int r = 0; r < 16; r++) {
@@ -1565,6 +1670,59 @@ void MachineInspectorWindow::LogTraceClickAgainstView(const char *when)
 	}
 }
 
+/*
+ * The banked-register panel against the machine's own banks.
+ *
+ * Every mode is selected in turn and what the labels say is compared with the
+ * snapshot, which is the only way to catch the panel showing one bank's
+ * registers under another bank's name - a fault that looks perfectly plausible
+ * on screen. Discussion #223.
+ */
+void MachineInspectorWindow::LogBankedRegistersAgainstMachine(const char *when)
+{
+	const int was = bank_choice_->GetSelection();
+
+	RefreshSnapshot();
+
+	for (uint32_t i = 0; i < last_snapshot_.debug_bank_count; i++) {
+		const DebugBankedRegs &b = last_snapshot_.debug_banks[i];
+		wxString shown;
+		bool agrees;
+
+		bank_choice_->SetSelection((int) i);
+		ApplyProcessorState(last_snapshot_);
+		shown = bank_regs_label_->GetLabel();
+		agrees = shown.Contains(wxString::Format("R13 %08X", b.r13)) &&
+		         shown.Contains(wxString::Format("R14 %08X", b.r14)) &&
+		         (b.is_current == (shown.Contains("(current mode)") ? 1 : 0));
+
+		rpclog("TEST_INSPECTOR: %s: bank %s%s shows \"%s\"%s\n", when,
+		       b.name, b.is_current ? " (current)" : "",
+		       static_cast<const char *>(shown.mb_str()),
+		       agrees ? "" : "  <- DISAGREES");
+	}
+
+	bank_choice_->SetSelection(was < 0 ? 0 : was);
+	ApplyProcessorState(last_snapshot_);
+
+	/*
+	 * Does the left-hand column actually fit? It is a splitter pane, so it
+	 * scrolls when it does not, and the last box ends up half off the bottom -
+	 * which is what "squashed" looked like the first time. Measured rather
+	 * than guessed at, because guessing has now cost three runs.
+	 */
+	{
+		wxWindow *const column = bank_choice_->GetParent();
+
+		rpclog("TEST_INSPECTOR: %s: state column wants %d high, pane gives %d, "
+		       "window %dx%d%s\n", when,
+		       column->GetBestVirtualSize().y, column->GetClientSize().y,
+		       GetSize().x, GetSize().y,
+		       column->GetBestVirtualSize().y > column->GetClientSize().y
+		           ? "  <- scrolls" : "  <- fits");
+	}
+}
+
 void MachineInspectorWindow::LogDisassemblyFollowsHalt(const char *when)
 {
 	RefreshSnapshot();
@@ -1978,6 +2136,14 @@ void MachineInspectorWindow::EditRegister(int reg)
  * flag are the ones the view is already showing, so what is written is what is
  * on screen.
  */
+void MachineInspectorWindow::OnBankChoice(wxCommandEvent &)
+{
+	/* Redraw from the snapshot already held rather than asking the machine
+	   again: choosing a different bank changes what is shown, not what is
+	   known. */
+	ApplyProcessorState(last_snapshot_);
+}
+
 void MachineInspectorWindow::OnMemoryWrite(wxCommandEvent &)
 {
 	std::vector<uint8_t> bytes;

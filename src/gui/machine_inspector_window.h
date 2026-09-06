@@ -92,6 +92,9 @@ public:
 	/** Write bytes into memory while the machine is stopped (#223). */
 	void OnMemoryWrite(wxCommandEvent &event);
 
+	/** Show a different mode's banked registers (#223). */
+	void OnBankChoice(wxCommandEvent &event);
+
 	/** Log the memory view as bytes and as words, for comparison. */
 	void LogMemoryWordsAgainstBytes(const char *when);
 
@@ -100,6 +103,9 @@ public:
 
 	/** Check a trace line resolves to the address it names (#223). */
 	void LogTraceClickAgainstView(const char *when);
+
+	/** Check the banked-register panel against the machine (#223). */
+	void LogBankedRegistersAgainstMachine(const char *when);
 
 	/** Change a register and a byte of memory against a real machine. */
 	void LogEditsAgainstMachine(const char *when);
@@ -135,6 +141,7 @@ private:
 		ID_MEMORY_REFRESH,
 		ID_MEMORY_WORDS,
 		ID_MEMORY_WRITE,
+		ID_BANK_CHOICE,
 		ID_RUN,
 		ID_PAUSE,
 		ID_STEP,
@@ -270,6 +277,11 @@ private:
 	bool have_previous_regs_ = false;
 	wxStaticText *fpreg_value_[8] = {};
 	wxStaticText *fpsr_label_ = nullptr;
+	/* The banked registers, one mode at a time (discussion #223). */
+	wxChoice *bank_choice_ = nullptr;
+	wxStaticText *bank_regs_label_ = nullptr;
+	wxStaticText *bank_spsr_label_ = nullptr;
+	wxStaticText *bank_extra_label_ = nullptr;
 	wxStaticText *fpcr_label_ = nullptr;
 	uint32_t previous_fpregs_[8][3] = {};
 	bool have_previous_fpregs_ = false;

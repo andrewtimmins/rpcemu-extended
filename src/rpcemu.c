@@ -46,6 +46,7 @@
 #include "iomd.h"
 #include "ide.h"
 #include "arm.h"
+#include "arm_common.h"	/* ARM_MODE_32: bit 4 of the mode says 26- or 32-bit */
 #include "arm_disasm.h"
 #include "cmos.h"
 #include "serial_host.h"
@@ -1712,6 +1713,109 @@ debugger_set_register(int reg, uint32_t value)
 	}
 	arm.reg[reg] = value;
 	return 1;
+}
+
+/**
+ * The banked registers of every processor mode.
+ *
+ * WHY THIS IS NOT A LOOP OVER THE BANK ARRAYS. The mode the machine is in has
+ * its registers in arm.reg[], and its own bank array holds whatever was there
+ * when it was last switched out of - which is stale, sometimes by a long way.
+ * updatemode() writes them back on the way out, not as it goes. So every value
+ * here is either the live register or the stored one, depending on whether the
+ * mode being described is the current one, and getting that backwards produces
+ * a display that is right for five modes out of six and quietly wrong for the
+ * one being debugged.
+ *
+ * R8-R12 have the same shape one level down. Every mode except FIQ shares them
+ * with User, so while the machine is in IRQ or SVC the shared copy is the live
+ * arm.reg[8..12] and arm.user_reg[8..12] is stale; only when the machine is IN
+ * FIQ does the User bank hold them.
+ *
+ * Asked for by JonAbbott2 on discussion #223: stepping through an exception
+ * path means wanting to see the mode's own R13 and R14 beside the ones the
+ * interrupted code was using.
+ *
+ * @param out Filled in with up to `max` banks, User first
+ * @param max Length of `out`; DEBUG_BANK_COUNT is enough for all of them
+ * @return How many banks were written
+ */
+uint32_t
+debugger_get_banked_registers(DebugBankedRegs *out, uint32_t max)
+{
+	static const struct {
+		uint32_t mode;
+		const char *name;
+	} banks[DEBUG_BANK_COUNT] = {
+		{ USER,        "USR" },
+		{ FIQ,         "FIQ" },
+		{ IRQ,         "IRQ" },
+		{ SUPERVISOR,  "SVC" },
+		{ ABORT,       "ABT" },
+		{ UNDEFINED,   "UND" },
+	};
+	const uint32_t current = arm.mode & 0xf;
+	uint32_t written = 0;
+	uint32_t i;
+
+	for (i = 0; i < DEBUG_BANK_COUNT && written < max; i++) {
+		DebugBankedRegs *b = &out[written++];
+		/* System shares User's bank, so a machine in System mode is showing
+		   the User row its live registers. */
+		const int is_current = (banks[i].mode == current) ||
+		    (banks[i].mode == USER && current == SYSTEM);
+
+		memset(b, 0, sizeof(*b));
+		b->mode = banks[i].mode | (ARM_MODE_32(arm.mode) ? 0x10u : 0u);
+		b->name = banks[i].name;
+		b->is_current = (uint8_t) (is_current ? 1 : 0);
+		b->has_spsr = (uint8_t) (banks[i].mode != USER ? 1 : 0);
+		if (b->has_spsr) {
+			b->spsr = arm.spsr[banks[i].mode];
+		}
+
+		if (is_current) {
+			b->r13 = arm.reg[13];
+			b->r14 = arm.reg[14];
+		} else {
+			switch (banks[i].mode) {
+			case USER:       b->r13 = arm.user_reg[13];
+			                 b->r14 = arm.user_reg[14];  break;
+			case FIQ:        b->r13 = arm.fiq_reg[13];
+			                 b->r14 = arm.fiq_reg[14];   break;
+			case IRQ:        b->r13 = arm.irq_reg[0];
+			                 b->r14 = arm.irq_reg[1];    break;
+			case SUPERVISOR: b->r13 = arm.super_reg[0];
+			                 b->r14 = arm.super_reg[1];  break;
+			case ABORT:      b->r13 = arm.abort_reg[0];
+			                 b->r14 = arm.abort_reg[1];  break;
+			default:         b->r13 = arm.undef_reg[0];
+			                 b->r14 = arm.undef_reg[1];  break;
+			}
+		}
+
+		if (banks[i].mode == FIQ) {
+			uint32_t c;
+
+			b->banks_r8_r12 = 1;
+			for (c = 0; c < 5; c++) {
+				b->r8_r12[c] = is_current ? arm.reg[8 + c]
+				                          : arm.fiq_reg[8 + c];
+			}
+		} else if (banks[i].mode == USER) {
+			uint32_t c;
+
+			/* The shared five. Live in arm.reg[] unless the machine is in
+			   FIQ, which is the one mode that does not share them. */
+			b->banks_r8_r12 = 1;
+			for (c = 0; c < 5; c++) {
+				b->r8_r12[c] = (current == FIQ) ? arm.user_reg[8 + c]
+				                                : arm.reg[8 + c];
+			}
+		}
+	}
+
+	return written;
 }
 
 /**

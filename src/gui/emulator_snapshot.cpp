@@ -118,6 +118,9 @@ emulator_fill_snapshot(MachineSnapshot *snapshot)
 		snapshot->fpcr = fpa.fpcr;
 	}
 
+	snapshot->debug_bank_count =
+	    debugger_get_banked_registers(snapshot->debug_banks, DEBUG_BANK_COUNT);
+
 	for (int i = 0; i < 8; i++) {
 		const uint32_t addr = (pc + static_cast<uint32_t>(i * 4)) & arm.r15_mask;
 		uint32_t word = 0;

@@ -1954,6 +1954,7 @@ void MainFrame::OnTestInspectorTimer(wxTimerEvent &event)
 			machine_inspector_window_->LogDisassemblyFollowsHalt("reopened");
 			machine_inspector_window_->LogEditsAgainstMachine("reopened");
 			machine_inspector_window_->LogTraceClickAgainstView("reopened");
+			machine_inspector_window_->LogBankedRegistersAgainstMachine("reopened");
 			{
 				const wxPoint at = machine_inspector_window_->GetPosition();
 

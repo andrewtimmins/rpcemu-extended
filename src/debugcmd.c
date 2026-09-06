@@ -372,6 +372,7 @@ dc_cmd_help(char *r)
 	    "\"status\","
 	    "\"regs\","
 	    "\"fpregs\","
+	    "\"bankregs\","
 	    "\"reg set <0-15|pc|cpsr> <hex>\","
 	    "\"mem <hexaddr> <len> [phys]\","
 	    "\"mem write <hexaddr> <hexbytes> [phys]\","
@@ -546,6 +547,66 @@ dc_cmd_regs(char *r)
 	}
 	snprintf(r + n, DC_RESP_SZ - n, "]}");
 	}
+}
+
+/**
+ * bankregs
+ *
+ * Every mode's banked registers at once, User first.
+ *
+ * Only the registers that are banked: R0-R7 are shared by every mode and R15
+ * is the PC, so repeating them six times would be noise. R8-R12 appear for
+ * FIQ, which has its own, and for User, which is where every other mode's copy
+ * of them lives.
+ *
+ * `current` marks the mode the machine is in, and it matters more than it
+ * looks: that mode's registers are the live ones and its bank array is stale,
+ * so a client that assumes otherwise reads the wrong values for exactly the
+ * mode being debugged. debugger_get_banked_registers() sorts that out; this
+ * only formats it.
+ */
+static void
+dc_cmd_bankregs(char *r)
+{
+	DebugBankedRegs banks[DEBUG_BANK_COUNT];
+	const uint32_t count = debugger_get_banked_registers(banks, DEBUG_BANK_COUNT);
+	size_t n;
+	uint32_t i;
+
+	n = (size_t) snprintf(r, DC_RESP_SZ,
+	    "{\"ok\":true,\"paused\":%s,\"banks\":[",
+	    debugger_is_paused() ? "true" : "false");
+
+	for (i = 0; i < count; i++) {
+		const DebugBankedRegs *b = &banks[i];
+
+		n += (size_t) snprintf(r + n, DC_RESP_SZ - n,
+		    "%s{\"mode\":\"%s\",\"mode_value\":\"%02x\",\"current\":%s,"
+		    "\"r13\":\"%08x\",\"r14\":\"%08x\",\"spsr\":",
+		    i ? "," : "", b->name, (unsigned) b->mode,
+		    b->is_current ? "true" : "false",
+		    (unsigned) b->r13, (unsigned) b->r14);
+
+		if (b->has_spsr) {
+			n += (size_t) snprintf(r + n, DC_RESP_SZ - n, "\"%08x\"",
+			    (unsigned) b->spsr);
+		} else {
+			n += (size_t) snprintf(r + n, DC_RESP_SZ - n, "null");
+		}
+
+		if (b->banks_r8_r12) {
+			uint32_t c;
+
+			n += (size_t) snprintf(r + n, DC_RESP_SZ - n, ",\"r8_r12\":[");
+			for (c = 0; c < 5; c++) {
+				n += (size_t) snprintf(r + n, DC_RESP_SZ - n, "%s\"%08x\"",
+				    c ? "," : "", (unsigned) b->r8_r12[c]);
+			}
+			n += (size_t) snprintf(r + n, DC_RESP_SZ - n, "]");
+		}
+		n += (size_t) snprintf(r + n, DC_RESP_SZ - n, "}");
+	}
+	snprintf(r + n, DC_RESP_SZ - n, "]}");
 }
 
 /**
@@ -1363,6 +1424,8 @@ dc_dispatch(char *line)
 		dc_cmd_regs(resp);
 	} else if (strcmp(verb, "fpregs") == 0) {
 		dc_cmd_fpregs(resp);
+	} else if (strcmp(verb, "bankregs") == 0) {
+		dc_cmd_bankregs(resp);
 	} else if (strcmp(verb, "status") == 0) {
 		dc_cmd_status(resp);
 	} else if (strcmp(verb, "mem") == 0) {
