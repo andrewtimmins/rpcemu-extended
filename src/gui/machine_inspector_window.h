@@ -86,6 +86,9 @@ public:
 	/** Record the window's position and size, for the next time it opens. */
 	void OnGeometryChanged(wxEvent &event);
 
+	/** Double-click a trace line to show that address (discussion #223). */
+	void OnTraceActivated(wxMouseEvent &event);
+
 	/** Write bytes into memory while the machine is stopped (#223). */
 	void OnMemoryWrite(wxCommandEvent &event);
 
@@ -94,6 +97,9 @@ public:
 
 	/** Log where the disassembly opened against where the machine stopped. */
 	void LogDisassemblyFollowsHalt(const char *when);
+
+	/** Check a trace line resolves to the address it names (#223). */
+	void LogTraceClickAgainstView(const char *when);
 
 	/** Change a register and a byte of memory against a real machine. */
 	void LogEditsAgainstMachine(const char *when);

@@ -747,6 +747,10 @@ void MachineInspectorWindow::BuildUi()
 	                             wxDefaultPosition, wxSize(-1, 120),
 	                             wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP);
 	ApplyMonoFont(trace_view_);
+	trace_view_->SetToolTip(
+	    "Double-click a line to show that address in the disassembly");
+	trace_view_->Bind(wxEVT_LEFT_DCLICK,
+	    &MachineInspectorWindow::OnTraceActivated, this);
 
 	trace_autoscroll_checkbox_ = new wxCheckBox(trace_panel, wxID_ANY, "Auto-scroll");
 	trace_autoscroll_checkbox_->SetValue(true);
@@ -1762,6 +1766,46 @@ void MachineInspectorWindow::LogEditsAgainstMachine(const char *when)
 	       last_snapshot_.regs[0] == saved_r0 ? "" : "  <- RESTORE FAILED");
 }
 
+/*
+ * Double-clicking a trace line, against a real trace.
+ *
+ * The click cannot be sent as a click - there is no pointer here - so the
+ * caret is put into the line and the handler is invoked, which is the path a
+ * real double-click takes once HitTest has answered. What is being checked is
+ * that a line of the trace resolves to the address it names and the
+ * disassembly follows it.
+ */
+void MachineInspectorWindow::LogTraceClickAgainstView(const char *when)
+{
+	const wxString line = trace_view_->GetLineText(0);
+	int at = line.Find("PC=0x");
+	unsigned long address = 0;
+
+	if (line.IsEmpty() || at == wxNOT_FOUND ||
+	    !line.Mid((size_t) at + 5, 8).ToULong(&address, 16)) {
+		rpclog("TEST_INSPECTOR: %s: no trace line to click (%s)\n", when,
+		       static_cast<const char *>(line.mb_str()));
+		return;
+	}
+
+	{
+		wxMouseEvent click(wxEVT_LEFT_DCLICK);
+		const uint32_t expect =
+		    (uint32_t) address >= kDisasmLeadIn * 4u
+		        ? (uint32_t) address - kDisasmLeadIn * 4u : 0u;
+
+		trace_view_->SetInsertionPoint(0);
+		disasm_follow_pc_checkbox_->SetValue(true);
+		OnTraceActivated(click);
+
+		rpclog("TEST_INSPECTOR: %s: trace line names %08lX, disassembly at "
+		       "%08X, wanted %08X, follow-pc now %d%s\n",
+		       when, address, disasm_current_address_, expect,
+		       disasm_follow_pc_checkbox_->GetValue() ? 1 : 0,
+		       disasm_current_address_ == expect ? "" : "  <- DISAGREES");
+	}
+}
+
 void MachineInspectorWindow::LogDisassemblyFollowsHalt(const char *when)
 {
 	RefreshSnapshot();
@@ -2338,6 +2382,61 @@ void MachineInspectorWindow::RefreshMemoryView(uint32_t address)
 	}
 
 	memory_view_->SetValue(text);
+}
+
+/*
+ * Double-click a trace line to look at the code it names.
+ *
+ * Every line carries "PC=0x........", whatever kind of event it is, so this
+ * works for a SWI, a watchpoint hit or an exception alike - and the exception
+ * is the case JonAbbott2 asked for on discussion #223: an abort in the trace,
+ * and no way to get from it to the instruction without copying the address
+ * across by eye.
+ *
+ * Follow PC is switched off, exactly as typing an address into the Go box
+ * does. Without that the next refresh would snap the view straight back to the
+ * machine's PC and the click would look like it had done nothing.
+ */
+void MachineInspectorWindow::OnTraceActivated(wxMouseEvent &event)
+{
+	long pos = 0;
+	long column = 0;
+	long row = 0;
+	wxString line;
+	int at;
+
+	event.Skip();
+
+	if (trace_view_->HitTest(event.GetPosition(), &pos) == wxTE_HT_UNKNOWN) {
+		/* wxTextCtrl::HitTest is not implemented everywhere. A double-click
+		   has already moved the caret into the line that was clicked, so the
+		   insertion point answers the same question. */
+		pos = trace_view_->GetInsertionPoint();
+	}
+	if (!trace_view_->PositionToXY(pos, &column, &row)) {
+		return;
+	}
+
+	line = trace_view_->GetLineText(row);
+	at = line.Find("PC=0x");
+	if (at == wxNOT_FOUND) {
+		return;
+	}
+
+	{
+		const wxString hex = line.Mid((size_t) at + 5, 8);
+		unsigned long address = 0;
+
+		if (!hex.ToULong(&address, 16)) {
+			return;
+		}
+
+		const uint32_t back = kDisasmLeadIn * 4u;
+		const uint32_t target = (uint32_t) address;
+
+		disasm_follow_pc_checkbox_->SetValue(false);
+		RefreshDisassembly(target >= back ? target - back : 0u);
+	}
 }
 
 void MachineInspectorWindow::OnDisasmGo(wxCommandEvent &)
