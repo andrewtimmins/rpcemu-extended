@@ -49,6 +49,17 @@ typedef struct {
 typedef int (*OpFn)(uint32_t opcode);
 
 extern void updatemode(uint32_t m);
+
+/**
+ * updatemode(), told which instruction is responsible.
+ *
+ * updatemode() derives that address from R15, which is right for a mode change
+ * that did not touch R15 and wrong for the ones that did: `MOVS PC, R14` and
+ * `LDM {..., PC}^` restore the PSR *and* branch, and R15 already holds the
+ * target by the time the mode is applied. Callers in that position pass the
+ * address they were executing at. Only the reserved-mode halt reads it.
+ */
+extern void updatemode_at(uint32_t m, uint32_t pc);
 extern void resetcodeblocks(void);
 extern void initcodeblocks(void);
 extern void generatepcinc(void);

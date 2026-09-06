@@ -313,6 +313,11 @@ static inline void
 arm_write_r15(uint32_t opcode, uint32_t dest)
 {
 	uint32_t mask;
+	/* Read before R15 moves. This instruction both branches and can change
+	   the mode, so once R15 holds the target there is no way back to the
+	   address that did it - and that address is the whole of what a
+	   reserved-mode halt has to report. */
+	const uint32_t instruction_pc = PC;
 
 	NOT_USED(opcode);
 
@@ -338,7 +343,7 @@ arm_write_r15(uint32_t opcode, uint32_t dest)
 			arm.reg[16] = arm.spsr[arm.mode & 0xf];
 		}
 		if ((arm.reg[cpsr] & arm.mmask) != arm.mode) {
-			updatemode(arm.reg[cpsr] & arm.mmask);
+			updatemode_at(arm.reg[cpsr] & arm.mmask, instruction_pc);
 		}
 	}
 }
