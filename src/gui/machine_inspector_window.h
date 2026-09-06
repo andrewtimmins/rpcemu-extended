@@ -242,6 +242,9 @@ private:
 	wxStaticText *fpcr_label_ = nullptr;
 	uint32_t previous_fpregs_[8][3] = {};
 	bool have_previous_fpregs_ = false;
+	/* Why auto step turned itself off, shown beside the machine's state.
+	   Empty when there is nothing to say. */
+	wxString autostep_stopped_note_;
 	wxTextCtrl *disasm_view_ = nullptr;
 	wxTextCtrl *memory_view_ = nullptr;
 	wxTextCtrl *peripheral_view_ = nullptr;
