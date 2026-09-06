@@ -1889,7 +1889,7 @@ void MainFrame::SizeWindowToGuest()
 		panel_->SizeToGuest();
 		Layout();
 		Fit();
-		CentreWindowOnScreen();
+		PlaceWindowAfterResize();
 		ForcePanelRedraw();
 		return;
 	}
@@ -1904,7 +1904,7 @@ void MainFrame::SizeWindowToGuest()
 	Layout();
 	Fit();
 	const long t2 = display_timing_ms();
-	CentreWindowOnScreen();
+	PlaceWindowAfterResize();
 	const long t3 = display_timing_ms();
 	ForcePanelRedraw();
 
@@ -2061,6 +2061,70 @@ void MainFrame::CentreWindowOnScreen()
 		                    work.y + (work.height - size.y) / 2));
 	} else {
 		SetPosition(work.GetTopLeft());
+	}
+}
+
+/*
+ * Keep the window where the user put it, and on the screen.
+ *
+ * A guest mode change resizes the window, and a window grows around its
+ * top-left corner, so without this a bigger mode walks off the bottom-right.
+ * Centring solved that and created another problem: every mode change moved
+ * the window, so a Reset - which goes through several modes on its way up -
+ * took it back to the middle of the screen whatever the user had done with it.
+ * Reported by JonAbbott2 on discussion #223.
+ *
+ * So the corner is kept and only pulled back when the new size would hang off
+ * an edge. The first placement still centres, because a window that has never
+ * been positioned has no corner worth keeping.
+ */
+/*
+ * Centre the first time, keep the corner afterwards. See KeepWindowOnScreen().
+ */
+void MainFrame::PlaceWindowAfterResize()
+{
+	if (!window_placed_) {
+		CentreWindowOnScreen();
+		window_placed_ = true;
+		return;
+	}
+	KeepWindowOnScreen();
+}
+
+void MainFrame::KeepWindowOnScreen()
+{
+	int index = wxDisplay::GetFromWindow(this);
+
+	if (index == wxNOT_FOUND) {
+		index = 0;
+	}
+
+	const wxRect work = wxDisplay((unsigned) index).GetClientArea();
+	const wxSize size = GetSize();
+	const wxPoint was = GetPosition();
+	wxPoint now = was;
+
+	if (size.x > work.width || size.y > work.height) {
+		/* Bigger than the screen either way: the top-left corner is the only
+		   part that can be seen, so put it there. */
+		SetPosition(work.GetTopLeft());
+		return;
+	}
+
+	if (now.x + size.x > work.x + work.width) {
+		now.x = work.x + work.width - size.x;
+	}
+	if (now.y + size.y > work.y + work.height) {
+		now.y = work.y + work.height - size.y;
+	}
+	if (now.x < work.x) {
+		now.x = work.x;
+	}
+	if (now.y < work.y) {
+		now.y = work.y;
+	}
+	if (now != was) {
+		SetPosition(now);
 	}
 }
 
@@ -2442,6 +2506,13 @@ void MainFrame::OnTestInspectorTimer(wxTimerEvent &event)
 	case 2:
 		if (machine_inspector_window_ != nullptr) {
 			machine_inspector_window_->LogTraceControlsAgainstMachine("first open");
+			/* Somewhere distinctive to be found again after the reopen, which
+			   is how "remember where the window was" gets checked at all. */
+			test_inspector_position_ =
+			    machine_inspector_window_->GetPosition() + wxPoint(37, 53);
+			machine_inspector_window_->SetPosition(test_inspector_position_);
+			rpclog("TEST_INSPECTOR: moved to %d,%d before closing\n",
+			    test_inspector_position_.x, test_inspector_position_.y);
 			machine_inspector_window_->Close(true);
 			rpclog("TEST_INSPECTOR: closed\n");
 		} else {
@@ -2474,6 +2545,14 @@ void MainFrame::OnTestInspectorTimer(wxTimerEvent &event)
 			machine_inspector_window_->LogMemoryWordsAgainstBytes("reopened");
 			machine_inspector_window_->LogDisassemblyFollowsHalt("reopened");
 			machine_inspector_window_->LogEditsAgainstMachine("reopened");
+			{
+				const wxPoint at = machine_inspector_window_->GetPosition();
+
+				rpclog("TEST_INSPECTOR: reopened at %d,%d, was moved to %d,%d%s\n",
+				    at.x, at.y, test_inspector_position_.x,
+				    test_inspector_position_.y,
+				    at == test_inspector_position_ ? "" : "  <- DID NOT COME BACK");
+			}
 		} else {
 			rpclog("TEST_INSPECTOR: no inspector window on reopen\n");
 		}
