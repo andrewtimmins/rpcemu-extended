@@ -74,10 +74,26 @@ response has an `"ok"` boolean; failures carry `"error"`.
 | `ping` | `{ok, paused, model, dynarec}` |
 | `regs` | `{ok, paused, pc, cpsr, mode, flags, regs:[16 hex]}` |
 | `reg set <0-15\|pc\|cpsr> <hex>` | `{ok, reg, value}` — refused unless paused |
+| `reg set pc <hex>` | `{ok, reg:"pc", value, r15}` — `value` is where the machine will resume |
 `regs` also returns `spsr`: the saved PSR of the current mode as a hex string,
 or `null` in User and System mode, which bank none. Reporting the array's
 contents there would be whatever the last exception left behind. Knowing the
 mode an exception return is about to restore is not answerable from the CPSR.
+
+**`pc` and `15` are the same register and not the same number.** R15 reads
+eight ahead of the instruction being executed. Everything the debugger reports
+is the address - `regs.pc`, `status.halt_pc`, the disassembly, breakpoints -
+and `regs.regs[15]` is the raw register, eight higher. Writing follows the
+same split: `reg set pc 5000` resumes the machine at 5000 and puts 5008 in
+R15, which it returns as `r15`; `reg set 15 5000` puts 5000 in R15, so the
+machine resumes at 4ff8. Whatever else R15 carries is kept, which matters in a
+26-bit mode where it holds the flags and the processor mode as well as the
+address.
+
+`reg set pc` used to write R15 raw, so it resumed the machine eight bytes below
+the address asked for, and reading the PC back gave a different number from the
+one just written. A client that was compensating for that by subtracting eight
+should stop.
 
 | `fpregs` | `{ok, paused, fpsr, fpcr, sysid, fpregs:[8 x {raw:[3 hex], value}]}` |
 

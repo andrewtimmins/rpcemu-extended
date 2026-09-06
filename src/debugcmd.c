@@ -181,8 +181,30 @@ static int dc_write8(uint32_t addr, int physical, uint8_t val);
  * reg set <n|pc|cpsr> <hexvalue>
  *
  * Registers were readable and not writable, so a theory about what a register
- * should have held could only be tested by finding the code that sets it. R15 is
- * accepted as "pc" as well as "15" because that is what people type.
+ * should have held could only be tested by finding the code that sets it.
+ *
+ * "pc" and "15" are both accepted and they do NOT mean the same thing, for the
+ * same reason `regs` reports both: R15 reads eight ahead of the instruction
+ * being executed, so the raw register and the address everything else calls
+ * the PC are eight apart.
+ *
+ *   reg set pc 5000    execution resumes at 5000
+ *   reg set 15 5000    R15 becomes 5000, so execution resumes at 4ff8
+ *
+ * "pc" used to write R15 raw, which meant that setting the PC to an address
+ * and then reading it back gave an address eight lower, and a machine told to
+ * resume at the top of a function started two instructions earlier - on the
+ * tail of whatever preceded it. It agreed with nothing else in the protocol:
+ * `regs` reports "pc" as (R15 - 8) and "regs[15]" as the raw register, the
+ * disassembly and the breakpoints mean the former, and `status.halt_pc` is the
+ * former too. It is the same fault as issue #258, where the memory view read
+ * physical addresses while every other address in the window was virtual: one
+ * name, two meanings, and nothing to say which you had.
+ *
+ * The bits R15 carries besides the address are kept. In a 26-bit mode it holds
+ * the flags and the mode there, and writing a bare address would silently
+ * clear them; arm.r15_mask is exactly the address part, so everything outside
+ * it survives.
  */
 static void
 dc_cmd_reg(char *r, char *args)
@@ -213,7 +235,17 @@ dc_cmd_reg(char *r, char *args)
 		    (unsigned) val);
 		return;
 	}
-	n = (strcmp(a2, "pc") == 0) ? 15 : atoi(a2);
+	if (strcmp(a2, "pc") == 0) {
+		/* The address given is where execution is to resume, so R15 goes
+		   eight beyond it - and only its address bits move. */
+		arm.reg[15] = (arm.reg[15] & ~arm.r15_mask) |
+		    ((val + 8u) & arm.r15_mask);
+		snprintf(r, DC_RESP_SZ,
+		    "{\"ok\":true,\"reg\":\"pc\",\"value\":\"%08x\",\"r15\":\"%08x\"}",
+		    (unsigned) (val & arm.r15_mask), (unsigned) arm.reg[15]);
+		return;
+	}
+	n = atoi(a2);
 	if (n < 0 || n > 15) {
 		dc_error("register must be 0-15, pc or cpsr");
 		return;
