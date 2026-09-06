@@ -650,7 +650,8 @@ dc_cmd_status(char *r)
 	}
 	n = (size_t) snprintf(r, DC_RESP_SZ,
 	    "{\"ok\":true,\"paused\":%s,\"pause_requested\":%s,\"reason\":%u,"
-	    "\"halt_pc\":\"%08x\",\"halt_opcode\":\"%08x\",\"last_pc\":\"%08x\","
+	    "\"halt_pc\":\"%08x\",\"halt_opcode\":\"%08x\","
+	    "\"halt_from_pc\":\"%08x\",\"last_pc\":\"%08x\","
 	    "\"hit_address\":\"%08x\",\"hit_value\":\"%08x\",\"hit_size\":%u,"
 	    "\"hit_is_write\":%u,\"step_active\":%u,\"trace_pending\":%u,"
 	    "\"pc_symbol\":%s%s%s,\"pc_offset\":%u,"
@@ -658,7 +659,7 @@ dc_cmd_status(char *r)
 	    "\"breakpoints\":[",
 	    st.paused ? "true" : "false", st.pause_requested ? "true" : "false",
 	    (unsigned) st.reason, (unsigned) st.halt_pc, (unsigned) st.halt_opcode,
-	    (unsigned) st.last_pc, (unsigned) st.hit_address, (unsigned) st.hit_value,
+	    (unsigned) st.halt_from_pc, (unsigned) st.last_pc, (unsigned) st.hit_address, (unsigned) st.hit_value,
 	    (unsigned) st.hit_size, (unsigned) st.hit_is_write,
 	    (unsigned) st.step_active, (unsigned) debugger_trace_pending(),
 	    pc_sym ? "\"" : "null", pc_sym ? pc_esc : "", pc_sym ? "\"" : "",

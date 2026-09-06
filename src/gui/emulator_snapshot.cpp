@@ -170,6 +170,7 @@ emulator_fill_snapshot(MachineSnapshot *snapshot)
 	snapshot->debug_pause_requested = debug_status.pause_requested;
 	snapshot->debug_pause_reason = debug_status.reason;
 	snapshot->debug_halt_pc = debug_status.halt_pc;
+	snapshot->debug_halt_from_pc = debug_status.halt_from_pc;
 	snapshot->debug_halt_opcode = debug_status.halt_opcode;
 	snapshot->debug_last_pc = debug_status.last_pc;
 	snapshot->debug_last_opcode = debug_status.last_opcode;

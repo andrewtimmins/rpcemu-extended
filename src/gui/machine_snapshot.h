@@ -98,6 +98,9 @@ typedef struct MachineSnapshot {
 	int debug_pause_requested;
 	DebugPauseReason debug_pause_reason;
 	uint32_t debug_halt_pc;
+	/* The instruction that branched to a prefetch abort, or zero. See
+	   DebuggerStatus.halt_from_pc. */
+	uint32_t debug_halt_from_pc;
 	uint32_t debug_halt_opcode;
 	uint32_t debug_last_pc;
 	uint32_t debug_last_opcode;

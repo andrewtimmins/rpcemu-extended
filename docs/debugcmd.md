@@ -151,6 +151,13 @@ Wherever an address is taken, the name of a loaded symbol is accepted instead.
 A bare hex number always wins, so loading a symbol table cannot change what an
 existing script means.
 
+`status.halt_from_pc` is the instruction that branched to a **prefetch abort**,
+and zero for every other halt. A prefetch abort is the one exception whose
+faulting address has nothing to disassemble - that is what the fault means - so
+the instruction before it is the only thing worth looking at. It is known
+because trapping a prefetch abort keeps the instruction hook running, so the
+core recorded the previous instruction. Cleared when the machine resumes.
+
 `status.breakpoints` holds objects, not bare addresses:
 `{address, enabled, one_shot, condition, ignore_count, hit_count, eval_errors}`.
 `status.watchpoints` holds `{address, size, on_read, on_write, log_only}`.

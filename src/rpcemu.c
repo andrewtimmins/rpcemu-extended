@@ -477,6 +477,8 @@ static uint32_t debugger_last_opcode = 0;
  * PC when the pause lands.
  */
 static uint32_t debugger_fault_pc = 0;
+/* Where a prefetch abort was branched from; see DebuggerStatus.halt_from_pc. */
+static uint32_t debugger_fault_from_pc = 0;
 static uint32_t debugger_fault_opcode = 0;
 static int debugger_fault_pc_valid = 0;
 
@@ -629,6 +631,7 @@ debugger_get_status(DebuggerStatus *status)
 	status->reason = debugger_pause_reason;
 	status->halt_pc = debugger_halt_pc;
 	status->halt_opcode = debugger_halt_opcode;
+	status->halt_from_pc = debugger_fault_from_pc;
 	status->last_pc = debugger_last_pc;
 	status->last_opcode = debugger_last_opcode;
 	status->hit_address = debugger_hit_address;
@@ -729,6 +732,9 @@ debugger_resume(void)
 	/* An outstanding step-over target is abandoned here rather than left to
 	   fire at some unrelated moment later on. */
 	debugger_temp_bp_active = 0;
+	/* Belongs to the halt that has just ended: left set, it would be read as
+	   part of the next stop, which may have nothing to do with an abort. */
+	debugger_fault_from_pc = 0;
 	debugger_reset_hit_info();
 	debugger_refresh_hook_active();
 }
@@ -1584,6 +1590,17 @@ debugger_exception_hook(uint32_t mmode, uint32_t address, uint32_t pc)
 		   says so rather than showing the handler's first word as the
 		   faulting one. */
 		debugger_fault_opcode = (debugger_last_pc == pc) ? debugger_last_opcode : 0;
+		/*
+		 * For a prefetch abort, also the instruction that sent execution
+		 * there. Nothing can be disassembled at the faulting address - that is
+		 * what a prefetch abort means - so the instruction before it is the
+		 * only thing worth looking at. Trapping one keeps the instruction hook
+		 * running (debugger_compute_hook_active), so the last PC it saw is
+		 * that instruction; zero when it is the faulting address itself, which
+		 * would say nothing.
+		 */
+		debugger_fault_from_pc = (kind == TraceException_PrefetchAbort &&
+		    debugger_last_pc != pc) ? debugger_last_pc : 0;
 		debugger_fault_pc_valid = 1;
 		debugger_refresh_hook_active();
 	}
