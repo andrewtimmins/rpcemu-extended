@@ -79,6 +79,36 @@ wxString FormatFpRegister(double v)
  * Masking 0x1f instead of 0xf, as this did, made every 32-bit mode unmatchable:
  * User came out of the emulator as 0x10 and was reported as "Unknown (0x10)".
  */
+/*
+ * The mode as an assembler would write it: SVC32, FIQ26, UND32.
+ *
+ * The long form ("Abort 32-bit (privileged)") took a line of its own in a
+ * column that has none to spare, and is not what anybody reading a PSR calls
+ * these. Asked for by JonAbbott2 on discussion #223. The word size is part of
+ * the name because on this machine it is part of the mode: bit 4 of the mode
+ * field is what tells USR26 from USR32.
+ */
+wxString ModeToShortString(uint32_t mode)
+{
+	const char *name;
+
+	switch (mode & 0xf) {
+	case USER: name = "USR"; break;
+	case FIQ: name = "FIQ"; break;
+	case IRQ: name = "IRQ"; break;
+	case SUPERVISOR: name = "SVC"; break;
+	case ABORT: name = "ABT"; break;
+	case UNDEFINED: name = "UND"; break;
+	case SYSTEM: name = "SYS"; break;
+	default:
+		/* One of the nine the architecture reserves. Shown as the number,
+		   because there is no name to give it and it is worth seeing. */
+		return wxString::Format("MODE%02X", mode & 0x1fu);
+	}
+
+	return wxString::Format("%s%s", name, ARM_MODE_32(mode) ? "32" : "26");
+}
+
 wxString ModeToString(uint32_t mode)
 {
 	switch (mode & 0xf) {
@@ -154,6 +184,7 @@ wxBEGIN_EVENT_TABLE(MachineInspectorWindow, wxFrame)
 	EVT_CHECKBOX(ID_DISASM_FOLLOW_PC, MachineInspectorWindow::OnDisasmFollowPc)
 	EVT_BUTTON(ID_MEMORY_GO, MachineInspectorWindow::OnMemoryGo)
 	EVT_BUTTON(ID_MEMORY_REFRESH, MachineInspectorWindow::OnMemoryRefresh)
+	EVT_CHECKBOX(ID_MEMORY_WORDS, MachineInspectorWindow::OnMemoryRefresh)
 	EVT_BUTTON(ID_RUN, MachineInspectorWindow::OnRun)
 	EVT_BUTTON(ID_PAUSE, MachineInspectorWindow::OnPause)
 	EVT_BUTTON(ID_STEP, MachineInspectorWindow::OnStep)
@@ -260,6 +291,16 @@ wxWindow *MachineInspectorWindow::BuildStatePanel(wxWindow *parent)
 			reg_name_[r] = new wxStaticText(panel, wxID_ANY, name);
 			reg_value_[r] = new wxStaticText(panel, wxID_ANY, "00000000");
 			ApplyMonoFont(reg_value_[r]);
+			/*
+			 * Double-click a register to look at what it points at - R13 for
+			 * the stack being the case that comes up every time. Asked for by
+			 * JonAbbott2 on discussion #223; before it, reading the stack meant
+			 * copying eight hex digits into the address box by eye.
+			 */
+			reg_value_[r]->SetToolTip(
+			    "Double-click to show this address in the memory view");
+			reg_value_[r]->Bind(wxEVT_LEFT_DCLICK,
+			    [this, r](wxMouseEvent &) { ShowRegisterInMemoryView(r); });
 			grid->Add(reg_name_[r], 0, wxALIGN_CENTER_VERTICAL);
 			grid->Add(reg_value_[r], 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 4);
 		}
@@ -297,7 +338,9 @@ wxWindow *MachineInspectorWindow::BuildStatePanel(wxWindow *parent)
 
 	cpsr_label_ = new wxStaticText(panel, wxID_ANY, "CPSR 00000000");
 	ApplyMonoFont(cpsr_label_);
-	mode_label_ = new wxStaticText(panel, wxID_ANY, "Mode");
+	cpsr_label_->SetToolTip(
+	    "The processor status, and beside it the mode it names: SVC32, FIQ26 "
+	    "and so on, with whether that mode is privileged.");
 	mmu_label_ = new wxStaticText(panel, wxID_ANY, "MMU");
 	core_label_ = new wxStaticText(panel, wxID_ANY, "Core");
 	spsr_label_ = new wxStaticText(panel, wxID_ANY, "SPSR --------");
@@ -333,7 +376,6 @@ wxWindow *MachineInspectorWindow::BuildStatePanel(wxWindow *parent)
 	psr_box->Add(cpsr_label_, 0, wxLEFT | wxBOTTOM, 4);
 	psr_box->Add(spsr_label_, 0, wxLEFT | wxBOTTOM, 4);
 	psr_box->Add(fpsr_row, 0, wxLEFT | wxBOTTOM, 4);
-	psr_box->Add(mode_label_, 0, wxLEFT | wxBOTTOM, 4);
 	psr_box->Add(mmu_label_, 0, wxLEFT | wxBOTTOM, 4);
 	psr_box->Add(core_label_, 0, wxLEFT | wxBOTTOM, 4);
 	sizer->Add(psr_box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 6);
@@ -437,9 +479,12 @@ void MachineInspectorWindow::BuildUi()
 	    "disassemble by name instead of by number");
 	disasm_controls->Add(swi_names_button, 0);
 
+	/* wxTE_RICH so one line can be coloured; wxMSW needs it and wxOSX ignores
+	   it. See HighlightCurrentInstruction(). */
 	disasm_view_ = new wxTextCtrl(disasm_panel, wxID_ANY, wxEmptyString,
 	                              wxDefaultPosition, wxDefaultSize,
-	                              wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP);
+	                              wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP |
+	                              wxTE_RICH);
 	ApplyMonoFont(disasm_view_);
 
 	auto *disasm_sizer = new wxBoxSizer(wxVERTICAL);
@@ -460,6 +505,16 @@ void MachineInspectorWindow::BuildUi()
 	    "Read the address as a physical one. Off, it is a virtual address and "
 	    "goes through the MMU, which is what every other address in this window "
 	    "means. Matches the debug socket's 'mem <addr> <len> [phys]'.");
+	/*
+	 * Words, for reading a table of pointers or a block of instructions
+	 * without assembling four bytes in your head. Asked for by JonAbbott2 on
+	 * discussion #223. Little-endian, because that is how this machine stores
+	 * a word and the point is to read the value the guest would.
+	 */
+	memory_words_checkbox_ = new wxCheckBox(memory_panel, ID_MEMORY_WORDS, "Words");
+	memory_words_checkbox_->SetToolTip(
+	    "Show 32-bit words, little-endian as the machine stores them, rather "
+	    "than bytes");
 	auto *memory_go_button = new wxButton(memory_panel, ID_MEMORY_GO, "Go");
 	auto *memory_refresh_button = new wxButton(memory_panel, ID_MEMORY_REFRESH, "Refresh");
 
@@ -469,6 +524,7 @@ void MachineInspectorWindow::BuildUi()
 	memory_controls->Add(new wxStaticText(memory_panel, wxID_ANY, "Bytes:"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
 	memory_controls->Add(memory_bytes_spin_, 0, wxRIGHT, 6);
 	memory_controls->Add(memory_physical_checkbox_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+	memory_controls->Add(memory_words_checkbox_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
 	memory_controls->Add(memory_go_button, 0, wxRIGHT, 6);
 	memory_controls->Add(memory_refresh_button, 0);
 
@@ -847,7 +903,9 @@ void MachineInspectorWindow::ApplyProcessorState(const MachineSnapshot &snapshot
 		flag_label_[i]->SetForegroundColour(set ? changed : dim);
 	}
 
-	cpsr_label_->SetLabel(wxString::Format("CPSR %08X", snapshot.cpsr));
+	cpsr_label_->SetLabel(wxString::Format("CPSR %08X  %s %s", snapshot.cpsr,
+	    ModeToShortString(snapshot.mode),
+	    snapshot.privileged_mode ? "priv" : "user"));
 
 	/*
 	 * The SPSR, and - the useful part - the mode a return through it would
@@ -855,15 +913,11 @@ void MachineInspectorWindow::ApplyProcessorState(const MachineSnapshot &snapshot
 	 * where it is about to go, and the number alone does not say.
 	 */
 	if (snapshot.spsr_valid) {
-		spsr_label_->SetLabel(wxString::Format("SPSR %08X -> %s",
-		    snapshot.spsr, ModeToString(snapshot.spsr)));
+		spsr_label_->SetLabel(wxString::Format("SPSR %08X  %s",
+		    snapshot.spsr, ModeToShortString(snapshot.spsr)));
 	} else {
-		spsr_label_->SetLabel("SPSR -------- (none in this mode)");
+		spsr_label_->SetLabel("SPSR --------  none in this mode");
 	}
-	mode_label_->SetLabel(wxString::Format("%s %s (%s)",
-	    ModeToString(snapshot.mode),
-	    ARM_MODE_32(snapshot.mode) ? "32-bit" : "26-bit",
-	    snapshot.privileged_mode ? "privileged" : "unprivileged"));
 	mmu_label_->SetLabel(wxString::Format("MMU %s",
 	    snapshot.mmu_enabled ? "enabled" : "disabled"));
 	core_label_->SetLabel(wxString::Format("%s, idle %s, %.0f MIPS",
@@ -1250,6 +1304,55 @@ bool MachineInspectorWindow::LogTraceControlsAgainstMachine(const char *when)
  * disagreement is logged with both values rather than asserted, so a genuine
  * race would be visible for what it is.
  */
+/*
+ * The memory view's byte and word renderings side by side (discussion #223).
+ *
+ * A word is the four bytes on its line, low byte first, so the two lines have
+ * to agree digit for digit once one is reversed in fours. Logged rather than
+ * asserted because reading them beside each other is the check: a wrong
+ * endianness or an off-by-one line is obvious there and awkward to phrase as
+ * a comparison.
+ */
+void MachineInspectorWindow::LogMemoryWordsAgainstBytes(const char *when)
+{
+	wxString bytes_line;
+	wxString words_line;
+
+	memory_words_checkbox_->SetValue(false);
+	RefreshMemoryView(memory_current_address_);
+	bytes_line = memory_view_->GetLineText(0);
+
+	memory_words_checkbox_->SetValue(true);
+	RefreshMemoryView(memory_current_address_);
+	words_line = memory_view_->GetLineText(0);
+
+	memory_words_checkbox_->SetValue(false);
+	RefreshMemoryView(memory_current_address_);
+
+	/*
+	 * And the double-click that points the view at a register. The event is
+	 * sent to the label rather than clicked, so this proves the binding is
+	 * live and the address is computed correctly; whether macOS delivers a
+	 * real double-click to a static text is the one part only a person can
+	 * settle.
+	 */
+	{
+		wxMouseEvent click(wxEVT_LEFT_DCLICK);
+		const uint32_t expect = last_snapshot_.regs[13] & ~0xfu;
+
+		reg_value_[13]->ProcessWindowEvent(click);
+		rpclog("TEST_INSPECTOR: %s: double-click R13 (%08x) put the memory view "
+		       "at %08x, wanted %08x%s\n", when, last_snapshot_.regs[13],
+		       memory_current_address_, expect,
+		       memory_current_address_ == expect ? "" : "  <- DISAGREES");
+	}
+
+	rpclog("TEST_INSPECTOR: %s: bytes %s\n", when,
+	       static_cast<const char *>(bytes_line.mb_str()));
+	rpclog("TEST_INSPECTOR: %s: words %s\n", when,
+	       static_cast<const char *>(words_line.mb_str()));
+}
+
 bool MachineInspectorWindow::LogFpRegistersAgainstMachine(const char *when)
 {
 	RefreshSnapshot();
@@ -1483,11 +1586,80 @@ void MachineInspectorWindow::DrainTraceEvents()
 	}
 }
 
+/*
+ * Colour the line the machine is about to execute.
+ *
+ * The disassembler already marks it, by writing "<" where the other lines have
+ * ":", and that is too quiet to find when you are jumping between the
+ * disassembly, the memory view and the tabs below - which is what JonAbbott2
+ * said on discussion #223. The marker stays, because the debug socket's `dis`
+ * hands out the same text and has nowhere to put a colour.
+ *
+ * The system's own selection colours, so this reads correctly in both light
+ * and dark and against whatever theme the user has, rather than a hardcoded
+ * yellow that disappears in one of them.
+ */
+void MachineInspectorWindow::HighlightCurrentInstruction()
+{
+	const wxString text = disasm_view_->GetValue();
+	long line_start = 0;
+
+	/* Clear whatever the last refresh coloured. */
+	disasm_view_->SetStyle(0, static_cast<long>(text.length()),
+	    wxTextAttr(wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT),
+	               wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW)));
+
+	for (size_t i = 0; i <= text.length(); i++) {
+		if (i == text.length() || text[i] == '\n') {
+			const long line_end = static_cast<long>(i);
+
+			/* "FC00A66C< E92D580E  stmdb ..." - the marker sits where the
+			   other lines have a colon, right after the address. */
+			if (line_end - line_start > 8 && text[line_start + 8] == '<') {
+				disasm_view_->SetStyle(line_start, line_end,
+				    wxTextAttr(
+				        wxSystemSettings::GetColour(wxSYS_COLOUR_HIGHLIGHTTEXT),
+				        wxSystemSettings::GetColour(wxSYS_COLOUR_HIGHLIGHT)));
+				return;
+			}
+			line_start = line_end + 1;
+		}
+	}
+}
+
 void MachineInspectorWindow::RefreshDisassembly(uint32_t address)
 {
+	const wxString text =
+	    wxString::FromUTF8(emulator_disassemble_at(address, kDisasmLines));
+
 	disasm_current_address_ = address;
-	SetTextIfChanged(disasm_view_,
-	    wxString::FromUTF8(emulator_disassemble_at(address, kDisasmLines)));
+
+	/* Only when the text has moved. The marker is part of the text, so the
+	   current line changing changes it - and re-styling an unchanged view on
+	   every refresh would fight the user's own selection twice a second. */
+	if (disasm_view_->GetValue() != text) {
+		disasm_view_->ChangeValue(text);
+		HighlightCurrentInstruction();
+	}
+}
+
+/*
+ * Point the memory view at what a register holds.
+ *
+ * Rounded down to the start of its line, so the address asked for is on the
+ * first row with its neighbours either side, rather than at a ragged offset
+ * that makes a stack hard to read.
+ */
+void MachineInspectorWindow::ShowRegisterInMemoryView(int reg)
+{
+	if (reg < 0 || reg > 15) {
+		return;
+	}
+
+	const uint32_t value = (reg == 15) ? last_snapshot_.pc
+	                                   : last_snapshot_.regs[reg];
+
+	RefreshMemoryView(value & ~0xfu);
 }
 
 void MachineInspectorWindow::RefreshMemoryView(uint32_t address)
@@ -1512,10 +1684,55 @@ void MachineInspectorWindow::RefreshMemoryView(uint32_t address)
 	}
 
 	wxString text;
+	const bool words = memory_words_checkbox_ != nullptr &&
+	                   memory_words_checkbox_->GetValue();
 	const int bytes_per_line = 16;
 	for (size_t offset = 0; offset < data.size(); offset += bytes_per_line) {
 		wxString hex_part;
 		wxString ascii_part;
+
+		if (words) {
+			/* Four bytes at a time, low byte first, and "--------" when any
+			   byte of the word is unmapped: a word is only a word if all of
+			   it is there. */
+			for (int i = 0; i < bytes_per_line; i += 4) {
+				const size_t at = offset + static_cast<size_t>(i);
+				uint32_t value = 0;
+				bool mapped = true;
+
+				for (int b = 0; b < 4; b++) {
+					if (at + static_cast<size_t>(b) >= data.size()) {
+						mapped = false;
+						break;
+					}
+					if (at + static_cast<size_t>(b) < read.mapped.size() &&
+					    read.mapped[at + static_cast<size_t>(b)] == 0) {
+						mapped = false;
+					}
+					value |= static_cast<uint32_t>(data[at + static_cast<size_t>(b)])
+					    << (b * 8);
+				}
+				hex_part += mapped ? wxString::Format("%08X ", value)
+				                   : wxString("-------- ");
+				for (int b = 0; b < 4; b++) {
+					const size_t byte_at = at + static_cast<size_t>(b);
+
+					if (!mapped || byte_at >= data.size()) {
+						ascii_part += " ";
+					} else {
+						const uint8_t byte = data[byte_at];
+
+						ascii_part += (byte >= 32 && byte < 127)
+						    ? wxString(static_cast<char>(byte)) : ".";
+					}
+				}
+			}
+			text += wxString::Format("%08X: %s|%s|\n",
+			                         address + static_cast<uint32_t>(offset),
+			                         hex_part, ascii_part);
+			continue;
+		}
+
 		for (int i = 0; i < bytes_per_line; i++) {
 			if (offset + static_cast<size_t>(i) < data.size()) {
 				const size_t at = offset + static_cast<size_t>(i);
@@ -1689,6 +1906,20 @@ void MachineInspectorWindow::OnDebugKey(wxKeyEvent &event)
 
 	case WXK_SPACE:
 		if (paused) {
+			/*
+			 * A step already in flight, and the key repeating.
+			 *
+			 * A step is asynchronous: the emulator thread has to execute the
+			 * instruction. Holding the key asked for another on every repeat,
+			 * which queues steps faster than the machine retires them and
+			 * keeps the event loop busy enough that the views never repaint -
+			 * "holding SPACE to constantly step doesn't update the disassembly
+			 * window", on discussion #223. Dropping the repeat is the same
+			 * rule AutoStepTick() already follows.
+			 */
+			if (last_snapshot_.debug_step_active != 0) {
+				return;
+			}
 			if (event.ShiftDown()) {
 				emulator_.DebuggerStepOver();
 			} else {
