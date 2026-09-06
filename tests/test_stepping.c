@@ -65,6 +65,12 @@ check(const char *what, int ok)
 #define OP_MOV		0xE1A00000u	/* MOV R0, R0 - not a call */
 #define OP_MOV_PC_LR	0xE1A0F00Eu	/* MOV PC, LR - a return, not a call */
 #define OP_SWI		0xEF000002u	/* SWI OS_Write0 - a call into the OS */
+/* The bottom of a loop and the top of an if, which step over must tell apart.
+   A branch offset is (target - pc - 8) / 4, so -4 reaches pc - 8 and 0 reaches
+   pc + 8. */
+#define OP_BNE_BACK	0x1AFFFFFCu	/* BNE pc-8   - a loop */
+#define OP_BNE_FWD	0x1A000000u	/* BNE pc+8   - an if */
+#define OP_B_BACK	0xEAFFFFFCu	/* B   pc-8   - unconditional */
 
 /**
  * Put the machine at `pc`, executing `opcode`, and stopped.
@@ -190,6 +196,45 @@ test_step_over_a_non_call(void)
 	halt_at(CODE, OP_MOV_PC_LR);
 	check("step over a return is accepted", debugger_step_over());
 	check("... by single-stepping", is_stepping());
+}
+
+/*
+ * Step over at the bottom of a loop.
+ *
+ * Asked for by JonAbbott2 on discussion #223: pressing Step over on a loop's
+ * branch followed it back to the top, when the point of pressing it was to be
+ * past the loop. A backward conditional branch is therefore run to pc + 4,
+ * which is where the loop goes when it stops looping.
+ *
+ * The two neighbouring cases must NOT do that, and they are the reason this is
+ * not simply "any branch":
+ *
+ *   - a forward conditional branch, taken, never reaches pc + 4, so running to
+ *     it would be a runaway; and whether it was taken is what you are watching
+ *     for anyway;
+ *   - an unconditional branch never reaches pc + 4 at all.
+ */
+static void
+test_step_over_a_loop(void)
+{
+	printf("Stepping over a loop\n");
+
+	halt_at(CODE, OP_BNE_BACK);
+	check("step over a loop's branch is accepted", debugger_step_over());
+	check("... by running to the instruction after it, not round again",
+	      !is_stepping());
+
+	halt_at(CODE, OP_BNE_FWD);
+	check("step over a forward conditional branch is accepted",
+	      debugger_step_over());
+	check("... by single-stepping, since taking it skips pc+4",
+	      is_stepping());
+
+	halt_at(CODE, OP_B_BACK);
+	check("step over an unconditional backward branch is accepted",
+	      debugger_step_over());
+	check("... by single-stepping, since it never reaches pc+4",
+	      is_stepping());
 }
 
 static void
@@ -351,6 +396,7 @@ main(void)
 	test_step_over_a_call();
 	test_step_over_a_swi();
 	test_step_over_a_non_call();
+	test_step_over_a_loop();
 	test_step_over_needs_a_stopped_machine();
 	test_step_out();
 	test_step_out_without_a_frame();
