@@ -273,6 +273,10 @@ private:
 	wxTextCtrl *disasm_view_ = nullptr;
 	wxTextCtrl *memory_view_ = nullptr;
 	wxCheckBox *memory_words_checkbox_ = nullptr;
+	/* The three sashes, kept so a session file can restore them. */
+	wxSplitterWindow *split_outer_ = nullptr;
+	wxSplitterWindow *split_main_ = nullptr;
+	wxSplitterWindow *split_code_ = nullptr;
 	wxTextCtrl *peripheral_view_ = nullptr;
 
 	wxTextCtrl *disasm_address_input_ = nullptr;
