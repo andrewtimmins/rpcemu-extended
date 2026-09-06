@@ -86,6 +86,8 @@ enum class EmuCommandType {
 	DebuggerAddWatchpoint,
 	DebuggerRemoveWatchpoint,
 	DebuggerClearWatchpoints,
+	DebuggerSetRegister,
+	DebuggerWriteMemory,
 	TakeSnapshot,
 	ReadMemory,
 	Disassemble,
@@ -115,6 +117,8 @@ struct EmuCommand {
 	bool debug_on_write = false;
 	bool debug_log_only = false;
 	DebugTraceConfig debug_trace_config{};
+	/* DebuggerWriteMemory: the bytes to write, in the order they land. */
+	std::vector<uint8_t> debug_bytes;
 };
 
 /* True once any fatal() has been raised (on any thread). The raising thread
@@ -251,6 +255,16 @@ public:
 	void DebuggerClearWatchpoints();
 	void SetDebugTraceConfig(const DebugTraceConfig &cfg);
 	std::vector<DebugTraceEvent> DrainTraceEvents(uint32_t max, uint32_t *dropped_out);
+	/*
+	 * Change the machine while it is stopped, which is what a debugger is for.
+	 * Both are refused by the core unless it is paused; see
+	 * debugger_set_register(). `reg` takes DEBUG_REG_PC and DEBUG_REG_CPSR as
+	 * well as 0-15.
+	 */
+	void DebuggerSetRegister(int reg, uint32_t value);
+	void DebuggerWriteMemory(uint32_t address, const std::vector<uint8_t> &bytes,
+	                         bool physical);
+
 	MachineSnapshot TakeSnapshot();
 	size_t ReadMemory(uint32_t address, uint32_t length, uint8_t *buffer, size_t buffer_size);
 	std::string DisassembleAt(uint32_t address, int count);

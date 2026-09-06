@@ -80,11 +80,20 @@ public:
 	/** Point the memory view at what a register holds (discussion #223). */
 	void ShowRegisterInMemoryView(int reg);
 
+	/** Change a register while the machine is stopped (discussion #223). */
+	void EditRegister(int reg);
+
+	/** Write bytes into memory while the machine is stopped (#223). */
+	void OnMemoryWrite(wxCommandEvent &event);
+
 	/** Log the memory view as bytes and as words, for comparison. */
 	void LogMemoryWordsAgainstBytes(const char *when);
 
 	/** Log where the disassembly opened against where the machine stopped. */
 	void LogDisassemblyFollowsHalt(const char *when);
+
+	/** Change a register and a byte of memory against a real machine. */
+	void LogEditsAgainstMachine(const char *when);
 
 	/*
 	 * Driven by RPCEMU_TEST_INSPECTOR_AFTER. Auto-step and the session file are
@@ -116,6 +125,7 @@ private:
 		ID_MEMORY_GO,
 		ID_MEMORY_REFRESH,
 		ID_MEMORY_WORDS,
+		ID_MEMORY_WRITE,
 		ID_RUN,
 		ID_PAUSE,
 		ID_STEP,

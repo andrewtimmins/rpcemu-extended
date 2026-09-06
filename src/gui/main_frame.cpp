@@ -1881,6 +1881,7 @@ void MainFrame::OnTestInspectorTimer(wxTimerEvent &event)
 			machine_inspector_window_->LogFpRegistersAgainstMachine("reopened");
 			machine_inspector_window_->LogMemoryWordsAgainstBytes("reopened");
 			machine_inspector_window_->LogDisassemblyFollowsHalt("reopened");
+			machine_inspector_window_->LogEditsAgainstMachine("reopened");
 		} else {
 			rpclog("TEST_INSPECTOR: no inspector window on reopen\n");
 		}

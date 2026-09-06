@@ -218,28 +218,27 @@ dc_cmd_reg(char *r, char *args)
 
 	val = (uint32_t) strtoul(a3, NULL, 16);
 
+	/* The write itself is debugger_set_register(), shared with the inspector:
+	   the PC rule is exactly the sort of thing that goes wrong once it is
+	   written down in two places. */
 	if (strcmp(a2, "cpsr") == 0) {
-		arm.reg[16] = val;
+		debugger_set_register(DEBUG_REG_CPSR, val);
 		snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"reg\":\"cpsr\",\"value\":\"%08x\"}",
 		    (unsigned) val);
 		return;
 	}
 	if (strcmp(a2, "pc") == 0) {
-		/* The address given is where execution is to resume, so R15 goes
-		   eight beyond it - and only its address bits move. */
-		arm.reg[15] = (arm.reg[15] & ~arm.r15_mask) |
-		    ((val + 8u) & arm.r15_mask);
+		debugger_set_register(DEBUG_REG_PC, val);
 		snprintf(r, DC_RESP_SZ,
 		    "{\"ok\":true,\"reg\":\"pc\",\"value\":\"%08x\",\"r15\":\"%08x\"}",
 		    (unsigned) (val & arm.r15_mask), (unsigned) arm.reg[15]);
 		return;
 	}
 	n = atoi(a2);
-	if (n < 0 || n > 15) {
+	if (!debugger_set_register(n, val)) {
 		dc_error("register must be 0-15, pc or cpsr");
 		return;
 	}
-	arm.reg[n] = val;
 	snprintf(r, DC_RESP_SZ, "{\"ok\":true,\"reg\":%d,\"value\":\"%08x\"}",
 	    n, (unsigned) val);
 }
