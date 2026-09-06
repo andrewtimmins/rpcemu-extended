@@ -881,8 +881,12 @@ debugger_run_to_temp(uint32_t address)
  * reply to it said this already worked, which it did not: is_call is set for BL
  * and nothing else.
  *
+ * A backward conditional branch counts too, because that is the bottom of a
+ * loop and stepping over it means being done with the loop. See the reasoning
+ * at the test below for why only backward and only conditional.
+ *
  * Falls back to a plain step whenever the instruction cannot be read or is not
- * a recognised call. Stepping into is always safe; running away is not, so an
+ * one of those. Stepping into is always safe; running away is not, so an
  * uncertain case must degrade towards the step.
  *
  * The one thing this cannot do is bring back a call that never returns - a SWI
@@ -903,13 +907,41 @@ debugger_step_over(void)
 		return 0;
 	}
 
-	if (!mem_debug_read(pc, 4, &opcode) ||
-	    !arm_decode(opcode, pc, &info) || !(info.is_call || info.is_swi)) {
+	if (!mem_debug_read(pc, 4, &opcode) || !arm_decode(opcode, pc, &info)) {
 		debugger_single_step(1);
 		return 1;
 	}
 
-	debugger_run_to_temp(pc + 4);
+	if (info.is_call || info.is_swi) {
+		debugger_run_to_temp(pc + 4);
+		return 1;
+	}
+
+	/*
+	 * A loop, stepped over as a whole.
+	 *
+	 * The branch at the bottom of a loop is not a call, so this used to
+	 * single-step it and follow it back to the top - and somebody who pressed
+	 * Step over on it wanted to be past the loop, not round it again.
+	 * Reported by JonAbbott2 on discussion #223.
+	 *
+	 * Both conditions are load-bearing. CONDITIONAL, because pc + 4 is the
+	 * not-taken path: an unconditional branch never reaches it and running to
+	 * it would be a runaway. BACKWARD, because a forward conditional branch
+	 * that is taken skips pc + 4 entirely - so a `BEQ` over an else-arm has to
+	 * keep single-stepping, which is also what you want, since whether it was
+	 * taken is the interesting part.
+	 *
+	 * A loop that never exits is the same runaway the SWI case has, and Pause
+	 * is the same answer.
+	 */
+	if (info.is_branch && info.is_conditional && info.branch_target_known &&
+	    info.branch_target <= pc) {
+		debugger_run_to_temp(pc + 4);
+		return 1;
+	}
+
+	debugger_single_step(1);
 	return 1;
 }
 
