@@ -72,6 +72,17 @@ static const char *reg_names_apcs[16] = {
 /* See ArmDisasmOptions. Zeroed, so the defaults are the plain ARM rendering. */
 static ArmDisasmOptions disasm_opts;
 
+/* The optional memory reader; see arm_disasm_set_memory_reader(). */
+static ArmMemoryRead disasm_mem_reader;
+static void *disasm_mem_ctx;
+
+void
+arm_disasm_set_memory_reader(ArmMemoryRead reader, void *ctx)
+{
+	disasm_mem_reader = reader;
+	disasm_mem_ctx = ctx;
+}
+
 /*
  * SWI names loaded from a file, searched before the built-in table so a chunk
  * can be renamed as well as added. Grown as needed and freed by
@@ -551,6 +562,23 @@ disasm_single_transfer(uint32_t opcode, uint32_t address, char *buf, size_t bufl
 		const int offset = (int) (opcode & 0xFFF);
 		const uint32_t target = u ? address + 8u + (uint32_t) offset
 		                          : address + 8u - (uint32_t) offset;
+
+		/*
+		 * And what is there, for a load. The address says where R0 comes
+		 * from; this says what it is about to become, which is the question
+		 * actually being asked. Left off silently when there is no reader or
+		 * the address is not readable - an annotation that guessed would be
+		 * worse than none.
+		 */
+		if (l && disasm_mem_reader != NULL) {
+			uint32_t value = 0;
+
+			if (disasm_mem_reader(target, &value, disasm_mem_ctx)) {
+				return snprintf(buf, buflen, "%s%s%s %s, &%08X  ;=&%08X",
+				                mnem, cond_names[cond], suffix, reg_names[rd],
+				                (unsigned) target, (unsigned) value);
+			}
+		}
 
 		return snprintf(buf, buflen, "%s%s%s %s, &%08X",
 		                mnem, cond_names[cond], suffix, reg_names[rd],

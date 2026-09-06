@@ -1917,6 +1917,21 @@ rpcemu_prestart(void)
  *
  * @return Always 0
  */
+/*
+ * The disassembler's window on to memory.
+ *
+ * Translated and side-effect-free, which matters: this is called while
+ * rendering, for every literal pool load on screen, and a read that touched
+ * I/O would change the machine simply by looking at it.
+ */
+static int
+disasm_read_word(uint32_t addr, uint32_t *value, void *ctx)
+{
+	NOT_USED(ctx);
+
+	return mem_debug_read(addr, 4, value);
+}
+
 void
 rpcemu_start(void)
 {
@@ -1929,6 +1944,15 @@ rpcemu_start(void)
 	   endrpcemu(). */
 	timeBeginPeriod(1);
 #endif
+
+	/*
+	 * Let the disassembler say what a literal pool load will fetch. Registered
+	 * here rather than by each front end so the inspector's view and the debug
+	 * socket's `dis` annotate identically - one machine, one rendering, which
+	 * is the same reason the disassembly options live in the disassembler.
+	 * See arm_disasm_set_memory_reader().
+	 */
+	arm_disasm_set_memory_reader(disasm_read_word, NULL);
 
 	hostfs_init();
 	hostcmd_init();
