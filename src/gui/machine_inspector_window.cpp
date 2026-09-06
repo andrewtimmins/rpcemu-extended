@@ -174,6 +174,7 @@ wxBEGIN_EVENT_TABLE(MachineInspectorWindow, wxFrame)
 	EVT_BUTTON(ID_MEMORY_GO, MachineInspectorWindow::OnMemoryGo)
 	EVT_BUTTON(ID_MEMORY_REFRESH, MachineInspectorWindow::OnMemoryRefresh)
 	EVT_CHECKBOX(ID_MEMORY_WORDS, MachineInspectorWindow::OnMemoryRefresh)
+	EVT_BUTTON(ID_MEMORY_WRITE, MachineInspectorWindow::OnMemoryWrite)
 	EVT_BUTTON(ID_RUN, MachineInspectorWindow::OnRun)
 	EVT_BUTTON(ID_PAUSE, MachineInspectorWindow::OnPause)
 	EVT_BUTTON(ID_STEP, MachineInspectorWindow::OnStep)
@@ -288,9 +289,12 @@ wxWindow *MachineInspectorWindow::BuildStatePanel(wxWindow *parent)
 			 * copying eight hex digits into the address box by eye.
 			 */
 			reg_value_[r]->SetToolTip(
-			    "Double-click to show this address in the memory view");
+			    "Double-click to show this address in the memory view; "
+			    "right-click to change it while the machine is stopped");
 			reg_value_[r]->Bind(wxEVT_LEFT_DCLICK,
 			    [this, r](wxMouseEvent &) { ShowRegisterInMemoryView(r); });
+			reg_value_[r]->Bind(wxEVT_RIGHT_UP,
+			    [this, r](wxMouseEvent &) { EditRegister(r); });
 			grid->Add(reg_name_[r], 0, wxALIGN_CENTER_VERTICAL);
 			grid->Add(reg_value_[r], 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 4);
 		}
@@ -330,7 +334,10 @@ wxWindow *MachineInspectorWindow::BuildStatePanel(wxWindow *parent)
 	ApplyMonoFont(cpsr_label_);
 	cpsr_label_->SetToolTip(
 	    "The processor status, and beside it the mode it names: SVC32, FIQ26 "
-	    "and so on, with whether that mode is privileged.");
+	    "and so on, with whether that mode is privileged. Right-click to "
+	    "change it while the machine is stopped.");
+	cpsr_label_->Bind(wxEVT_RIGHT_UP,
+	    [this](wxMouseEvent &) { EditRegister(DEBUG_REG_CPSR); });
 	mmu_label_ = new wxStaticText(panel, wxID_ANY, "MMU");
 	core_label_ = new wxStaticText(panel, wxID_ANY, "Core");
 	spsr_label_ = new wxStaticText(panel, wxID_ANY, "SPSR --------");
@@ -507,6 +514,11 @@ void MachineInspectorWindow::BuildUi()
 	    "than bytes");
 	auto *memory_go_button = new wxButton(memory_panel, ID_MEMORY_GO, "Go");
 	auto *memory_refresh_button = new wxButton(memory_panel, ID_MEMORY_REFRESH, "Refresh");
+	auto *memory_write_button = new wxButton(memory_panel, ID_MEMORY_WRITE, "Write...");
+
+	memory_write_button->SetToolTip(
+	    "Write bytes at the address above, while the machine is stopped. "
+	    "Hex pairs, in the order they land: e0 3a 00 91");
 
 	auto *memory_controls = new wxBoxSizer(wxHORIZONTAL);
 	memory_controls->Add(new wxStaticText(memory_panel, wxID_ANY, "Address:"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
@@ -515,6 +527,7 @@ void MachineInspectorWindow::BuildUi()
 	memory_controls->Add(memory_bytes_spin_, 0, wxRIGHT, 6);
 	memory_controls->Add(memory_physical_checkbox_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
 	memory_controls->Add(memory_words_checkbox_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+	memory_controls->Add(memory_write_button, 0, wxRIGHT, 6);
 	memory_controls->Add(memory_go_button, 0, wxRIGHT, 6);
 	memory_controls->Add(memory_refresh_button, 0);
 
@@ -1601,6 +1614,81 @@ void MachineInspectorWindow::LogMemoryWordsAgainstBytes(const char *when)
  * R15 is on the hardware vector by then and halt_pc is the instruction that
  * faulted. Discussion #223.
  */
+/*
+ * Changing a register and a byte of memory, against a real machine.
+ *
+ * The dialogs cannot be driven from here - they run their own modal loop - so
+ * what this exercises is everything behind them: the command reaching the
+ * emulator thread, the core's refusal to write a running machine, and the
+ * change actually landing. That is the part that can be wrong; a wxTextEntry
+ * dialog is not.
+ *
+ * Everything is put back, since this runs against a booted RISC OS that has to
+ * carry on afterwards.
+ */
+void MachineInspectorWindow::LogEditsAgainstMachine(const char *when)
+{
+	const uint32_t scratch = 0x5000u;	/* kernel scratch space */
+	uint32_t saved_r0;
+	uint32_t saved_byte;
+	std::vector<uint8_t> probe;
+
+	RefreshSnapshot();
+	if (last_snapshot_.debug_paused == 0) {
+		emulator_.DebuggerPause();
+		for (int i = 0; i < 100 && last_snapshot_.debug_paused == 0; i++) {
+			wxMilliSleep(5);
+			RefreshSnapshot();
+		}
+	}
+	if (last_snapshot_.debug_paused == 0) {
+		rpclog("TEST_INSPECTOR: %s: could not stop the machine to test edits\n",
+		       when);
+		return;
+	}
+
+	saved_r0 = last_snapshot_.regs[0];
+	saved_byte = emulator_read_memory(scratch, 1, false).data[0];
+
+	emulator_.DebuggerSetRegister(0, 0xABCD1234u);
+	for (int i = 0; i < 100; i++) {
+		wxMilliSleep(5);
+		RefreshSnapshot();
+		if (last_snapshot_.regs[0] == 0xABCD1234u) {
+			break;
+		}
+	}
+	rpclog("TEST_INSPECTOR: %s: set R0 to ABCD1234, machine says %08X%s\n",
+	       when, last_snapshot_.regs[0],
+	       last_snapshot_.regs[0] == 0xABCD1234u ? "" : "  <- DID NOT LAND");
+
+	probe.push_back(0x5A);
+	emulator_.DebuggerWriteMemory(scratch, probe, false);
+	{
+		uint8_t got = 0;
+
+		for (int i = 0; i < 100; i++) {
+			wxMilliSleep(5);
+			got = emulator_read_memory(scratch, 1, false).data[0];
+			if (got == 0x5A) {
+				break;
+			}
+		}
+		rpclog("TEST_INSPECTOR: %s: wrote 5A at %08X, memory says %02X%s\n",
+		       when, scratch, got, got == 0x5A ? "" : "  <- DID NOT LAND");
+	}
+
+	/* Put the machine back. */
+	probe[0] = static_cast<uint8_t>(saved_byte);
+	emulator_.DebuggerWriteMemory(scratch, probe, false);
+	emulator_.DebuggerSetRegister(0, saved_r0);
+	wxMilliSleep(20);
+	RefreshSnapshot();
+	rpclog("TEST_INSPECTOR: %s: restored R0 to %08X%s\n", when,
+	       last_snapshot_.regs[0],
+	       last_snapshot_.regs[0] == saved_r0 ? "" : "  <- RESTORE FAILED");
+}
+
 void MachineInspectorWindow::LogDisassemblyFollowsHalt(const char *when)
 {
 	RefreshSnapshot();
@@ -1941,6 +2029,129 @@ void MachineInspectorWindow::RefreshDisassembly(uint32_t address)
  * first row with its neighbours either side, rather than at a ragged offset
  * that makes a stack hard to read.
  */
+/*
+ * Change a register, which is the other half of being able to read one.
+ *
+ * Asked for in JonAbbott2's original list on discussion #223 and acknowledged
+ * twice: it has worked over the debug socket all along, and the window is
+ * where somebody stopped at a breakpoint actually is. Testing a theory about
+ * what a register should have held meant either finding the code that sets it
+ * or reaching for a terminal.
+ *
+ * R15 is written as the PC rather than as the raw register, because the PC is
+ * what the row displays: type back the number shown and nothing moves. The
+ * core keeps the two apart - see debugger_set_register().
+ */
+void MachineInspectorWindow::EditRegister(int reg)
+{
+	wxString name;
+	uint32_t current;
+
+	if (last_snapshot_.debug_paused == 0) {
+		wxMessageBox("The machine has to be stopped before a register can be "
+		             "changed. Pause it first.",
+		             "Machine is running", wxOK | wxICON_INFORMATION, this);
+		return;
+	}
+
+	if (reg == DEBUG_REG_CPSR) {
+		name = "CPSR";
+		current = last_snapshot_.cpsr;
+	} else if (reg == 15) {
+		name = "PC";
+		current = last_snapshot_.pc;
+	} else {
+		name = wxString::Format("R%d", reg);
+		current = last_snapshot_.regs[reg];
+	}
+
+	{
+		const wxString entered = wxGetTextFromUser(
+		    wxString::Format("New value for %s, in hex:", name),
+		    wxString::Format("Change %s", name),
+		    wxString::Format("%08X", current), this);
+		unsigned long value;
+
+		/* Cancelled, or nothing typed. */
+		if (entered.empty()) {
+			return;
+		}
+		if (!entered.ToULong(&value, 16)) {
+			wxMessageBox(wxString::Format("\"%s\" is not a hexadecimal number.",
+			                              entered),
+			             "Cannot read that value", wxOK | wxICON_ERROR, this);
+			return;
+		}
+
+		emulator_.DebuggerSetRegister(reg == 15 ? DEBUG_REG_PC : reg,
+		                              static_cast<uint32_t>(value));
+	}
+
+	RefreshSnapshot();
+}
+
+/*
+ * Write bytes into the machine's memory from the window.
+ *
+ * The other half of JonAbbott2's ask on discussion #223, and the same argument
+ * as the registers: it has worked over the debug socket all along.
+ *
+ * Hex pairs in the order they land, which is the same spelling `mem write`
+ * takes, so a sequence copied from one works in the other. Spaces are ignored
+ * so an instruction can be pasted in as bytes. The address and the physical
+ * flag are the ones the view is already showing, so what is written is what is
+ * on screen.
+ */
+void MachineInspectorWindow::OnMemoryWrite(wxCommandEvent &)
+{
+	std::vector<uint8_t> bytes;
+
+	if (last_snapshot_.debug_paused == 0) {
+		wxMessageBox("The machine has to be stopped before memory can be "
+		             "changed. Pause it first.",
+		             "Machine is running", wxOK | wxICON_INFORMATION, this);
+		return;
+	}
+
+	{
+		wxString entered = wxGetTextFromUser(
+		    wxString::Format("Bytes to write at %08X, in hex:",
+		                     memory_current_address_),
+		    "Write memory", wxEmptyString, this);
+
+		entered.Replace(" ", "");
+		if (entered.empty()) {
+			return;
+		}
+		if ((entered.length() % 2) != 0) {
+			wxMessageBox("That is an odd number of hex digits, so the last "
+			             "byte is incomplete.",
+			             "Cannot read those bytes", wxOK | wxICON_ERROR, this);
+			return;
+		}
+		for (size_t i = 0; i < entered.length(); i += 2) {
+			unsigned long byte;
+
+			if (!entered.Mid(i, 2).ToULong(&byte, 16)) {
+				wxMessageBox(wxString::Format(
+				    "\"%s\" is not a pair of hex digits.",
+				    entered.Mid(i, 2)),
+				    "Cannot read those bytes", wxOK | wxICON_ERROR, this);
+				return;
+			}
+			bytes.push_back(static_cast<uint8_t>(byte));
+		}
+	}
+
+	emulator_.DebuggerWriteMemory(memory_current_address_, bytes,
+	    memory_physical_checkbox_ != nullptr &&
+	    memory_physical_checkbox_->GetValue());
+
+	/* Read it back rather than assuming: a byte in ROM or an unmapped page
+	   simply does not land, and the view is where that shows. */
+	RefreshMemoryView(memory_current_address_);
+}
+
 void MachineInspectorWindow::ShowRegisterInMemoryView(int reg)
 {
 	if (reg < 0 || reg > 15) {

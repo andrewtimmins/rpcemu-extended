@@ -1678,6 +1678,52 @@ debugger_bad_mode(uint32_t mode, uint32_t pc)
 }
 
 /**
+ * Write one of the machine's registers.
+ *
+ * Here rather than in the debug socket's parser because there are now two
+ * callers - the socket and the inspector - and the PC rule below is exactly
+ * the sort of thing that goes wrong once it is written down twice.
+ *
+ * `reg` is 0-15 for the raw register, DEBUG_REG_CPSR, or DEBUG_REG_PC. The
+ * last two are not the same as 15: R15 reads eight ahead of the instruction
+ * being executed, so DEBUG_REG_PC takes the address the machine is to resume
+ * at and puts R15 eight beyond it, while 15 writes the register as given.
+ * Everything the debugger REPORTS as a PC is the former.
+ *
+ * The bits R15 carries besides the address are kept. In a 26-bit mode it holds
+ * the flags and the processor mode, and a bare write would silently clear them.
+ *
+ * Only while stopped: writing a register underneath a running core races the
+ * emulator thread, and the value would be overwritten by the next instruction
+ * anyway.
+ *
+ * @return 1 if the register was written, 0 if the machine is running or the
+ *         register is not one of the above
+ */
+int
+debugger_set_register(int reg, uint32_t value)
+{
+	if (!debugger_paused) {
+		return 0;
+	}
+
+	if (reg == DEBUG_REG_CPSR) {
+		arm.reg[16] = value;
+		return 1;
+	}
+	if (reg == DEBUG_REG_PC) {
+		arm.reg[15] = (arm.reg[15] & ~arm.r15_mask) |
+		    ((value + 8u) & arm.r15_mask);
+		return 1;
+	}
+	if (reg < 0 || reg > 15) {
+		return 0;
+	}
+	arm.reg[reg] = value;
+	return 1;
+}
+
+/**
  * Called from opSWI() when the guest executes the debugger's breakpoint SWI.
  *
  * The SWI is swallowed by the caller whatever this returns, so a machine with

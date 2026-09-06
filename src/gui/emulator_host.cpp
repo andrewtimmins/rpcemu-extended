@@ -1092,6 +1092,34 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 		debugger_clear_watchpoints();
 		NotifyDebuggerStateChanged();
 		break;
+	case EmuCommandType::DebuggerSetRegister:
+		if (debugger_set_register(command.arg1, command.debug_address)) {
+			NotifyDebuggerStateChanged();
+		}
+		break;
+	case EmuCommandType::DebuggerWriteMemory: {
+		/*
+		 * Byte at a time and translated unless a physical write was asked for,
+		 * which is what the debug socket's `mem write` does. A run of bytes can
+		 * cross into an unmapped page, so each one is offered on its own and
+		 * the ones that land, land: stopping at the first refusal would leave
+		 * a half-written change with nothing said about it.
+		 */
+		if (debugger_is_paused()) {
+			for (size_t i = 0; i < command.debug_bytes.size(); i++) {
+				const uint32_t addr =
+				    command.debug_address + static_cast<uint32_t>(i);
+				uint32_t phys = addr;
+
+				if (command.debug_on_write /* physical */ ||
+				    mem_debug_translate(addr, &phys)) {
+					mem_phys_write8_debug(phys, command.debug_bytes[i]);
+				}
+			}
+			NotifyDebuggerStateChanged();
+		}
+		break;
+	}
 	case EmuCommandType::TakeSnapshot: {
 		MachineSnapshot snapshot = emulator_take_snapshot();
 		{
@@ -1422,6 +1450,27 @@ std::vector<DebugTraceEvent> EmulatorHost::DrainTraceEvents(uint32_t max, uint32
 		*dropped_out = trace_dropped_;
 	}
 	return std::move(trace_result_);
+}
+
+void EmulatorHost::DebuggerSetRegister(int reg, uint32_t value)
+{
+	EmuCommand command = MakeCommand(EmuCommandType::DebuggerSetRegister);
+
+	command.arg1 = reg;
+	command.debug_address = value;
+	PostCommand(command);
+}
+
+void EmulatorHost::DebuggerWriteMemory(uint32_t address,
+                                       const std::vector<uint8_t> &bytes,
+                                       bool physical)
+{
+	EmuCommand command = MakeCommand(EmuCommandType::DebuggerWriteMemory);
+
+	command.debug_address = address;
+	command.debug_bytes = bytes;
+	command.debug_on_write = physical;
+	PostCommand(command);
 }
 
 MachineSnapshot EmulatorHost::TakeSnapshot()

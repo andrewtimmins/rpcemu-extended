@@ -785,6 +785,18 @@ extern void debugger_exception_hook(uint32_t mmode, uint32_t address, uint32_t p
 extern int debugger_swi_hook(uint32_t swinum, uint32_t opcode);
 extern int debugger_bad_mode(uint32_t mode, uint32_t pc);
 
+/** debugger_set_register(): the CPSR, rather than one of R0-R15. */
+#define DEBUG_REG_CPSR	16
+/**
+ * debugger_set_register(): the PC as everything reports it.
+ *
+ * Distinct from 15, which is the raw R15 - the two are a pipeline apart. See
+ * debugger_set_register().
+ */
+#define DEBUG_REG_PC	17
+
+extern int debugger_set_register(int reg, uint32_t value);
+
 /**
  * The guest executed RPCEMU_SWI_BREAKPOINT.
  *
