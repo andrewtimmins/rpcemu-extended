@@ -49,3 +49,20 @@ Look at `v1.1.12.md`, which is the shape to copy.
 The tag run checks the tag against `VERSION` and the notes file against the tag
 before it builds anything, so a mistake at step 1 or 2 costs seconds rather than
 a published release that has to be edited.
+
+## What is here, and what is not
+
+Every release from 1.1.8 onwards has its notes in this directory, including the
+ones from the 1.x line, so that the history is readable from a checkout rather
+than only from the releases page.
+
+The releases before 1.1.8 are absent on purpose. Their bodies were the changelog
+link GitHub generates and nothing else, so there is no writing to preserve; the
+comparison they linked to is still one click away from each release. 1.1.8 to
+1.1.11 were written before this directory existed and have been brought back
+from their published bodies, unedited, which is why their house style differs
+from the rest and why 1.1.8 still calls the project by its old name.
+
+v1.1.14 has notes and no tag. It was published and withdrawn the same day, its
+notes leading with a fix that was not in the macOS download. The file stays as
+the account of what happened.
