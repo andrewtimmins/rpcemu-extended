@@ -72,6 +72,11 @@ arm_is_dynarec(void)
 
 void updatemode(uint32_t m)
 {
+        updatemode_at(m, PC);
+}
+
+void updatemode_at(uint32_t m, uint32_t pc)
+{
         uint32_t c, om = arm.mode;
 
         usrregs[15] = &arm.reg[15];
@@ -165,10 +170,15 @@ void updatemode(uint32_t m)
                  * want to look at, and what fatal() used to take away with the
                  * rest of the process. Issue #227.
                  *
-                 * PC is read before r15_mask is updated below, so it is still
-                 * the mask of the mode the offending instruction ran in.
+                 * The address comes from the caller rather than from R15,
+                 * because the instructions that usually get a guest here -
+                 * `MOVS PC, R14`, `LDM {..., PC}^` - have already written R15
+                 * with the branch target by this point. Deriving it here named
+                 * an instruction that had nothing to do with it, and named
+                 * FFFFFFF8 when the value loaded was zero. Reported on
+                 * discussion #223.
                  */
-                if (!debugger_bad_mode(arm.mode, PC)) {
+                if (!debugger_bad_mode(arm.mode, pc)) {
                         fatal("Bad mode %i\n", arm.mode);
                 }
 

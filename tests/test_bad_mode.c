@@ -51,6 +51,7 @@
 #include "arm.h"
 #include "arm_common.h"
 #include "mem.h"
+#include "cp15.h"	/* dcache: isblockvalid() keys off it, so 0 is the interpreter */
 
 /* Where the test pretends the offending instruction is. R15 leads the
    instruction by eight in a 32-bit mode, which is what PC in arm.h undoes. */
@@ -60,6 +61,10 @@
 /* Values planted in the user bank, to be found again in a reserved mode. */
 #define USER_R13	0x0d0d0d0du
 #define USER_R14	0x0e0e0e0eu
+
+/* Where an instruction that is actually executed lives. RAM, so it can be
+   written and fetched; the machine is set to 32-bit Supervisor for it. */
+#define CODE_PC		0x10000000u
 
 static int failures;
 
@@ -258,6 +263,73 @@ test_debugger_disabled(void)
 	check("and the machine is halted", debugger_is_paused() != 0);
 }
 
+/*
+ * The address reported when the mode is written by an instruction that also
+ * writes R15 - which is how a guest usually gets into a reserved mode.
+ *
+ * Everything above calls updatemode() directly with R15 parked at TEST_R15,
+ * so PC is whatever the test put there and the reported address cannot be
+ * wrong. A real machine does not arrive that way. `MOVS PC, R14` and
+ * `LDM {..., PC}^` restore the PSR *and* branch, and arm_write_r15() writes
+ * R15 before it calls updatemode(), so by the time the halt is taken the
+ * address the debugger derives from R15 belongs to the branch target rather
+ * than to the instruction that did it.
+ *
+ * Reported by JonAbbott2 on discussion #223: an address whose instruction did
+ * not touch CPSR, and once FFFFFFF8, which is (0 - 8) masked - a PC computed
+ * from an R15 that had just been loaded with zero.
+ *
+ * So this runs the instruction rather than describing it.
+ */
+static void
+test_mode_change_by_a_branching_instruction(int dyn)
+{
+	DebuggerStatus status;
+
+	printf("A reserved mode written by MOVS PC, R14 (%s)\n",
+	       dyn ? "compiled block" : "instruction at a time");
+
+	reset_machine();
+
+	arm_reset(CPUModel_SA110);
+	initcodeblocks();
+	/*
+	 * Both ways round. isblockvalid() keys off dcache, so 0 runs the
+	 * instruction on its own and 1 runs it from a compiled block - and the
+	 * mode change is applied in a different place in each. Which core this
+	 * links is the build's choice: with RPCEMU_DYNAREC on, as it is here and
+	 * for every shipped binary, it is arm_dynarec.c. arm.c carries the same
+	 * updatemode() and is built by the interpreter configuration, which CI
+	 * builds too.
+	 */
+	dcache = dyn ? 1 : 0;
+	resetcodeblocks();
+	prog32 = 1;
+	updatemode(0x10 | SUPERVISOR);
+
+	ram00[0] = 0xe1b0f00eu;		/* MOVS PC, R14 */
+	ram00[1] = 0xeafffffeu;		/* B . */
+
+	/* The branch target is a long way from the instruction, so an address
+	   derived from it cannot be mistaken for the right answer. */
+	arm.reg[14] = CODE_PC + 0x800u;
+	arm.reg[15] = CODE_PC + 8u;
+	arm.reg[16] = 0x10 | SUPERVISOR;
+	arm.spsr[SUPERVISOR] = 0x14;	/* reserved, and what MOVS PC restores */
+
+	config.debug_enabled = 1;
+	debugger_resume();
+
+	arm_exec();
+
+	debugger_get_status(&status);
+
+	check("the machine is halted", status.paused != 0);
+	check("halted because of the mode", status.reason == DebugPauseReason_BadMode);
+	check_hex("the halt names the instruction, not its branch target",
+	          status.halt_pc, CODE_PC);
+}
+
 int
 main(void)
 {
@@ -273,6 +345,8 @@ main(void)
 		test_reserved_mode(reserved[i]);
 	}
 	test_legal_modes();
+	test_mode_change_by_a_branching_instruction(0);
+	test_mode_change_by_a_branching_instruction(1);
 	test_debugger_disabled();
 
 	printf("\n%s\n", failures == 0 ? "all ok" : "FAILURES");
