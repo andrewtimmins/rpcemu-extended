@@ -31,6 +31,7 @@
  */
 
 #include <errno.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -339,6 +340,7 @@ dc_cmd_help(char *r)
 	    "\"ping\","
 	    "\"status\","
 	    "\"regs\","
+	    "\"fpregs\","
 	    "\"reg set <0-15|pc|cpsr> <hex>\","
 	    "\"mem <hexaddr> <len> [phys]\","
 	    "\"mem write <hexaddr> <hexbytes> [phys]\","
@@ -513,6 +515,77 @@ dc_cmd_regs(char *r)
 	}
 	snprintf(r + n, DC_RESP_SZ - n, "]}");
 	}
+}
+
+/**
+ * An FPA register's value as a JSON string.
+ *
+ * A string rather than a JSON number because a register can hold an infinity
+ * or a NaN, and JSON has no way to write either: emitting a bare `nan` gives
+ * every client a parse error on the whole response instead of one odd
+ * register. Seventeen significant digits is what a double round-trips in.
+ */
+static void
+dc_fp_value(char *out, size_t sz, double v)
+{
+	if (isnan(v)) {
+		snprintf(out, sz, "nan");
+	} else if (isinf(v)) {
+		snprintf(out, sz, v < 0.0 ? "-inf" : "inf");
+	} else {
+		snprintf(out, sz, "%.17g", v);
+	}
+}
+
+/**
+ * fpregs
+ *
+ * The FPA10's eight registers, its status and its control word.
+ *
+ * Each register comes back both ways round: `raw` is the three words the chip
+ * holds, in the 80-bit extended format, and `value` is the same number written
+ * out. The raw words are the authority - see FPADebugReg in rpcemu.h for what
+ * a double cannot carry - and they are also what LDFE/STFE and LFM/SFM move,
+ * so they can be compared directly against a register spill in memory.
+ *
+ * `sysid` is the top byte of FPSR, which is how the FPEmulator support code
+ * decides what it is talking to: 0x81 is an FPA10, and it is what this
+ * emulator reports. It is in the response on its own because "is the machine
+ * using the hardware path" is the first question to ask when a floating point
+ * value looks wrong, and picking a byte out of FPSR by hand to answer it is a
+ * step nobody should have to take.
+ *
+ * Read-only. There is deliberately no "fpreg set": the support code keeps its
+ * own copy of the register file around a trap, so a write here would be
+ * overwritten or, worse, would not be.
+ */
+static void
+dc_cmd_fpregs(char *r)
+{
+	FPADebugState st;
+	size_t n;
+	int i;
+
+	fpa_get_state(&st);
+
+	n = (size_t) snprintf(r, DC_RESP_SZ,
+	    "{\"ok\":true,\"paused\":%s,\"fpsr\":\"%08x\",\"fpcr\":\"%08x\","
+	    "\"sysid\":\"%02x\",\"fpregs\":[",
+	    debugger_is_paused() ? "true" : "false",
+	    (unsigned) st.fpsr, (unsigned) st.fpcr,
+	    (unsigned) (st.fpsr >> 24));
+
+	for (i = 0; i < 8; i++) {
+		char value[40];
+
+		dc_fp_value(value, sizeof(value), st.reg[i].value);
+		n += (size_t) snprintf(r + n, DC_RESP_SZ - n,
+		    "%s{\"raw\":[\"%08x\",\"%08x\",\"%08x\"],\"value\":\"%s\"}",
+		    i ? "," : "",
+		    (unsigned) st.reg[i].w[0], (unsigned) st.reg[i].w[1],
+		    (unsigned) st.reg[i].w[2], value);
+	}
+	snprintf(r + n, DC_RESP_SZ - n, "]}");
 }
 
 static void
@@ -1256,6 +1329,8 @@ dc_dispatch(char *line)
 		    models[machine.model].name_config, arm_is_dynarec() ? "true" : "false");
 	} else if (strcmp(verb, "regs") == 0) {
 		dc_cmd_regs(resp);
+	} else if (strcmp(verb, "fpregs") == 0) {
+		dc_cmd_fpregs(resp);
 	} else if (strcmp(verb, "status") == 0) {
 		dc_cmd_status(resp);
 	} else if (strcmp(verb, "mem") == 0) {
