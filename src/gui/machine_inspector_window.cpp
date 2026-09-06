@@ -46,6 +46,14 @@ extern "C" {
 
 namespace {
 
+/*
+ * Where the inspector was when it was last closed, so reopening it puts it
+ * back. File scope rather than a member, because the window is destroyed and
+ * rebuilt each time it is opened - the whole point is to outlive it.
+ */
+wxRect remembered_geometry;
+bool remembered_geometry_valid = false;
+
 wxString FormatHex(uint32_t value, int width = 8)
 {
 	return wxString::Format("0x%0*X", width, value);
@@ -210,7 +218,24 @@ MachineInspectorWindow::MachineInspectorWindow(wxWindow *parent, EmulatorHost &e
 
 	SetMinSize(wxSize(std::min(950, screen.x), std::min(640, screen.y)));
 	SetSize(wxSize(std::min(1250, screen.x), std::min(820, screen.y)));
-	CentreOnParent();
+
+	/*
+	 * Where it was last time, if it has been open before.
+	 *
+	 * The window is built fresh every time it is opened, so without this it
+	 * came back in the middle of the screen having been dragged somewhere
+	 * deliberate - and it is opened and closed a lot while debugging. Asked
+	 * for by JonAbbott2 on discussion #223. Only within a session: writing it
+	 * to the configuration is a bigger question, since the machine's own
+	 * settings file is not obviously where a debugger window belongs.
+	 */
+	if (remembered_geometry_valid) {
+		SetSize(remembered_geometry);
+	} else {
+		CentreOnParent();
+	}
+	Bind(wxEVT_MOVE, &MachineInspectorWindow::OnGeometryChanged, this);
+	Bind(wxEVT_SIZE, &MachineInspectorWindow::OnGeometryChanged, this);
 	refresh_timer_.Start(500);
 	RefreshSnapshot();
 }
@@ -543,13 +568,24 @@ void MachineInspectorWindow::BuildUi()
 
 	auto *notebook = new wxNotebook(split_outer, wxID_ANY);
 	auto *debug_panel = new wxPanel(notebook);
-	debug_status_label_ = new wxStaticText(debug_panel, wxID_ANY, "State unknown");
-	debug_hit_label_ = new wxStaticText(debug_panel, wxID_ANY, "Last watchpoint: none");
 
-	run_button_ = new wxButton(debug_panel, ID_RUN, "Run");
-	pause_button_ = new wxButton(debug_panel, ID_PAUSE, "Pause");
-	step_button_ = new wxButton(debug_panel, ID_STEP, "Step");
-	step_over_button_ = new wxButton(debug_panel, ID_STEP_OVER, "Step over");
+	/*
+	 * Run, Pause, Step and the machine's state belong to the window rather than
+	 * to a page of it.
+	 *
+	 * They used to live on the Debugger tab, so stopping the machine meant
+	 * first going back to that tab - and the tab you were on was usually Trace,
+	 * which is where you look while stepping. Asked for by JonAbbott2 on
+	 * discussion #223. The tab keeps the breakpoint and watchpoint lists, which
+	 * are the only things on it that are worth a page.
+	 */
+	debug_status_label_ = new wxStaticText(this, wxID_ANY, "State unknown");
+	debug_hit_label_ = new wxStaticText(this, wxID_ANY, "Last watchpoint: none");
+
+	run_button_ = new wxButton(this, ID_RUN, "Run");
+	pause_button_ = new wxButton(this, ID_PAUSE, "Pause");
+	step_button_ = new wxButton(this, ID_STEP, "Step");
+	step_over_button_ = new wxButton(this, ID_STEP_OVER, "Step over");
 	step_over_button_->SetToolTip(
 	    "Run to the next instruction without going into a call or a SWI");
 	run_button_->Enable(false);
@@ -566,18 +602,18 @@ void MachineInspectorWindow::BuildUi()
 	debug_buttons->Add(step_button_, 0, wxRIGHT, 6);
 	debug_buttons->Add(step_over_button_, 0, wxRIGHT, 12);
 
-	autostep_checkbox_ = new wxCheckBox(debug_panel, ID_AUTOSTEP, "Auto");
+	autostep_checkbox_ = new wxCheckBox(this, ID_AUTOSTEP, "Auto");
 	autostep_checkbox_->SetToolTip(
 	    "Keep stepping at the rate beside this, so code can be watched running "
 	    "slowly without holding down Step. Ticking it stops a running machine "
 	    "first; pressing Run turns it off again.");
-	autostep_rate_spin_ = new wxSpinCtrl(debug_panel, wxID_ANY, "4",
+	autostep_rate_spin_ = new wxSpinCtrl(this, wxID_ANY, "4",
 	                                     wxDefaultPosition, wxSize(70, -1),
 	                                     wxSP_ARROW_KEYS, 1, 200, 4);
 	autostep_rate_spin_->SetToolTip("Steps per second");
 	debug_buttons->Add(autostep_checkbox_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 4);
 	debug_buttons->Add(autostep_rate_spin_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 2);
-	debug_buttons->Add(new wxStaticText(debug_panel, wxID_ANY, "/sec"), 0,
+	debug_buttons->Add(new wxStaticText(this, wxID_ANY, "/sec"), 0,
 	    wxALIGN_CENTER_VERTICAL | wxRIGHT, 12);
 	debug_buttons->Add(debug_status_label_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 12);
 	debug_buttons->Add(debug_hit_label_, 1, wxALIGN_CENTER_VERTICAL);
@@ -643,8 +679,7 @@ void MachineInspectorWindow::BuildUi()
 	debug_lists->Add(watchpoint_box, 2, wxEXPAND);
 
 	auto *debug_sizer = new wxBoxSizer(wxVERTICAL);
-	debug_sizer->Add(debug_buttons, 0, wxEXPAND | wxALL, 8);
-	debug_sizer->Add(debug_lists, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+	debug_sizer->Add(debug_lists, 1, wxEXPAND | wxALL, 8);
 	debug_panel->SetSizer(debug_sizer);
 	notebook->AddPage(debug_panel, "Debugger");
 
@@ -743,7 +778,8 @@ void MachineInspectorWindow::BuildUi()
 
 	auto *main = new wxBoxSizer(wxVERTICAL);
 	main->Add(controls, 0, wxEXPAND | wxALL, 8);
-	main->Add(split_outer, 1, wxEXPAND | wxALL, 8);
+	main->Add(debug_buttons, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+	main->Add(split_outer, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
 	SetSizer(main);
 
 	/*
@@ -818,6 +854,19 @@ void MachineInspectorWindow::RefreshFromStateChange()
 	if (IsShown()) {
 		RefreshSnapshot();
 	}
+}
+
+/*
+ * Remember where the window is. Cheap enough to do on every move: two ints,
+ * and a drag is not a hot path.
+ */
+void MachineInspectorWindow::OnGeometryChanged(wxEvent &event)
+{
+	if (IsShown() && !IsIconized() && !IsMaximized()) {
+		remembered_geometry = wxRect(GetPosition(), GetSize());
+		remembered_geometry_valid = true;
+	}
+	event.Skip();
 }
 
 void MachineInspectorWindow::RefreshSnapshot()

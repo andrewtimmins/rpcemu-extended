@@ -365,6 +365,17 @@ private:
 	 */
 	void CentreWindowOnScreen();
 
+	/**
+	 * Put the window back after a guest mode change: centred the first time,
+	 * and afterwards left where the user has it, pulled back only if the new
+	 * size would hang off an edge. Discussion #223.
+	 */
+	void PlaceWindowAfterResize();
+	void KeepWindowOnScreen();
+
+	/** Cleared until the window has been placed once. */
+	bool window_placed_ = false;
+
 	/** Make the window the size of the guest's desktop, and centre it. */
 	void SizeWindowToGuest();
 
@@ -622,6 +633,10 @@ private:
 
 	wxTimer test_fullscreen_timer_;
 	int test_fullscreen_step_ = 0;
+
+	/* RPCEMU_TEST_INSPECTOR_AFTER only: where the inspector was put before it
+	   was closed, to be compared against where it reopens. */
+	wxPoint test_inspector_position_;
 
 	/* RPCEMU_TEST_INSPECTOR_AFTER only. */
 	wxTimer test_inspector_timer_;

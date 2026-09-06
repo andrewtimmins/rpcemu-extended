@@ -83,6 +83,9 @@ public:
 	/** Change a register while the machine is stopped (discussion #223). */
 	void EditRegister(int reg);
 
+	/** Record the window's position and size, for the next time it opens. */
+	void OnGeometryChanged(wxEvent &event);
+
 	/** Write bytes into memory while the machine is stopped (#223). */
 	void OnMemoryWrite(wxCommandEvent &event);
 
