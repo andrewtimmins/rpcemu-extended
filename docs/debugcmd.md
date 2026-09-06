@@ -79,6 +79,32 @@ or `null` in User and System mode, which bank none. Reporting the array's
 contents there would be whatever the last exception left behind. Knowing the
 mode an exception return is about to restore is not answerable from the CPSR.
 
+| `fpregs` | `{ok, paused, fpsr, fpcr, sysid, fpregs:[8 x {raw:[3 hex], value}]}` |
+
+`fpregs` reads the emulated FPA10 in `src/fpa.c`. On a machine with no FPA the
+registers belong to FPEmulator and live in its workspace, where nothing outside
+the module can find them; here the chip is real enough to own them, because
+`resetfpa()` reports system ID `0x81` and the support code takes the hardware
+path on seeing it. `sysid` is that byte on its own, so a client can check which
+path is in use without picking FPSR apart.
+
+Each register is given twice. `raw` is the three words the chip holds, in the
+80-bit extended format, and is the authority: those are the words `LDFE`,
+`STFE`, `LFM` and `SFM` move, so they can be compared straight against a
+register spill in memory. `value` is the same number written out to seventeen
+significant digits, as a string rather than a JSON number so that an infinity
+or a NaN does not make the whole response unparseable. A double cannot hold
+everything the register can, so a very large or very precise value is exact in
+`raw` and approximate in `value`.
+
+The low bits of `fpsr` are whatever the support code last wrote with `WFS`.
+This FPA does not raise the exception flags itself, so they are not the chip's
+account of what has happened.
+
+There is deliberately no `fpreg set`. The support code keeps its own copy of
+the register file around a trapped operation, so a write here would either be
+overwritten or, worse, not be.
+
 | `status` | `{ok, paused, pause_requested, reason, halt_pc, halt_opcode, last_pc, hit_address, hit_value, hit_size, hit_is_write, step_active, trace_pending, pc_symbol, pc_offset, symbols_loaded, breakpoints:[…], watchpoints:[…]}` — see below |
 | `mem <addr> <len> [phys]` | `{ok, addr, physical, len, data:"<hex>"}` — `len` capped 4096; virtual unless `phys` |
 | `mem write <addr> <hexbytes> [phys]` | `{ok, addr, written, requested}` — reports how many landed rather than failing the whole request |

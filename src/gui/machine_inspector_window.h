@@ -61,6 +61,19 @@ public:
 	 */
 	bool LogMemoryViewAgainstMachine(const char *when);
 
+	/**
+	 * Check the floating point panel shows the machine's own FPA registers
+	 * (discussion #257).
+	 *
+	 * Driven by RPCEMU_TEST_INSPECTOR_AFTER, for the same reason as the two
+	 * above: what a wxStaticText is displaying cannot be read from a script on
+	 * macOS, and a value that reaches the snapshot correctly and then the label
+	 * wrongly looks right from every other angle. Each register is reported on
+	 * its own line rather than as one verdict. Returns true when all of them,
+	 * and FPSR and FPCR, agree with the machine.
+	 */
+	bool LogFpRegistersAgainstMachine(const char *when);
+
 	/*
 	 * Driven by RPCEMU_TEST_INSPECTOR_AFTER. Auto-step and the session file are
 	 * both window behaviour - a timer and two file dialogs - so no unit test can
@@ -225,6 +238,11 @@ private:
 	wxStaticText *core_label_ = nullptr;
 	uint32_t previous_regs_[16] = {};
 	bool have_previous_regs_ = false;
+	wxStaticText *fpreg_value_[8] = {};
+	wxStaticText *fpsr_label_ = nullptr;
+	wxStaticText *fpcr_label_ = nullptr;
+	uint32_t previous_fpregs_[8][3] = {};
+	bool have_previous_fpregs_ = false;
 	wxTextCtrl *disasm_view_ = nullptr;
 	wxTextCtrl *memory_view_ = nullptr;
 	wxTextCtrl *peripheral_view_ = nullptr;

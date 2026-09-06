@@ -363,6 +363,57 @@ test_symbols(void)
 	ok_with("sym lookup 8004", "\"symbol\":null");
 }
 
+/*
+ * The FPA's registers over the wire.
+ *
+ * The values are put there by executing real FPA instructions rather than by
+ * reaching into fpa.c, because what is being checked is the whole path a
+ * client sees: the chip's register file, the accessor, and the JSON. The
+ * opcodes are hand-assembled from the operation tables in fpa.c, exactly as
+ * the FPA cases in test_arm_disasm.c are.
+ *
+ * The extended layout is asserted rather than described. 1.0 is exponent
+ * 0x3fff (bias 16383) with the integer bit set and no fraction, so a register
+ * holding it reads 00003fff 80000000 00000000, and those are the words LDFE
+ * and STFE move. Get the layout wrong and the value would still look right.
+ */
+static void
+test_fpregs(void)
+{
+	printf("Floating point registers\n");
+
+	resetfpa();
+
+	/* The system ID byte the FPEmulator support code reads to decide it has a
+	   chip to talk to. If this is ever not 0x81, RISC OS stops using the
+	   register file these tests are about. */
+	ok_with("fpregs", "\"sysid\":\"81\"");
+	ok_with("fpregs", "\"fpsr\":\"81000000\"");
+	ok_with("fpregs",
+	    "{\"raw\":[\"00000000\",\"00000000\",\"00000000\"],\"value\":\"0\"}");
+
+	/* MVFS F0, #1.0 */
+	fpaopcode(0xee008109);
+	ok_with("fpregs",
+	    "{\"raw\":[\"00003fff\",\"80000000\",\"00000000\"],\"value\":\"1\"}");
+
+	/* ADFS F1, F0, F0 - a second register, and a value that had to be computed
+	   rather than loaded from the constant table. */
+	fpaopcode(0xee001100);
+	ok_with("fpregs",
+	    "{\"raw\":[\"00004000\",\"80000000\",\"00000000\"],\"value\":\"2\"}");
+
+	/* MNFS F0, F0: the sign is in the top bit of the first word, and a
+	   negative value must not come back as its magnitude. */
+	fpaopcode(0xee108100);
+	ok_with("fpregs",
+	    "{\"raw\":[\"80003fff\",\"80000000\",\"00000000\"],\"value\":\"-1\"}");
+
+	/* Reading is all that is offered, deliberately: the support code holds its
+	   own copy of the register file around a trapped operation. */
+	refused("fpreg set 0 1");
+}
+
 static void
 test_memory_and_disassembly(void)
 {
@@ -566,6 +617,7 @@ main(int argc, char *argv[])
 	test_stepping_and_backtrace();
 	test_symbols();
 	test_memory_and_disassembly();
+	test_fpregs();
 
 	closesocket(client_fd);
 	debugcmd_close();

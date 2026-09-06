@@ -875,6 +875,30 @@ extern Perf perf;
 extern void resetfpa(void);
 extern void fpaopcode(uint32_t opcode);
 
+/**
+ * One FPA register as a debugger sees it.
+ *
+ * `w` is the register exactly as the chip holds it, in the 80-bit extended
+ * format (sign and exponent, integer bit and high fraction, low fraction), and
+ * is the authority. `value` is the same number in a host double, for display:
+ * the register carries a 64-bit mantissa and a 15-bit exponent where a double
+ * has 53 and 11, so a value can lose its last few digits there, and one beyond
+ * the double range reads as an infinity. Read `w` when the exact bits matter.
+ */
+typedef struct {
+	uint32_t w[3];
+	double value;
+} FPADebugReg;
+
+/** The whole of the FPA's programmer-visible state, for the debugger. */
+typedef struct {
+	FPADebugReg reg[8];
+	uint32_t fpsr;
+	uint32_t fpcr;
+} FPADebugState;
+
+extern void fpa_get_state(FPADebugState *state);
+
 /* settings.cpp */
 extern void config_deep_copy(Config *dest, const Config *src);
 extern void config_sync_machine_edit_to_copy(Config *dest, const Config *src);

@@ -40,6 +40,7 @@ extern "C" {
 #include "mem.h"	/* mem_debug_read: the translated, side-effect-free read */
 }
 
+#include <cmath>
 #include <cstring>
 
 #include "arm_disasm.h"
@@ -50,6 +51,26 @@ namespace {
 wxString FormatHex(uint32_t value, int width = 8)
 {
 	return wxString::Format("0x%0*X", width, value);
+}
+
+/*
+ * An FPA register, for the narrow left-hand column.
+ *
+ * Ten significant digits, which is enough to recognise a value and to see it
+ * change without the column growing wide enough to push the disassembly off
+ * the window. The full seventeen and the stored words are on the tooltip, and
+ * the debug socket's "fpregs" gives both to a program. Infinities and NaNs are
+ * spelled out rather than left to the platform's own %g.
+ */
+wxString FormatFpRegister(double v)
+{
+	if (std::isnan(v)) {
+		return "nan";
+	}
+	if (std::isinf(v)) {
+		return v < 0.0 ? "-inf" : "inf";
+	}
+	return wxString::Format("%.8g", v);
 }
 
 /*
@@ -155,7 +176,7 @@ wxEND_EVENT_TABLE()
 
 MachineInspectorWindow::MachineInspectorWindow(wxWindow *parent, EmulatorHost &emulator)
 	: wxFrame(parent, wxID_ANY, "Machine Inspector",
-	          wxDefaultPosition, wxSize(1150, 820),
+	          wxDefaultPosition, wxSize(1250, 820),
 	          wxDEFAULT_FRAME_STYLE | wxRESIZE_BORDER)
 	, emulator_(emulator)
 {
@@ -171,8 +192,8 @@ MachineInspectorWindow::MachineInspectorWindow(wxWindow *parent, EmulatorHost &e
 	 */
 	const wxSize screen = wxGetClientDisplayRect().GetSize();
 
-	SetMinSize(wxSize(std::min(900, screen.x), std::min(640, screen.y)));
-	SetSize(wxSize(std::min(1150, screen.x), std::min(820, screen.y)));
+	SetMinSize(wxSize(std::min(950, screen.x), std::min(640, screen.y)));
+	SetSize(wxSize(std::min(1250, screen.x), std::min(820, screen.y)));
 	CentreOnParent();
 	refresh_timer_.Start(500);
 	RefreshSnapshot();
@@ -199,11 +220,33 @@ void MachineInspectorWindow::ShowAndRaise()
  */
 wxWindow *MachineInspectorWindow::BuildStatePanel(wxWindow *parent)
 {
-	auto *panel = new wxPanel(parent);
+	/*
+	 * Scrolled, because this column is a splitter pane with a height it does
+	 * not choose. Adding the floating point registers to it made the content
+	 * taller than the pane on a 820-pixel window, and a plain panel does not
+	 * report that: the last box is simply cut off part way through its first
+	 * row, which reads as a rendering fault rather than as a window that is
+	 * too short. Scrolling also means the next thing added here cannot repeat
+	 * it. The rate is set only vertically; the pane's width is the sash's.
+	 */
+	auto *panel = new wxScrolledWindow(parent);
 	auto *sizer = new wxBoxSizer(wxVERTICAL);
 
+	panel->SetScrollRate(0, 10);
+
+	/*
+	 * R0-R7 | R8-R15 | F0-F7, in one grid of eight rows.
+	 *
+	 * The FPA registers went in a box of their own below the Status box first,
+	 * and that was wrong twice over: this column is a splitter pane whose
+	 * height it does not choose, so the box was cut off part way through its
+	 * first row on an 820-pixel window - which is what "squashed" looks like -
+	 * and even scrolled into view it was a long way from the registers it
+	 * belongs beside. A third column of the same grid costs no height at all
+	 * and puts F0 where you are already looking. Discussion #257.
+	 */
 	auto *regs_box = new wxStaticBoxSizer(wxVERTICAL, panel, "Registers");
-	auto *grid = new wxFlexGridSizer(8, 4, 2, 8);	/* 8 rows, R0-R7 | R8-R15 */
+	auto *grid = new wxFlexGridSizer(8, 6, 2, 8);
 
 	for (int row = 0; row < 8; row++) {
 		for (int half = 0; half < 2; half++) {
@@ -223,6 +266,19 @@ wxWindow *MachineInspectorWindow::BuildStatePanel(wxWindow *parent)
 			grid->Add(reg_name_[r], 0, wxALIGN_CENTER_VERTICAL);
 			grid->Add(reg_value_[r], 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 4);
 		}
+
+		auto *fp_name = new wxStaticText(panel, wxID_ANY,
+		    wxString::Format("F%d", row));
+
+		fpreg_value_[row] = new wxStaticText(panel, wxID_ANY, "0");
+		ApplyMonoFont(fpreg_value_[row]);
+		/* Room for the widest value this shows, so the column does not resize
+		   itself - and the pane's sash with it - as a register changes
+		   magnitude. */
+		fpreg_value_[row]->SetMinSize(
+		    wxSize(fpreg_value_[row]->GetTextExtent("-1.2345679e-300").x, -1));
+		grid->Add(fp_name, 0, wxALIGN_CENTER_VERTICAL);
+		grid->Add(fpreg_value_[row], 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 4);
 	}
 	regs_box->Add(grid, 0, wxALL, 4);
 	sizer->Add(regs_box, 0, wxEXPAND | wxALL, 6);
@@ -253,15 +309,44 @@ wxWindow *MachineInspectorWindow::BuildStatePanel(wxWindow *parent)
 	    "The saved PSR of the current mode, and the mode a return through it "
 	    "would enter. User and System have none.");
 
+	/*
+	 * The FPA's two status words, beside the processor's. FPSR's top byte is
+	 * the system ID the FPEmulator support code reads to decide whether it is
+	 * driving a chip, so it is named rather than left as a number: a machine
+	 * showing anything but 81 there is one where F0-F7 above are not the
+	 * registers RISC OS is using.
+	 */
+	fpsr_label_ = new wxStaticText(panel, wxID_ANY, "FPSR 00000000");
+	ApplyMonoFont(fpsr_label_);
+	fpsr_label_->SetToolTip(
+	    "The FPA status register. The top byte is the system ID: 81 is an "
+	    "FPA10. The low bits are whatever the support code last wrote, since "
+	    "the emulated chip does not raise the exception flags itself.");
+	fpcr_label_ = new wxStaticText(panel, wxID_ANY, "FPCR 00000000");
+	ApplyMonoFont(fpcr_label_);
+
+	/* Side by side rather than one under the other. This column is a splitter
+	   pane, and two more full-width lines were enough to push the last of it
+	   out of sight at the window's default height. */
+	auto *fpsr_row = new wxBoxSizer(wxHORIZONTAL);
+
+	fpsr_row->Add(fpsr_label_, 0, wxRIGHT, 12);
+	fpsr_row->Add(fpcr_label_, 0);
+
 	psr_box->Add(cpsr_label_, 0, wxLEFT | wxBOTTOM, 4);
 	psr_box->Add(spsr_label_, 0, wxLEFT | wxBOTTOM, 4);
+	psr_box->Add(fpsr_row, 0, wxLEFT | wxBOTTOM, 4);
 	psr_box->Add(mode_label_, 0, wxLEFT | wxBOTTOM, 4);
 	psr_box->Add(mmu_label_, 0, wxLEFT | wxBOTTOM, 4);
 	psr_box->Add(core_label_, 0, wxLEFT | wxBOTTOM, 4);
 	sizer->Add(psr_box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 6);
 
-	sizer->AddStretchSpacer();
+
+	/* No stretch spacer: in a scrolled window it would claim whatever height
+	   was left and the virtual size would never exceed the pane, which is the
+	   one thing that has to happen for a scrollbar to appear. */
 	panel->SetSizer(sizer);
+	panel->FitInside();
 	return panel;
 }
 
@@ -794,9 +879,55 @@ void MachineInspectorWindow::ApplyProcessorState(const MachineSnapshot &snapshot
 	    snapshot.cpu_idle_enabled ? "on" : "off",
 	    snapshot.perf_mips));
 
+	/*
+	 * The FPA's registers, coloured on the same rule as the ARM ones: what
+	 * moved since the last look. The comparison is on the stored words rather
+	 * than the value, so a change too small for the displayed digits still
+	 * shows as a change.
+	 */
+	for (int f = 0; f < 8; f++) {
+		const wxString text = FormatFpRegister(snapshot.fpvalues[f]);
+		bool moved = false;
+
+		if (fpreg_value_[f]->GetLabel() != text) {
+			fpreg_value_[f]->SetLabel(text);
+		}
+		for (int w = 0; w < 3; w++) {
+			moved = moved || (have_previous_fpregs_ &&
+			    previous_fpregs_[f][w] != snapshot.fpregs[f][w]);
+			previous_fpregs_[f][w] = snapshot.fpregs[f][w];
+		}
+		fpreg_value_[f]->SetForegroundColour(moved ? changed : normal);
+
+		/*
+		 * Only when the register has actually moved. Setting a tooltip on
+		 * macOS tears down the control's tracking area and installs a new
+		 * one, so doing it unconditionally re-made eight of them twice a
+		 * second - and a mouse enter or leave arriving mid-swap crashed the
+		 * window inside wxNSWindow's event filter, with nothing of ours on
+		 * the stack. Nothing needs rewriting while the value has not changed.
+		 */
+		if (moved || !have_previous_fpregs_) {
+			fpreg_value_[f]->SetToolTip(wxString::Format(
+			    "F%d = %.17g\nExtended: %08X %08X %08X",
+			    f, snapshot.fpvalues[f], snapshot.fpregs[f][0],
+			    snapshot.fpregs[f][1], snapshot.fpregs[f][2]));
+		}
+	}
+	have_previous_fpregs_ = true;
+
+	/* The system ID byte named, because "is this machine using the FPA at all"
+	   is the question the register is usually being read to answer. */
+	fpsr_label_->SetLabel(wxString::Format("FPSR %08X%s", snapshot.fpsr,
+	    (snapshot.fpsr >> 24) == 0x81 ? " (FPA10)" : ""));
+	fpcr_label_->SetLabel(wxString::Format("FPCR %08X", snapshot.fpcr));
+
 	/* One refresh for the lot: colouring a label does not repaint it. */
 	for (int r = 0; r < 16; r++) {
 		reg_value_[r]->Refresh();
+	}
+	for (int f = 0; f < 8; f++) {
+		fpreg_value_[f]->Refresh();
 	}
 	for (int i = 0; i < 7; i++) {
 		flag_label_[i]->Refresh();
@@ -1340,6 +1471,62 @@ bool MachineInspectorWindow::LogTraceControlsAgainstMachine(const char *when)
 
 	rpclog("TEST_INSPECTOR: %s: controls %s the machine\n", when,
 	       agree ? "agree with" : "DISAGREE with");
+	return agree;
+}
+
+/*
+ * The floating point panel against the machine's own FPA (discussion #257).
+ *
+ * The window is refreshed first and then asked what it is displaying, so what
+ * is compared is the text on the labels rather than the snapshot that was used
+ * to write them. That is the whole point: a register can reach the snapshot
+ * intact and still be put on the wrong label, or on none.
+ *
+ * The registers are read again afterwards, so in principle the machine could
+ * move one between the two reads. Nothing does at a Supervisor prompt, and a
+ * disagreement is logged with both values rather than asserted, so a genuine
+ * race would be visible for what it is.
+ */
+bool MachineInspectorWindow::LogFpRegistersAgainstMachine(const char *when)
+{
+	RefreshSnapshot();
+
+	const MachineSnapshot snapshot = emulator_.TakeSnapshot();
+	bool agree = true;
+
+	for (int f = 0; f < 8; f++) {
+		const wxString expect = FormatFpRegister(snapshot.fpvalues[f]);
+		const wxString shown = fpreg_value_[f]->GetLabel();
+		const bool same = (shown == expect);
+
+		if (!same) {
+			agree = false;
+		}
+		rpclog("TEST_INSPECTOR: %s: F%d shown=%s machine=%s [%08x %08x %08x]%s\n",
+		       when, f, static_cast<const char *>(shown.mb_str()),
+		       static_cast<const char *>(expect.mb_str()),
+		       snapshot.fpregs[f][0], snapshot.fpregs[f][1], snapshot.fpregs[f][2],
+		       same ? "" : "  <- DISAGREES");
+	}
+
+	/*
+	 * FPSR matters beyond being one more number. Its top byte is the system ID
+	 * the FPEmulator support code reads to decide whether it is driving a chip,
+	 * so a machine reporting anything but 0x81 here is one where these
+	 * registers are not the ones RISC OS is using.
+	 */
+	const bool fpsr_shown = fpsr_label_->GetLabel().Contains(
+	    wxString::Format("%08X", snapshot.fpsr));
+	const bool fpcr_shown = fpcr_label_->GetLabel().Contains(
+	    wxString::Format("%08X", snapshot.fpcr));
+
+	if (!fpsr_shown || !fpcr_shown) {
+		agree = false;
+	}
+	rpclog("TEST_INSPECTOR: %s: FPSR %08x shown=%d (system ID %02x), FPCR %08x shown=%d\n",
+	       when, snapshot.fpsr, fpsr_shown ? 1 : 0, snapshot.fpsr >> 24,
+	       snapshot.fpcr, fpcr_shown ? 1 : 0);
+
 	return agree;
 }
 

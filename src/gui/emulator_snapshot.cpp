@@ -105,6 +105,20 @@ emulator_fill_snapshot(MachineSnapshot *snapshot)
 	const uint32_t pc = PC;
 	snapshot->pc = pc;
 
+	{
+		FPADebugState fpa;
+
+		fpa_get_state(&fpa);
+		for (int i = 0; i < 8; i++) {
+			snapshot->fpregs[i][0] = fpa.reg[i].w[0];
+			snapshot->fpregs[i][1] = fpa.reg[i].w[1];
+			snapshot->fpregs[i][2] = fpa.reg[i].w[2];
+			snapshot->fpvalues[i] = fpa.reg[i].value;
+		}
+		snapshot->fpsr = fpa.fpsr;
+		snapshot->fpcr = fpa.fpcr;
+	}
+
 	for (int i = 0; i < 8; i++) {
 		const uint32_t addr = (pc + static_cast<uint32_t>(i * 4)) & arm.r15_mask;
 		uint32_t word = 0;

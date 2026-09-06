@@ -50,6 +50,15 @@ typedef struct MachineSnapshot {
 	uint32_t mode;
 	uint32_t pc;
 
+	/* The FPA10's state, in the chip's own 80-bit extended format plus the
+	   value each register stands for. Asked for in discussion #257: the
+	   debugger disassembled FPA instructions and then had nothing to say about
+	   what they did. See FPADebugReg in rpcemu.h for why both forms are kept. */
+	uint32_t fpregs[8][3];
+	double fpvalues[8];
+	uint32_t fpsr;
+	uint32_t fpcr;
+
 	uint32_t pipeline_addr[8];
 	uint32_t pipeline_data[8];
 

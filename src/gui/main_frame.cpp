@@ -2468,6 +2468,9 @@ void MainFrame::OnTestInspectorTimer(wxTimerEvent &event)
 			   other address in the window meant a virtual one. Needs a booted
 			   machine, because it needs real page tables. */
 			machine_inspector_window_->LogMemoryViewAgainstMachine("reopened");
+			/* Discussion #257: the FPA's registers, which the debugger could
+			   not show at all until they were plumbed through the snapshot. */
+			machine_inspector_window_->LogFpRegistersAgainstMachine("reopened");
 		} else {
 			rpclog("TEST_INSPECTOR: no inspector window on reopen\n");
 		}

@@ -765,6 +765,42 @@ void fpaopcode(uint32_t opcode)
 }
 
 /**
+ * The FPA's state, for the debugger.
+ *
+ * Worth saying where these values live, because it is not where a RISC OS
+ * programmer would expect. On a machine with no FPA the registers belong to
+ * FPEmulator and sit in its workspace, and nothing outside the module knows
+ * where. Here there is a chip: resetfpa() puts 0x81 in the FPSR system ID byte,
+ * the support code reads that, and from then on F0-F7 are the ones below.
+ *
+ * Two things follow, both of which the debugger has to be honest about.
+ *
+ * The registers are the chip's, so they are what the machine will use next -
+ * but while the support code is servicing an operation the FPA10 does not do
+ * in hardware, the working value is in its workspace and these are the
+ * operands it was handed. Stopped between instructions, which is where a
+ * breakpoint puts you, that distinction does not arise.
+ *
+ * And the FPSR's low bits are whatever the support code last wrote with WFS.
+ * This FPA does not raise the exception flags itself, so do not read them as
+ * the chip's account of what has happened. The system ID byte is ours.
+ */
+void
+fpa_get_state(FPADebugState *state)
+{
+	int c;
+
+	for (c = 0; c < 8; c++) {
+		state->reg[c].w[0] = fparegs[c].w[0];
+		state->reg[c].w[1] = fparegs[c].w[1];
+		state->reg[c].w[2] = fparegs[c].w[2];
+		state->reg[c].value = (double) ext_to_ld(&fparegs[c]);
+	}
+	state->fpsr = fpsr;
+	state->fpcr = fpcr;
+}
+
+/**
  * Write the FPA state to a suspend snapshot.
  */
 void
