@@ -38,6 +38,11 @@ extern "C" {
 #include "rpcemu.h"
 }
 
+enum {
+	ID_SETTLE_TIMER = wxID_HIGHEST + 1,
+	ID_KEY_RELEASE_TIMER,
+};
+
 wxBEGIN_EVENT_TABLE(RemoteEmulatorPanel, wxPanel)
 	EVT_PAINT(RemoteEmulatorPanel::OnPaint)
 	EVT_SIZE(RemoteEmulatorPanel::OnSize)
@@ -64,7 +69,8 @@ wxBEGIN_EVENT_TABLE(RemoteEmulatorPanel, wxPanel)
 	EVT_KEY_DOWN(RemoteEmulatorPanel::OnKeyDown)
 	EVT_KEY_UP(RemoteEmulatorPanel::OnKeyUp)
 	EVT_KILL_FOCUS(RemoteEmulatorPanel::OnKillFocus)
-	EVT_TIMER(wxID_ANY, RemoteEmulatorPanel::OnSettleTimer)
+	EVT_TIMER(ID_SETTLE_TIMER, RemoteEmulatorPanel::OnSettleTimer)
+	EVT_TIMER(ID_KEY_RELEASE_TIMER, RemoteEmulatorPanel::OnKeyReleaseTimer)
 wxEND_EVENT_TABLE()
 
 #if wxUSE_GLCANVAS
@@ -84,7 +90,8 @@ static const int kGlUndecidedPaintLimit = 120;
 RemoteEmulatorPanel::RemoteEmulatorPanel(wxWindow *parent, const std::string &shared_fb_name,
                                          const std::string &ipc_endpoint)
 	: wxPanel(parent, wxID_ANY, wxDefaultPosition, wxSize(640, 480), wxWANTS_CHARS)
-	, settle_timer_(this)
+	, settle_timer_(this, ID_SETTLE_TIMER)
+	, key_release_timer_(this, ID_KEY_RELEASE_TIMER)
 {
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
 	SetBackgroundColour(*wxBLACK);
@@ -1374,11 +1381,25 @@ void RemoteEmulatorPanel::OnKeyDown(wxKeyEvent &event)
 	const unsigned key_id = InputKeyIdentityFromKeyEvent(event);
 	const unsigned scan_code = InputNativeScancodeFromKeyEvent(event);
 
+	InputLogKeyEvent(event, scan_code, true);
+
+	/* A repeat would press again once a made-up release has let the key go. */
+	if (event.IsAutoRepeat()) {
+		return;
+	}
+
 	if (scan_code != 0 && held_keys_press(&held_keys_, key_id, scan_code)) {
 		IpcRequest request;
 		request.type = IpcRequestType::KeyPress;
 		request.arg1 = (int32_t) scan_code;
 		SendRequest(request);
+	}
+
+	if (scan_code != 0 && InputNeedsSyntheticRelease(event, scan_code)) {
+		key_release_pending_.push_back(key_id);
+		if (!key_release_timer_.IsRunning()) {
+			key_release_timer_.StartOnce(kInputSyntheticReleaseMs);
+		}
 	}
 }
 
@@ -1397,7 +1418,12 @@ void RemoteEmulatorPanel::OnKeyUp(wxKeyEvent &event)
 		return;
 	}
 
-	const unsigned key_id = InputKeyIdentityFromKeyEvent(event);
+	InputLogKeyEvent(event, InputNativeScancodeFromKeyEvent(event), false);
+	SendKeyRelease(InputKeyIdentityFromKeyEvent(event));
+}
+
+void RemoteEmulatorPanel::SendKeyRelease(unsigned key_id)
+{
 	unsigned scan_code = 0;
 
 	if (held_keys_release(&held_keys_, key_id, &scan_code)) {
@@ -1405,6 +1431,16 @@ void RemoteEmulatorPanel::OnKeyUp(wxKeyEvent &event)
 		request.type = IpcRequestType::KeyRelease;
 		request.arg1 = (int32_t) scan_code;
 		SendRequest(request);
+	}
+}
+
+void RemoteEmulatorPanel::OnKeyReleaseTimer(wxTimerEvent & /*event*/)
+{
+	std::vector<unsigned> pending;
+
+	pending.swap(key_release_pending_);
+	for (const unsigned key_id : pending) {
+		SendKeyRelease(key_id);
 	}
 }
 

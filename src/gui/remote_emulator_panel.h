@@ -197,6 +197,8 @@ private:
 	void OnKeyDown(wxKeyEvent &event);
 	void OnKeyUp(wxKeyEvent &event);
 	void OnKillFocus(wxFocusEvent &event);
+	void OnKeyReleaseTimer(wxTimerEvent &event);
+	void SendKeyRelease(unsigned key_id);
 
 	void HandleIpcEvent(const IpcEvent &event);
 	void RefreshFrame();
@@ -395,6 +397,11 @@ private:
 #endif
 
 	HeldKeys held_keys_{};
+
+	/* Releases macOS never sends, made up after an interval. See
+	   InputNeedsSyntheticRelease(). */
+	wxTimer key_release_timer_;
+	std::vector<unsigned> key_release_pending_;
 
 	wxDECLARE_EVENT_TABLE();
 };
