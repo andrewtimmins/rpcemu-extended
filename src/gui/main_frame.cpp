@@ -3270,11 +3270,9 @@ void MainFrame::NativeKeyPress(unsigned key_id, unsigned scan_code)
  */
 void MainFrame::QueueSyntheticRelease(unsigned key_id)
 {
-	static const int kSyntheticReleaseMs = 60;
-
 	synthetic_release_pending_.push_back(key_id);
 	if (!synthetic_release_timer_.IsRunning()) {
-		synthetic_release_timer_.StartOnce(kSyntheticReleaseMs);
+		synthetic_release_timer_.StartOnce(kInputSyntheticReleaseMs);
 	}
 }
 

@@ -154,6 +154,12 @@ feels sticky. Modifier keycodes are excluded, since a modifier genuinely is held
 Off macOS this returns false always: a press is answered by a release there, and
 inventing one would be inventing a fault.
 
+A machine in its own window (`MainFrame`) and one drawn inside the Manager
+(`RemoteEmulatorPanel`) each have their own key handlers, and both have to do
+this. The Manager's did not, so Caps Lock and Cmd+key stuck there while working
+in a machine's own window. Each has its own timer, sharing only the decision and
+the 60ms.
+
 ## Diagnosing a keyboard fault
 
 Set `RPCEMU_KEYBOARD_DEBUG` in the environment and every key event is written to
@@ -171,6 +177,9 @@ Keyboard: down raw=0x0000001e flags=0x001e0001 wxkey=65 position=0x26 scancode=0
 - `scancode` is what RPCEmu will send, after the macOS policy above.
 - `ps2` says whether `keyboard_map_key()` could deliver it. `DROPPED` means the
   guest received nothing.
+
+For a machine drawn in the Manager the lines go to the **Manager's**
+`rpclog.txt` (in the data directory), not the machine's own.
 
 This exists because Windows and macOS keyboard behaviour cannot be reproduced on
 a Linux development machine. A reporter can be asked for a log rather than for
