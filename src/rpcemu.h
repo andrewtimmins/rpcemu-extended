@@ -463,8 +463,15 @@ typedef struct {
 	 *
 	 * It is an open network of strangers with no encryption and no
 	 * authentication, which is why turning it on asks the user to agree to
-	 * something first (see the machine editor). Where both this and a server of
-	 * the user's own are set, this one wins; net_json_target() decides.
+	 * something first (see the machine editor).
+	 *
+	 * This and a server of the user's own are independent: neither overrides
+	 * the other, and a machine set for both joins both. net_json_link_wanted()
+	 * answers for one link at a time and the two never consult each other, so
+	 * one server being unreachable is not the other's problem. The cost is
+	 * duplication - both are hubs, so a peer that is also on both is heard
+	 * twice - which community-network.md says plainly rather than leaving to
+	 * be discovered.
 	 */
 	int community_net_enabled;	/**< Join the shared Community Network */
 	int cpu_idle;		/**< Attempt to reduce CPU usage */
