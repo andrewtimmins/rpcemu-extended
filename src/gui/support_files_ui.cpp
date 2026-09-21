@@ -92,16 +92,23 @@ int SupportFilesEnsure(wxWindow *parent)
 	/*
 	 * Silently where there is no toolkit to show anything with: the console
 	 * entry points, and headless, which reaches here before wx is up at all -
-	 * so wxTheApp is checked for NULL rather than assumed. The work still
-	 * happens, because a machine started from a script needs its expansion card
-	 * modules just as much as one started from the Manager.
+	 * so the application object is checked for NULL rather than assumed. The
+	 * work still happens, because a machine started from a script needs its
+	 * expansion card modules just as much as one started from the Manager.
+	 *
+	 * wxAppConsole::GetInstance(), not wxTheApp, for the reason set out at
+	 * length in folder_transfer.cpp: wxTheApp downcasts to wxApp*, and the
+	 * console entry points really are wxAppConsole - --fetch-riscos builds a
+	 * RiscosFetchApp. UBSan fails the sanitiser job on it.
 	 *
 	 * A null parent is NOT the test. The graphical route calls this before any
 	 * window exists, which is the whole point of it - the files have to be in
 	 * place before the Manager can offer a machine - and a progress dialogue
 	 * with no parent is an ordinary top-level window.
 	 */
-	if (wxTheApp == nullptr || !wxTheApp->IsGUI()) {
+	const wxAppConsole *const app = wxAppConsole::GetInstance();
+
+	if (app == nullptr || !app->IsGUI()) {
 		return support_install_run(datadir, nullptr, nullptr);
 	}
 

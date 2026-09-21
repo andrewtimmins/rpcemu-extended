@@ -565,9 +565,9 @@ void SeedMonitorChoice(const wxString &hostfs_dir, unsigned vram_mb)
 	{
 		host_w = host_h = 0;
 
-		if (wxTheApp != NULL && wxTheApp->IsGUI() &&
-		    wxDisplay::GetCount() > 0)
-		{
+		const wxAppConsole *const app = wxAppConsole::GetInstance();
+
+		if (app != NULL && app->IsGUI() && wxDisplay::GetCount() > 0) {
 			const wxRect geom = wxDisplay(0u).GetGeometry();
 
 			if (geom.width > 0 && geom.height > 0) {
