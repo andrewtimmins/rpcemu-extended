@@ -80,6 +80,9 @@ bool InputIsThirdMouseButtonKey(const wxKeyEvent &event);
  */
 bool InputNeedsSyntheticRelease(const wxKeyEvent &event, unsigned scan_code);
 
+/** How long a made-up release is held back after its press, in milliseconds. */
+static const int kInputSyntheticReleaseMs = 60;
+
 
 /**
  * Log one key event to rpclog.txt when RPCEMU_KEYBOARD_DEBUG is set in the
