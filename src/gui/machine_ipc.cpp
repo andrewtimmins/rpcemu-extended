@@ -299,6 +299,12 @@ bool SharedFramebuffer::ReadInto(std::vector<uint32_t> *out, int *width, int *he
 	}
 
 	const uint32_t front = header_->front_slot.load(std::memory_order_acquire);
+
+	/* Bounds-checked for the reason given in AcquireFront(). */
+	if (front >= (uint32_t) kBufferCount) {
+		return false;
+	}
+
 	const uint32_t w = header_->slot_width[front].load(std::memory_order_relaxed);
 	const uint32_t h = header_->slot_height[front].load(std::memory_order_relaxed);
 
@@ -323,6 +329,17 @@ bool SharedFramebuffer::AcquireFront(const uint32_t **pixels, int *width, int *h
 	/* Acquire, as ReadInto does: the dimensions are per-slot, so loading them
 	   after this gives the pair that belongs to these exact pixels. */
 	const uint32_t front = header_->front_slot.load(std::memory_order_acquire);
+
+	/* front comes out of memory another process writes, so it is checked
+	   before it is used as a subscript. A machine that has died or been
+	   killed part way through a publish can leave anything here, and
+	   slots_[] is an array in THIS process - an out-of-range read of it
+	   hands back a wild pointer that the caller then reads a whole frame
+	   through. */
+	if (front >= (uint32_t) kBufferCount) {
+		return false;
+	}
+
 	const uint32_t w = header_->slot_width[front].load(std::memory_order_relaxed);
 	const uint32_t h = header_->slot_height[front].load(std::memory_order_relaxed);
 

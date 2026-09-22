@@ -849,7 +849,10 @@ void RemoteEmulatorPanel::UploadPendingFrame()
 	const uint32_t *pixels = nullptr;
 	int w = 0, h = 0;
 
-	if (!GlActive() || !shared_fb_.AcquireFront(&pixels, &w, &h)) {
+	/* live_ as well as GlActive(): the CPU path in RefreshFrame() has always
+	   tested it, and this one never did, so after a machine stopped the GPU
+	   path went on reading a dead machine's framebuffer. */
+	if (!live_ || !GlActive() || !shared_fb_.AcquireFront(&pixels, &w, &h)) {
 		return;
 	}
 
