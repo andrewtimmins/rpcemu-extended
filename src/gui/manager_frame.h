@@ -62,7 +62,6 @@ private:
 		long pid = 0;
 		wxProcess *process = nullptr;	/* null for a machine found already running at startup */
 		RemoteEmulatorPanel *panel = nullptr;
-		int book_page = -1;
 		bool starting = false;		/* waiting for the child to publish its IPC endpoint */
 		wxString last_attach_error;	/* why the most recent attempt failed */
 		wxLongLong start_time_ms;
@@ -231,7 +230,21 @@ private:
 
 	wxListCtrl *machine_list_ = nullptr;
 	wxSimplebook *display_book_ = nullptr;
-	int placeholder_page_ = -1;
+	/*
+	 * The placeholder page as a WINDOW, not as an index.
+	 *
+	 * wxBookCtrl renumbers its pages when one is removed, so an index stored
+	 * when a page was added is wrong as soon as an earlier page goes - and
+	 * pages now do go, because a stopped machine's page has to be removed from
+	 * the book before its window is destroyed (issue #266). Every page is
+	 * therefore looked up by its window with FindPage(), which cannot go stale.
+	 */
+	wxWindow *placeholder_panel_ = nullptr;
+
+	/** The book index of a page, or wxNOT_FOUND. */
+	int PageIndexOf(const wxWindow *page) const;
+	/** Select the placeholder page, if the book still has one. */
+	void ShowPlaceholderPage();
 
 	/* The machine list collapses, so the width it had is kept to put it back
 	   where the user had it. */

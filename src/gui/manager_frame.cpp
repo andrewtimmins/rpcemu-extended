@@ -335,8 +335,8 @@ void ManagerFrame::BuildUi()
 	left_panel->SetSizer(left_sizer);
 
 	display_book_ = new wxSimplebook(splitter);
-	placeholder_page_ = display_book_->GetPageCount();
-	display_book_->AddPage(BuildPlaceholderPage(), "", true);
+	placeholder_panel_ = BuildPlaceholderPage();
+	display_book_->AddPage(placeholder_panel_, "", true);
 
 	machines_panel_ = left_panel;
 	splitter->SplitVertically(left_panel, display_book_, 300);
@@ -1563,7 +1563,6 @@ void ManagerFrame::AttachPanelFor(const wxString &name, long pid,
 		request.arg2 = (int32_t) (uint32_t) (id >> 32);
 		panel->SendRequest(request);
 	}
-	it->second.book_page = display_book_->GetPageCount();
 	display_book_->AddPage(panel, name, false);
 
 	RefreshMachineList();
@@ -1735,7 +1734,11 @@ void ManagerFrame::ShowMachinePanel(const wxString &name)
 
 	if (it != running_.end() && it->second.panel != nullptr) {
 		active_machine_ = name;
-		display_book_->SetSelection((size_t) it->second.book_page);
+		const int page = PageIndexOf(it->second.panel);
+
+		if (page != wxNOT_FOUND) {
+			display_book_->SetSelection((size_t) page);
+		}
 		it->second.panel->SetActive(true);
 
 		/* What this machine last said, now, rather than leaving the previous
@@ -1754,7 +1757,7 @@ void ManagerFrame::ShowMachinePanel(const wxString &name)
 		it->second.panel->SendRequest(request);
 	} else {
 		active_machine_.clear();
-		display_book_->SetSelection((size_t) placeholder_page_);
+		ShowPlaceholderPage();
 		SetMuteToolState(false);
 	}
 	RefreshUiState();
@@ -1794,6 +1797,40 @@ void ManagerFrame::StopAllAndClose()
 	RefreshUiState();
 }
 
+/**
+ * Where a page window sits in the book right now.
+ *
+ * Asked every time rather than remembered, because removing a page renumbers
+ * every page after it. See placeholder_panel_ in the header for why that is no
+ * longer hypothetical.
+ */
+int ManagerFrame::PageIndexOf(const wxWindow *page) const
+{
+	if (display_book_ == nullptr || page == nullptr) {
+		return wxNOT_FOUND;
+	}
+
+	for (size_t i = 0; i < display_book_->GetPageCount(); i++) {
+		if (display_book_->GetPage(i) == page) {
+			return (int) i;
+		}
+	}
+
+	return wxNOT_FOUND;
+}
+
+/**
+ * Put the "no machine shown" page up.
+ */
+void ManagerFrame::ShowPlaceholderPage()
+{
+	const int page = PageIndexOf(placeholder_panel_);
+
+	if (page != wxNOT_FOUND) {
+		display_book_->SetSelection((size_t) page);
+	}
+}
+
 void ManagerFrame::RemoveRunningEntry(const wxString &name)
 {
 	auto it = running_.find(name);
@@ -1815,7 +1852,30 @@ void ManagerFrame::RemoveRunningEntry(const wxString &name)
 	if (it->second.panel != nullptr) {
 		if (active_machine_ == name) {
 			active_machine_.clear();
-			display_book_->SetSelection((size_t) placeholder_page_);
+			ShowPlaceholderPage();
+		}
+
+		/*
+		 * ★ Out of the book first, and only then destroyed.
+		 *
+		 * wxBookCtrl keeps its own vector of page windows and is never told
+		 * that one has been destroyed - there is no hook for it. Destroying
+		 * the window on its own therefore leaves a freed pointer in that
+		 * vector, and the next thing that walks it dies. Measured with a
+		 * twenty-line wx program: after page->Destroy() the book still
+		 * reports the same GetPageCount() and still hands back the freed
+		 * window from GetPage(), and the next AddPage() segfaults. On Windows
+		 * restoring the window from the task bar is what walks it, which is
+		 * how it was reported - issue #266.
+		 *
+		 * RemovePage rather than DeletePage: this takes the page out without
+		 * deleting the window, leaving Destroy() to do that the wx way, at
+		 * idle, once the events already queued for it have been delivered.
+		 */
+		const int page = PageIndexOf(it->second.panel);
+
+		if (page != wxNOT_FOUND) {
+			display_book_->RemovePage((size_t) page);
 		}
 		it->second.panel->Destroy();
 	}
