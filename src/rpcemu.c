@@ -447,6 +447,19 @@ static DebugPauseReason debugger_pending_reason = DebugPauseReason_None;
 static int debugger_temp_bp_active = 0;
 static uint32_t debugger_temp_bp_address = 0;
 
+/* The address a halt is being resumed from, exempted from the breakpoint table
+   for exactly one instruction.
+
+   The hook runs BEFORE the instruction at that address, so a halt leaves the
+   machine sitting on the very instruction that caused it, not past it. Without
+   this the breakpoint matches again the moment the machine is let go, and Run
+   and Step both stop dead where they started - issue #263. Skipping the whole
+   check rather than just the halt is deliberate: debugger_breakpoint_should_halt()
+   counts the hit and spends an ignore count, and neither belongs to a halt that
+   has already been reported. */
+static int debugger_resume_skip_active = 0;
+static uint32_t debugger_resume_skip_address = 0;
+
 static int debugger_paused = 0;
 static DebugPauseReason debugger_pause_reason = DebugPauseReason_None;
 static uint32_t debugger_halt_pc = 0;
@@ -584,6 +597,22 @@ debugger_watchpoint_matches(const DebugWatchpointInfo *wp, uint32_t address,
 	return !(end < wp_start || wp_end < start);
 }
 
+/**
+ * Let go of the instruction a halt stopped on.
+ *
+ * Called by every resume and step. Arms the one-instruction exemption above,
+ * and only when the machine really is sitting on a halt - a resume of a machine
+ * that was already running has no address to exempt.
+ */
+static void
+debugger_arm_resume_skip(void)
+{
+	if (debugger_paused) {
+		debugger_resume_skip_active = 1;
+		debugger_resume_skip_address = debugger_halt_pc;
+	}
+}
+
 static void
 debugger_reset_hit_info(void)
 {
@@ -711,6 +740,7 @@ debugger_request_pause(DebugPauseReason reason)
 void
 debugger_resume(void)
 {
+	debugger_arm_resume_skip();
 	debugger_paused = 0;
 	debugger_pause_requested = 0;
 	debugger_pending_reason = DebugPauseReason_None;
@@ -733,6 +763,7 @@ debugger_single_step(uint32_t instruction_count)
 	if (instruction_count == 0) {
 		return;
 	}
+	debugger_arm_resume_skip();
 	debugger_paused = 0;
 	debugger_pause_requested = 0;
 	debugger_pending_reason = DebugPauseReason_None;
@@ -1282,6 +1313,16 @@ debugger_instruction_hook(uint32_t pc, uint32_t opcode)
 
 	debugger_step_active = (debugger_step_remaining > 0) ? 1 : 0;
 
+	/* Spend the exemption armed by the resume, whether or not it matches: it
+	   is good for one instruction and no longer, so a later return to the same
+	   address stops the way the user asked it to. */
+	int skip_breakpoints = 0;
+
+	if (debugger_resume_skip_active) {
+		debugger_resume_skip_active = 0;
+		skip_breakpoints = (pc == debugger_resume_skip_address);
+	}
+
 	/* The step-over/step-out/run-to target. Checked before the breakpoint
 	   table and consumed on arrival, so it cannot fire twice. */
 	if (debugger_temp_bp_active && pc == debugger_temp_bp_address) {
@@ -1290,7 +1331,7 @@ debugger_instruction_hook(uint32_t pc, uint32_t opcode)
 		debugger_pending_reason = DebugPauseReason_Step;
 	}
 
-	if (debugger_breakpoint_count > 0) {
+	if (debugger_breakpoint_count > 0 && !skip_breakpoints) {
 		int index = debugger_breakpoint_index(pc);
 
 		if (index >= 0 &&
