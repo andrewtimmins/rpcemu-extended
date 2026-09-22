@@ -195,9 +195,9 @@ The MinGW/SDL2/libvncserver runtime DLLs are bundled in the zip, so there is not
 else to install. Windows 10/11 (x64). Built with MinGW-w64 via MSYS2 — see
 [Build for Windows](#build-for-windows) to build it yourself.
 
-**macOS**: open the `macos_universal.dmg` and drag **RPCEmu** into **Applications**. It is
-a universal app (Intel and Apple Silicon); on Apple Silicon the Intel slice runs at full
-speed under Rosetta 2.
+**macOS**: needs **macOS 15 (Sequoia) or later**. Open the `macos_universal.dmg` and drag
+**RPCEmu** into **Applications**. It is a universal app: Intel and Apple Silicon Macs each
+run their own native slice, with the dynamic recompiler on both.
 
 Nothing needs to be installed alongside it. As on Linux, machines, configs, ROMs, HostFS
 and logs are written to a visible **`~/RPCEmu/`** folder, never inside the app bundle, so
@@ -282,29 +282,50 @@ libusb is required, so that USB passthrough is not silently dropped from a relea
 
 ### Build for macOS
 
-`build-macos.sh` produces a **universal** `RPCEmu.app` — the Intel (x86-64) slice includes
-the dynamic recompiler, the Apple Silicon (arm64) slice is the interpreter — fused with
-`lipo`, then ad-hoc signed and wrapped in a drag-to-Applications `.dmg`. Dependencies come
-from Homebrew (`cmake ninja pkg-config wxwidgets sdl2 libvncserver libusb`), and both
-slices must have the same versions of them or `lipo` will not fuse the result. (A native arm64 recompiler now exists, including the `MAP_JIT` support the
-hardened runtime needs, but it is not yet used for the Apple Silicon slice pending testing
-on real arm64 hardware — see [docs/arm64-dynarec.md](docs/arm64-dynarec.md).) Build each
-slice, then fuse and package:
+`build-macos.sh` produces a **universal** `RPCEmu.app`. Both slices carry the dynamic
+recompiler — the x86-64 backend on Intel, the AArch64 one on Apple Silicon
+([docs/arm64-dynarec.md](docs/arm64-dynarec.md)) — fused with `lipo`, then ad-hoc signed
+and wrapped in a drag-to-Applications `.dmg`.
+
+Dependencies come from MacPorts or Homebrew; the script uses whichever `wx-config` and
+`pkg-config` are first on `PATH`, and stops before configuring, naming anything missing.
+CI uses MacPorts, which publishes binary archives for both architectures and installs to
+`/opt/local` on either:
 
 ```bash
-./build-macos.sh --arch x86_64   # Intel slice (recompiler)
-./build-macos.sh --arch arm64    # Apple Silicon slice (interpreter)
-./build-macos.sh --fuse --zip    # lipo -> RPCEmu.app + releases/macos/*.dmg (+ .tar.gz)
+sudo port install wxWidgets-3.2 libsdl2 LibVNCServer libusb cmake ninja pkgconfig
+sudo port select --set wxWidgets wxWidgets-3.2
 ```
+
+The `port select` is required: wxWidgets installs as a framework, and that is what puts
+`wx-config` on `PATH`. Homebrew works too:
+
+```bash
+brew install wxwidgets sdl2 libvncserver libusb cmake ninja pkg-config
+```
+
+That gets whatever Homebrew currently calls stable, not the 3.2 CI and the releases
+build against, though nothing here requires 3.2 specifically. To match CI exactly, use
+`brew install wxwidgets@3.2` and `brew link --force wxwidgets@3.2` instead (see
+[docs/macos-build.md](docs/macos-build.md)).
+
+Homebrew installs libraries for one architecture only, so build just this machine's slice:
+
+```bash
+./build-macos.sh --arch $(uname -m)   # this machine's slice + RPCEmu.app + .dmg
+```
+
+A universal binary needs both architectures' libraries, built and fused separately — see
+[docs/macos-build.md](docs/macos-build.md) for the two-machine `--arch x86_64` /
+`--arch arm64` / `--fuse` sequence CI runs.
 
 The app bundle keeps its read-only payload in `Contents/Resources` and seeds writable data
 into `~/RPCEmu` on first run. The `.icns` icon is built from `resources/rpcemu.png` with
 `iconutil`, and the app is ad-hoc signed (Apple Silicon will not run an unsigned binary);
 without an Apple Developer ID it is not notarised, so the first launch has to be allowed
 past Gatekeeper (see [First launch is blocked](#first-launch-is-blocked-how-to-open-it)).
-On a single machine each slice is built for its own architecture (the other builds
-under Rosetta); the `macos-x86_64`, `macos-arm64`, and `macos-universal` CI jobs do exactly
-this and fuse the result.
+The `macos-x86_64`, `macos-arm64` and `macos-universal` CI jobs do exactly this, each
+slice on a runner of its own architecture.
 
 ### Run
 
@@ -741,7 +762,7 @@ device while WinUSB is bound, and reverting means *Device Manager → the device
 Uninstall device*, ticking "delete the driver software", then replugging. Keyboards,
 mice and hubs are held by Windows and are not candidates.
 
-**macOS.** `brew install libusb` covers it, and most devices need no driver work
+**macOS.** `brew install libusb` or `sudo port install libusb` covers it, and most devices need no driver work
 because libusb reaches them through IOKit directly. A device already claimed by one of
 Apple's own class drivers, which includes HID, mass storage and audio, may refuse the
 interface claim; there is no supported way to detach an Apple driver, so those are not
@@ -753,12 +774,12 @@ The emulated controller and the card are always built. Passthrough needs **libus
 at build time, and a release build now **fails** rather than quietly producing a binary
 that cannot reach a device.
 
-| Platform | How |
-| --- | --- |
-| Linux | `./setup-build-env.sh` (installs `libusb-1.0-0-dev`) |
-| Windows, native MSYS2 | `pacman -S mingw-w64-x86_64-libusb` (or `mingw-w64-clang-aarch64-libusb` on ARM64) |
-| Windows, cross from Linux | `./setup-cross-build-env.sh` (builds libusb for the MinGW target) |
-| macOS | `brew install libusb` |
+| Platform                  | How                                                                                |
+| ------------------------- | ---------------------------------------------------------------------------------- |
+| Linux                     | `./setup-build-env.sh` (installs `libusb-1.0-0-dev`)                               |
+| Windows, native MSYS2     | `pacman -S mingw-w64-x86_64-libusb` (or `mingw-w64-clang-aarch64-libusb` on ARM64) |
+| Windows, cross from Linux | `./setup-cross-build-env.sh` (builds libusb for the MinGW target)                  |
+| macOS                     | `brew install libusb` or `sudo port install libusb`                                |
 
 Set `RPCEMU_REQUIRE_LIBUSB=OFF` in the environment to build without it deliberately.
 `BUILDINFO.txt` in a Linux release records whether the binary has it, and the USB

@@ -3,17 +3,17 @@
 # staged_library_agreement() in build-macos.sh, which decides whether the two
 # slices of a universal build may be fused.
 #
-# WHY THIS EXISTS. On 2 September 2026 every build on main and 1.x failed, and
-# nothing in the tree had changed: the two macOS runners are separate images with
-# separate Homebrew installations, and they had drifted to pcre2 10.48 on x86_64
-# and 10.47_1 on arm64. The check compared the whole path below each slice's
-# Homebrew prefix - version directory included - so the same formula at two
-# versions read as "a different library in each slice" and the fuse step refused.
+# WHY THIS EXISTS. The judgement is a few lines of string handling with no
+# dependencies, and it can fail in two directions that both matter: too strict
+# stops every release, too lax puts two unrelated libraries into one file and
+# ships it. So it is tested rather than eyeballed.
 #
-# The judgement is four lines of string handling with no dependencies, and it can
-# fail in two directions that both matter: too strict stops every release, too
-# lax puts two unrelated libraries into one file and ships it. So it is tested
-# rather than eyeballed, and the case that broke CI is one of the cases.
+# CI gives both slices one prefix, so the usual answer is the trivial one. The
+# rest of the cases are a local build against a package manager with a prefix
+# per architecture, where two runners can hold different revisions of a package
+# and the two paths then differ in ways that do not mean different software.
+# Getting that wrong once failed every build on main and 1.x with nothing in
+# the tree changed, which is why those cases are kept.
 #
 # Run: tests/test_fuse_libs.sh
 
@@ -45,6 +45,24 @@ check() {
 		failures=$((failures + 1))
 	fi
 }
+
+# Both slices take their libraries from MacPorts, which installs to /opt/local
+# whatever the architecture, so the two source paths are identical and the
+# first comparison answers outright. This is the shipping configuration and so
+# the first thing tested.
+echo "One prefix for both slices, which is how CI builds"
+check "identical /opt/local paths" \
+	/opt/local/lib/libwebp.7.dylib \
+	/opt/local/lib/libwebp.7.dylib \
+	same
+check "a framework layout, as wxWidgets installs" \
+	/opt/local/Library/Frameworks/wxWidgets.framework/Versions/wxWidgets/3.1/lib/libwx_baseu-3.2.dylib \
+	/opt/local/Library/Frameworks/wxWidgets.framework/Versions/wxWidgets/3.1/lib/libwx_baseu-3.2.dylib \
+	same
+check "one prefix, genuinely different paths" \
+	/opt/local/lib/libfoo.dylib \
+	/opt/local/lib/other/libfoo.dylib \
+	differ
 
 echo "The same library under each prefix"
 check "identical tails" \
@@ -90,7 +108,9 @@ check "same formula, different file below the version" \
 	/usr/local/Cellar/webp/1.6.0/lib/libwebp.7.dylib \
 	/opt/homebrew/Cellar/webp/1.6.0/lib32/libwebp.7.dylib \
 	differ
-check "a non-Homebrew prefix on one side" \
+# Two package managers, one basename. Whether they are the same library cannot
+# be told from the paths, so it is refused rather than guessed at.
+check "a different package manager on each side" \
 	/opt/local/lib/libpcre2-32.0.dylib \
 	/opt/homebrew/Cellar/pcre2/10.47_1/lib/libpcre2-32.0.dylib \
 	differ
