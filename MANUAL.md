@@ -85,10 +85,10 @@ Each release lists SHA256 checksums if you want to verify the download.
 **Windows.** Unzip anywhere and run `rpcemu-recompiler.exe`. Nothing is
 installed and nothing is written outside the folder you pick on first run.
 
-**macOS.** Open the `.dmg` and drag the application over. The build is not
-notarised by Apple, so the **first** launch needs a right-click and **Open**
-rather than a double-click — after that it opens normally. One download covers
-both Intel and Apple Silicon.
+**macOS.** Needs **macOS 15 (Sequoia) or later**. Open the `.dmg` and drag the
+application over. The build is not notarised by Apple, so the **first** launch
+needs a right-click and **Open** rather than a double-click — after that it
+opens normally. One download covers both Intel and Apple Silicon.
 
 **Linux.** Install the `.deb` with your package manager, or unpack the
 `.tar.gz` and run `./rpcemu-recompiler` from inside it. Builds are published for
