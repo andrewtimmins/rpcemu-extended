@@ -20,6 +20,7 @@
 
 #include "gui_resources.h"
 #include "manager_frame.h"
+#include "reset_question.h"
 
 #include "display_options.h"
 #include "settings_labels.h"
@@ -2476,6 +2477,9 @@ void ManagerFrame::OnReset(wxCommandEvent & /*event*/)
 	}
 	auto it = running_.find(name);
 	if (it == running_.end() || it->second.panel == nullptr) {
+		return;
+	}
+	if (!HostResetQuestion(this, name)) {
 		return;
 	}
 	IpcRequest request;

@@ -25,6 +25,7 @@
 #include "main_frame.h"
 
 #include "guest_cursor.h"
+#include "reset_question.h"
 #include "window_owner.h"
 
 #include <algorithm>
@@ -115,15 +116,6 @@ const DiscTypeFileMap kDiscTypeFileMaps[] = {
     {"DOS 1440k Disc Image (*.img)", ".img", "blank-pc-1440.img"},
 };
 
-
-bool HostResetQuestion(wxWindow *parent)
-{
-	return wxMessageBox(
-	           "This will reset RPCEmu Extended!\n\nOkay to continue?",
-	           "RPCEmu Extended",
-	           wxOK | wxCANCEL | wxICON_WARNING,
-	           parent) == wxOK;
-}
 
 bool SameString(const char *a, const char *b)
 {
@@ -978,7 +970,7 @@ void MainFrame::OnScreenshot(wxCommandEvent &)
 
 void MainFrame::OnReset(wxCommandEvent &)
 {
-	if (!HostResetQuestion(this)) {
+	if (!HostResetQuestion(this, wxString::FromUTF8(config_copy_.name))) {
 		return;
 	}
 	if (emulator_) {
@@ -1254,7 +1246,7 @@ void MainFrame::OnClearRecentFloppies(wxCommandEvent &)
 
 void MainFrame::OnCdromDisabled(wxCommandEvent &)
 {
-	if (config_copy_.cdromenabled && !HostResetQuestion(this)) {
+	if (config_copy_.cdromenabled && !HostResetQuestion(this, wxString::FromUTF8(config_copy_.name))) {
 		SyncCdromMenuChecks();
 		return;
 	}
@@ -1268,7 +1260,7 @@ void MainFrame::OnCdromDisabled(wxCommandEvent &)
 
 void MainFrame::OnCdromEmpty(wxCommandEvent &)
 {
-	if (!config_copy_.cdromenabled && !HostResetQuestion(this)) {
+	if (!config_copy_.cdromenabled && !HostResetQuestion(this, wxString::FromUTF8(config_copy_.name))) {
 		SyncCdromMenuChecks();
 		return;
 	}
@@ -1291,7 +1283,7 @@ void MainFrame::OnCdromIso(wxCommandEvent &)
 		return;
 	}
 
-	if (!config_copy_.cdromenabled && !HostResetQuestion(this)) {
+	if (!config_copy_.cdromenabled && !HostResetQuestion(this, wxString::FromUTF8(config_copy_.name))) {
 		SyncCdromMenuChecks();
 		return;
 	}
@@ -1310,7 +1302,7 @@ void MainFrame::OnCdromIso(wxCommandEvent &)
 
 void MainFrame::OnCdromIoctl(wxCommandEvent &)
 {
-	if (!config_copy_.cdromenabled && !HostResetQuestion(this)) {
+	if (!config_copy_.cdromenabled && !HostResetQuestion(this, wxString::FromUTF8(config_copy_.name))) {
 		SyncCdromMenuChecks();
 		return;
 	}
@@ -1342,7 +1334,7 @@ void MainFrame::OnRecentCdrom(wxCommandEvent &event)
 		return;
 	}
 
-	if (!config_copy_.cdromenabled && !HostResetQuestion(this)) {
+	if (!config_copy_.cdromenabled && !HostResetQuestion(this, wxString::FromUTF8(config_copy_.name))) {
 		return;
 	}
 
@@ -2596,7 +2588,7 @@ void MainFrame::OnTestCloseTimer(wxTimerEvent &event)
 
 void MainFrame::OnCpuIdle(wxCommandEvent &event)
 {
-	if (!HostResetQuestion(this)) {
+	if (!HostResetQuestion(this, wxString::FromUTF8(config_copy_.name))) {
 		if (cpu_idle_menu_item_ != nullptr) {
 			cpu_idle_menu_item_->Check(config_copy_.cpu_idle != 0);
 		}
