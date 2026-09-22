@@ -565,7 +565,12 @@ void SeedMonitorChoice(const wxString &hostfs_dir, unsigned vram_mb)
 	{
 		host_w = host_h = 0;
 
-		if (wxTheApp != NULL && wxTheApp->IsGUI() &&
+		/* wxAppConsole::GetInstance(), not wxTheApp, for the reason the
+		   sentence above gives: wxTheApp downcasts to wxApp* and there is no
+		   wxApp here. See the note in folder_transfer.cpp. */
+		const wxAppConsole *const app = wxAppConsole::GetInstance();
+
+		if (app != NULL && app->IsGUI() &&
 		    wxDisplay::GetCount() > 0)
 		{
 			const wxRect geom = wxDisplay(0u).GetGeometry();

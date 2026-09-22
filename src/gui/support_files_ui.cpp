@@ -101,7 +101,12 @@ int SupportFilesEnsure(wxWindow *parent)
 	 * place before the Manager can offer a machine - and a progress dialogue
 	 * with no parent is an ordinary top-level window.
 	 */
-	if (wxTheApp == nullptr || !wxTheApp->IsGUI()) {
+	/* wxAppConsole::GetInstance(), not wxTheApp: the latter downcasts to
+	   wxApp*, and under --fetch-riscos the object is a wxAppConsole that never
+	   was one. See the note in folder_transfer.cpp. */
+	const wxAppConsole *const app = wxAppConsole::GetInstance();
+
+	if (app == nullptr || !app->IsGUI()) {
 		return support_install_run(datadir, nullptr, nullptr);
 	}
 
