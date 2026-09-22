@@ -139,20 +139,45 @@ find_unique_word(size_t words, uint32_t value, size_t *out)
    reported under a card. The kernel's own OS_CheckModeValid uses it for exactly
    this purpose.
 
-   So this patch redirects the load. It leaves VIDC20 behaving as before (there
-   TotalScreenSize is the VRAM), and lets the card offer what it can actually
-   hold. Applied only when the card is fitted, so a machine without one is
-   untouched.
+   So this patch redirects the load, and then puts a floor under it.
+
+   ★ The floor is not optional, and leaving it out was issue #244.
+
+   TotalScreenSize is NOT the VRAM under VIDC20; it is the size of the mode
+   currently up. The kernel sets it from XOS_ReadDynamicArea - the screen
+   dynamic area's CURRENT size - whenever the screen DA is in use, and only
+   from GraphicsV_FramestoreAddress when a driver manages its own memory
+   (vdudriver, "Screen DA is in use" / "Driver manages memory itself").
+
+   So on a machine with the card FITTED BUT NOT DRIVING - which is every
+   machine after *GfxCardOff, and any configured with gfxcard_boot_display=0 -
+   the redirected check measured each mode against the mode already on screen.
+   Booting into 640x480 at 4bpp left a ceiling of 152KB, every larger mode was
+   refused as "unsuitable for displaying the desktop", and the machine could
+   never grow out of the mode it started in.
+
+   The floor is the fitted VRAM, which is what the unpatched instruction read,
+   so VIDC20 really does behave as before now. When the card is driving,
+   TotalScreenSize is its framestore and is far larger than the VRAM, so the
+   floor never bites and the deeper modes are still offered.
 
      mov  r5, #0                 ->  mov  r5, #<workspace base>
      ldr  r5, [r5, #VideoSize..] ->  ldr  r5, [r5, #TotalScreenSize]
      mov  r4, #100*1024*1024         (bandwidth, left alone: ScreenModes
-     mov  r5, r5, lsr #12             ignores it)
-     mov  r5, r5, lsl #12
+                                      ignores it)
+     mov  r5, r5, lsr #12        ->  cmp   r5, #<VRAM bytes>
+     mov  r5, r5, lsl #12        ->  movlo r5, #<VRAM bytes>
 
-   Both replacements are single words in the slots already there, so nothing
+   The two rounding instructions are what the floor is built out of, and losing
+   them costs nothing: both figures it can now hold are already whole numbers of
+   pages - a dynamic area's size, a framestore's size, or a whole number of
+   megabytes of VRAM - so rounding down to a page was already a no-op.
+
+   Every replacement is a single word in the slot already there, so nothing
    moves. The offsets are read out of the ROM rather than assumed, and the patch
-   is skipped unless every part of the pattern is found. */
+   is skipped unless every part of the pattern is found. A machine with no VRAM
+   at all is left alone entirely: there is no figure to floor it with, and the
+   unpatched instruction is right for it. */
 
 #define GBS_MOV_R5_0		0xe3a05000u	/* mov r5, #0 (ZeroPage) */
 #define GBS_LDR_R5_MASK		0xfffff000u	/* ldr r5, [r5, #imm12] */
@@ -201,11 +226,13 @@ arm_immediate(uint32_t instr)
 }
 
 /**
- * Encode "mov Rd, #value", or 0 if the value is not one an ARM immediate can
- * express.
+ * Encode the rotated 8-bit immediate field, or ~0 if the value cannot be one.
+ *
+ * Returned separately from the opcode so that several instructions can share
+ * it; every data-processing instruction carries the field in the same place.
  */
 static uint32_t
-arm_encode_mov(unsigned rd, uint32_t value)
+arm_encode_immediate(uint32_t value)
 {
 	unsigned rot;
 
@@ -213,11 +240,41 @@ arm_encode_mov(unsigned rd, uint32_t value)
 		const uint32_t imm = rotl32(value, rot * 2);
 
 		if (imm <= 0xffu) {
-			return 0xe3a00000u | (rd << 12) | (rot << 8) | imm;
+			return (rot << 8) | imm;
 		}
 	}
 
-	return 0;
+	return ~0u;
+}
+
+/**
+ * Encode "mov Rd, #value", or 0 if the value is not one an ARM immediate can
+ * express.
+ */
+static uint32_t
+arm_encode_mov(unsigned rd, uint32_t value)
+{
+	const uint32_t imm = arm_encode_immediate(value);
+
+	return (imm == ~0u) ? 0 : (0xe3a00000u | (rd << 12) | imm);
+}
+
+/** "cmp Rn, #value", or 0 if the value is not an ARM immediate. */
+static uint32_t
+arm_encode_cmp(unsigned rn, uint32_t value)
+{
+	const uint32_t imm = arm_encode_immediate(value);
+
+	return (imm == ~0u) ? 0 : (0xe3500000u | (rn << 16) | imm);
+}
+
+/** "movlo Rd, #value", or 0 if the value is not an ARM immediate. */
+static uint32_t
+arm_encode_movlo(unsigned rd, uint32_t value)
+{
+	const uint32_t imm = arm_encode_immediate(value);
+
+	return (imm == ~0u) ? 0 : (0x33a00000u | (rd << 12) | imm);
 }
 
 /**
@@ -279,8 +336,9 @@ static void
 rom_patch_video_memory_limit(size_t rom_bytes)
 {
 	const size_t words = rom_bytes / 4;
+	const uint32_t vram_bytes = (uint32_t) config.vram_size * 1024u * 1024u;
 	uint32_t ws_base = 0, tss_offset = 0;
-	uint32_t mov_ws;
+	uint32_t mov_ws, cmp_vram, movlo_vram;
 	unsigned patched = 0;
 	size_t i;
 
@@ -288,9 +346,28 @@ rom_patch_video_memory_limit(size_t rom_bytes)
 		return;
 	}
 
+	/* No VRAM means no floor to put under the redirected figure, and the
+	   instruction already there reads the right thing for such a machine. See
+	   the note above: without the floor this patch is issue #244. */
+	if (vram_bytes == 0) {
+		rpclog("rom_patch: no VRAM fitted, so the mode list is left measured "
+		       "against the ROM's own figure - the graphics card will be "
+		       "limited to the modes that allows\n");
+		return;
+	}
+
 	if (!rom_find_total_screen_size(words, &ws_base, &tss_offset)) {
 		rpclog("rom_patch: could not locate TotalScreenSize - the graphics card "
 		       "will be limited to modes the fitted VRAM could hold\n");
+		return;
+	}
+
+	cmp_vram = arm_encode_cmp(5, vram_bytes);
+	movlo_vram = arm_encode_movlo(5, vram_bytes);
+	if (cmp_vram == 0 || movlo_vram == 0) {
+		rpclog("rom_patch: %u MB of VRAM is not an encodable immediate - "
+		       "leaving the mode list's memory limit alone\n",
+		       (unsigned) config.vram_size);
 		return;
 	}
 
@@ -316,6 +393,8 @@ rom_patch_video_memory_limit(size_t rom_bytes)
 
 		rom[i] = mov_ws;			/* mov r5, #<workspace> */
 		rom[i + 1] = GBS_LDR_R5_MATCH | tss_offset;	/* ldr r5, [r5, #TSS] */
+		rom[i + 3] = cmp_vram;			/* cmp r5, #<VRAM> */
+		rom[i + 4] = movlo_vram;		/* movlo r5, #<VRAM> */
 		patched++;
 	}
 
@@ -326,9 +405,10 @@ rom_patch_video_memory_limit(size_t rom_bytes)
 	}
 
 	rpclog("rom_patch: applied: mode list vetted against the current display "
-	       "driver's memory (TotalScreenSize at 0x%x + 0x%x), %u site%s\n",
-	       (unsigned) ws_base, (unsigned) tss_offset, patched,
-	       patched == 1 ? "" : "s");
+	       "driver's memory (TotalScreenSize at 0x%x + 0x%x) but never below "
+	       "the %u MB of VRAM fitted, %u site%s\n",
+	       (unsigned) ws_base, (unsigned) tss_offset,
+	       (unsigned) config.vram_size, patched, patched == 1 ? "" : "s");
 }
 
 /* -------------------------------------------------------------------------
