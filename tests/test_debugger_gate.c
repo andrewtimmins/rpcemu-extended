@@ -580,6 +580,104 @@ test_exception_reports_the_faulting_instruction(void)
 	reset_debugger();
 }
 
+/**
+ * Issue #263: a halt must not re-trigger on the instruction it stopped on.
+ *
+ * The hook runs BEFORE the instruction, so a breakpoint halt leaves the machine
+ * sitting on the instruction that caused it rather than past it. Resuming or
+ * stepping therefore presents the SAME pc to the hook again, and without the
+ * one-instruction exemption the breakpoint matches a second time and the
+ * machine never moves. Jon Abbott reported it as "impossible to step or run
+ * beyond the address without removing the breakpoint first".
+ *
+ * Two halves matter equally: it must let go, and it must still stop when the
+ * machine genuinely comes back round. A test that only checked the first would
+ * pass for a debugger whose breakpoints had simply stopped working.
+ */
+static void
+test_breakpoint_does_not_retrigger_in_place(void)
+{
+	DebuggerStatus status;
+
+	printf("Resuming off a breakpoint (#263)\n");
+
+	/* Run. */
+	reset_debugger();
+	debugger_add_breakpoint(0x8000);
+
+	debugger_instruction_hook(0x8000, 0xe1a00000);
+	debugger_get_status(&status);
+	check("the breakpoint halts", status.paused != 0);
+	check("at its own address", status.halt_pc == 0x8000);
+	check("counted once", status.breakpoints[0].hit_count == 1);
+
+	debugger_resume();
+	debugger_instruction_hook(0x8000, 0xe1a00000);
+	debugger_get_status(&status);
+	check("resuming does not halt on the same instruction", status.paused == 0);
+	check("and does not count a second hit",
+	    status.breakpoints[0].hit_count == 1);
+
+	/* The exemption is good for one instruction, not for the address. */
+	debugger_after_instruction(0x8000, 0xe1a00000);
+	debugger_instruction_hook(0x8004, 0xe1a00000);
+	debugger_get_status(&status);
+	check("the machine runs on", status.paused == 0);
+
+	debugger_after_instruction(0x8004, 0xe1a00000);
+	debugger_instruction_hook(0x8000, 0xe1a00000);
+	debugger_get_status(&status);
+	check("coming back round, it stops again", status.paused != 0);
+	check("at the breakpoint", status.halt_pc == 0x8000);
+	check("counting the second arrival",
+	    status.breakpoints[0].hit_count == 2);
+
+	/*
+	 * Step, which is the half Jon hit first. A different address each time:
+	 * reset_debugger() resumes, which arms the exemption on the address the
+	 * previous block halted at, exactly as a real resume would.
+	 */
+	reset_debugger();
+	debugger_add_breakpoint(0x9000);
+
+	debugger_instruction_hook(0x9000, 0xe1a00000);
+	debugger_get_status(&status);
+	check("step: the breakpoint halts", status.paused != 0);
+
+	debugger_single_step(1);
+	debugger_instruction_hook(0x9000, 0xe1a00000);
+	debugger_get_status(&status);
+	check("step: it is not caught again where it stopped", status.paused == 0);
+
+	debugger_after_instruction(0x9000, 0xe1a00000);
+	debugger_instruction_hook(0x9004, 0xe1a00000);
+	debugger_get_status(&status);
+	check("step: it stops one instruction later", status.paused != 0);
+	check("step: at the next address", status.halt_pc == 0x9004);
+	check("step: reported as a step, not as the breakpoint",
+	    status.reason == DebugPauseReason_Step);
+
+	/* An ignore count belongs to real arrivals, not to button presses. */
+	reset_debugger();
+	debugger_add_breakpoint_ex(0xa000, NULL, 1, 0);
+
+	debugger_instruction_hook(0xa000, 0xe1a00000);
+	debugger_get_status(&status);
+	check("count: the first arrival is ignored", status.paused == 0);
+
+	debugger_after_instruction(0xa000, 0xe1a00000);
+	debugger_instruction_hook(0xa000, 0xe1a00000);
+	debugger_get_status(&status);
+	check("count: the second arrival halts", status.paused != 0);
+
+	debugger_resume();
+	debugger_instruction_hook(0xa000, 0xe1a00000);
+	debugger_get_status(&status);
+	check("count: resuming does not spend another", status.paused == 0);
+
+	reset_debugger();
+}
+
 int
 main(void)
 {
@@ -595,6 +693,7 @@ main(void)
 	test_step_filters();
 	test_stepping_past_swis();
 	test_exception_reports_the_faulting_instruction();
+	test_breakpoint_does_not_retrigger_in_place();
 
 	printf("\n%s\n", failures ? "FAILED" : "All tests passed");
 
