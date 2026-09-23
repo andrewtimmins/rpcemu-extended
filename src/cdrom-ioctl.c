@@ -20,7 +20,9 @@
  */
 
 #include <stdio.h>
+#if defined(__linux__)
 #include <linux/cdrom.h>
+#endif
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <unistd.h>

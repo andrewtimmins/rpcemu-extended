@@ -79,10 +79,6 @@ option(RPCEMU_BUILD_TESTS "Build unit tests (amd64 dynarec only)" ON)
 # shipping quietly without it.
 option(RPCEMU_REQUIRE_LIBUSB "Fail the build if libusb-1.0 is missing" OFF)
 
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT WIN32 AND NOT APPLE)
-    message(FATAL_ERROR "RPCEmu (Extended Edition) supports Linux, Windows (MinGW-w64), and macOS.")
-endif()
-
 if(WIN32 AND MSVC)
     message(FATAL_ERROR "RPCEmu (Extended Edition) on Windows requires MinGW-w64, not MSVC.")
 endif()
