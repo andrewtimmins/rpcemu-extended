@@ -511,6 +511,11 @@ built-in VNC server — useful for servers or always-on machines:
 ./rpcemu-recompiler --headless --machine <name>
 ```
 
+- **No machine to point `--machine` at yet?** That's what `--fetch-riscos` is for —
+  it creates one headlessly, with no GUI needed at any point. See [Getting RISC
+  OS](#getting-risc-os). Already have one set up elsewhere? Copy it across instead —
+  see [docs/paths.md: Copying a machine to another
+  computer](docs/paths.md#copying-a-machine-to-another-computer).
 - `--machine <name>` selects a machine by its config name (the file in `configs/`,
   with or without the `.cfg` suffix). On its own, without `--headless`, it starts the
   GUI on that machine, skipping the selector (see above).
