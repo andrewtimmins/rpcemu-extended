@@ -20,12 +20,12 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 
 ## Highlights
 
-- **Cross-platform** — runs on **Linux** (amd64 + arm64), **Windows** (amd64 + a native arm64 build, interpreter, from CI artifacts), and **macOS** (universal — Intel + Apple Silicon). The x86-64 dynamic recompiler gives full-speed emulation on Linux, Windows and Intel Macs. A native **arm64** recompiler ships too, so an Apple Silicon Mac or an arm64 Linux machine runs recompiled code out of the box ([docs/arm64-dynarec.md](docs/arm64-dynarec.md)). Windows on ARM is the one platform still on the interpreter. Builds from a single CMake codebase. See [Supported systems](#supported-systems).
+- **Cross-platform** — runs on **Linux** (amd64 + arm64), **Windows** (amd64 + a native arm64 build), and **macOS** (universal — Intel + Apple Silicon). The x86-64 dynamic recompiler gives full-speed emulation on Linux, Windows and Intel Macs. A native **arm64** recompiler ships too, on every arm64 target including Windows on ARM, so an Apple Silicon Mac, an arm64 Linux machine or a Windows-on-ARM PC runs recompiled code out of the box ([docs/arm64-dynarec.md](docs/arm64-dynarec.md)). Builds from a single CMake codebase. See [Supported systems](#supported-systems).
 - **Kinetic StrongARM (512MB)** — emulates the Acorn Risc PC **Kinetic** StrongARM processor card and its full **512MB** of RAM: the 256MB the motherboard IOMD can address, plus two 128MB on-card SDRAM banks. Boots RISC OS 5 straight to the desktop.
 - **Get RISC OS in one step** — RPCEmu ships no ROM, so a new installation has nothing to run. Creating a machine offers to fetch a ROM and the ready-made HardDisc4 hard disc from RISC OS Open and set them up on it. Stable 5.30 or the 5.31 nightly, with the licensing terms shown and agreed to first; also available headlessly as `--fetch-riscos`. An existing machine's hard disc is never overwritten. Needs a wxWidgets with `wxWebRequest`, which Debian 12 and Raspberry Pi OS have not got: see [COMPILE.md](COMPILE.md#wxwidgets-and-wxwebrequest). See [Getting RISC OS](#getting-risc-os).
 - **Multi-machine configuration** — create, edit, clone, and delete machine profiles from a startup selector; each machine has isolated CMOS, HostFS, and hard disc storage.
 - **Quick machine switching** — switch between machines via *File → Recent Machines* without restarting.
-- **Package manager** — install software packaged for RISC OS straight onto a machine's disc, from the same repositories a real machine uses: over 350 applications, games, fonts and libraries from RISC OS Open, the RISC OS Community, and the Archimedes Software Preservation Project's preserved commercial games. *Tools → Package Manager*, or headlessly with `--pkg-list` and `--pkg-install`. **The repository list is yours**: add, edit, disable or remove sources under *Sources…*, or edit the plain-text `pkgsources` file directly. One-click section filters (*Games*, *Graphics*, *Desktop*…, with *All* to clear) sit above the list and narrow alongside the search box. Downloads are checked against the index's MD5, and what each package installed is recorded on that machine's disc in the RISC OS Packaging Project's own format, so it removes cleanly and other RISC OS package tools can see it. Needs a wxWidgets with `wxWebRequest`, which Debian 12 and Raspberry Pi OS have not got: see [COMPILE.md](COMPILE.md#wxwidgets-and-wxwebrequest). See [docs/packages.md](docs/packages.md).
+- **Package manager** — install software packaged for RISC OS straight onto a machine's disc, from the same repositories a real machine uses: several hundred applications, games, fonts and libraries from RISC OS Open, the RISC OS Community, and the Archimedes Software Preservation Project's preserved commercial games (current count and sources: [docs/packages.md](docs/packages.md)). *Tools → Package Manager*, or headlessly with `--pkg-list` and `--pkg-install`. **The repository list is yours**: add, edit, disable or remove sources under *Sources…*, or edit the plain-text `pkgsources` file directly. One-click section filters (*Games*, *Graphics*, *Desktop*…, with *All* to clear) sit above the list and narrow alongside the search box. Downloads are checked against the index's MD5, and what each package installed is recorded on that machine's disc in the RISC OS Packaging Project's own format, so it removes cleanly and other RISC OS package tools can see it. Needs a wxWidgets with `wxWebRequest`, which Debian 12 and Raspberry Pi OS have not got: see [COMPILE.md](COMPILE.md#wxwidgets-and-wxwebrequest). See [docs/packages.md](docs/packages.md).
 - **Save/load state, suspend & resume** — snapshot a machine's complete running state (CPU, RAM, VRAM, devices, and networking) to disk and restore it exactly. Use *File → Save State* / *Load State* for named snapshots, or *File → Suspend* to save and exit and pick up right where you left off via the machine's **Resume** button in the selector. Contributed by Nick Brown.
 - **Shared clipboard** — copy text on the host and paste it in RISC OS, or the other way about. Off by default (*Settings → Share Clipboard with RISC OS*), since it puts your host clipboard within the guest's reach; the guest half loads itself and needs nothing installed. Text and images (PNG or JPEG). RiscOS Cloverleaf's design and interface, credited below. See [docs/clipboard.md](docs/clipboard.md).
 - **Dual HostFS drives** — per-machine **HostFS** plus a common **Shared** drive (`shared/`) visible to all machines. **The HostFS folder is configurable per machine** (*Settings → Machine → System*), so several machines can share one folder, which is handy when testing the same software across different configurations. Leave it empty for the machine's own folder, as before. See [docs/hostfs.md](docs/hostfs.md).
@@ -136,6 +136,7 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `docs/testing.md`                | Testing: running the suite, the pre-push hook, writing a test, the sanitiser build, and the known gaps                                                                                                                                                                                                                                                          |
 | `docs/windows-build.md`          | Building for Windows (MinGW-w64)                                                                                                                                                                                                                                                                                                                                |
 | `docs/macos-build.md`            | Building for macOS (universal binary)                                                                                                                                                                                                                                                                                                                           |
+| `docs/porting.md`                | Porting to another OS: how much is actually platform-specific, what a new port has to provide, and what it costs to keep one alive                                                                                                                                                                                                                             |
 | `setup-build-env.sh`             | Install build dependencies (Debian/Ubuntu)                                                                                                                                                                                                                                                                                                                      |
 
 ### Where your data lives
@@ -172,15 +173,18 @@ chosen on first run so that scripts and CI stay predictable:
 
 ### Supported systems
 
-Each GitHub release ships prebuilt packages for four targets:
+Each GitHub release ships prebuilt packages for five targets:
 
 | Package                                      | Platform                        | CPU core                                                                                           |
 | -------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `rpcemu_*_amd64.deb` / `_linux_amd64.tar.gz` | Linux x86-64                    | Recompiler (full speed)                                                                            |
 | `rpcemu_*_arm64.deb` / `_linux_arm64.tar.gz` | Linux arm64 (e.g. Raspberry Pi) | Recompiler (native AArch64 backend)                                                               |
 | `rpcemu_*_windows_amd64.zip`                 | Windows x64 (10/11)             | Recompiler (full speed)                                                                            |
-| *(CI artifact, not a release asset yet)*     | Windows on ARM (ARM64)          | Interpreter — native build; the amd64 release also runs there under emulation, with the recompiler |
+| `rpcemu_*_windows_arm64.zip`                 | Windows on ARM (ARM64)          | Recompiler (native AArch64 backend); the amd64 release also runs there under emulation, with its own recompiler |
 | `rpcemu_*_macos_universal.dmg`               | macOS (Intel + Apple Silicon)   | Universal app bundle — recompiler on both, x86-64 backend on Intel and AArch64 on Apple Silicon    |
+
+Every package includes both binaries (`rpcemu-recompiler`/`.exe` and `rpcemu-interpreter`/`.exe`) —
+the table names the one to reach for.
 
 **Linux** packages are built on **Ubuntu 24.04 LTS**; being dynamically linked, they run
 on distributions whose system libraries are that version or newer:
@@ -206,10 +210,11 @@ yourself. Debian 13 (Trixie) and Ubuntu 24.04 are unaffected. See
 [wxWidgets and wxWebRequest](COMPILE.md#wxwidgets-and-wxwebrequest) for what is
 missing and how to get it back.
 
-**Windows**: extract the `windows_amd64.zip` anywhere and run `rpcemu-recompiler.exe`.
-The MinGW/SDL2/libvncserver runtime DLLs are bundled in the zip, so there is nothing
-else to install. Windows 10/11 (x64). Built with MinGW-w64 via MSYS2 — see
-[Build for Windows](#build-for-windows) to build it yourself.
+**Windows**: extract the `windows_amd64.zip` (or, on Windows on ARM, `windows_arm64.zip`)
+anywhere and run `rpcemu-recompiler.exe`. The MinGW/SDL2/libvncserver runtime DLLs are
+bundled in the zip, so there is nothing else to install. Windows 10/11 (x64 or ARM64).
+Built with MinGW-w64 via MSYS2 — see [Build for Windows](#build-for-windows) to build it
+yourself.
 
 **macOS**: needs **macOS 15 (Sequoia) or later**. Open the `macos_universal.dmg` and drag
 **RPCEmu** into **Applications**. It is a universal app: Intel and Apple Silicon Macs each
@@ -226,20 +231,15 @@ opened because the developer cannot be verified"* or *"Apple could not verify RP
 free of malware"*. This only has to be dealt with once — afterwards it opens by
 double-clicking like anything else.
 
-**macOS 15 Sequoia and macOS 26 Tahoe.** Control-clicking no longer offers a way past
-this. Try to open the app and dismiss the message, then go to **System Settings >
-Privacy & Security**, scroll to **Security**, and click **Open Anyway** beside the note
-about RPCEmu. Confirm with **Open**, authenticating if asked. The button only appears for
-about an hour after the blocked launch, so if it is not there, try opening the app again
-first.
+Control-clicking does not offer a way past this on macOS 15+ — RPCEmu's minimum supported
+version, so this is the only path that applies. Try to open the app and dismiss the
+message, then go to **System Settings > Privacy & Security**, scroll to **Security**, and
+click **Open Anyway** beside the note about RPCEmu. Confirm with **Open**, authenticating
+if asked. The button only appears for about an hour after the blocked launch, so if it is
+not there, try opening the app again first.
 
-**macOS 14 Sonoma and earlier.** **Control-click (or right-click) the app, choose Open,
-then Open again** in the dialog. If Open is not offered, use **System Settings** (or
-**System Preferences**) **> Privacy & Security**, or **Security & Privacy > General** on
-older releases, and click **Open Anyway**.
-
-**If neither works**, macOS has quarantined the download more firmly than the dialogs can
-clear. Remove the flag from Terminal, which works on every version:
+**If this doesn't work**, macOS has quarantined the download more firmly than the dialog
+can clear. Remove the flag from Terminal:
 
 ```bash
 xattr -d com.apple.quarantine /Applications/RPCEmu.app
@@ -294,7 +294,7 @@ interpreter build. Runtime DLLs are bundled into the staged folder automatically
 is exactly what the `windows-amd64` CI job runs.
 
 libusb is required, so that USB passthrough is not silently dropped from a release; see
-[Building with USB support](#building-with-usb-support).
+[docs/usb.md: Real devices](docs/usb.md#real-devices).
 
 ### Build for macOS
 
@@ -337,9 +337,9 @@ A universal binary needs both architectures' libraries, built and fused separate
 
 The app bundle keeps its read-only payload in `Contents/Resources` and seeds writable data
 into `~/RPCEmu` on first run. The `.icns` icon is built from `resources/rpcemu.png` with
-`iconutil`, and the app is ad-hoc signed (Apple Silicon will not run an unsigned binary);
-without an Apple Developer ID it is not notarised, so the first launch has to be allowed
-past Gatekeeper (see [First launch is blocked](#first-launch-is-blocked-how-to-open-it)).
+`iconutil`, and the app is ad-hoc signed (Apple Silicon will not run an unsigned binary),
+but not notarised, so the first launch has to be allowed past Gatekeeper (see
+[First launch is blocked](#first-launch-is-blocked-how-to-open-it)).
 The `macos-x86_64`, `macos-arm64` and `macos-universal` CI jobs do exactly this, each
 slice on a runner of its own architecture.
 
@@ -377,48 +377,17 @@ can start. Creating a machine offers to do it for you, as below.
 
 RISC OS Open publish both a ROM and a ready-to-use hard disc, and RPCEmu can fetch
 them and set them up on a machine. **New...** in the machine selector asks, and
-downloads on OK before the machine editor opens. Afterwards the same download is
+downloads on OK before the machine editor opens; afterwards the same download is
 available from **Get RISC OS...** beside the ROM chooser in the machine editor.
-
-There are two choices to make:
-
-- **Version.** RISC OS **5.30**, the current stable release, or **5.31**, the nightly
-  development build. Each ROM is named for its version, and a nightly also for the day
-  it was built, so several can sit side by side in `roms/` and you can go back to an
-  earlier one by picking it in the machine editor.
-- **Whether to include the hard disc.** HardDisc4 carries applications, utilities,
-  `!System` and a configured `!Boot`. Without it a machine starts at the supervisor
-  prompt with nothing on its HostFS.
-
-The disc HardDisc4 ships set up for an AKF60 monitor at 800 x 600 in 256 colours,
-which is not what a machine on a modern display wants. So when the disc is unpacked
-onto a machine, RPCEmu also sets its desktop screen mode: the largest standard mode
-that fits inside the host's display and the machine's display memory, in 16 million
-colours. Change it afterwards as you would on real hardware, in *Configure → Screen*.
-Nothing is changed on a disc that is already installed, and a headless
-`--fetch-riscos` leaves the setting alone, having no display to size it against.
-
-About 15 MB is downloaded. Files come from `riscosopen.org`, and every request
-identifies itself as RPCEmu so that RISC OS Open can see what the traffic is.
-
-Before anything is fetched, RPCEmu acknowledges whose work this is and asks you to
-agree to the licence. RISC OS is copyright RISC OS Developments Ltd and is developed and
-maintained by RISC OS Open Ltd, under the Apache License, Version 2.0, which the
-dialogue reproduces in full. Some applications, logos and other material in the
-downloads come from third parties under their own terms, so the dialogue also links to
-[RISC OS Open's licensing page](https://www.riscosopen.org/content/documents/licences)
-and to [donations](https://www.riscosopen.org/content/donations), which is how the work
-is funded. ROOL's own copy of the licence is written to the root of the machine's hard
-disc alongside the files it covers.
-
-Nothing is written into place until the download and unpacking have both finished, so
-cancelling, or losing the network part way, leaves the installation exactly as it was.
+Before anything is fetched, RPCEmu asks you to agree to RISC OS Open's licence,
+reproduced in full in the dialogue. See [MANUAL.md: Your first
+machine](MANUAL.md#your-first-machine) for the walkthrough — choosing 5.30 stable
+vs. 5.31 nightly, and the hard disc and networking options.
 
 **An existing machine's hard disc is never overwritten.** In the machine editor the
-hard-disc option is only available while that machine's disc is empty, and says so
-when it is not; the ROM can always be fetched. To move an existing machine to a newer
-ROM, fetch it there and select it. To get a fresh copy of the disc, make a new
-machine, which costs nothing and cannot disturb the old one.
+hard-disc option is only available while that machine's disc is empty; the ROM can
+always be fetched. To move an existing machine to a newer ROM, fetch it there and
+select it. To get a fresh copy of the disc, make a new machine.
 
 The same thing is available without the interface, which is useful for a scripted or
 container install:
@@ -475,6 +444,7 @@ portable between them.
 | Option                           | Effect                                                                                                                                                                                                                                                                                                                                                              |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--machine <name>`               | Run this machine, skipping the selector. Also accepts `--machine=<name>`.                                                                                                                                                                                                                                                                                           |
+| `--manager`                      | Show the Manager window even when a default machine is set, which would otherwise be opened instead. Mutually exclusive with `--machine` and `--headless`.                                                                                                                                                                                                        |
 | `--resume`                       | Resume the machine's own snapshot, consuming it to `.bak`. Requires `--machine`.                                                                                                                                                                                                                                                                                    |
 | `--state <file>`                 | Load an explicit state file, leaving it in place. Requires `--machine`.                                                                                                                                                                                                                                                                                             |
 | `--vnc-port <n>`                 | VNC port for this instance, overriding the settings file. Needed when running more than one emulator on a host, since the setting is per installation.                                                                                                                                                                                                              |
@@ -544,34 +514,19 @@ built-in VNC server — useful for servers or always-on machines:
 - `--machine <name>` selects a machine by its config name (the file in `configs/`,
   with or without the `.cfg` suffix). On its own, without `--headless`, it starts the
   GUI on that machine, skipping the selector (see above).
-- **Without `--machine`, the machine list is offered over VNC.** Connect a client to
-  the VNC port and choose with the arrow keys, or type the number beside a machine,
-  then press Enter. Escape gives up and exits. The port and password come from the
-  emulator's own settings (`rpcemu.cfg` in the data directory), since no machine has
-  been chosen yet to ask. The machine you pick then applies its own, so a machine
-  with a port of its own is served on it.
+- **Without `--machine`, the machine list is offered over VNC** — connect a client
+  and choose one. See [docs/vnc.md: Choosing a machine over
+  VNC](docs/vnc.md#choosing-a-machine-over-vnc).
 - `--resume` and `--state <file>` work here too, so a headless machine can be brought
   back up from a snapshot — useful when a service manager restarts it.
 - `--list-machines` prints the available machine names and exits.
 - `--help` (or `-h`) prints usage and exits. All three of these run without a display.
-- VNC is the only way into a headless machine, so `--headless` **implies it**: the
-  server is started for the session even if `vnc_enabled=0`. The setting itself is
-  your choice and is left alone, so running headless once does not enable VNC for
-  the GUI afterwards. The port and password come from the machine's own
-  configuration, falling back to `rpcemu.cfg` in the data directory for anything it
-  does not mention, with the port defaulting to 5900. There is no password unless you set one, so do set one if the
-  port is reachable from anywhere untrusted; headless says so at startup.
-- **A VNC client can control the machine, not just type at it.** `Ctrl`+`Alt`+`Shift`+`M`
-  brings up a menu over the running machine to reset it or shut the emulator down,
-  which matters most here, where there is no window and no menu bar. See
-  [docs/vnc.md](docs/vnc.md).
-- **Running more than one emulator at once needs a different `vnc_port` for each.**
-  Ports are not allocated automatically and the default is 5900, so a second
-  instance left at the default cannot bind and exits with an error rather than
-  starting unreachable. Since the port is now per-installation rather than per
-  machine, two instances sharing a data directory need one of them overridden. The
-  port and password can also be changed while a machine is running from
-  **Settings > VNC Server** in the GUI.
+- `--headless` **implies VNC**, starting the server for the session even if
+  `vnc_enabled=0` — it's the only way in. There is no password unless you set one,
+  so do set one if the port is reachable from anywhere untrusted; headless says so
+  at startup. See [docs/vnc.md](docs/vnc.md) for the control menu
+  (`Ctrl+Alt+Shift+M`, to reset or shut down remotely) and for running more than
+  one emulator at once (each needs its own `--vnc-port`).
 - Press **Ctrl-C** (or send `SIGTERM`) to shut down cleanly — CMOS, disc images, and
   configuration are saved on exit, just as when closing the GUI window.
 - Send `SIGUSR1` to reset the machine without stopping it (see
@@ -679,42 +634,13 @@ is exposed.
 | **Serial (0x3F8)** | Disabled, log to file, TCP modem (telnet), a real port on the host |
 | **Parallel (LPT)** | Disabled, log to file, virtual printer, print on this computer     |
 
-- **Log to file** captures the raw byte stream the guest sends — handy for debugging
-  or capturing print/serial output.
-
-- **TCP modem** answers the Hayes AT command set and `ATDT host:port` opens a real TCP
-  connection. It speaks telnet and negotiates binary mode, so telnet BBSes work and
-  X/Y/ZMODEM transfers stay 8-bit clean. `+++` (guard-timed) returns to command mode;
-  `ATH` hangs up.
-
-- **Virtual printer** writes `.prn` files to a chosen folder
-  (default: `machines/<name>/printjobs/`); with Ghostscript support, enable **Also
-  create PDF files** for automatic conversion.
-
-- **A real serial port on the host** hands the guest an actual port: a USB adapter, a
-  built-in port, or a pseudo terminal. The dialogue lists the ports the machine has
-  rather than names that might not exist, and the field is editable for anything
-  unusual. The speed and framing follow whatever the guest programs, so
-  `*Configure Baud` and friends behave as they would on real hardware, and DTR and RTS
-  are mirrored onto the port. What is *not* attempted is bit-level timing: the host's
-  own UART does the signalling. A device that cannot report its modem lines, which
-  includes every pseudo terminal, is treated as asserting CTS, DSR and DCD, because
-  RISC OS waits for CTS before transmitting and would otherwise hang.
-
-- **Print on this computer** sends a finished job to a printer the host already knows
-  about. Give it the name of a print queue and the job is spooled as raw data through
-  the host print system, or give it a device path such as `/dev/usb/lp0` and it is
-  written there directly. The bytes are passed through untouched, since what the guest
-  produces is whatever its RISC OS printer driver emits.
-
-**On the limits of the parallel port:** this carries the print stream, not the pins.
-Devices that need real bidirectional IEEE-1284 signalling, such as dongles, Zip drives
-and scanners, are not supported and are not planned: raw pin access needs hardware
-almost no modern machine has, there is no portable way to reach it, and the handshake
-turnarounds are shorter than an emulator that is not locked to the wall clock can meet.
-
-Full details, including AT commands and how RISC OS drives each port, are in
-[docs/peripherals.md](docs/peripherals.md).
+Each mode redirects the port to the host: a log file; a Hayes-AT TCP "modem" for
+dialling telnet BBSes; a real serial port (USB adapter, built-in port, or pseudo
+terminal); a virtual printer (with optional Ghostscript PDF conversion); or a
+printer/device the host already knows about. The parallel port carries the print
+stream, not the pins — devices needing real IEEE-1284 signalling are not
+supported. Full details, including AT commands and how RISC OS drives each port,
+are in [docs/peripherals.md](docs/peripherals.md).
 
 ---
 
@@ -743,89 +669,28 @@ host is currently using takes a confirmation first.
 
 ### What to expect
 
-Devices enumerate, and their descriptors, manufacturer and product strings and serial
-numbers all come from the real hardware. Keyboards and mice work without anything being
-installed, since HID is compiled into USBDriver.
-
-**Streaming devices work too.** Isochronous transfers are implemented, so a webcam or an
-audio device does more than describe itself: its packets reach the guest a frame at a
-time, and a few lines of BASIC reading the endpoint through DeviceFS get the real data.
-Nothing in RISC OS will display a webcam for you, so this is a foundation rather than a
-feature, and [docs/usb.md](docs/usb.md) shows how to read one.
-
-**USB drives work as well, and mount.** The card's ROM carries RISC OS Open's SCSI
-modules, so a drive appears in `*SCSIDevices` with its real capacity and its sectors
-read and write correctly. RISC OS itself will only mount a FileCore disc, and almost
-every stick in the world is FAT or exFAT, so the card's ROM also carries **MultiFS** -
-ours - to read them, and **MultiFSFiler** to put the disc on the icon bar under its volume
-name. Plug a stick in, click the icon, and a Filer window opens on it. Files can be
-read off a stick and saved, renamed and deleted on one, and directories made and
-removed, with long file names in both directions, so a file keeps the name the host
-gave it and a file written in RISC OS keeps the name it was given when the stick goes
-back into a PC. That covers **FAT12/16/32 and exFAT**. **NTFS is read only**: its
-files and directories are listed and read, and every attempt to change one is refused.
-RISC OS file types are kept on FAT, following the convention recorded in the credits
-below so that two machines agree about a stick; [docs/usb.md](docs/usb.md) says exactly where the edges are.
-
-Hubs still cannot be passed through.
+Devices enumerate with their real descriptors, manufacturer/product strings and serial
+numbers. Keyboards and mice work with nothing installed (HID is built into USBDriver).
+Streaming devices (webcams, audio) work over isochronous transfers, readable from BASIC
+via DeviceFS. USB drives mount too, via MultiFS/MultiFSFiler: FAT12/16/32 and exFAT read
+and write, NTFS is read-only. Hubs cannot be passed through.
 
 This is **verified on Linux**. Windows and macOS builds only gained libusb in this
 release, so passthrough there is expected to work but has not yet been confirmed on
 real hardware. Reports welcome.
 
-### Letting RPCEmu reach the device
+Reaching a *real* device means getting past the host's own claim on it - a udev rule on
+Linux, the WinUSB driver via [Zadig](https://zadig.akeo.ie/) on Windows, mostly automatic
+via IOKit on macOS (except devices macOS's own class drivers hold, like HID and mass
+storage). Passthrough needs **libusb-1.0** at build time - a release build fails rather
+than quietly shipping without it; see [docs/usb.md: Real
+devices](docs/usb.md#real-devices) for the per-platform install step and the
+`RPCEMU_REQUIRE_LIBUSB=OFF` override.
 
-The emulated card needs nothing. Reaching a *real* device means getting past the host's
-own claim on it, and each platform does that differently.
-
-**Linux.** The device nodes under `/dev/bus/usb` belong to root, so add a udev rule
-naming the device you want:
-
-```
-# /etc/udev/rules.d/70-rpcemu-usb.rules
-SUBSYSTEM=="usb", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c077", TAG+="uaccess"
-```
-
-Then `sudo udevadm control --reload-rules && sudo udevadm trigger`, and unplug and
-replug the device. `TAG+="uaccess"` grants access to whoever is logged in at the
-machine rather than to every account on it. Without the rule the dialogue still lists
-the device, marked "no permission", rather than failing when you try to use it.
-
-**Windows.** Windows binds its own class driver to a device (`usbstor`, HID, `usbccgp`
-for composite devices) and libusb cannot open it through that. The device needs the
-**WinUSB** driver bound instead, which is what [Zadig](https://zadig.akeo.ie/) is for:
-run it, *Options → List All Devices*, pick the device, choose **WinUSB**, and replace
-the driver. Two things worth knowing before you do: Windows itself stops using the
-device while WinUSB is bound, and reverting means *Device Manager → the device →
-Uninstall device*, ticking "delete the driver software", then replugging. Keyboards,
-mice and hubs are held by Windows and are not candidates.
-
-**macOS.** `brew install libusb` or `sudo port install libusb` covers it, and most devices need no driver work
-because libusb reaches them through IOKit directly. A device already claimed by one of
-Apple's own class drivers, which includes HID, mass storage and audio, may refuse the
-interface claim; there is no supported way to detach an Apple driver, so those are not
-available.
-
-### Building with USB support
-
-The emulated controller and the card are always built. Passthrough needs **libusb-1.0**
-at build time, and a release build now **fails** rather than quietly producing a binary
-that cannot reach a device.
-
-| Platform                  | How                                                                                |
-| ------------------------- | ---------------------------------------------------------------------------------- |
-| Linux                     | `./setup-build-env.sh` (installs `libusb-1.0-0-dev`)                               |
-| Windows, native MSYS2     | `pacman -S mingw-w64-x86_64-libusb` (or `mingw-w64-clang-aarch64-libusb` on ARM64) |
-| Windows, cross from Linux | `./setup-cross-build-env.sh` (builds libusb for the MinGW target)                  |
-| macOS                     | `brew install libusb` or `sudo port install libusb`                                |
-
-Set `RPCEMU_REQUIRE_LIBUSB=OFF` in the environment to build without it deliberately.
-`BUILDINFO.txt` in a Linux release records whether the binary has it, and the USB
-dialogue says so plainly if it does not.
-
-Full details, including the descriptor cache, how transfers avoid blocking the emulator
-thread, and why the controller is OHCI rather than the historically correct ISP1161, are
-in [docs/usb.md](docs/usb.md).
+Full details - the descriptor cache, per-platform permission steps, how transfers avoid
+blocking the emulator thread, exactly where the FAT/exFAT/NTFS edges are, and why the
+controller is OHCI rather than the historically correct ISP1161 - are in
+[docs/usb.md](docs/usb.md).
 
 ---
 
@@ -835,7 +700,9 @@ RPCEmu does **not** bind any host keyboard shortcuts, so every key — including
 function keys (**F12** for the RISC OS command line, etc.) and Ctrl combinations —
 passes straight through to RISC OS. All emulator actions (screenshot, reset, floppy
 load/eject, full-screen, mute, machine settings, and the debugger Run/Pause/Step
-controls) are available from the menus and the toolbar instead.
+controls) are available from the menus and the toolbar instead. See
+[docs/keyboard.md](docs/keyboard.md) for how a host key reaches RISC OS, non-UK
+layouts, and diagnosing it with `RPCEMU_KEYBOARD_DEBUG`.
 
 | Key           | Action                                          |
 | ------------- | ----------------------------------------------- |
@@ -902,7 +769,7 @@ how the JIT is built and when it falls back to interpretation.
 - Machine Inspector with disassembly and memory browser
 - Dynarec debugger hooks for consistent breakpoint/watchpoint behaviour
 - Debugger exception trapping, SWI tracing, and logging watchpoints (see [docs/debugger-tracing.md](docs/debugger-tracing.md))
-- Native arm64 (AArch64) recompiler backend, in addition to upstream's x86 dynarec — implemented and validated under emulation, not yet enabled in prebuilt releases (see [docs/arm64-dynarec.md](docs/arm64-dynarec.md))
+- Native arm64 (AArch64) recompiler backend, in addition to upstream's x86 dynarec — ships in the Linux arm64, Windows on ARM and macOS (Apple Silicon) prebuilt releases (see [docs/arm64-dynarec.md](docs/arm64-dynarec.md))
 - Robustness & memory-safety hardening: bounds-checked HFE/ADF disc-image and HostFS input handling, FPA faults raised as undefined instructions rather than aborting the emulator, a wild branch in the guest reported as a Prefetch Abort instead of killing the emulator, and a fixed use-after-free on GUI shutdown
 - CMake build system, cross-platform: Linux (amd64 and arm64), Windows (amd64, MinGW-w64), and macOS (universal — Intel + Apple Silicon)
 
