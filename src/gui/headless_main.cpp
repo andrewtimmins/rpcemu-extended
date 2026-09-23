@@ -626,7 +626,7 @@ void HeadlessPrintUsage(const char *argv0)
 	    "                        display driver misbehaves with it; a display\n"
 	    "                        that cannot start OpenGL at all falls back on\n"
 	    "                        its own, without the option.\n"
-	    "  --openbus-card=CORE   Fit a co-processor card to the second processor\n"
+	    "  --openbus-card CORE   Fit a co-processor card to the second processor\n"
 	    "                        slot, with CORE as its processor, one of:\n"
 	    "                        %s.\n"
 	    "                        The card carries its own RAM and is driven\n"
