@@ -1111,17 +1111,53 @@ int main(int argc, char **argv)
 				ConsoleMessageFlush();
 				return 2;
 			}
-		} else if (strncmp(arg, "--pkg-install=", 14) == 0) {
+		} else if (strcmp(arg, "--pkg-install") == 0 ||
+		           strncmp(arg, "--pkg-install=", 14) == 0) {
+			const char *value = (arg[13] == '=') ? arg + 14
+			                                     : (i + 1 < argc ? argv[++i] : nullptr);
+
+			if (value == nullptr || value[0] == '\0') {
+				ConsoleMessage(true, "error: --pkg-install needs a package name.\n");
+				ConsoleMessageFlush();
+				return 2;
+			}
 			g_pkg_list = true;
-			g_pkg_install = arg + 14;
-		} else if (strncmp(arg, "--pkg-remove=", 13) == 0) {
+			g_pkg_install = value;
+		} else if (strcmp(arg, "--pkg-remove") == 0 ||
+		           strncmp(arg, "--pkg-remove=", 13) == 0) {
+			const char *value = (arg[12] == '=') ? arg + 13
+			                                     : (i + 1 < argc ? argv[++i] : nullptr);
+
+			if (value == nullptr || value[0] == '\0') {
+				ConsoleMessage(true, "error: --pkg-remove needs a package name.\n");
+				ConsoleMessageFlush();
+				return 2;
+			}
 			g_pkg_list = true;
-			g_pkg_remove = arg + 13;
-		} else if (strncmp(arg, "--pkg-machine=", 14) == 0) {
-			g_pkg_machine = arg + 14;
-		} else if (strncmp(arg, "--pkg-info=", 11) == 0) {
+			g_pkg_remove = value;
+		} else if (strcmp(arg, "--pkg-machine") == 0 ||
+		           strncmp(arg, "--pkg-machine=", 14) == 0) {
+			const char *value = (arg[13] == '=') ? arg + 14
+			                                     : (i + 1 < argc ? argv[++i] : nullptr);
+
+			if (value == nullptr || value[0] == '\0') {
+				ConsoleMessage(true, "error: --pkg-machine needs a machine name.\n");
+				ConsoleMessageFlush();
+				return 2;
+			}
+			g_pkg_machine = value;
+		} else if (strcmp(arg, "--pkg-info") == 0 ||
+		           strncmp(arg, "--pkg-info=", 11) == 0) {
+			const char *value = (arg[10] == '=') ? arg + 11
+			                                     : (i + 1 < argc ? argv[++i] : nullptr);
+
+			if (value == nullptr || value[0] == '\0') {
+				ConsoleMessage(true, "error: --pkg-info needs a package name.\n");
+				ConsoleMessageFlush();
+				return 2;
+			}
 			g_pkg_list = true;
-			g_pkg_info = arg + 11;
+			g_pkg_info = value;
 		} else if (strcmp(arg, "--pkg-sources") == 0) {
 			g_pkg_list = true;
 			g_pkg_sources = true;
@@ -1429,7 +1465,7 @@ int main(int argc, char **argv)
 	if ((g_pkg_install != NULL || g_pkg_remove != NULL) &&
 	    g_pkg_machine == NULL) {
 		ConsoleMessage(true, "error: --pkg-install and --pkg-remove need "
-		               "--pkg-machine=<name> to say which machine's disc.\n");
+		               "--pkg-machine <name> to say which machine's disc.\n");
 		ConsoleMessageFlush();
 		return 2;
 	}
