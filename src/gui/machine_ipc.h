@@ -61,11 +61,28 @@
 
 class SharedFramebuffer {
 public:
-	/* Generous upper bound on any host/guest display mode; sized once so a
-	   resize never needs to remap the segment (which the reader could be
-	   touching at the same time). */
-	static constexpr int kMaxWidth = 2560;
-	static constexpr int kMaxHeight = 1600;
+	/*
+	 * Upper bound on any host/guest display mode; sized once so a resize never
+	 * needs to remap the segment (which the reader could be touching at the
+	 * same time).
+	 *
+	 * 4K UHD, because that is what a guest negotiates on a 4K host and the
+	 * Manager has to show the whole of it. At the 2560x1600 this used to be, a
+	 * 3840x2160 desktop lost a third of its width and two fifths of its
+	 * height - and, until Publish() learned the source's stride, arrived
+	 * sheared into unreadable diagonal bands rather than merely cropped.
+	 *
+	 * The cost is mostly address space rather than memory: a slot is written at
+	 * the frame's OWN width, so a machine in a 800x600 mode touches the first
+	 * 1.9MB of each and no more. The exception is Windows, where a pagefile-
+	 * backed section is charged to commit in full - about 100MB per running
+	 * machine, against 49MB before.
+	 *
+	 * A frame larger still (a 5K host) is cropped to its top-left corner, which
+	 * is a limitation of the preview, not a corruption of it.
+	 */
+	static constexpr int kMaxWidth = 3840;
+	static constexpr int kMaxHeight = 2160;
 	static constexpr int kBufferCount = 3;	/* see class comment: lock-free triple buffer */
 
 	SharedFramebuffer() = default;
@@ -86,10 +103,9 @@ public:
 
 	/* Writer side. Copies `width`x`height` (whole-frame; simpler and, for
 	   RISC OS resolutions, cheap enough than tracking a dirty rect through
-	   shared memory) into the next free slot, then publishes it. Silently
-	   clamps/ignores a frame larger than kMaxWidth x kMaxHeight, which
-	   should not happen given the host display bound rpcemu already
-	   negotiates. */
+	   shared memory) into the next free slot, then publishes it. A frame
+	   larger than kMaxWidth x kMaxHeight is stored as its top-left corner,
+	   cropped row by row to what fits. */
 	/*
 	 * Copies the rows [dirty_top, dirty_bottom) of the frame into the next free
 	 * slot and publishes it. An empty or impossible range means the whole
