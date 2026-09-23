@@ -344,7 +344,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14, windows-latest]
+        os: [ubuntu-latest, macos-15, windows-latest]
     runs-on: ${{ matrix.os }}
     # Eight, and Windows is why. This creates a venv and pip-installs the MCP
     # server's dependencies from PyPI, which pulls pydantic and its compiled
@@ -991,107 +991,37 @@ jobs:
   macos-x86_64:
     needs: build-gate
     if: always() && needs.build-gate.result == 'success'
-    # Free Intel (macos-13) runners are effectively unavailable, so build the
-    # x86_64 slice (WITH the dynarec) on an Apple Silicon runner: Apple clang
-    # cross-compiles to x86_64 natively via CMAKE_OSX_ARCHITECTURES, we just
-    # need x86_64 libraries (from a Rosetta x86_64 Homebrew - the arm64 Homebrew
-    # in /opt/homebrew can't provide them) and Rosetta 2 to run the JIT test.
-    runs-on: macos-14
-    # 34 for the install plus 22 for the build, and room for Rosetta and the
-    # artifact upload. A step cap above its job cap achieves nothing: the job
-    # dies first.
-    timeout-minutes: 62
+    # The x86_64 slice, on an Intel runner: the JIT test then runs on the
+    # architecture it emits code for, and no cross-compile or translation layer
+    # is involved.
+    #
+    # macos-15-intel is the last x86_64 image GitHub offers, available until
+    # August 2027 (actions/runner-images#13046). When it goes, delete this job
+    # and macos-universal with it; macos-arm64 stands alone.
+    runs-on: macos-15-intel
+    # A tripwire, not a budget, and a first guess: nothing has timed a MacPorts
+    # install on these runners yet. A port with a binary archive is a download;
+    # one without is built from source and could blow through this. Set from a
+    # real run.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
           submodules: recursive
 
-      - name: Install Rosetta 2
-        run: softwareupdate --install-rosetta --agree-to-license
+      - name: Install MacPorts and the dependencies
+        timeout-minutes: 16
+        run: bash .github/scripts/macos/macports-setup.sh 15-Sequoia
 
-      - name: Install x86_64 Homebrew + dependencies
-        # Thirty-four, and the reason is not a slow network.
-        #
-        # This provisions a whole second Homebrew under Rosetta, updates it, and
-        # installs seven formulae. Ten minutes timed out on 2 September 2026 and
-        # twenty timed out on 3 September, both with nothing in the tree
-        # changed - but the second failure was not a stall. The log shows it
-        # COMPILING: libtiff 3m51, pcre2 3m17, sdl3 6m00, sdl2-compat 2m02, and
-        # still going at the cap.
-        #
-        # Why it compiles rather than pouring a bottle: "brew update" below
-        # moves this Homebrew to the newest formula revision, and a revision
-        # published hours ago has no x86_64 bottle yet. The arm64 Homebrew that
-        # ships in the runner image is pinned older, so it pours. That is the
-        # same drift that broke the fuse step on 2 September, seen from the
-        # other end.
-        #
-        # So this is still a tripwire and not a budget - it is just that the
-        # thing being timed can legitimately be half an hour of compiling. It
-        # will come back down on its own as bottles are published.
-        #
-        # If it fires again at this number, the fix is not another raise. It is
-        # either to cache the x86_64 Cellar between runs, or to stop calling
-        # "brew update" at all: it was there to hold both slices to one formula
-        # revision, and build-macos.sh no longer needs that - it compares the
-        # formula and forgives the version. Both are bigger changes than a
-        # tripwire deserves, which is why this is a raise today.
-        timeout-minutes: 34
-        run: |
-          # A separate Intel Homebrew installs into /usr/local (the arm64
-          # Homebrew lives in /opt/homebrew); both coexist. The install script
-          # is downloaded by the outer shell, then executed under Rosetta so it
-          # provisions the x86_64 tree.
-          if [ ! -x /usr/local/bin/brew ]; then
-            script="$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-            NONINTERACTIVE=1 arch -x86_64 /bin/bash -c "$script"
-          fi
-          # Both slices need the SAME version of every dependency: lipo fuses
-          # them, and a library from two upstream releases is not one library.
-          # The Intel and Apple Silicon Homebrews update independently, so
-          # "brew update" is what holds them to one formula revision.
-          # Retried because it fetches from github.com.
-          #
-          # ★ A failed update is no longer fatal.
-          #
-          # It used to exit 1, because two slices built against different
-          # upstream revisions could not be fused: build-macos.sh refused the
-          # pair. That is no longer true - the fuse step now compares the
-          # formula rather than the version, says so in the log when the two
-          # runners have drifted, and fuses them, because a fat dylib is two
-          # independent binaries and each architecture loads its own half.
-          #
-          # So the worst a failed update can now do is leave the two slices on
-          # different revisions of the same formula, which is reported rather
-          # than silent. Failing the whole matrix for it costs more than it
-          # saves.
-          for attempt in 1 2 3; do
-            arch -x86_64 /usr/local/bin/brew update && break
-            echo "brew update failed (attempt $attempt of 3)"
-            if [ "$attempt" = 3 ]; then
-              echo "::warning::brew update failed three times; the x86_64 and" \
-                   "arm64 slices may be built against different revisions." \
-                   "The fuse step reports it if so."
-              break
-            fi
-            sleep $((attempt * 15))
-          done
-          arch -x86_64 /usr/local/bin/brew install cmake ninja pkg-config wxwidgets sdl2 libvncserver libusb
-          echo "==> x86_64 dependency versions"
-          arch -x86_64 /usr/local/bin/brew list --versions sdl2-compat sdl3 wxwidgets libvncserver libusb || true
-
-      - name: Build x86_64 slice (both binaries) + test (Rosetta)
-        timeout-minutes: 22
+      - name: Build x86_64 slice (both binaries) + test
+        timeout-minutes: 12
         run: |
           chmod +x build-macos.sh
-          # Resolve wx-config / pkg-config / cmake from the x86_64 Homebrew
-          # (/usr/local) so the slice links x86_64 libraries; clang emits x86_64
-          # via CMAKE_OSX_ARCHITECTURES (set in build-macos.sh). The JIT test
-          # binary is x86_64 and runs under Rosetta.
-          export PATH="/usr/local/bin:$PATH"
-          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig"
           ./build-macos.sh --both --arch x86_64
+
+      - name: Every staged file must be x86_64
+        run: bash .github/scripts/macos/check-slice-arch.sh build-mac-x86_64/appstage x86_64
 
       - name: Upload x86_64 slice
         uses: actions/upload-artifact@v7
@@ -1099,7 +1029,7 @@ jobs:
           name: macos-slice-x86_64
           # The staged tree, not just bin/: it carries this slice's bundled
           # dependencies, which only exist on this runner. The job that fuses the
-          # slices installs no Homebrew packages of its own.
+          # slices installs no packages of its own.
           path: build-mac-x86_64/appstage/
           if-no-files-found: error
 
@@ -1113,39 +1043,31 @@ jobs:
     # downloading the slow one. build-macos.sh decides that; this job just calls
     # it. The eight JIT differential tests build here now, checking the arm64
     # backend against the interpreter on the architecture it emits code for.
-    runs-on: macos-14
-    timeout-minutes: 20
+    # MacPorts here too, so both slices take their libraries from one package
+    # manager at one prefix. The fuse step matches the two slices' libraries by
+    # where they came from, which one prefix makes trivial - see
+    # staged_library_agreement() in build-macos.sh.
+    runs-on: macos-15
+    # See the x86_64 job: a first guess, to be set from a real run.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-tags: true
           submodules: recursive
 
-      - name: Install dependencies
-        timeout-minutes: 8
-        run: |
-          # Both slices need the SAME version of every dependency: lipo fuses
-          # them, and a library from two upstream releases is not one library.
-          # The Intel and Apple Silicon Homebrews update independently, so
-          # "brew update" is what holds them to one formula revision.
-          #
-          # Retried because it fetches from github.com. Still fatal if all three
-          # attempts fail - the drift this prevents is worse than a red build.
-          for attempt in 1 2 3; do
-            brew update && break
-            echo "brew update failed (attempt $attempt of 3)"
-            [ "$attempt" = 3 ] && exit 1
-            sleep $((attempt * 15))
-          done
-          brew install cmake ninja pkg-config wxwidgets sdl2 libvncserver libusb
-          echo "==> arm64 dependency versions"
-          brew list --versions sdl2-compat sdl3 wxwidgets libvncserver libusb || true
+      - name: Install MacPorts and the dependencies
+        timeout-minutes: 16
+        run: bash .github/scripts/macos/macports-setup.sh 15-Sequoia
 
       - name: Build arm64 slice (both binaries) + test
-        timeout-minutes: 8
+        timeout-minutes: 12
         run: |
           chmod +x build-macos.sh
           ./build-macos.sh --both --arch arm64
+
+      - name: Every staged file must be arm64
+        run: bash .github/scripts/macos/check-slice-arch.sh build-mac-arm64/appstage arm64
 
       - name: Upload arm64 slice
         uses: actions/upload-artifact@v7
@@ -1158,7 +1080,10 @@ jobs:
     # Fuse the two per-arch slices into a universal binary and stage the release.
     needs: [macos-x86_64, macos-arm64]
     if: always() && needs.macos-x86_64.result == 'success' && needs.macos-arm64.result == 'success'
-    runs-on: macos-14
+    # Only lipo, codesign and hdiutil run here - all from the OS, none from a
+    # package manager - so this job installs nothing. Same runner OS as the two
+    # slices so the tools match the binaries they are packaging.
+    runs-on: macos-15
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
