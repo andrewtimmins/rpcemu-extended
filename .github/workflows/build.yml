@@ -924,10 +924,9 @@ jobs:
       # libvncserver together - all of it built by a compiler and for an
       # architecture this project has never used before.
       #
-      # Longer timeout than the amd64 job gets: this is the interpreter rather
-      # than the recompiler. It is now the only build that is, the other two arm64
-      # platforms having moved to the recompiler in 1.1.15 - see build-windows.sh
-      # for what is still outstanding on Windows on ARM specifically.
+      # Runs the recompiler - see the comment on the step below - so this is the
+      # test that proves the AArch64 JIT actually works on real Windows-on-ARM
+      # hardware, not merely that it compiles. build-windows.sh has the history.
       - name: Headless boot smoke test
         timeout-minutes: 3
         run: |

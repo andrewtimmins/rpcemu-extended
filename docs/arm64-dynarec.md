@@ -7,8 +7,9 @@ first for how the recompiler is structured as a whole; this document covers only
 the arm64-specific backend.
 
 **It is in the releases.** The macOS universal binary is the recompiler on both
-slices and the arm64 Linux builds use it too, so an Apple Silicon Mac or an arm64
-Linux machine runs recompiled code out of the box.
+slices, the arm64 Linux build uses it too, and so does Windows on ARM, so an Apple
+Silicon Mac, an arm64 Linux machine or a Windows-on-ARM PC runs recompiled code out
+of the box.
 
 It was not, for a long time, and the reason was that it did not work: three
 separate defects, each fatal on its own, meant `--recompiler` crashed on every
@@ -36,13 +37,17 @@ while the arm64 releases were interpreter builds. And CI builds and boot-tests t
 arm64 Linux release on real arm64 hardware, so the Linux half is not inferred from
 the macOS half.
 
-**Windows on ARM is still the interpreter**, and the reason is now narrow rather
-than general: cache maintenance there wants `FlushInstructionCache` rather than the
-EL0 `dc cvau` / `ic ivau` this backend falls back on, and whether clang's
-`__builtin___clear_cache` lowers to something equivalent on that target has not
-been checked. The other objection has gone - x18 is reserved as the TEB pointer
-there, and `codegen_arm64.c` never uses it. Pass `--dynarec` to `build-windows.sh`
-to try it. No arm64 Windows binary is published in any case.
+**Windows on ARM shipped the interpreter alone for longer than the other two**,
+over one narrow, specific worry: cache maintenance there wants
+`FlushInstructionCache` rather than the EL0 `dc cvau` / `ic ivau` this backend
+falls back on, and whether clang's `__builtin___clear_cache` lowers to something
+equivalent on that target had not been checked. It has been checked empirically
+since: CI boots RISC OS on the recompiler on a real `windows-11-arm` runner and
+requires it to draw the desktop (the `windows-arm64` job), and that is what ships
+- `BUILDINFO.txt` in the arm64 zip names the recompiler as the one to reach for,
+same as every other platform, with the interpreter alongside it. The other worry
+was already gone - x18 is reserved as the TEB pointer there, and `codegen_arm64.c`
+never uses it.
 
 ## Where it fits
 
@@ -189,8 +194,12 @@ codesign -s - --force \
 ```
 
 `build-macos.sh` does this automatically when `RPCEMU_MACOS_CODESIGN=1` is set.
-The prebuilt macOS release ships the arm64 slice as the interpreter, so it is
-unsigned and needs neither `MAP_JIT` nor the entitlement.
+CI never sets it, so the prebuilt macOS release - recompiler included - is
+ad-hoc signed without the hardened runtime, and `mmap(MAP_JIT)` /
+`pthread_jit_write_protect_np()` work there without the entitlement: it is the
+hardened runtime that requires it, not which core is running. The entitlement
+only matters for a build that opts into the hardened runtime, e.g. for
+notarisation.
 
 ## Adding a new recompiled instruction
 

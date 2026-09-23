@@ -4,9 +4,9 @@ RPCEmu can install software packaged for RISC OS straight onto a machine's hard 
 from the same repositories a real RISC OS machine would use. Open a machine, then
 **Tools → Package Manager**.
 
-There are around 200 packages: applications, games, fonts, libraries and system
-components. Installing one puts its files on the disc and **records what it put there**,
-so it can be removed again cleanly.
+There are several hundred packages, and growing: applications, games, fonts, libraries and
+system components, spanning the four repositories below. Installing one puts its files on
+the disc and **records what it put there**, so it can be removed again cleanly.
 
 > **Not in every build.** The package manager needs a wxWidgets with
 > `wxWebRequest` support, which some distributions do not provide - Debian 12

@@ -151,6 +151,32 @@ it and leaves the payload beside the binary. So the folder beside the binary sti
 has `poduleroms` and no longer has `configs`, was declared empty, and the search
 fell through. The probe tests `poduleroms/` as well.
 
+## Copying a machine to another computer
+
+A machine created on one computer - or one platform, RISC OS not caring which
+host OS is underneath it - can be copied to another rather than recreated with
+`--fetch-riscos` or the selector again. Three things travel with it, all under
+the data directory:
+
+| | Where | Why it's needed |
+| --- | --- | --- |
+| `configs/<name>.cfg` | `configs/` | The machine's own settings, including which ROM it uses |
+| `machines/<name>/` | `machines/` | CMOS, the HostFS folder, and (unless overridden) the hard disc image |
+| `roms/<rom_dir>/` | `roms/` | The ROM the `.cfg`'s `rom_dir` key names - not stored inside the machine |
+
+The ROM is separate because several machines commonly share one: `rom_dir` in
+the `.cfg` is a folder name looked up under the destination's own `roms/`, not a
+path baked in at creation time, so copying the `.cfg` without its ROM folder
+gives a machine that cannot find what to boot. `hd4_path` and `hostfs_path`
+follow the same convention (`hostfs_path.h`) precisely so this works: **empty**
+(the default) means inside `machines/<name>/` and travels with it automatically,
+**relative** also travels with it, and only an **absolute** override has to be
+fixed up by hand on the other side.
+
+Nothing about a `.cfg` or a `machines/<name>/` folder is platform-specific - the
+same files work read straight across Linux, Windows and macOS, which is what
+makes this a copy rather than a per-platform export/import step.
+
 ## Both entry points agree
 
 The GUI and the no-GUI paths resolve this through the same

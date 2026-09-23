@@ -98,16 +98,22 @@ question to real hardware.
 This is the one part of USB that is a build-time option. The controller and the
 card are always built; passthrough needs **libusb-1.0** present when the emulator
 is compiled, and `src/usb_host.c` has a stub half that answers politely when it
-was not. Install it with `./setup-build-env.sh` on Linux,
-`pacman -S mingw-w64-x86_64-libusb` in MSYS2, `brew install libusb` or
-`sudo port install libusb` on macOS, or `./setup-cross-build-env.sh` for a
-MinGW cross build.
+was not.
+
+| Platform                  | How                                                                                |
+| ------------------------- | ----------------------------------------------------------------------------------- |
+| Linux                     | `./setup-build-env.sh` (installs `libusb-1.0-0-dev`)                                |
+| Windows, native MSYS2     | `pacman -S mingw-w64-x86_64-libusb` (or `mingw-w64-clang-aarch64-libusb` on ARM64)  |
+| Windows, cross from Linux | `./setup-cross-build-env.sh` (builds libusb for the MinGW target)                   |
+| macOS                     | `brew install libusb` or `sudo port install libusb`                                 |
 
 Release builds pass `-DRPCEMU_REQUIRE_LIBUSB=ON`, which turns a missing libusb
 from a `STATUS` line into a configure failure. That is not pedantry: the Windows
 and macOS releases shipped without passthrough for exactly this reason, because
-neither CI job installed libusb and nothing in the build complained. A Linux
-release records the answer in `BUILDINFO.txt`.
+neither CI job installed libusb and nothing in the build complained. Set
+`RPCEMU_REQUIRE_LIBUSB=OFF` to build without it deliberately. A Linux release
+records the answer in `BUILDINFO.txt`, and the USB dialogue says so plainly if a
+build does not have it.
 
 *Settings → USB...* lists the four ports and what is in each. The choice is per
 machine and is remembered as the device's **identifiers rather than its

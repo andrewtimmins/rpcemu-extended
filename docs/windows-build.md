@@ -1,11 +1,11 @@
 # Building RPCEmu Extended for Windows
 
-Windows builds are produced with **MinGW-w64** (not MSVC). The x86-64 build ships
-the full-speed recompiler (`rpcemu-recompiler.exe`); there is also a native
-**ARM64** build, which ships the interpreter - see
-[Windows on ARM](#windows-on-arm). The wxWidgets GUI is cross-platform, so the
-Windows-specific code is confined to the C core (POSIX→Win32 shims) and the build
-system.
+Windows builds are produced with **MinGW-w64** (not MSVC). Both the x86-64 build
+and the native **ARM64** build ship the full-speed recompiler
+(`rpcemu-recompiler.exe`) as the one to reach for, with the interpreter alongside
+it - see [Windows on ARM](#windows-on-arm). The wxWidgets GUI is cross-platform,
+so the Windows-specific code is confined to the C core (POSIX→Win32 shims) and
+the build system.
 
 `build-windows.sh` decides which of the two it is building from `$MSYSTEM`:
 `MINGW64` gives amd64, `CLANGARM64` gives arm64, and neither (on Linux) gives the
@@ -50,26 +50,27 @@ It is native: clang there reports `aarch64-w64-windows-gnu` and `file` calls the
 result `PE32+ ... ARM64`. MSYS2's own runtime is x86-64 and runs under Windows'
 Prism emulation, so the *build* is emulated and slow while its *output* is not.
 
-**It ships the interpreter, and that is deliberate** - but for a narrower reason
-than it used to be. The AArch64 dynarec
-([arm64-dynarec.md](arm64-dynarec.md)) *is* now enabled in the macOS and arm64
-Linux releases, so "not enabled anywhere yet" is no longer the argument.
+**It ships the recompiler now**, same as every other platform - see
+[arm64-dynarec.md](arm64-dynarec.md) for the history: a narrow, specific worry
+(cache maintenance there wants `FlushInstructionCache` rather than the EL0
+`dc cvau` / `ic ivau` sequence the backend falls back on) held it back after the
+AArch64 dynarec was already shipping on macOS and Linux, and CI now settles that
+worry empirically rather than by inspection - the `windows-arm64` job boots RISC
+OS on the recompiler, on a real `windows-11-arm` runner, and requires it to draw
+the desktop. That is why the shipped release trusts it.
 
-What is left is specific to Windows on ARM: cache maintenance there wants
-`FlushInstructionCache` rather than the EL0 `dc cvau` / `ic ivau` sequence the
-backend falls back on, and whether clang's `__builtin___clear_cache` lowers to
-something equivalent on that target has not been checked. The other objection can
-be struck off - `x18` is reserved as the TEB pointer there, and `codegen_arm64.c`
-never uses it. `--dynarec` will build it anyway, which is how it will be proved. Note also that Windows on ARM runs the amd64
-build under emulation **with** the recompiler, so the emulated build may well be
-quicker than the native one until that changes - worth measuring rather than
-assuming either way.
+A plain, flag-less `./build-windows.sh` here still stages the interpreter by
+itself - a quick single build someone runs by hand. Pass `--dynarec` for the
+recompiler alone, or `--both` as CI does, which is what actually ships: both
+binaries, with `BUILDINFO.txt` and the archive written by the recompiler pass so
+it is the one named as primary.
 
-Built by the CI `windows-arm64` job on a `windows-11-arm` runner, which also boots
-a real machine with a real ROM and checks over VNC that RISC OS drew something -
-the same test the other platforms get. Published as a build artifact rather than a
-release asset: what the runner cannot show is somebody using it, meaning sound,
-USB and a window on a real ARM laptop.
+Built by the CI `windows-arm64` job, which also boots a real machine with a real
+ROM and checks over VNC that RISC OS drew something - the same test the other
+platforms get, but the only one still proving a brand new compiler and
+architecture combination rather than a known-good one. The zip it produces is
+attached to the GitHub Release like every other platform's; what CI cannot show
+is somebody using it day to day - sound, USB, a window on a real ARM laptop.
 
 ### Cross-compiling from Linux
 
