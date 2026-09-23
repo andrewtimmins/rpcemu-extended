@@ -1351,6 +1351,15 @@ int main(int argc, char **argv)
 			   launching the GUI, which on a machine with no display just
 			   hangs. */
 			ConsoleMessage(true, "error: unexpected argument '%s'.\n", arg);
+
+			/* The one case this usually is: --fetch-riscos and --pkg-list are
+			   also complete with no value, so their optional value has to be
+			   --flag=value - a space here reads as this flag bare, then this
+			   stray argument, rather than as the value it looks like. */
+			if (i > 1 && (strcmp(argv[i - 1], "--fetch-riscos") == 0 ||
+			              strcmp(argv[i - 1], "--pkg-list") == 0)) {
+				ConsoleMessage(true, "       Did you mean %s=%s?\n", argv[i - 1], arg);
+			}
 			ConsoleMessage(true, "       Use --help to see the available options.\n");
 			ConsoleMessageFlush();
 			return 2;
