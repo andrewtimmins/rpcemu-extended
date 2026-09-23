@@ -901,6 +901,13 @@ void MachineInspectorWindow::BuildUi()
 
 	swi_filter_min_input_->Bind(wxEVT_TEXT_ENTER, &MachineInspectorWindow::OnTraceConfigChanged, this);
 	swi_filter_max_input_->Bind(wxEVT_TEXT_ENTER, &MachineInspectorWindow::OnTraceConfigChanged, this);
+	/* Losing focus commits it too, not just Enter. */
+	auto apply_on_kill_focus = [this](wxFocusEvent &event) {
+		ApplyTraceConfig();
+		event.Skip();
+	};
+	swi_filter_min_input_->Bind(wxEVT_KILL_FOCUS, apply_on_kill_focus);
+	swi_filter_max_input_->Bind(wxEVT_KILL_FOCUS, apply_on_kill_focus);
 }
 
 void MachineInspectorWindow::ApplyMonoFont(wxWindow *window)
