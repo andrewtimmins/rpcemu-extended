@@ -252,6 +252,7 @@ static bool g_fetch_riscos = false;
 static bool g_fetch_nightly = false;
 static bool g_fetch_disc = true;
 static bool g_fetch_accept_licence = false;
+static const char *g_fetch_machine_name = nullptr;
 /*
  * --datadir: where machines, ROMs and settings live, for this run only. Outranks
  * both RPCEMU_DATADIR and whatever was chosen on a first run, and is deliberately
@@ -687,6 +688,9 @@ public:
 		request.release = g_fetch_nightly ? RiscosRelease::Nightly
 		                                  : RiscosRelease::Stable;
 		request.include_disc = g_fetch_disc;
+		if (g_fetch_machine_name != nullptr) {
+			request.machine_name = wxString::FromUTF8(g_fetch_machine_name);
+		}
 		request.create_machine = true;
 
 		/* CreateMainLoop() is the application's own choice of event
@@ -1185,6 +1189,17 @@ int main(int argc, char **argv)
 			}
 		} else if (strcmp(arg, "--no-disc") == 0) {
 			g_fetch_disc = false;
+		} else if (strcmp(arg, "--fetch-riscos-name") == 0 ||
+		           strncmp(arg, "--fetch-riscos-name=", 20) == 0) {
+			const char *value = (arg[19] == '=') ? arg + 20
+			                                     : (i + 1 < argc ? argv[++i] : nullptr);
+
+			if (value == nullptr || value[0] == '\0') {
+				ConsoleMessage(true, "error: --fetch-riscos-name needs a name.\n");
+				ConsoleMessageFlush();
+				return 2;
+			}
+			g_fetch_machine_name = value;
 		} else if (strcmp(arg, "--accept-licence") == 0 ||
 		           strcmp(arg, "--accept-license") == 0) {
 			g_fetch_accept_licence = true;
@@ -1426,9 +1441,12 @@ int main(int argc, char **argv)
 		ConsoleMessageFlush();
 		return 2;
 	}
-	if (!g_fetch_riscos && (!g_fetch_disc || g_fetch_accept_licence)) {
+	if (!g_fetch_riscos && (!g_fetch_disc || g_fetch_accept_licence ||
+	                        g_fetch_machine_name != nullptr)) {
 		ConsoleMessage(true, "error: %s only applies to --fetch-riscos.\n",
-		               !g_fetch_disc ? "--no-disc" : "--accept-licence");
+		               !g_fetch_disc ? "--no-disc" :
+		               g_fetch_accept_licence ? "--accept-licence" :
+		               "--fetch-riscos-name");
 		ConsoleMessageFlush();
 		return 2;
 	}
