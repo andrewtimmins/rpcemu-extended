@@ -252,6 +252,7 @@ static bool g_fetch_riscos = false;
 static bool g_fetch_nightly = false;
 static bool g_fetch_disc = true;
 static bool g_fetch_accept_licence = false;
+static const char *g_fetch_machine_name = nullptr;
 /*
  * --datadir: where machines, ROMs and settings live, for this run only. Outranks
  * both RPCEMU_DATADIR and whatever was chosen on a first run, and is deliberately
@@ -687,6 +688,9 @@ public:
 		request.release = g_fetch_nightly ? RiscosRelease::Nightly
 		                                  : RiscosRelease::Stable;
 		request.include_disc = g_fetch_disc;
+		if (g_fetch_machine_name != nullptr) {
+			request.machine_name = wxString::FromUTF8(g_fetch_machine_name);
+		}
 		request.create_machine = true;
 
 		/* CreateMainLoop() is the application's own choice of event
@@ -1107,17 +1111,53 @@ int main(int argc, char **argv)
 				ConsoleMessageFlush();
 				return 2;
 			}
-		} else if (strncmp(arg, "--pkg-install=", 14) == 0) {
+		} else if (strcmp(arg, "--pkg-install") == 0 ||
+		           strncmp(arg, "--pkg-install=", 14) == 0) {
+			const char *value = (arg[13] == '=') ? arg + 14
+			                                     : (i + 1 < argc ? argv[++i] : nullptr);
+
+			if (value == nullptr || value[0] == '\0') {
+				ConsoleMessage(true, "error: --pkg-install needs a package name.\n");
+				ConsoleMessageFlush();
+				return 2;
+			}
 			g_pkg_list = true;
-			g_pkg_install = arg + 14;
-		} else if (strncmp(arg, "--pkg-remove=", 13) == 0) {
+			g_pkg_install = value;
+		} else if (strcmp(arg, "--pkg-remove") == 0 ||
+		           strncmp(arg, "--pkg-remove=", 13) == 0) {
+			const char *value = (arg[12] == '=') ? arg + 13
+			                                     : (i + 1 < argc ? argv[++i] : nullptr);
+
+			if (value == nullptr || value[0] == '\0') {
+				ConsoleMessage(true, "error: --pkg-remove needs a package name.\n");
+				ConsoleMessageFlush();
+				return 2;
+			}
 			g_pkg_list = true;
-			g_pkg_remove = arg + 13;
-		} else if (strncmp(arg, "--pkg-machine=", 14) == 0) {
-			g_pkg_machine = arg + 14;
-		} else if (strncmp(arg, "--pkg-info=", 11) == 0) {
+			g_pkg_remove = value;
+		} else if (strcmp(arg, "--pkg-machine") == 0 ||
+		           strncmp(arg, "--pkg-machine=", 14) == 0) {
+			const char *value = (arg[13] == '=') ? arg + 14
+			                                     : (i + 1 < argc ? argv[++i] : nullptr);
+
+			if (value == nullptr || value[0] == '\0') {
+				ConsoleMessage(true, "error: --pkg-machine needs a machine name.\n");
+				ConsoleMessageFlush();
+				return 2;
+			}
+			g_pkg_machine = value;
+		} else if (strcmp(arg, "--pkg-info") == 0 ||
+		           strncmp(arg, "--pkg-info=", 11) == 0) {
+			const char *value = (arg[10] == '=') ? arg + 11
+			                                     : (i + 1 < argc ? argv[++i] : nullptr);
+
+			if (value == nullptr || value[0] == '\0') {
+				ConsoleMessage(true, "error: --pkg-info needs a package name.\n");
+				ConsoleMessageFlush();
+				return 2;
+			}
 			g_pkg_list = true;
-			g_pkg_info = arg + 11;
+			g_pkg_info = value;
 		} else if (strcmp(arg, "--pkg-sources") == 0) {
 			g_pkg_list = true;
 			g_pkg_sources = true;
@@ -1185,6 +1225,17 @@ int main(int argc, char **argv)
 			}
 		} else if (strcmp(arg, "--no-disc") == 0) {
 			g_fetch_disc = false;
+		} else if (strcmp(arg, "--fetch-riscos-name") == 0 ||
+		           strncmp(arg, "--fetch-riscos-name=", 20) == 0) {
+			const char *value = (arg[19] == '=') ? arg + 20
+			                                     : (i + 1 < argc ? argv[++i] : nullptr);
+
+			if (value == nullptr || value[0] == '\0') {
+				ConsoleMessage(true, "error: --fetch-riscos-name needs a name.\n");
+				ConsoleMessageFlush();
+				return 2;
+			}
+			g_fetch_machine_name = value;
 		} else if (strcmp(arg, "--accept-licence") == 0 ||
 		           strcmp(arg, "--accept-license") == 0) {
 			g_fetch_accept_licence = true;
@@ -1300,6 +1351,15 @@ int main(int argc, char **argv)
 			   launching the GUI, which on a machine with no display just
 			   hangs. */
 			ConsoleMessage(true, "error: unexpected argument '%s'.\n", arg);
+
+			/* The one case this usually is: --fetch-riscos and --pkg-list are
+			   also complete with no value, so their optional value has to be
+			   --flag=value - a space here reads as this flag bare, then this
+			   stray argument, rather than as the value it looks like. */
+			if (i > 1 && (strcmp(argv[i - 1], "--fetch-riscos") == 0 ||
+			              strcmp(argv[i - 1], "--pkg-list") == 0)) {
+				ConsoleMessage(true, "       Did you mean %s=%s?\n", argv[i - 1], arg);
+			}
 			ConsoleMessage(true, "       Use --help to see the available options.\n");
 			ConsoleMessageFlush();
 			return 2;
@@ -1414,7 +1474,7 @@ int main(int argc, char **argv)
 	if ((g_pkg_install != NULL || g_pkg_remove != NULL) &&
 	    g_pkg_machine == NULL) {
 		ConsoleMessage(true, "error: --pkg-install and --pkg-remove need "
-		               "--pkg-machine=<name> to say which machine's disc.\n");
+		               "--pkg-machine <name> to say which machine's disc.\n");
 		ConsoleMessageFlush();
 		return 2;
 	}
@@ -1426,9 +1486,12 @@ int main(int argc, char **argv)
 		ConsoleMessageFlush();
 		return 2;
 	}
-	if (!g_fetch_riscos && (!g_fetch_disc || g_fetch_accept_licence)) {
+	if (!g_fetch_riscos && (!g_fetch_disc || g_fetch_accept_licence ||
+	                        g_fetch_machine_name != nullptr)) {
 		ConsoleMessage(true, "error: %s only applies to --fetch-riscos.\n",
-		               !g_fetch_disc ? "--no-disc" : "--accept-licence");
+		               !g_fetch_disc ? "--no-disc" :
+		               g_fetch_accept_licence ? "--accept-licence" :
+		               "--fetch-riscos-name");
 		ConsoleMessageFlush();
 		return 2;
 	}
