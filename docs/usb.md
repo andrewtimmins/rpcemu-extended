@@ -99,8 +99,9 @@ This is the one part of USB that is a build-time option. The controller and the
 card are always built; passthrough needs **libusb-1.0** present when the emulator
 is compiled, and `src/usb_host.c` has a stub half that answers politely when it
 was not. Install it with `./setup-build-env.sh` on Linux,
-`pacman -S mingw-w64-x86_64-libusb` in MSYS2, `brew install libusb` on macOS, or
-`./setup-cross-build-env.sh` for a MinGW cross build.
+`pacman -S mingw-w64-x86_64-libusb` in MSYS2, `brew install libusb` or
+`sudo port install libusb` on macOS, or `./setup-cross-build-env.sh` for a
+MinGW cross build.
 
 Release builds pass `-DRPCEMU_REQUIRE_LIBUSB=ON`, which turns a missing libusb
 from a `STATUS` line into a configure failure. That is not pedantry: the Windows

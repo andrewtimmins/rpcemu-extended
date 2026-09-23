@@ -9,17 +9,13 @@
 #   x86-64 and codegen_arm64.c emits AArch64, so the universal binary is
 #   x86_64(dynarec) + arm64(dynarec), fused by lipo.
 #
-#   The arm64 slice was the interpreter until 1.1.14, because the arm64 recompiler
-#   did not boot (issue #30) - which meant an Apple Silicon Mac, the machine most
-#   people now run this on, was downloading the slow one. That is fixed, so it
-#   ships the recompiler.
-#
-#   On Apple Silicon the x86_64 slice can also run (slowly) under Rosetta 2.
-#
 # Two toolchain modes, auto-detected:
 #   * Native on macOS (uname = Darwin). Apple clang cross-compiles between its
-#     own two arches (the SDK is universal), so ONE mac can build either slice.
-#     Dependencies via Homebrew (per-arch bottles). This is what CI runs.
+#     own two arches (the SDK is universal), so ONE mac can build either slice,
+#     given libraries of that architecture to link against. CI builds each slice
+#     on a runner of its own architecture, with dependencies from MacPorts
+#     (/opt/local, the same prefix on both). Locally, Homebrew or MacPorts will
+#     do: whichever wx-config and pkg-config are first on PATH are used.
 #   * Cross-compile from Linux via osxcross. Prerequisite: run
 #     ./setup-macos-cross-build-env.sh once (needs a user-provided macOS SDK)
 #     and cross-build wxWidgets/SDL2/libvncserver for each arch. UNTESTED path
@@ -165,12 +161,101 @@ fi
 # Per-arch build knobs. Both slices are the recompiler, each with its own backend.
 slice_binname() { echo rpcemu-recompiler; }
 slice_dynarec() { echo ON; }
-# Tests are built for both slices, and with a dynarec backend on each that now
+# Tests are built for both slices, and with a dynarec backend on each that
 # includes the eight JIT differential tests - so the arm64 recompiler is checked
 # against the interpreter on the architecture it generates code for, which is
 # where a code-generation fault would actually show.
 slice_tests()   { echo ON; }
-slice_deploy()  { [ "$1" = "x86_64" ] && echo 10.15 || echo 11.0; }
+# What the bundle can honestly claim, which is set by the libraries inside it
+# rather than by what the emulator's own code needs. MacPorts builds its ports
+# against the OS it runs on, and every dylib bundled from a macOS 15 runner
+# declares 15.0 - so a lower number here is a promise the app cannot keep: it
+# loads and then dyld fails on the first dependency.
+#
+# check-slice-arch.sh prints the figure every staged file declares, so this can
+# be checked against a build rather than assumed.
+slice_deploy()  { echo 15.0; }
+
+# Does this library carry the slice we are about to build? A library that is not
+# there at all is not this check's business - CMake reports a missing dependency
+# clearly enough, whereas a present-but-wrong-architecture one is exactly what it
+# reports badly.
+lib_has_arch() {
+	local lib="$1" arch="$2"
+
+	[ -f "$lib" ] || return 0
+	lipo -archs "$lib" 2>/dev/null | tr ' ' '\n' | grep -qx "$arch"
+}
+
+# Fail before configuring if the installed libraries are for the other slice.
+#
+# A package manager installs libraries for one architecture. Apple clang
+# cross-compiles happily between the two, and the HEADERS are
+# architecture-neutral, so configuring the other slice against them SUCCEEDS -
+# then dies hundreds of targets later with a screenful of "Undefined symbols for
+# architecture x86_64" naming wx symbols, which says nothing about the real
+# cause. So each slice is built where its own libraries are, and CI fuses them.
+check_slice_deps() {
+	local arch="$1" prefix lib
+	local -a bad=()
+
+	command -v wx-config >/dev/null 2>&1 || return 0
+	prefix=$(wx-config --prefix 2>/dev/null) || return 0
+	[ -n "$prefix" ] && [ -d "$prefix/lib" ] || return 0
+
+	for lib in "$prefix"/lib/libwx_baseu-*.dylib "$prefix"/lib/libSDL2-*.dylib; do
+		[ -e "$lib" ] || continue
+		lib_has_arch "$lib" "$arch" || bad+=("$lib")
+	done
+
+	[ ${#bad[@]} -eq 0 ] && return 0
+
+	echo "error: [$arch] the dependencies in $prefix are not built for $arch:" >&2
+	for lib in "${bad[@]}"; do
+		echo "         $lib ($(lipo -archs "$lib" 2>/dev/null))" >&2
+	done
+	echo "       Apple clang would configure anyway and then fail at link time" >&2
+	echo "       with undefined symbols, so stopping here instead." >&2
+	echo "       Build --arch $(uname -m) on this machine, or build the $arch" >&2
+	echo "       slice on a machine whose libraries are $arch." >&2
+	exit 1
+}
+
+# CMake skips its pkg-config lookups silently when pkg-config is missing, so name
+# what is missing here instead of letting it surface as "libusb not found".
+check_build_tools() {
+	local -a missing=() brew_pkgs=() port_pkgs=()
+	local pkgcfg have_brew=false have_port=false wx_missing=false
+
+	command -v cmake >/dev/null 2>&1 || { missing+=(cmake); brew_pkgs+=(cmake); port_pkgs+=(cmake); }
+	if ! command -v wx-config >/dev/null 2>&1; then
+		missing+=(wx-config); brew_pkgs+=(wxwidgets); port_pkgs+=(wxWidgets-3.2); wx_missing=true
+	fi
+	pkgcfg=$(command -v pkg-config || command -v pkgconf || true)
+	if [ -z "$pkgcfg" ]; then
+		missing+=(pkg-config); brew_pkgs+=(pkg-config); port_pkgs+=(pkgconfig)
+	else
+		"$pkgcfg" --exists sdl2 || { missing+=(sdl2); brew_pkgs+=(sdl2); port_pkgs+=(libsdl2); }
+		"$pkgcfg" --exists libvncserver || { missing+=(libvncserver); brew_pkgs+=(libvncserver); port_pkgs+=(LibVNCServer); }
+		if [ "${RPCEMU_REQUIRE_LIBUSB:-ON}" != OFF ]; then
+			"$pkgcfg" --exists libusb-1.0 || { missing+=(libusb); brew_pkgs+=(libusb); port_pkgs+=(libusb); }
+		fi
+	fi
+
+	[ ${#missing[@]} -eq 0 ] && return 0
+
+	command -v brew >/dev/null 2>&1 && have_brew=true
+	[ -x /opt/local/bin/port ] && have_port=true
+	[ "$have_brew$have_port" = falsefalse ] && have_brew=true have_port=true
+
+	echo "error: not found: ${missing[*]}" >&2
+	[ "$have_brew" = true ] && echo "       Homebrew:  brew install ${brew_pkgs[*]}" >&2
+	if [ "$have_port" = true ]; then
+		echo "       MacPorts:  sudo port install ${port_pkgs[*]}" >&2
+		[ "$wx_missing" = true ] && echo "                  sudo port select --set wxWidgets wxWidgets-3.2" >&2
+	fi
+	exit 1
+}
 
 build_slice() {
 	local arch="$1"
@@ -250,13 +335,15 @@ build_slice() {
 		if [ "$(uname -m)" = "$arch" ]; then
 			can_run=true
 		elif [ "$arch" = x86_64 ] && arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
-			can_run=true	# Apple Silicon host with Rosetta 2 installed
+			# An arm64 host that can translate x86_64. Asked rather than
+			# assumed: it is an optional part of macOS.
+			can_run=true
 		fi
 
 		if [ "$can_run" = true ]; then
 			bash "$SCRIPT_DIR/tests/run-ctest.sh" "$build_dir" "$arch"
 		else
-			echo "Note: [$arch] skipping tests - cannot execute $arch binaries on $(uname -m) (Rosetta 2 not available)."
+			echo "Note: [$arch] skipping tests - this machine cannot execute $arch binaries."
 		fi
 	fi
 
@@ -276,12 +363,12 @@ INSTALL_NAME_TOOL=$(command -v install_name_tool || \
 #
 # Dependency bundling.
 #
-# The slices link against Homebrew, so the emulator records absolute paths such
-# as /opt/homebrew/opt/sdl2-compat/lib/libSDL2-2.0.0.dylib. Those exist only on a
-# machine with the same formulae installed, so an app built this way aborts on
-# launch anywhere else:
+# The slices link against a package manager's libraries, so the emulator
+# records absolute paths such as /opt/local/lib/libSDL2-2.0.0.dylib. Those
+# exist only on a machine with the same packages installed, so an app built
+# this way aborts on launch anywhere else:
 #
-#   dyld: Library not loaded: /opt/homebrew/opt/sdl2-compat/lib/libSDL2-2.0.0.dylib
+#   dyld: Library not loaded: /opt/local/lib/libSDL2-2.0.0.dylib
 #
 # Copy each non-system dependency into Contents/Frameworks and repoint every
 # reference at it, which is the macOS counterpart of the DLL bundling that
@@ -314,30 +401,30 @@ INSTALL_NAME_TOOL=$(command -v install_name_tool || \
 # same place?
 #
 # Prints one of:
-#   same     - the same library under each slice's own Homebrew prefix
-#   version  - the same formula, but a different version in each slice
+#   same     - the same library, at the same path, in both slices
+#   version  - the same package, but a different version in each slice
 #   differ   - not the same library at all
 #
-# WHY THE MIDDLE ANSWER EXISTS. The two macOS runners are separate images with
-# separate Homebrew installations, and they drift: on 2 September 2026 the
-# x86_64 runner had pcre2 10.48 while the arm64 one had 10.47_1, and every
-# build on main and 1.x failed because the check compared the whole path tail -
-# version directory included - and called that a different library. It is not,
-# and fusing them is sound: a fat dylib is two independent binaries in one
-# file, the x86_64 half built against 10.48 and the arm64 half against
-# 10.47_1, and a process loads only the half matching its own architecture.
-# Neither half ever sees the other's code.
+# Both slices take their dependencies from MacPorts, which installs under
+# /opt/local whatever the architecture, so the usual answer is "same" by the
+# first test below: the two paths are identical.
 #
-# What must still fail is a genuinely different library sharing a name - a
-# /opt/local libfoo staged against a Homebrew one - because that says the two
-# halves of the bundle are not the same software. So the formula name and the
-# path below the version are compared, and only the version is forgiven.
+# WHY THE MIDDLE ANSWER EXISTS. Two runners can be at different revisions of
+# one package, and a local build may use a package manager with a prefix per
+# architecture. Neither means the two libraries are different software, and
+# fusing them is sound: a fat dylib is two independent binaries in one file,
+# and a process loads only the half matching its own architecture. Neither half
+# ever sees the other's code.
+#
+# What must fail is a genuinely different library sharing a name, because that
+# says the two halves of the bundle are not the same software.
 staged_library_agreement() {
 	local x86_src="$1" arm_src="$2"
 	local x86_tail arm_tail
 
-	# Strip each slice's expected Homebrew prefix. What remains should be the
-	# same path under both, e.g. "Cellar/webp/1.6.0/lib/libwebp.7.dylib".
+	# Strip a per-architecture Homebrew prefix if there is one. MacPorts uses
+	# /opt/local for both, so its paths fall through unchanged and match each
+	# other outright.
 	x86_tail=${x86_src#/usr/local/}
 	arm_tail=${arm_src#/opt/homebrew/}
 
@@ -559,87 +646,8 @@ stage_slice() {
 		collect_deps "$obj" "$map" "$build_dir/bin"
 	done
 
-	# Libraries loaded at runtime rather than linked, which otool -L cannot see.
-	#
-	# Homebrew's "sdl2" is now sdl2-compat: a shim implementing the SDL2 ABI on
-	# top of SDL3, which it dlopen()s instead of linking. So libSDL3 appears in
-	# no LC_LOAD_DYLIB and the dependency walk above never finds it - the app
-	# then works on the build machine (Homebrew's copy is still on disk) and
-	# fails anywhere else. sdl2-compat's failure path runs in a library
-	# constructor and puts up a modal alert, so dyld blocks in
-	# runAllInitializersForMain() and the program never reaches main() at all:
-	# no output, no headless mode, and a GUI that cannot start either.
-	#
-	# sdl2-compat looks for "@loader_path/libSDL3.dylib" first, and the loader
-	# here is Contents/Frameworks/libSDL2-2.0.0.dylib, so placing SDL3 beside it
-	# is enough - no install-name rewriting of the reference is possible anyway,
-	# since there is no reference to rewrite.
-	# Test the dependency map, not $stage/libs: the copy loop below is what
-	# populates that directory, so checking it here always failed and this whole
-	# block was silently skipped.
-	if awk -F'\t' '$1 ~ /^libSDL2/ { f = 1 } END { exit !f }' "$map"; then
-		local sdl3 sdl3_prev sdl3_name
-		# Ask the Homebrew that matches THIS slice. On Apple Silicon the arm64
-		# brew in /opt/homebrew is on PATH, so building the x86_64 slice would
-		# otherwise pick up an arm64 SDL3 and lipo would later refuse to fuse
-		# it (or, worse, the slice would carry the wrong architecture).
-		local brew_x86=/usr/local/bin/brew brew_arm=/opt/homebrew/bin/brew
-		local brew_bin=""
-		if [ "$arch" = x86_64 ] && [ -x "$brew_x86" ]; then
-			brew_bin="$brew_x86"
-		elif [ "$arch" = arm64 ] && [ -x "$brew_arm" ]; then
-			brew_bin="$brew_arm"
-		fi
-		for sdl3 in \
-			"$([ -n "$brew_bin" ] && "$brew_bin" --prefix sdl3 2>/dev/null)/lib/libSDL3.dylib" \
-			"$([ -n "$brew_bin" ] && "$brew_bin" --prefix 2>/dev/null)/lib/libSDL3.dylib" \
-			"$([ "$arch" = x86_64 ] && echo /usr/local || echo /opt/homebrew)/lib/libSDL3.dylib"
-		do
-			# The prefix should imply the architecture, but check rather than
-			# assume: fusing a mismatched slice fails much later and far less
-			# clearly than saying so here.
-			if [ -f "$sdl3" ] && ! lipo -archs "$sdl3" 2>/dev/null | tr ' ' '\n' | grep -qx "$arch"; then
-				echo "   ! $sdl3 is not $arch ($(lipo -archs "$sdl3" 2>/dev/null)); ignoring"
-				continue
-			fi
-			if [ -f "$sdl3" ]; then
-				# Record it exactly as collect_deps() would, because the
-				# recursion below reaches the same file again and the two
-				# entries are compared:
-				#   - under its own install name (libSDL3.0.dylib), not the
-				#     symlink's name, so it is not bundled twice under two
-				#     names; and
-				#   - by canonical path, since $sdl3 is typically
-				#     /opt/homebrew/opt/sdl3/lib/libSDL3.dylib, a symlink into
-				#     Cellar. Storing the symlink made collect_deps' canonical
-				#     path look like a different library and failed the build.
-				sdl3=$(canon_path "$sdl3")
-				sdl3_name=$("$OTOOL" -D "$sdl3" 2>/dev/null | tail -n +2 | head -1)
-				sdl3_name=${sdl3_name##*/}
-				[ -n "$sdl3_name" ] || sdl3_name=${sdl3##*/}
-				sdl3_prev=$(awk -F'\t' -v b="$sdl3_name" '$1 == b { print $2; exit }' "$map")
-				if [ -z "$sdl3_prev" ]; then
-					printf '%s\t%s\n' "$sdl3_name" "$sdl3" >> "$map"
-				elif [ "$sdl3_prev" != "$sdl3" ]; then
-					echo "error: [$arch] two different SDL3 libraries were found:"
-					echo "         $sdl3_prev"
-					echo "         $sdl3"
-					exit 1
-				fi
-				collect_deps "$sdl3" "$map" "$(dirname "$sdl3")"
-				break
-			fi
-		done
-		echo "   SDL-related staged dependencies:"
-		grep -i sdl "$map" | sed 's/^/     /' || true
-		if ! awk -F'\t' '$1 ~ /^libSDL3/ { f = 1 } END { exit !f }' "$map"; then
-			echo "error: [$arch] this SDL2 is sdl2-compat, which needs SDL3 at runtime,"
-			echo "       but no libSDL3.dylib was found to bundle. Install it (brew"
-			echo "       install sdl3) or link a real SDL2 instead. Without it the"
-			echo "       finished app cannot start on any machine but this one."
-			exit 1
-		fi
-	fi
+	echo "   SDL-related staged dependencies:"
+	grep -i sdl "$map" | sed 's/^/     /' || true
 
 	while IFS=$'\t' read -r base src; do
 		[ -n "$base" ] || continue
@@ -664,6 +672,7 @@ stage_slice() {
 }
 
 if [ "$DO_BUILD" = true ]; then
+	[ "$MODE" = native ] && check_build_tools
 	if [ -n "$ONE_ARCH" ]; then
 		build_slice "$ONE_ARCH"
 	else
@@ -682,51 +691,64 @@ if [ "$DO_FUSE" = true ]; then
 	LIPO=$(command -v lipo || command -v x86_64-apple-darwin*-lipo || true)
 	[ -n "$LIPO" ] || { echo "error: lipo not found (need Apple cctools or osxcross)"; exit 1; }
 
-	# Which architectures this bundle is made of.
-	#
-	# Normally both, fused into a universal binary. With --arch it is just that
-	# one: the plist note below already accounts for a single-arch bundle, and
-	# requiring the other slice regardless meant "--arch arm64 --fuse" could not
-	# produce anything on a machine without the x86_64 Homebrew libraries - which
-	# is every Apple Silicon machine that has not gone out of its way to install
-	# them. A thin bundle is exactly what somebody testing their own build wants.
-	if [ -n "$ONE_ARCH" ]; then
-		FUSE_ARCHES="$ONE_ARCH"
-	else
-		FUSE_ARCHES="x86_64 arm64"
-	fi
-
 	# Staging normally happens in build_slice, on the machine that has that
 	# architecture's libraries installed - which matters because the CI job doing
-	# the fuse has no Homebrew dependencies of its own, only the staged slices.
+	# the fuse installs no packages of its own, only the staged slices.
 	# Stage here only if it has not been done, for a tree where the slices were
 	# built by an earlier invocation.
-	for arch in $FUSE_ARCHES; do
-		built="build-mac-$arch/bin/$(slice_binname "$arch")"
+	# Which slices are actually there.
+	#
+	# Both is the shipping case and gives a universal binary. One is enough to
+	# assemble a bundle that runs on the machine that built it, which is all a
+	# developer with one architecture's libraries installed can produce - and a
+	# testable RPCEmu.app is far more use to them than refusing outright.
+	STAGES=()
+	SLICE_ARCHES=()
+	for arch in x86_64 arm64; do
+		src="build-mac-$arch/bin/$(slice_binname "$arch")"
 		staged="build-mac-$arch/appstage/bin/rpcemu"
 
-		# Re-stage when the staged copy is missing OR older than the binary it
-		# was taken from. Only checking for its existence meant a rebuilt slice
-		# was staged once and never again, so the bundle kept whatever had been
-		# copied the first time - a stale binary that nothing reported.
-		if [ ! -f "$staged" ] || { [ -f "$built" ] && [ "$built" -nt "$staged" ]; }; then
-			[ -f "$built" ] || {
-				echo "error: no slice for $arch (build it first, or use the CI per-arch jobs)"
-				exit 1
-			}
+		# Re-stage when the built binary is NEWER than the staged copy, not just
+		# when the staged copy is missing. Staleness was previously invisible: a
+		# tree rebuilt since it was last staged fused the old binary and said
+		# nothing, so the bundle under test silently was not the code under
+		# test - which cost a whole test cycle chasing a bug that was already
+		# fixed in the source.
+		if [ -f "$src" ] && { [ ! -f "$staged" ] || [ "$src" -nt "$staged" ]; }; then
+			[ -f "$staged" ] && echo "==> [$arch] staged copy is older than the build; re-staging"
 			stage_slice "$arch"
 		fi
+		[ -f "$staged" ] || continue
+		STAGES+=("build-mac-$arch/appstage")
+		SLICE_ARCHES+=("$arch")
 	done
 
-	# The staged binaries to fuse, in architecture order. Named separately from
-	# the stage directories so a single-arch bundle is one entry rather than a
-	# special case at every use.
-	STAGES=""
-	for arch in $FUSE_ARCHES; do
-		f="build-mac-$arch/appstage"
-		[ -f "$f/bin/rpcemu" ] || { echo "error: missing staged slice '$f/bin/rpcemu'"; exit 1; }
-		STAGES="$STAGES $f"
-	done
+	if [ ${#STAGES[@]} -eq 0 ]; then
+		echo "error: no slice built for either architecture."
+		echo "       Build one first (./build-macos.sh --arch $(uname -m)),"
+		echo "       or use the CI per-arch jobs."
+		exit 1
+	fi
+	if [ ${#STAGES[@]} -eq 1 ]; then
+		echo "==> NOTE: only the ${SLICE_ARCHES[0]} slice is present, so RPCEmu.app will"
+		echo "    not be universal - it runs on ${SLICE_ARCHES[0]} only. Build the other"
+		echo "    slice too, or let CI build both, for a universal bundle."
+	fi
+
+	# lipo one staged binary from every slice present. Given a single input that
+	# is a thin copy, which is exactly what a one-slice bundle wants.
+	fuse_bin() {
+		local leaf="$1" out="$2" s
+		local -a ins=()
+
+		for s in "${STAGES[@]}"; do
+			[ -f "$s/bin/$leaf" ] && ins+=("$s/bin/$leaf")
+		done
+		[ ${#ins[@]} -gt 0 ] || return 1
+
+		"$LIPO" -create "${ins[@]}" -output "$out"
+		chmod +x "$out"
+	}
 
 	# lipo the named binary from every slice that has it, or nothing if none do.
 	# One input produces a thin binary, which is what a single-arch bundle is.
@@ -735,7 +757,7 @@ if [ "$DO_FUSE" = true ]; then
 		local -a inputs=()
 		local stage
 
-		for stage in $STAGES; do
+		for stage in "${STAGES[@]}"; do
 			[ -f "$stage/bin/$name" ] && inputs+=("$stage/bin/$name")
 		done
 		[ ${#inputs[@]} -gt 0 ] || return 1
@@ -751,17 +773,9 @@ if [ "$DO_FUSE" = true ]; then
 	# Writable data (machines, configs, ROMs, hostfs, logs) is NOT kept inside
 	# the bundle - InitRpcemuPaths() reads Contents/Resources and seeds ~/RPCEmu
 	# on first run, so an app dragged into /Applications stays read-only.
-	# The bundle can only claim what its slices support: x86_64 targets 10.15
-	# and arm64 targets 11.0 (there is no earlier macOS on Apple Silicon), so a
-	# fused bundle runs from 10.15 on Intel and 11.0 on Apple Silicon. The plist
-	# carries one number, so it must be the lower - anything higher would stop
-	# Intel Macs the x86_64 slice supports from launching. A single-arch arm64
-	# build advertises 11.0.
-	if [ -n "$ONE_ARCH" ]; then
-		PLIST_MIN_OS=$(slice_deploy "$ONE_ARCH")
-	else
-		PLIST_MIN_OS=$(slice_deploy x86_64)
-	fi
+	# The plist carries one number and both slices target the same one, so
+	# whichever slices are going in, this is it.
+	PLIST_MIN_OS=$(slice_deploy "${SLICE_ARCHES[0]}")
 
 	APP="releases/macos/RPCEmu.app"
 	CONTENTS="$APP/Contents"
@@ -798,43 +812,45 @@ if [ "$DO_FUSE" = true ]; then
 	# Fuse the emulator: x86_64(dynarec) + arm64(interpreter) -> universal.
 	# The staged copies are used, so the rewritten dependency paths are carried
 	# through into the bundle.
-	# What the release notes and the About box should say this bundle is.
-	case "$FUSE_ARCHES" in
-		"x86_64 arm64") BINARY_DESC="universal: x86_64 and arm64, recompiler on both, interpreter beside it" ;;
-		x86_64)         BINARY_DESC="x86_64 only, recompiler, interpreter beside it" ;;
-		arm64)          BINARY_DESC="arm64 only, recompiler, interpreter beside it" ;;
-		*)              BINARY_DESC="$FUSE_ARCHES" ;;
-	esac
+	# What to call this bundle, decided once from the slices actually found rather
+	# than from a flag - which is how everything else here decides, and avoids the
+	# two names disagreeing.
+	#
+	# A one-slice bundle called "universal" is a download that fails on half the
+	# Macs that trust the name, so only a genuinely fused pair earns the word.
+	if [ ${#SLICE_ARCHES[@]} -gt 1 ]; then
+		BINARY_DESC="universal: ${SLICE_ARCHES[*]}, recompiler on both, interpreter beside it"
+		ARCHTAG=universal
+	else
+		BINARY_DESC="${SLICE_ARCHES[0]} only, recompiler, interpreter beside it"
+		ARCHTAG="${SLICE_ARCHES[0]}"
+	fi
 
-	# What to call the artefacts. A thin bundle called "universal" is a file
-	# somebody will hand to an Intel Mac and watch fail to open.
-	case "$FUSE_ARCHES" in
-		"x86_64 arm64") ARCHTAG=universal ;;
-		*)              ARCHTAG="$FUSE_ARCHES" ;;
-	esac
-
-	echo "==> lipo emulator binary ($FUSE_ARCHES)"
-	fuse_binary rpcemu "$MACOSD/rpcemu"
+	echo "==> lipo emulator binary (${SLICE_ARCHES[*]})"
+	fuse_bin rpcemu "$MACOSD/rpcemu" || {
+		echo "error: no staged rpcemu binary to assemble"; exit 1;
+	}
 
 	# The interpreter, the same way. Not fatal if it is absent: a --fuse over
 	# slices staged by an older build of this script has no such binary, and a
 	# bundle without it is the bundle we shipped until now.
-	fuse_binary rpcemu-interpreter "$MACOSD/rpcemu-interpreter" || true
+	fuse_bin rpcemu-interpreter "$MACOSD/rpcemu-interpreter" || true
 
-	# The HostCmd host client, and rpcemu-shell which is the same binary.
-	if fuse_binary rpcemu-run "$MACOSD/rpcemu-run"; then
+	# Fuse the HostCmd host client from whichever slices built it.
+	if fuse_bin rpcemu-run "$MACOSD/rpcemu-run"; then
 		ln -sf rpcemu-run "$MACOSD/rpcemu-shell"
 	fi
 
 	# And the DebugCmd host client, the same way.
-	fuse_binary rpcemu-debug "$MACOSD/rpcemu-debug" || true
+	fuse_bin rpcemu-netcap "$MACOSD/rpcemu-netcap" || true
+	fuse_bin rpcemu-debug "$MACOSD/rpcemu-debug" || true
 
 	# Make each bundled dependency universal in the same way. A library present
 	# for only one architecture is copied through thin, which keeps that slice
 	# working rather than failing the whole build.
 	FRAMEWORKSD="$CONTENTS/Frameworks"
 	bundled=0
-	for stage in $STAGES; do
+	for stage in "${STAGES[@]}"; do
 	for lib in "$stage/libs/"*; do
 		[ -f "$lib" ] || continue
 		base=${lib##*/}
@@ -842,11 +858,11 @@ if [ "$DO_FUSE" = true ]; then
 		mkdir -p "$FRAMEWORKSD"
 		if [ -f "$X86_STAGE/libs/$base" ] && [ -f "$ARM_STAGE/libs/$base" ]; then
 			# Same basename in both slices is not proof they are the same
-			# library: each slice resolved its own Homebrew prefix, and a
-			# machine with, say, /opt/local alongside could stage a different
-			# libfoo for each. Comparing the files is no use - thin slices for
-			# different architectures always differ - so compare where they
-			# came from, which the per-slice maps record.
+			# library: a machine with more than one package manager installed
+			# could stage a different libfoo for each slice. Comparing the
+			# files is no use - thin slices for different architectures always
+			# differ - so compare where they came from, which the per-slice
+			# maps record.
 			# The maps are per-slice build output, so they are present for a
 			# local two-arch build but not when the fusing job only downloaded
 			# the staged appstage directories. Missing maps mean the check
@@ -887,7 +903,7 @@ if [ "$DO_FUSE" = true ]; then
 			# Worth saying only when the bundle is meant to be universal. In a
 			# single-arch bundle every library is thin by definition, and warning
 			# about each of twenty-one of them is noise that hides real problems.
-			if [ "$FUSE_ARCHES" = "x86_64 arm64" ]; then
+			if [ ${#STAGES[@]} -gt 1 ]; then
 				echo "   ! $base is single-architecture (present in only one slice)"
 			fi
 			cp -f "$lib" "$FRAMEWORKSD/$base"
@@ -908,35 +924,34 @@ if [ "$DO_FUSE" = true ]; then
 		echo "==> Bundled $bundled libraries into Contents/Frameworks"
 	fi
 
-	# Two names for one library must not become two copies of it.
+	# Collapse libraries bundled more than once under different names.
 	#
-	# Homebrew ships one real dylib plus version symlinks pointing at it, and the
+	# Homebrew ships one real dylib plus version symlinks pointing at it
+	# (libwx_osx_cocoau_core-3.3.dylib -> ... -3.3.3.0.0.dylib), and the
 	# dependency walk keys each entry on the basename of whichever name the
-	# object it came from happened to reference. Two names therefore produce two
-	# FULL COPIES here, and dyld loads both, because they are two distinct paths.
-	# wxWidgets then exists twice in one process, every Objective-C class inside
-	# it is registered twice, and the runtime says so on stderr:
+	# object it came from happened to reference. Two names for one library
+	# therefore produced two FULL COPIES here - and dyld loaded both, because
+	# they are two distinct paths.
 	#
-	#   objc[...]: Class wxImageTextCell is implemented in both
-	#   .../libwx_osx_cocoau_core-3.3.3.0.0.dylib and
-	#   .../libwx_osx_cocoau_core-3.3.dylib. One of the duplicates must be
-	#   removed or renamed.
+	# That is not merely wasteful. wxWidgets was then present twice, every
+	# Objective-C class inside it registered twice ("Class wxNSApplication is
+	# implemented in both ..."), and the Manager's OpenGL canvas never became
+	# usable: a machine started from the Manager showed a permanently black
+	# screen in the shipped .app while the very same code was fine in a
+	# build-tree run, which links Homebrew's single copy.
 	#
-	# On main that was the cause of a machine started from the Manager showing a
-	# permanently black screen in the shipped .app while the same code was fine
-	# from the build tree. It was fixed there on 22 August 2026 and 1.1.16 went
-	# out without it, which is how a user came to report the warnings from a
-	# release build (issue #183).
+	# A symlink is what upstream has and what dyld expects: it resolves to an
+	# image that is already loaded, so the library is mapped once however many
+	# names point at it.
 	#
 	# The test is the CANONICAL UPSTREAM PATH the copy came from, recorded per
 	# basename in each slice's deps.map. Comparing the staged files byte for byte
 	# does not work: each copy has already had its own LC_ID_DYLIB written into
-	# it, so two copies of one library differ in exactly those bytes.
+	# it, so two copies of one library differ in exactly those bytes and hash
+	# differently while being the same library.
 	#
-	# NOTE: $STAGES is a space-separated STRING on this branch, not an array as
-	# it is on main, so this iterates it unquoted. Taking main's "\${STAGES[@]}"
-	# verbatim would expand to one word here, find no deps.map, and silently
-	# collapse nothing while still reporting success.
+	# The name kept is the one the real file upstream has, so what remains is the
+	# layout the libraries were linked against, with the aliases pointing at it.
 	if [ -d "$FRAMEWORKSD" ]; then
 		dedup_map=$(mktemp)
 		collapsed=0
@@ -946,9 +961,9 @@ if [ "$DO_FUSE" = true ]; then
 
 			base=${lib##*/}
 			src=""
-			for s in $STAGES; do
+			for s in "${STAGES[@]}"; do
 				[ -f "$s/deps.map" ] || continue
-				src=$(awk -F'	' -v b="$base" '$1 == b { print $2; exit }' "$s/deps.map")
+				src=$(awk -F'\t' -v b="$base" '$1 == b { print $2; exit }' "$s/deps.map")
 				[ -n "$src" ] && break
 			done
 			# No map entry means nothing to compare it against - leave it alone
@@ -956,11 +971,13 @@ if [ "$DO_FUSE" = true ]; then
 			[ -n "$src" ] || continue
 			src=$(canon_path "$src")
 
-			keep=$(awk -F'	' -v pp="$src" '$1 == pp { print $2; exit }' "$dedup_map")
+			keep=$(awk -F'\t' -v p="$src" '$1 == p { print $2; exit }' "$dedup_map")
 			if [ -z "$keep" ]; then
 				# First name seen for this upstream file: it is the survivor.
-				printf '%s	%s
-' "$src" "$base" >> "$dedup_map"
+				# Deliberately NOT renamed to the upstream file's own name - a
+				# single copy under an alias is already correct and works, and
+				# renaming every such library would be churn for no gain.
+				printf '%s\t%s\n' "$src" "$base" >> "$dedup_map"
 			elif [ "$keep" != "$base" ]; then
 				echo "   collapsed $base -> $keep (one library under two names)"
 				rm -f "$lib"
@@ -969,7 +986,8 @@ if [ "$DO_FUSE" = true ]; then
 			fi
 		done
 		rm -f "$dedup_map"
-		[ "$collapsed" -gt 0 ] && 			echo "==> Collapsed $collapsed duplicate librar$([ "$collapsed" = 1 ] && echo y || echo ies) into symlinks"
+		[ "$collapsed" -gt 0 ] && \
+			echo "==> Collapsed $collapsed duplicate librar$([ "$collapsed" = 1 ] && echo y || echo ies) into symlinks"
 	fi
 
 	write_info_plist "$CONTENTS/Info.plist"
@@ -997,7 +1015,7 @@ if [ "$DO_FUSE" = true ]; then
 	fi
 
 	cat > "$RESD/BUILDINFO.txt" <<EOF
-RPCEmu (Extended Edition) $VERSION
+RPCEmu Extended $VERSION
 Built: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 Host:  $(uname -s) $(uname -m) ($MODE)
 Binary: rpcemu ($BINARY_DESC)
@@ -1010,18 +1028,6 @@ EOF
 	# open (right-click > Open once); this is documented in the README.
 	# RPCEMU_MACOS_CODESIGN=1 additionally applies the hardened runtime + JIT
 	# entitlement, needed only for a future recompiler arm64 slice (MAP_JIT).
-	# sdl2-compat dlopen()s "@loader_path/libSDL3.dylib" by that exact name, but
-	# SDL3's install name is versioned (libSDL3.0.dylib) and that is what gets
-	# bundled. Link the unversioned name to it, before signing so the signature
-	# covers the finished layout. Bundling the file twice would also work but
-	# wastes 5MB; leaving it out means sdl2-compat fails inside a dyld
-	# initializer and the app never reaches main() at all.
-	if ls "$CONTENTS/Frameworks"/libSDL3.*.dylib >/dev/null 2>&1 && \
-	   [ ! -e "$CONTENTS/Frameworks/libSDL3.dylib" ]; then
-		( cd "$CONTENTS/Frameworks" && ln -sf "$(ls libSDL3.*.dylib | head -1)" libSDL3.dylib )
-		echo "==> linked Frameworks/libSDL3.dylib -> $(readlink "$CONTENTS/Frameworks/libSDL3.dylib")"
-	fi
-
 	if [ "$(uname -s)" = Darwin ] && command -v codesign >/dev/null 2>&1; then
 		if [ "${RPCEMU_MACOS_CODESIGN:-0}" = 1 ] && [ -f resources/rpcemu-jit.entitlements ]; then
 			echo "==> codesign (ad-hoc, hardened runtime + JIT entitlement)"
@@ -1037,8 +1043,8 @@ EOF
 
 	# Prove the bundle is self-contained, rather than assuming it. Every
 	# @executable_path reference must resolve to a file that is actually here,
-	# and nothing may still point at Homebrew - that is the reference that works
-	# on the build machine and nowhere else.
+	# and nothing may still point into a package manager's prefix - that is the
+	# reference that works on the build machine and nowhere else.
 	echo "==> Verifying the bundle is self-contained"
 	bundle_ok=true
 	for obj in "$MACOSD"/* "$CONTENTS/Frameworks"/*; do
@@ -1063,7 +1069,7 @@ EOF
 						echo BAD >> "$CONTENTS/.deps.fail"
 					fi
 					;;
-				/opt/homebrew/*|/usr/local/*)
+				/opt/local/*|/opt/homebrew/*|/usr/local/*)
 					echo "   ! $(basename "$obj") still references $dep - it will not resolve elsewhere"
 					echo BAD >> "$CONTENTS/.deps.fail"
 					;;
@@ -1084,23 +1090,18 @@ EOF
 		echo "error: the bundle is not self-contained (see above)."
 		exit 1
 	fi
-	if [ -f "$CONTENTS/Frameworks/libSDL2-2.0.0.dylib" ] && \
-	   [ ! -e "$CONTENTS/Frameworks/libSDL3.dylib" ]; then
-		echo "error: libSDL2 is present but libSDL3 is not. If this SDL2 is"
-		echo "       sdl2-compat it loads SDL3 at runtime, and the app will stop"
-		echo "       in a modal alert before main() on any machine without it."
-		exit 1
-	fi
 	echo "✓ every bundled dependency resolves inside the bundle"
 
-	echo "==> Universal binary architectures:"
+	echo "==> Bundle architectures:"
 	"$LIPO" -archs "$MACOSD/rpcemu" 2>/dev/null || true
 	echo "✓ Bundle: $APP"
 
 	# Disk image with a drag-to-Applications shortcut - the format Mac users
 	# expect. macOS only (hdiutil); the osxcross path stops at the .app.
 	if [ "$(uname -s)" = Darwin ] && command -v hdiutil >/dev/null 2>&1; then
-		DMG="releases/macos/rpcemu_${VERSION}_macos_${ARCHTAG}.dmg"
+		# Named for what it actually contains: see ARCHTAG above.
+		DMG_ARCH="$ARCHTAG"
+		DMG="releases/macos/rpcemu_${VERSION}_macos_${DMG_ARCH}.dmg"
 		echo "==> Packaging $DMG"
 		DMGSTAGE=$(mktemp -d)
 		cp -a "$APP" "$DMGSTAGE/"

@@ -53,6 +53,9 @@
 # Emulator configuration settings
 /rpcemu.cfg
 
+# Manifest
+/manifest.txt
+
 # Local tool / editor settings
 /.claude/
 
