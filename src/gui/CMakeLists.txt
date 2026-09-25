@@ -33,6 +33,7 @@ set(GUI_SOURCES
     package_layout.cpp
     package_sources.cpp
     package_sources_dialog.cpp
+    http_reachable.cpp
     riscos_fetch.cpp
     riscos_setup_dialog.cpp
     support_bundle.cpp
