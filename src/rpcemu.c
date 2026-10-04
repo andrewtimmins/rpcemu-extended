@@ -513,7 +513,9 @@ static uint32_t debugger_trace_head = 0;	/**< next write index */
 static uint32_t debugger_trace_tail = 0;	/**< next read index */
 static uint32_t debugger_trace_dropped = 0;	/**< events lost to overflow */
 static uint32_t debugger_trace_seq = 0;		/**< monotonic event counter */
-static DebugTraceConfig debugger_trace_config;	/**< zero-initialised: all off */
+/* Zero-initialised, except swi_filter_max: zero there would mean "only SWI
+   &0 passes", not "unfiltered". */
+static DebugTraceConfig debugger_trace_config = { .swi_filter_max = 0xffffffffu };
 int debugger_swi_trace_active = 0;		/**< fast gate read from opSWI() */
 
 /* Fast gate read once per instruction by the interpreter and the recompiler's
