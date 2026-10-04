@@ -185,28 +185,39 @@ SharedFramebuffer::~SharedFramebuffer()
 void SharedFramebuffer::Publish(const uint32_t *pixels, int width, int height,
                                 int dirty_top, int dirty_bottom)
 {
-	bool clamped = false;
-
 	if (header_ == nullptr || pixels == nullptr || width <= 0 || height <= 0) {
 		return;
 	}
+
+	/*
+	 * The source's own row length, kept before the crop below can change what
+	 * this stores. The caller's rows sit at this pitch whatever ends up in the
+	 * slot, so the copy has to step the source by it - the two differ exactly
+	 * when the frame is wider than a slot.
+	 */
+	const int src_width = width;
+
 	if (width > kMaxWidth) {
 		width = kMaxWidth;
-		clamped = true;
 	}
 	if (height > kMaxHeight) {
 		height = kMaxHeight;
-		clamped = true;
 	}
 
 	/*
-	 * An empty or impossible range is the whole frame. So is a clamped one: the
-	 * source rows are then a different length from ours and only a whole-frame
-	 * copy behaves as it did before, imperfectly but identically.
+	 * An empty or impossible range is the whole frame, which is what every
+	 * caller meant before the range existed. A frame taller than a slot brings
+	 * a range that runs past its end, so the rows are held to what is stored:
+	 * cropping the picture must not decide which rows get copied.
 	 */
-	if (clamped || dirty_top < 0 || dirty_bottom > height ||
-	    dirty_bottom <= dirty_top) {
+	if (dirty_top < 0 || dirty_bottom <= dirty_top) {
 		dirty_top = 0;
+		dirty_bottom = height;
+	}
+	if (dirty_top > height) {
+		dirty_top = height;
+	}
+	if (dirty_bottom > height) {
 		dirty_bottom = height;
 	}
 
@@ -254,12 +265,35 @@ void SharedFramebuffer::Publish(const uint32_t *pixels, int width, int height,
 	slot_stale_bottom_[target] = 0;
 
 	{
-		const size_t offset = (size_t) copy_top * (size_t) width;
-		const size_t count = (size_t) (copy_bottom - copy_top) * (size_t) width;
+		const size_t stored = (size_t) width;
+		const size_t rows = (size_t) (copy_bottom - copy_top);
 
-		if (count != 0) {
+		if (rows != 0 && src_width == width) {
+			/* The ordinary case: rows are the same length on both sides, so
+			   the whole span is one contiguous copy. */
+			const size_t offset = (size_t) copy_top * stored;
+
 			std::memcpy(slots_[target] + offset, pixels + offset,
-			    count * sizeof(uint32_t));
+			    rows * stored * sizeof(uint32_t));
+		} else if (rows != 0) {
+			/*
+			 * Cropping a frame wider than a slot: row by row, stepping the
+			 * source by ITS width.
+			 *
+			 * Copying the span in one go here instead is what made a 3840-wide
+			 * guest reach the Manager as diagonal bands of nonsense: with the
+			 * cropped width taken as the source's pitch too, every row was
+			 * drawn from 1280 pixels further along the frame than it belonged,
+			 * and the picture sheared a whole tile every few rows.
+			 */
+			uint32_t *dst = slots_[target] + (size_t) copy_top * stored;
+			const uint32_t *src = pixels + (size_t) copy_top * (size_t) src_width;
+
+			for (size_t y = 0; y < rows; y++) {
+				std::memcpy(dst, src, stored * sizeof(uint32_t));
+				dst += stored;
+				src += (size_t) src_width;
+			}
 		}
 	}
 

@@ -192,6 +192,63 @@ static void test_shared_framebuffer_dirty_rows()
 }
 
 /*
+ * A frame bigger than a slot is cropped to its top-left corner, and cropped
+ * correctly.
+ *
+ * The bug this pins down was found by looking at a 4K guest in the Manager: the
+ * copy took the CROPPED width as the source's pitch as well, so each row was
+ * read further along the frame than the last - 1280 pixels further, for a
+ * 3840-wide guest against the 2560-wide slot of the day - and the desktop
+ * arrived as diagonal bands of nonsense instead of a picture. The cap is 4K
+ * now, so that guest fits, but a bigger one must still be cropped rather than
+ * mangled.
+ *
+ * Each row here holds its own row number, so a copy that drifts cannot pass:
+ * row y would arrive carrying pixels from somewhere below it.
+ */
+static void test_shared_framebuffer_oversized_frame()
+{
+	char name[64];
+	std::snprintf(name, sizeof(name), "/rpcemu-test-fbo-%ld", (long) getpid());
+
+	SharedFramebuffer writer;
+	CHECK(writer.CreateNew(name));
+	SharedFramebuffer reader;
+	CHECK(reader.OpenExisting(name));
+
+	const int w = SharedFramebuffer::kMaxWidth + 3;
+	const int h = SharedFramebuffer::kMaxHeight + 2;
+	std::vector<uint32_t> source((size_t) w * (size_t) h, 0u);
+
+	for (int y = 0; y < h; y++) {
+		uint32_t *row = source.data() + (size_t) y * (size_t) w;
+
+		for (int x = 0; x < w; x++) {
+			row[x] = ((uint32_t) y << 16) | (uint32_t) x;
+		}
+	}
+
+	/* A range that runs past what fits, as a guest taller than a slot gives. */
+	writer.Publish(source.data(), w, h, 0, h);
+
+	std::vector<uint32_t> out;
+	int gw = 0, gh = 0;
+
+	CHECK(reader.ReadInto(&out, &gw, &gh));
+	CHECK(gw == SharedFramebuffer::kMaxWidth);
+	CHECK(gh == SharedFramebuffer::kMaxHeight);
+
+	for (int y = 0; y < gh; y++) {
+		/* Stored row y is the head of source row y - the whole point. */
+		CHECK(std::memcmp(out.data() + (size_t) y * (size_t) gw,
+		    source.data() + (size_t) y * (size_t) w,
+		    (size_t) gw * sizeof(uint32_t)) == 0);
+	}
+
+	writer.Close();
+}
+
+/*
  * Regression test for a real bug caught by manually driving the Manager
  * window: MachineIpcNameFor() used to call getpid() internally with no way
  * to override it, so the managed child (creating the segment, its own pid)
@@ -514,6 +571,7 @@ int main()
 
 	test_shared_framebuffer();
 	test_shared_framebuffer_dirty_rows();
+	test_shared_framebuffer_oversized_frame();
 	test_ipc_name_for();
 	test_ipc_name_fits_platform_limit();
 	test_ipc_name_is_usable();
