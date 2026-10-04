@@ -2673,16 +2673,16 @@ void MachineInspectorWindow::OnPause(wxCommandEvent &)
 	RefreshSnapshot();
 }
 
+/* No snapshot here: the step is only armed, not yet executed, so one taken
+   now would show the pre-step PC. Same reasoning as AutoStepTick(). */
 void MachineInspectorWindow::OnStep(wxCommandEvent &)
 {
 	emulator_.DebuggerStep();
-	RefreshSnapshot();
 }
 
 void MachineInspectorWindow::OnStepOver(wxCommandEvent &)
 {
 	emulator_.DebuggerStepOver();
-	RefreshSnapshot();
 }
 
 /*
@@ -2772,7 +2772,7 @@ void MachineInspectorWindow::OnDebugKey(wxKeyEvent &event)
 			} else {
 				emulator_.DebuggerStep();
 			}
-			RefreshSnapshot();
+			/* No snapshot here either - see OnStep(). */
 		}
 		return;
 
