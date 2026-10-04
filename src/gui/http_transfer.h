@@ -39,6 +39,7 @@
 #include <wx/timer.h>
 #include <wx/webrequest.h>
 
+#include "http_reachable.h"	/* HttpConnectionRefused */
 #include "riscos_fetch.h"	/* RiscosFetchReporter, RiscosFetchLoopFactory */
 
 extern "C" {
@@ -190,6 +191,16 @@ private:
 		error_.clear();
 		body_.clear();
 		dest_path_ = dest_path;
+
+		/* Before wxWebRequest sees it: under wxGTK a refused connection
+		   crashes inside wxWidgets rather than being reported, and this
+		   is the only way to keep away from it. http_reachable.h has
+		   the detail, including why this is a mitigation and not a fix.
+		   Everywhere else it is false and costs nothing. */
+		if (HttpConnectionRefused(url)) {
+			error_ = "Nothing is listening at that address.";
+			return false;
+		}
 
 		request_ = wxWebSession::GetDefault().CreateRequest(this, url);
 		if (!request_.IsOk()) {
