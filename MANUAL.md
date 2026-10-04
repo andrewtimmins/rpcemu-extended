@@ -87,8 +87,8 @@ installed and nothing is written outside the folder you pick on first run.
 
 **macOS.** Needs **macOS 15 (Sequoia) or later**. Open the `.dmg` and drag the
 application over. The build is not notarised by Apple, so the **first** launch
-needs a right-click and **Open** rather than a double-click — after that it
-opens normally. One download covers both Intel and Apple Silicon.
+is blocked — see [README: First launch is blocked](README.md#first-launch-is-blocked-how-to-open-it)
+for the current procedure. One download covers both Intel and Apple Silicon.
 
 **Linux.** Install the `.deb` with your package manager, or unpack the
 `.tar.gz` and run `./rpcemu-recompiler` from inside it. Builds are published for
@@ -135,7 +135,10 @@ Press **New...** and you are asked two things.
 **Whether to include a hard disc.** Leave this ticked. It fetches HardDisc4 from
 RISC OS Open — applications, fonts, `!System` and a `!Boot` configured for the
 ROM you chose. Without it the machine starts to a command prompt with nothing on
-it.
+it. HardDisc4 ships set up for an old 800×600, 256-colour monitor, so RPCEmu also
+sets the desktop to the largest mode that fits your display and the machine's
+display memory, in 16 million colours, when it unpacks the disc — change it
+afterwards as you would on real hardware, in *Configure → Screen*.
 
 **Whether to set up networking.** Leave this ticked too. It adds the `!Boot`
 files that bring the network up when RISC OS starts: an address from DHCP, name
@@ -387,10 +390,10 @@ your host clipboard is visible to the guest.
 
 **Tools ▸ Package Manager**, with a machine open and started at least once.
 
-Around 200 packages — applications, games, fonts, libraries, system components —
-from the same repositories a real RISC OS machine uses. Pick one and it is
-installed onto that machine's disc along with anything it depends on, and
-`!System` is kept in order for you.
+Several hundred packages — applications, games, fonts, libraries, system components —
+from the same repositories a real RISC OS machine uses (see
+[docs/packages.md](docs/packages.md)). Pick one and it is installed onto that machine's
+disc along with anything it depends on, and `!System` is kept in order for you.
 
 It is per machine: installing on one does not touch another.
 

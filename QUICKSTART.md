@@ -18,8 +18,9 @@ Download the build for your computer from the
 | Linux (Intel/AMD) | `rpcemu_<version>_amd64.deb`, or the `linux_amd64.tar.gz` |
 | Linux (Raspberry Pi, ARM) | `rpcemu_<version>_arm64.deb`, or the `linux_arm64.tar.gz` |
 
-**macOS:** the build is not notarised by Apple, so the first launch needs
-right-click then **Open**, rather than a double-click. You only do this once.
+**macOS:** the build is not notarised by Apple, so the first launch is blocked -
+see [README: First launch is blocked](README.md#first-launch-is-blocked-how-to-open-it)
+for the current procedure. You only do this once.
 
 ## 2. Start it
 
@@ -68,9 +69,9 @@ that icon to get a window from it.
 folder on your own computer, so anything you put there appears in RISC OS and
 the other way round. There is also a **Shared** disc that every machine can see.
 
-**To install software**, open **Tools ▸ Package Manager**. Around 200
+**To install software**, open **Tools ▸ Package Manager**. Several hundred
 applications, games, fonts and libraries from the same repositories a real
-RISC OS machine uses.
+RISC OS machine uses (see [docs/packages.md](docs/packages.md)).
 
 **To leave full-screen**, press **Alt+Enter**. The same key gets you into it
 from **Settings ▸ Fullscreen**.

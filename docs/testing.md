@@ -112,10 +112,13 @@ pointed at the Windows binary, and how the RISC OS 5.31 empty-HostFS screen in
 
 ## What the suite covers
 
-Sixty-one tests: fifty that build anywhere, ten that need a native
-recompiler backend, and one that needs a Python 3 interpreter. (The count in
-`tests/CMakeLists.txt` is the one that is enforced; this sentence is prose and
-had fallen behind it, which is worth knowing before trusting it.)
+A base set that builds anywhere, plus native-recompiler-backend, Python-3, MultiFS
+submodule and (on Apple) library-fusing tests where each is available. The count is
+enforced, not descriptive: `tests/CMakeLists.txt`'s `RPCEMU_EXPECTED_TESTS` fails the
+build if a registered test and the expected total disagree, specifically so that a
+prose count here can't silently go stale the way this sentence itself once did - see
+`RPCEMU_EXPECTED_TESTS` for the actual number on your platform, rather than a
+count in this document.
 
 | Test | Covers |
 | --- | --- |
