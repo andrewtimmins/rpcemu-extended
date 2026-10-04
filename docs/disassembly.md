@@ -130,7 +130,7 @@ proper - the first version of this ate the `X` and printed `xOS_Exit`.
 
 The built-in table is the OS's. A call into a module of your own disassembles as
 `SWI &42C40`, which has to be looked up by hand every time, so names can be
-loaded from a file:
+loaded from a CSV file:
 
 ```
 # a module's own SWIs
