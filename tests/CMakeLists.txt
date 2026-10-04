@@ -443,6 +443,17 @@ target_include_directories(test_held_keys PRIVATE
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui)
 rpcemu_add_test(test_held_keys)
 
+# Where a VNC client's pointer lands. The server serves the framebuffer in the
+# guest's pixels but MouseMove() wants host display pixels, and those differ by
+# VIDC's doubling - so in a low-resolution mode a client could reach only the
+# top-left quarter of the screen. Header-only, like the unit itself: the test
+# takes a framebuffer coordinate the whole way through to the pixel the guest
+# would report, which is the part a user actually experiences.
+add_executable(test_vnc_pointer test_vnc_pointer.c)
+target_include_directories(test_vnc_pointer PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src/gui)
+rpcemu_add_test(test_vnc_pointer)
+
 # Where the data directory comes from, and above all when the user is asked for
 # it. Issue #67 was that RPCEmu made a folder in the user's home directory
 # without asking; asking on first run fixes that and introduces a worse bug if
@@ -1127,7 +1138,7 @@ rpcemu_add_test(test_unzip)
 #
 # Raise RPCEMU_EXPECTED_TESTS when adding a test. If that feels like a chore, it
 # is the only line in the file that cannot go stale without being noticed.
-set(RPCEMU_EXPECTED_TESTS 70)	# tests that build on every platform
+set(RPCEMU_EXPECTED_TESTS 71)	# tests that build on every platform
 if(RPCEMU_JIT_TESTS)
     math(EXPR RPCEMU_EXPECTED_TESTS "${RPCEMU_EXPECTED_TESTS} + 10")	# JIT differential
 endif()

@@ -26,7 +26,10 @@
 
 extern "C" {
 #include "rpcemu.h"
+#include "vidc20.h"
 }
+
+#include "vnc_pointer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -636,7 +639,16 @@ void vnc_ptr_callback(int buttonMask, int x, int y, rfbClientPtr cl)
 		return;
 	}
 
-	host->MouseMove(x, y);
+	/* The framebuffer is served in the guest's pixels; MouseMove() wants host
+	   display pixels, which differ by VIDC's doubling. See vnc_pointer.h. */
+	int double_x;
+	int double_y;
+	int host_x;
+	int host_y;
+
+	vidc_get_doublesize(&double_x, &double_y);
+	vnc_pointer_to_host(x, y, double_x, double_y, &host_x, &host_y);
+	host->MouseMove(host_x, host_y);
 
 	/* RFB reports buttons as bit 0 = left, bit 1 = middle, bit 2 = right. The
 	   guest button encoding (matching the native panel's MapClickButton) is
