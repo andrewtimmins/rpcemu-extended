@@ -429,6 +429,7 @@ typedef struct {
 	 * hostfs_path.h.
 	 */
 	char hostfs_path[512];
+	char hostfs_name[12];	/**< HostFS disc name, up to 10 chars (empty = "HostFS") */
 	char rom_dir[256];	/**< ROM directory name within roms/ folder */
 	unsigned mem_size;	/**< Amount of RAM in megabytes */
 	unsigned vram_size;	/**< Amount of VRAM in megabytes */

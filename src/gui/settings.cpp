@@ -530,6 +530,9 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 		cfg->hostfs_path[0] = '\0';
 	}
 
+	settings.Read("hostfs_name", &sText, wxEmptyString);
+	snprintf(cfg->hostfs_name, 11, "%s", sText.utf8_str().data());
+
 	settings.Read("rom_dir", &sText, wxEmptyString);
 	if (snprintf(cfg->rom_dir, sizeof(cfg->rom_dir), "%s", sText.utf8_str().data()) >= (int) sizeof(cfg->rom_dir)) {
 		rpclog("config_load: rom_dir too long - truncated\n");
@@ -927,6 +930,7 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	/* Empty when it is the default, which is what keeps a machine's
 	   configuration valid after its data folder moves. */
 	settings.Write("hostfs_path", wxString(cfg->hostfs_path, wxConvUTF8));
+	settings.Write("hostfs_name", wxString(cfg->hostfs_name, wxConvUTF8));
 	settings.Write("rom_dir", wxString(cfg->rom_dir, wxConvUTF8));
 
 	const wxString mem_size_str = wxString::Format("%u", cfg->mem_size);

@@ -326,6 +326,7 @@ Config config = {
 	"",			/* name */
 	"",			/* hd4_path (empty = use machine directory) */
 	"",			/* hostfs_path (empty = <machine dir>/hostfs) */
+	"",			/* hostfs_name (empty = "HostFS") */
 	"",			/* rom_dir (empty = use 'roms' folder directly) */
 	0,			/* mem_size */
 	0,			/* vram_size */

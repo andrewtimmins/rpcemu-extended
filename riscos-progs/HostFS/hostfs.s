@@ -7,6 +7,7 @@
 	@ RISC OS constants
 	XOS_Write0          = 0x20002
 	XOS_CLI             = 0x20005
+	XOS_Module          = 0x2001e
 	XOS_ReadVarVal      = 0x20024
 	XOS_FSControl       = 0x20029
 	XOS_ValidateAddress = 0x2003a
@@ -29,6 +30,10 @@
 
 	HOSTFS_PROTOCOL_VERSION = 3
 
+	@ HostFS SWI operations
+	HOSTFS_OP_QUERY_DISC_NAME = 8
+	HOSTFS_OP_SET_DISC_NAME   = 9
+
 	@ Filing system error codes
 	FILECORE_ERROR_DIRNOTEMPTY	= 0xb4
 	FILECORE_ERROR_ACCESS		= 0xbd
@@ -42,6 +47,12 @@
 	FILING_SYSTEM_NUMBER = 0x99	@ TODO choose unique value
 	MAX_OPEN_FILES       = 100	@ TODO choose sensible value
 	IMAGEFS_EXTENSIONS   = (1 << 23)
+
+	@ Workspace layout (RMA block, pointer stored in private word)
+	WS_DISC_NAME   = 0	@ 12 bytes: disc name (up to 10 chars + NUL)
+	WS_BOOTDIR_CMD = 12	@ 48 bytes: "Set Boot$Dir HostFS::<name>.$"
+	WS_FREE_PATH   = 60	@ 24 bytes: "HostFS::<name>.$"
+	WS_SIZE        = 84
 
 
 	.global	_start
@@ -72,7 +83,7 @@ title:
 	.string	"RPCEmuHostFS"
 
 help:
-	.string	"RPCEmu HostFS\t0.10 (23 Sep 2014)"
+	.string	"RPCEmu HostFS\t0.11 (30 Oct 2026)"
 
 	.align
 
@@ -86,10 +97,32 @@ table:
 	.int	0
 	.int	command_hostfs_help
 
+	.string	"HostFS_NameDisc"
+	.align
+	.int	command_namedisc
+	.int	0x00010001	@ min 1, max 1
+	.int	command_namedisc_syntax
+	.int	command_namedisc_help
+
+	.string	"HostFS_NameDisk"
+	.align
+	.int	command_namedisc
+	.int	0x00010001	@ min 1, max 1
+	.int	command_namedisc_syntax
+	.int	command_namedisc_help
+
 	.byte	0	@ Table terminator
 
 command_hostfs_help:
 	.string	"*HostFS selects the HostFS filing system\rSyntax: *HostFS"
+	.align
+
+command_namedisc_help:
+	.string	"Changes the name of a HostFS disc\rSyntax: *HostFS_NameDisc <disc name>"
+	.align
+
+command_namedisc_syntax:
+	.string	"Syntax: *HostFS_NameDisc <disc name>"
 	.align
 
 
@@ -136,6 +169,35 @@ init:
 	cmp	r0, #0xffffffff		@ Look for acknowledge response
 	bne	init_failed_registration
 
+	@ Claim RMA workspace
+	mov	r0, #6			@ OS_Module reason: Claim
+	mov	r3, #WS_SIZE
+	swi	XOS_Module
+	bvs	init_failed_registration
+	str	r2, [r12]		@ Store workspace pointer in private word
+
+	@ Query disc name from emulator (R9=8, R0=buffer, R1=size)
+	@ Falls back to "HostFS" if the emulator does not support it.
+	@ Zero the first byte so an old host that ignores R9=8 leaves
+	@ the buffer empty, triggering the default-name fallback below.
+	mov	r0, #0
+	strb	r0, [r2, #WS_DISC_NAME]
+	add	r0, r2, #WS_DISC_NAME
+	mov	r1, #12
+	mov	r9, #HOSTFS_OP_QUERY_DISC_NAME
+	swi	ArcEm_HostFS
+
+	@ Check the name is non-empty; fall back to default if not
+	ldr	r2, [r12]
+	ldrb	r0, [r2, #WS_DISC_NAME]
+	cmp	r0, #0
+	adreq	r0, default_disc_name
+	addeq	r1, r2, #WS_DISC_NAME
+	bleq	copy_string
+
+	@ Build "Set Boot$Dir HostFS::<name>.$" in workspace
+	bl	init_build_strings
+
 	@ Declare filing system
 	mov	r0, #FSControl_AddFS
 	adr	r1, module_start
@@ -168,9 +230,57 @@ err_failed_registration:
 	.string	"Failed registration with emulator"
 	.align
 
-bootdir_set_cmd:
-	.string	"Set Boot$Dir HostFS::HostFS.$"
+default_disc_name:
+	.string	"HostFS"
 	.align
+
+	@ Build the two path strings in workspace from the disc name.
+	@ On entry: [r12] = workspace pointer, WS_DISC_NAME populated.
+init_build_strings:
+	stmfd	sp!, {r0-r3, lr}
+	ldr	r3, [r12]		@ r3 = workspace
+
+	@ Build "Set Boot$Dir HostFS::<name>.$" at WS_BOOTDIR_CMD
+	add	r1, r3, #WS_BOOTDIR_CMD
+	adr	r0, str_bootdir_prefix
+	bl	copy_string		@ returns r1 past the NUL
+	sub	r1, r1, #1		@ back up over the NUL
+	add	r0, r3, #WS_DISC_NAME
+	bl	copy_string
+	sub	r1, r1, #1
+	adr	r0, str_root_suffix
+	bl	copy_string
+
+	@ Build "HostFS::<name>.$" at WS_FREE_PATH
+	add	r1, r3, #WS_FREE_PATH
+	adr	r0, str_fs_prefix
+	bl	copy_string
+	sub	r1, r1, #1
+	add	r0, r3, #WS_DISC_NAME
+	bl	copy_string
+	sub	r1, r1, #1
+	adr	r0, str_root_suffix
+	bl	copy_string
+
+	ldmfd	sp!, {r0-r3, pc}
+
+str_bootdir_prefix:
+	.string	"Set Boot$Dir HostFS::"
+str_fs_prefix:
+	.string	"HostFS::"
+str_root_suffix:
+	.string	".$"
+	.align
+
+	@ Copy a NUL-terminated string.
+	@ Entry: r0 = src, r1 = dst
+	@ Exit:  r1 = one past the NUL written (r0 corrupted)
+copy_string:
+0:	ldrb	r2, [r0], #1
+	strb	r2, [r1], #1
+	cmp	r2, #0
+	bne	0b
+	mov	pc, lr
 
 	@ Define Boot$Dir during module init.
 	@
@@ -189,7 +299,8 @@ bootdir_set_cmd:
 init_ensure_bootdir:
 	stmfd	sp!, {r0-r3, lr}
 
-	adr	r0, bootdir_set_cmd
+	ldr	r0, [r12]
+	add	r0, r0, #WS_BOOTDIR_CMD
 	swi	XOS_CLI
 
 	ldmfd	sp!, {r0-r3, pc}
@@ -219,6 +330,15 @@ final:
 	mov	r0, #FSControl_RemoveFS
 	adr	r1, fs_name
 	swi	XOS_FSControl
+
+	@ Free RMA workspace
+	mov	r0, #7			@ OS_Module reason: Free
+	ldr	r2, [r12]
+	cmp	r2, #0
+	swine	XOS_Module
+	movne	r2, #0
+	strne	r2, [r12]
+
 	cmp	pc, #0		@ Clears V (also clears N, Z, and sets C)
 
 	ldmfd	sp!, {pc}
@@ -257,7 +377,8 @@ free_get_free_space:
 	mov	r5, r2			@ Pointer to buffer to return data
 
 	mov	r0, #FSControl_FreeSpace
-	adr	r1, free_object_name
+	ldr	r1, [r12]
+	add	r1, r1, #WS_FREE_PATH
 	swi	XOS_FSControl
 
 	str	r0, [r5, #4]		@ Free space
@@ -279,7 +400,8 @@ free_get_free_space64:
 	mov	r5, r2			@ Pointer to buffer to return data
 
 	mov	r0, #FSControl_FreeSpace64
-	adr	r1, free_object_name
+	ldr	r1, [r12]
+	add	r1, r1, #WS_FREE_PATH
 	swi	XOS_FSControl
 
 	str	r0, [r5, #8]		@ Free space lo
@@ -296,10 +418,6 @@ free_get_free_space64:
 	mov	r0, #0			@ Return 0 to indicate success
 
 	ldmfd	sp!, {r1 - r5, pc}
-
-free_object_name:
-	.string	"HostFS::HostFS.$"
-	.align
 
 
 
@@ -338,7 +456,7 @@ service_fsredeclare:
 
 	@ Redeclare filing system
 	mov	r0, #FSControl_AddFS
-	adr	r1, module_start
+	adrl	r1, module_start
 	mov	r2, #(fs_info_block - module_start)
 	mov	r3, r12
 	swi	XOS_FSControl
@@ -368,6 +486,47 @@ command_hostfs:
 
 	ldmfd	sp!, {pc}
 
+
+	@ *HostFS_NameDisc / *HostFS_NameDisk
+	@ R0 = pointer to command tail (the new disc name)
+command_namedisc:
+	stmfd	sp!, {r1-r3, r9, lr}
+
+	@ R0 points to the argument; copy up to 10 chars to stack,
+	@ NUL-terminate, then send to the emulator via SWI op 9.
+	sub	sp, sp, #12		@ stack buffer for the name
+
+	mov	r1, sp			@ r1 = dest buffer
+	mov	r2, #0			@ char count
+1:	ldrb	r3, [r0], #1
+	cmp	r3, #' '		@ space or control char terminates
+	ble	2f
+	cmp	r2, #10
+	bge	3f			@ name too long
+	strb	r3, [r1], #1
+	add	r2, r2, #1
+	b	1b
+
+2:	mov	r3, #0
+	strb	r3, [r1]		@ NUL-terminate
+
+	cmp	r2, #0
+	beq	3f			@ empty name
+
+	mov	r0, sp			@ R0 = NUL-terminated name
+	mov	r9, #HOSTFS_OP_SET_DISC_NAME
+	swi	ArcEm_HostFS
+
+	add	sp, sp, #12
+	ldmfd	sp!, {r1-r3, r9, pc}
+
+3:	@ Bad disc name
+	add	sp, sp, #12
+	ldmfd	sp!, {r1-r3, r9, lr}
+	adrl	r0, err_bad_disc_name
+	cmp	r0, #NBIT
+	cmnvc	r0, #NBIT
+	mov	pc, lr
 
 
 	/* FSEntry_Open (Open a file)
@@ -499,12 +658,12 @@ not_implemented:
 	adr	r0, err_badfsop
 	mov	r1, #0
 	mov	r2, #0
-	adr	r4, title
+	ldr	r4, =title
 	swi	XMessageTrans_ErrorLookup	@ V always set when SWI returns
 	ldmfd	sp!, {pc}
 
 
-	/* Entry: 
+	/* Entry:
 	 * R9 = error number
 	 * Exit:
 	 * Return function with error
@@ -586,6 +745,11 @@ err_discnotfound:
 err_notfound:
 	.int	0x10000 | (FILING_SYSTEM_NUMBER << 8) | FILECORE_ERROR_NOTFOUND
 	.string	"Not found"
+	.align
+
+err_bad_disc_name:
+	.int	0x10000 | (FILING_SYSTEM_NUMBER << 8) | 0xCF
+	.string	"Bad disc name"
 	.align
 
 err_unknown:

@@ -72,6 +72,8 @@ guest module pass the call through without shuffling registers.
 <value number="5">FSEntry_File</value>
 <value number="6">FSEntry_Func</value>
 <value number="7">FSEntry_GBPB</value>
+<value number="8">QueryDiscName</value>
+<value number="9">SetDiscName</value>
 <value number="FFFFFFFF">Register with the host</value>
 </value-table>
 </p>
@@ -233,6 +235,8 @@ complete. That value is also returned when the object named is not a directory.
    <value number="5"><reference type='swi' name='RPCEmu_HostFS' reason='5' use-description='yes'/></value>
    <value number="6"><reference type='swi' name='RPCEmu_HostFS' reason='6' use-description='yes'/></value>
    <value number="7"><reference type='swi' name='RPCEmu_HostFS' reason='7' use-description='yes'/></value>
+   <value number="8"><reference type='swi' name='RPCEmu_HostFS' reason='8' use-description='yes'/></value>
+   <value number="9"><reference type='swi' name='RPCEmu_HostFS' reason='9' use-description='yes'/></value>
    <value number="FFFFFFFF"><reference type='swi' name='RPCEmu_HostFS' reason='FFFFFFFF' use-description='yes'/></value>
   </value-table>
   </p>
@@ -687,6 +691,81 @@ A host implementation need do no more than accept the call.
 </use>
 </swi-definition>
 
+<swi-definition name="RPCEmu_HostFS"
+                number="56AC1"
+                reason="8" reasonname="QueryDiscName"
+                description="Returns the disc name"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">Pointer to the buffer to receive the name</register-use>
+ <register-use number="1">Size of the buffer in bytes</register-use>
+ <register-use number="9">8 (operation)</register-use>
+</entry>
+<exit>
+ <register-use number="1">Length of the disc name in bytes, whether or not it was written</register-use>
+</exit>
+
+<use>
+<p>
+Returns the current disc name as a NUL-terminated string. When R0 is non-zero
+and R1 is greater than zero, the name is written to the buffer. The name's
+length is always returned in R1 so a caller can discover how large a buffer it
+needs without providing one.
+</p>
+<p>
+Spaces in the name are returned as &hex;A0 (non-breaking space), which is the
+encoding RISC OS uses so that FileSwitch path parsing does not treat them as
+terminators.
+</p>
+<p>
+The name defaults to "HostFS" but may be changed by the user through the
+<em>hostfs_name</em> key in the machine's configuration file, or from within
+RISC OS using <command>*HostFS_NameDisc</command>.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_HostFS' reason='9'/>
+</related>
+</swi-definition>
+
+<swi-definition name="RPCEmu_HostFS"
+                number="56AC1"
+                reason="9" reasonname="SetDiscName"
+                description="Changes the disc name"
+                irqs="undefined"
+                fiqs="undefined"
+                processor-mode="SVC"
+                re-entrant="no">
+<entry>
+ <register-use number="0">Pointer to a NUL-terminated string holding the new name</register-use>
+ <register-use number="9">9 (operation)</register-use>
+</entry>
+<exit>
+ <register-use number="0-8" state="preserved" />
+</exit>
+
+<use>
+<p>
+Sets the disc name and saves it to the machine's configuration file. The
+<command>*HostFS_NameDisc</command> command limits the name to ten characters,
+matching the FileCore disc name limit. An empty string is ignored.
+</p>
+<p>
+Spaces may be encoded as &hex;A0 (non-breaking space), which is what a RISC OS
+writable icon produces. The host converts them to ordinary spaces for storage
+and converts them back when the name is queried.
+</p>
+</use>
+
+<related>
+<reference type='swi' name='RPCEmu_HostFS' reason='8'/>
+</related>
+</swi-definition>
+
 </section>
 
 <section title="Examples">
@@ -714,6 +793,7 @@ hostfs_handler():
     case R9 of
     0: open()          1: get_bytes()      2: put_bytes()     3: args()
     4: close()         5: file()           6: func()          7: gbpb()
+    8: query_disc_name()                   9: set_disc_name()
     otherwise: log("unknown operation")
 </extended-example>
 
@@ -785,6 +865,9 @@ get_bytes():
  <history>
   <revision number="1" author="Charles Ferguson" date="11 Aug 2026" title="Initial version">
     <change>Documented the &hex;56AC1 filing system interface, protocol version 3.</change>
+  </revision>
+  <revision number="2" author="David Ramsden" date="30 Oct 2026" title="Disc name operations">
+    <change>Added R9=8 (QueryDiscName) and R9=9 (SetDiscName) operations.</change>
   </revision>
  </history>
 </meta>

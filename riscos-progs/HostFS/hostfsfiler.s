@@ -20,11 +20,13 @@
         XOS_ReadModeVariable  = 0x20035
         XOS_ReadMonotonicTime = 0x20042
         XWimp_Initialise = 0x600c0
-        XWimp_CreateIcon = 0x600c2
-	XWimp_CreateMenu = 0x600d4
-        XWimp_CloseDown  = 0x600dd
-        XWimp_PollIdle   = 0x600e1
-        XWimp_SpriteOp   = 0x600e9
+        XWimp_CreateIcon    = 0x600c2
+	XWimp_DeleteIcon    = 0x600c4
+	XWimp_SetIconState  = 0x600c6
+	XWimp_CreateMenu    = 0x600d4
+        XWimp_CloseDown     = 0x600dd
+        XWimp_PollIdle      = 0x600e1
+        XWimp_SpriteOp      = 0x600e9
 
         Module_Enter = 2
         Module_Claim = 6
@@ -45,7 +47,14 @@
 
         WIMP_POLL_MASK = 0x00000031     @ no Null, Pointer Entering or Pointer Leaving events
 
-        WORKSPACE_SIZE = 512
+        @ ArcEm SWI chunk
+        ARCEM_SWI_CHUNK  = 0x56ac0
+        ARCEM_SWI_CHUNKX = ARCEM_SWI_CHUNK | 0x20000
+        ArcEm_HostFS    = ARCEM_SWI_CHUNKX + 1
+
+        HOSTFS_OP_QUERY_DISC_NAME = 8
+
+        WORKSPACE_SIZE = 832	@ includes 64-byte stack at end
 
         WS_MY_TASK_HANDLE      = 0
         WS_FILER_TASK_HANDLE   = 4
@@ -55,7 +64,16 @@
         WS_HOSTFS_ICON_HANDLE  = 84
         WS_SHARED_ICON_HANDLE  = 88
         WS_CURRENT_MENU        = 92	@ 0 = HostFS, 1 = Shared
-        WS_WIMP_BLOCK          = 96 @ must be last
+        @ Dynamic strings built from the configured disc name
+        WS_DISC_NAME           = 96	@ 12 bytes: disc name (up to 10 + NUL)
+        WS_ICON_TEXT           = 108	@ 12 bytes: icon bar text (same as disc name)
+        WS_FILER_CMD           = 120	@ 48 bytes: "Filer_OpenDir HostFS::<name>.$"
+        WS_FREE_CMD            = 168	@ 48 bytes: "ShowFree -fs HostFS <name>"
+        WS_MENU                = 216	@ 76 bytes: 2-item main menu (Name disc + Free)
+        WS_MENU_NAME           = 292	@ 52 bytes: 1-item submenu (writable name field)
+        WS_MENU_NAME_BUF       = 344	@ 12 bytes: writable item buffer
+        WS_NAMEDISC_CMD        = 356	@ 32 bytes: "HostFS_NameDisc <name>"
+        WS_WIMP_BLOCK          = 388	@ must be last
 
 
 
@@ -86,7 +104,7 @@ modtitle:
         .string	"RPCEmuHostFSFiler"
 
 help:
-        .string	"HostFSFiler\t0.05 (23 Sep 2014)"
+        .string	"HostFSFiler\t0.08 (30 Oct 2026)"
         .align
 
 
@@ -122,7 +140,7 @@ init:
 	mov	r3, #WORKSPACE_SIZE
 	swi	XOS_Module
 	ldmvsfd	sp!, {pc}       @ no memory claimed then refuse to initialise
-	
+
 	str	r2, [r12]
 1:
 	ldr	wp, [r12]
@@ -262,6 +280,10 @@ task_modtitle:
 	.string	"HostFS Filer"
 	.align
 
+default_disc_name:
+	.string	"HostFS"
+	.align
+
 icon_bar_block:
 	.int	-5		@ Left side of icon bar, scan from left (RO3+)
 	.int	0		@ Minimum X
@@ -271,10 +293,7 @@ icon_bar_block:
 	.int	0x1700310b	@ Flags (includes Indirected Text and Sprite)
 	.int	0		@ Gap for pointer to Text
 	.int	0		@ Gap for pointer to Validation String
-	.int	6		@ Length of Text buffer
-
-icon_bar_text:
-	.string	"HostFS"
+	.int	12		@ Length of Text buffer
 
 icon_bar_validation:
 	.ascii	"S"		@ Unterminated - continues below...
@@ -305,25 +324,7 @@ icon_bar_icon_name2:
 
 	.align
 
-
-
-menu_hostfs:
-	.string	"HostFS"	@ Menu Title, padded to 12 bytes
-	.align
-	.int	0
-
-	.byte	7, 2, 7, 0	@ Title colours
-	.int	16 * 6		@ Width
-	.int	44		@ Height
-	.int	0		@ Vertical gap
-	@ Menu items
-	.int	(1 << 7)	@ Flags: last item
-	.int	-1		@ Submenu pointer
-	.int	0x07000001	@ Menu item icon flags, Text
-	.string	"Free"		@ Menu item icon data, padded to 12 bytes
-	.align
-	.int	0
-
+@ Menu template for the Shared drive (static)
 menu_shared:
 	.string	"Shared"	@ Menu Title, padded to 12 bytes
 	.align
@@ -341,6 +342,24 @@ menu_shared:
 	.align
 	.int	0
 
+@ Static strings
+str_filer_prefix:
+	.string	"Filer_OpenDir HostFS::"
+str_free_prefix:
+	.string	"ShowFree -fs HostFS "
+str_root_suffix:
+	.string	".$"
+str_namedisc_prefix:
+	.string	"HostFS_NameDisc "
+str_name_disc_item:
+	.string	"Name disc"
+str_disc_name_title:
+	.string	"Disc name"
+menu_name_validation:
+	.ascii	"A~$&%@\\^:.#*\"|"
+	.byte	' ', 0
+	.align
+
 
 
 	@ "Start" entry point
@@ -348,6 +367,7 @@ menu_shared:
 	@ Therefore no need to preserve link register before calling SWIs
 start:
         ldr     wp, [r12]               @ Get workspace pointer
+	add	sp, wp, #WORKSPACE_SIZE	@ Set up USR stack in workspace
         ldr     r0, [wp, #WS_MY_TASK_HANDLE]
         cmp     r0, #0                  @ Am I already active?
         ble     start_skipclosedown     @ No then skip following instructions
@@ -357,6 +377,10 @@ start:
         str     r0, [wp, #WS_MY_TASK_HANDLE]
 
 start_skipclosedown:
+	bl	query_disc_name
+	bl	build_filer_strings
+	bl	build_menu
+
 	ldr	r0, = WIMP_VERSION	@ (re)start the task
 	ldr	r1, TASK
 	adr	r2, task_modtitle
@@ -366,19 +390,18 @@ start_skipclosedown:
 	str	r0, [wp, #WS_WIMP_VERSION]	@ store Wimp version
 	str	r1, [wp, #WS_MY_TASK_HANDLE]	@ store Task handle
 
-
 	@ Prepare block for Icon Bar icon
-	adr	r0, icon_bar_block
+	adrl	r0, icon_bar_block
 	add	r1, wp, #WS_ICON_BAR_BLOCK
 
 	ldmia	r0, {r2-r10}
-	adrl	r8, icon_bar_text		@ Fill in pointers
+	add	r8, wp, #WS_ICON_TEXT		@ Text -> workspace
 	adrl	r9, icon_bar_validation
 	stmia	r1, {r2-r10}
 
 	@ Calculate size of Icon Bar Icon
 	mov	r0, #SpriteOp_ReadSpriteInfo
-	adr	r2, icon_bar_icon_name
+	adrl	r2, icon_bar_icon_name
 	swi	XWimp_SpriteOp
 	movvc	r0, r6
 	movvc	r1, #ModeVariable_YEig
@@ -398,7 +421,7 @@ start_skipclosedown:
 	str	r0, [wp, #WS_HOSTFS_ICON_HANDLE]	@ Save icon handle
 
 	@ Prepare block for second Icon Bar icon (Shared)
-	adr	r0, icon_bar_block2
+	adrl	r0, icon_bar_block2
 	add	r1, wp, #WS_ICON_BAR_BLOCK2
 
 	ldmia	r0, {r2-r10}
@@ -408,7 +431,7 @@ start_skipclosedown:
 
 	@ Calculate size of second Icon Bar Icon
 	mov	r0, #SpriteOp_ReadSpriteInfo
-	adr	r2, icon_bar_icon_name2
+	adrl	r2, icon_bar_icon_name2
 	swi	XWimp_SpriteOp
 	movvc	r0, r6
 	movvc	r1, #ModeVariable_YEig
@@ -471,10 +494,11 @@ mouse_click_hostfs:
 
 	cmp	r0, #4			@ Select
 	cmpne	r0, #1			@ Adjust
-	adreq	r0, cli_command_hostfs
-	swieq	XOS_CLI
-	beq	re_poll
-
+	bne	1f
+	add	r0, wp, #WS_FILER_CMD
+	swi	XOS_CLI
+	b	re_poll
+1:
 	cmp	r0, #2			@ Menu
 	bne	re_poll
 
@@ -484,7 +508,7 @@ mouse_click_hostfs:
 	ldr	r2, [r1, #0]		@ X coordinate of click
 	sub	r2, r2, #64
 	mov	r3, #(96 + 44)
-	adr	r1, menu_hostfs
+	add	r1, wp, #WS_MENU
 	swi	XWimp_CreateMenu
 
 	b	re_poll
@@ -507,14 +531,10 @@ mouse_click_shared:
 	ldr	r2, [r1, #0]		@ X coordinate of click
 	sub	r2, r2, #64
 	mov	r3, #(96 + 44)
-	adr	r1, menu_shared
+	adrl	r1, menu_shared
 	swi	XWimp_CreateMenu
 
 	b	re_poll
-
-cli_command_hostfs:
-	.string	"Filer_OpenDir HostFS::HostFS.$"
-	.align
 
 cli_command_shared:
 	.string	"Filer_OpenDir HostFS::Shared.$"
@@ -522,18 +542,58 @@ cli_command_shared:
 
 
 menu_selection:
-	@ Check which menu is open and run appropriate free command
 	ldr	r0, [wp, #WS_CURRENT_MENU]
 	cmp	r0, #1
-	adreq	r0, free_cli_command_shared
-	adrne	r0, free_cli_command_hostfs
-	swi	XOS_CLI
+	beq	menu_selection_shared
 
+	@ HostFS menu: check item index
+	ldr	r0, [wp, #WS_WIMP_BLOCK]
+	cmp	r0, #0
+	beq	menu_selection_name
+	cmp	r0, #1
+	bne	re_poll
+
+	@ Item 1: Free
+	add	r0, wp, #WS_FREE_CMD
+	swi	XOS_CLI
 	b	re_poll
 
-free_cli_command_hostfs:
-	.string	"ShowFree -fs HostFS HostFS"
-	.align
+menu_selection_shared:
+	adrl	r0, free_cli_command_shared
+	swi	XOS_CLI
+	b	re_poll
+
+menu_selection_name:
+	@ Build "HostFS_NameDisc <name>" at WS_NAMEDISC_CMD
+	adrl	r0, str_namedisc_prefix
+	add	r1, wp, #WS_NAMEDISC_CMD
+	bl	copy_string
+	sub	r1, r1, #1		@ back over NUL
+	add	r0, wp, #WS_MENU_NAME_BUF
+	bl	copy_string
+
+	add	r0, wp, #WS_NAMEDISC_CMD
+	swi	XOS_CLI
+
+	@ Re-query and rebuild everything
+	bl	query_disc_name
+	bl	build_filer_strings
+	bl	build_menu
+
+	@ Delete old icon and recreate with updated text
+	add	r1, wp, #WS_WIMP_BLOCK
+	mvn	r0, #1			@ -2 = icon bar
+	str	r0, [r1]
+	ldr	r0, [wp, #WS_HOSTFS_ICON_HANDLE]
+	str	r0, [r1, #4]
+	swi	XWimp_DeleteIcon
+
+	mov	r0, #0x71000000		@ same priority as original
+	add	r1, wp, #WS_ICON_BAR_BLOCK
+	swi	XWimp_CreateIcon
+	str	r0, [wp, #WS_HOSTFS_ICON_HANDLE]
+
+	b	re_poll
 
 free_cli_command_shared:
 	.string	"ShowFree -fs HostFS Shared"
@@ -556,3 +616,193 @@ close_down:
 	str	r0, [wp, #WS_MY_TASK_HANDLE]
 
 	swi	XOS_Exit
+
+
+@ -----------------------------------------------------------------------
+@ Query the disc name from the emulator into WS_DISC_NAME.
+@ Falls back to "HostFS" if the emulator does not support the query.
+@ -----------------------------------------------------------------------
+query_disc_name:
+	stmfd	sp!, {r0-r3, r9, lr}
+
+	add	r0, wp, #WS_DISC_NAME
+	mov	r1, #12
+	mov	r9, #HOSTFS_OP_QUERY_DISC_NAME
+	swi	ArcEm_HostFS
+
+	@ Check non-empty
+	ldrb	r0, [wp, #WS_DISC_NAME]
+	cmp	r0, #0
+	bne	1f
+
+	@ Fall back to default
+	adrl	r0, default_disc_name
+	add	r1, wp, #WS_DISC_NAME
+	bl	copy_string
+1:
+	@ Copy disc name to icon text buffer too
+	add	r0, wp, #WS_DISC_NAME
+	add	r1, wp, #WS_ICON_TEXT
+	bl	copy_string
+
+	ldmfd	sp!, {r0-r3, r9, pc}
+
+@ -----------------------------------------------------------------------
+@ Build "Filer_OpenDir HostFS::<name>.$" at WS_FILER_CMD and
+@ "ShowFree -fs HostFS <name>" at WS_FREE_CMD.
+@ -----------------------------------------------------------------------
+build_filer_strings:
+	stmfd	sp!, {r0-r3, lr}
+
+	@ "Filer_OpenDir HostFS::<name>.$"
+	adrl	r0, str_filer_prefix
+	add	r1, wp, #WS_FILER_CMD
+	bl	copy_string
+	sub	r1, r1, #1		@ back over NUL
+	add	r0, wp, #WS_DISC_NAME
+	bl	copy_string
+	sub	r1, r1, #1
+	adrl	r0, str_root_suffix
+	bl	copy_string
+
+	@ "ShowFree -fs HostFS <name>"
+	adrl	r0, str_free_prefix
+	add	r1, wp, #WS_FREE_CMD
+	bl	copy_string
+	sub	r1, r1, #1
+	add	r0, wp, #WS_DISC_NAME
+	bl	copy_string
+
+	ldmfd	sp!, {r0-r3, pc}
+
+@ -----------------------------------------------------------------------
+@ Build two Wimp menu blocks for the HostFS drive:
+@   WS_MENU      — main menu (title = disc name): "Name disc" + "Free"
+@   WS_MENU_NAME — submenu (title = "Disc name"): writable name field
+@ Also copies the current disc name to WS_MENU_NAME_BUF.
+@ -----------------------------------------------------------------------
+build_menu:
+	stmfd	sp!, {r0-r4, lr}
+
+	@ Copy current disc name into writable buffer
+	add	r0, wp, #WS_DISC_NAME
+	add	r1, wp, #WS_MENU_NAME_BUF
+	bl	copy_string
+
+	@ === Main menu at WS_MENU ===
+	add	r3, wp, #WS_MENU
+
+	@ Title: disc name, NUL-padded to 12 bytes
+	add	r0, wp, #WS_DISC_NAME
+	mov	r1, r3
+	bl	copy_string
+	sub	r2, r1, r3
+1:	cmp	r2, #12
+	movlt	r4, #0
+	strltb	r4, [r1], #1
+	addlt	r2, r2, #1
+	blt	1b
+
+	@ Title colours
+	mov	r0, #7
+	strb	r0, [r1], #1
+	mov	r0, #2
+	strb	r0, [r1], #1
+	mov	r0, #7
+	strb	r0, [r1], #1
+	mov	r0, #0
+	strb	r0, [r1], #1
+
+	@ Width, height, gap
+	mov	r0, #(16 * 12)
+	str	r0, [r1], #4
+	mov	r0, #44
+	str	r0, [r1], #4
+	mov	r0, #0
+	str	r0, [r1], #4
+
+	@ Item 0: "Name disc" with submenu arrow
+	mov	r0, #0
+	str	r0, [r1], #4		@ Flags: 0
+	add	r0, wp, #WS_MENU_NAME
+	str	r0, [r1], #4		@ Submenu: pointer to name submenu
+	ldr	r0, =0x07000001
+	str	r0, [r1], #4		@ Icon flags: Text
+	mov	r4, r1			@ save icon data start
+	adrl	r0, str_name_disc_item
+	bl	copy_string
+	add	r1, r4, #12		@ advance past 12-byte icon data
+
+	@ Item 1: "Free" (last item)
+	mov	r0, #(1 << 7)
+	str	r0, [r1], #4
+	mvn	r0, #0
+	str	r0, [r1], #4
+	ldr	r0, =0x07000001
+	str	r0, [r1], #4
+	adrl	r0, str_free_item
+	bl	copy_string
+
+	@ === Name submenu at WS_MENU_NAME ===
+	add	r3, wp, #WS_MENU_NAME
+
+	@ Title: "Disc name", NUL-padded to 12 bytes
+	adrl	r0, str_disc_name_title
+	mov	r1, r3
+	bl	copy_string
+	sub	r2, r1, r3
+2:	cmp	r2, #12
+	movlt	r4, #0
+	strltb	r4, [r1], #1
+	addlt	r2, r2, #1
+	blt	2b
+
+	@ Title colours
+	mov	r0, #7
+	strb	r0, [r1], #1
+	mov	r0, #2
+	strb	r0, [r1], #1
+	mov	r0, #7
+	strb	r0, [r1], #1
+	mov	r0, #0
+	strb	r0, [r1], #1
+
+	@ Width, height, gap
+	mov	r0, #(16 * 12)
+	str	r0, [r1], #4
+	mov	r0, #44
+	str	r0, [r1], #4
+	mov	r0, #0
+	str	r0, [r1], #4
+
+	@ Item 0: writable name field (last item)
+	mov	r0, #((1 << 7) | (1 << 2))
+	str	r0, [r1], #4		@ Flags: last + writable
+	mvn	r0, #0
+	str	r0, [r1], #4		@ Submenu: -1
+	ldr	r0, =0x07000121
+	str	r0, [r1], #4		@ Icon flags: text | fill | indirected
+	add	r0, wp, #WS_MENU_NAME_BUF
+	str	r0, [r1], #4		@ buffer pointer
+	adrl	r0, menu_name_validation
+	str	r0, [r1], #4		@ validation pointer
+	mov	r0, #11
+	str	r0, [r1], #4		@ buffer length (10 chars + NUL)
+
+	ldmfd	sp!, {r0-r4, pc}
+
+str_free_item:
+	.string	"Free"
+	.align
+
+@ -----------------------------------------------------------------------
+@ Copy a NUL-terminated string.
+@ Entry: r0 = src, r1 = dst
+@ Exit:  r1 = one past the NUL written (r0, r2 corrupted)
+@ -----------------------------------------------------------------------
+copy_string:
+0:	ldrb	r2, [r0], #1
+	strb	r2, [r1], #1
+	cmp	r2, #0
+	bne	0b
+	mov	pc, lr

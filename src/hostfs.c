@@ -112,8 +112,25 @@ typedef struct {
 #define DEFAULT_FILE_TYPE   RISC_OS_FILE_TYPE_TEXT
 #define MINIMUM_BUFFER_SIZE 32768
 
-/** Disc name of default disc or if no disc name is present */
-static const char *disc_name_default = "HostFS";
+/** Disc name of default disc or if no disc name is present.
+    Set from config.hostfs_name during hostfs_init(); "HostFS" when empty.
+    Stored in RISC OS encoding: spaces are 0xA0 (non-breaking space). */
+static char disc_name_buf[12] = "HostFS";
+static const char *disc_name_default = disc_name_buf;
+
+/** Convert spaces between host (0x20) and RISC OS (0xA0) encoding. */
+static void
+hostfs_disc_name_to_riscos(char *buf)
+{
+  for (; *buf; buf++)
+    if (*buf == 0x20) *buf = (char) 0xA0;
+}
+static void
+hostfs_disc_name_to_host(char *buf)
+{
+  for (; *buf; buf++)
+    if ((unsigned char) *buf == 0xA0) *buf = 0x20;
+}
 
 /** Disc name of shared disc */
 static const char *disc_name_shared = "Shared";
@@ -158,8 +175,19 @@ dbug_hostfs(const char *format, ...)
 #endif
 
 /**
+ * Test whether a disc name refers to the per-machine HostFS drive.
+ * Accepts the configured name and "HostFS" (the legacy/module default).
+ */
+static int
+hostfs_disc_name_is_default(const char *disc_name)
+{
+  return STRCASEEQ(disc_name, disc_name_default) ||
+         STRCASEEQ(disc_name, "HostFS");
+}
+
+/**
  * Verify that the disc name is valid.
- * Accepts both "HostFS" (per-machine) and "Shared" (common) disc names.
+ * Accepts the configured per-machine name, "HostFS" (legacy), and "Shared".
  *
  * @param disc_name Disc name
  * @return 1 if disc name is valid, 0 otherwise
@@ -167,7 +195,7 @@ dbug_hostfs(const char *format, ...)
 static int
 hostfs_disc_name_valid(const char *disc_name)
 {
-  if (STRCASEEQ(disc_name, disc_name_default) || STRCASEEQ(disc_name, disc_name_shared)) {
+  if (hostfs_disc_name_is_default(disc_name) || STRCASEEQ(disc_name, disc_name_shared)) {
     return 1;
   }
   return 0;
@@ -2267,7 +2295,10 @@ hostfs_func_23_canonicalise_disc_name(ARMul_State *state)
     get_string(state, state->Reg[2], disc_name, sizeof(disc_name));
     dbug_hostfs("\t   = \'%s\'\n", disc_name);
     if (hostfs_disc_name_valid(disc_name)) {
-      canonical_name = disc_name;
+      if (hostfs_disc_name_is_default(disc_name))
+        canonical_name = disc_name_default;
+      else
+        canonical_name = disc_name_shared;
       have_valid_disc_name = 1;
     }
   }
@@ -2479,6 +2510,15 @@ hostfs_init(void)
 {
   int c;
 
+  /* Apply the configured disc name, or fall back to "HostFS".
+     Convert host spaces (0x20) to RISC OS non-breaking spaces (0xA0). */
+  if (config.hostfs_name[0] != '\0') {
+    snprintf(disc_name_buf, sizeof(disc_name_buf), "%s", config.hostfs_name);
+    hostfs_disc_name_to_riscos(disc_name_buf);
+  } else {
+    strcpy(disc_name_buf, "HostFS");
+  }
+
   /*
    * The machine's HostFS folder: <machine dir>/hostfs unless the configuration
    * says otherwise. Several machines can be pointed at one folder, which is
@@ -2616,8 +2656,26 @@ hostfs(ARMul_State *state)
     case 5: hostfs_file(state);     break;
     case 6: hostfs_func(state);     break;
     case 7: hostfs_gbpb(state);     break;
+    case 8: /* Query disc name: R0 = buffer, R1 = size */
+      if (state->Reg[0] != 0 && state->Reg[1] > 0) {
+        put_string(state, state->Reg[0], disc_name_default);
+      }
+      state->Reg[1] = (uint32_t) strlen(disc_name_default);
+      break;
+    case 9: /* Set disc name: R0 = string pointer */
+      if (state->Reg[0] != 0) {
+        char new_name[12];
+        get_string(state, state->Reg[0], new_name, sizeof(new_name));
+        if (new_name[0] != '\0') {
+          snprintf(disc_name_buf, sizeof(disc_name_buf), "%s", new_name);
+          /* Convert RISC OS 0xA0 to host 0x20 for the config file. */
+          snprintf(config.hostfs_name, sizeof(config.hostfs_name), "%s", new_name);
+          hostfs_disc_name_to_host(config.hostfs_name);
+          config_save(&config);
+        }
+      }
+      break;
     default:
-      error("!!! ERROR !!! - unknown op in R9\n");
       break;
     }
     break;
