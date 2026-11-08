@@ -20,6 +20,7 @@
 
 #include "gui_resources.h"
 #include "manager_frame.h"
+#include "file_wildcards.h"
 #include "reset_question.h"
 
 #include "display_options.h"
@@ -2776,12 +2777,15 @@ void ManagerFrame::OnMachineMenuCommand(wxCommandEvent &event)
 	case ID_MENU_LOAD_DISC0:
 	case ID_MENU_LOAD_DISC1:
 		ForwardWithFileDialog(id, "Load Disc Image",
-		    "Disc images (*.adf;*.hfe;*.img)|*.adf;*.hfe;*.img|All files (*.*)|*.*",
+		    HostCaseInsensitiveWildcard(
+		        "Disc images (*.adf;*.adl;*.hfe;*.img)|*.adf;*.adl;*.hfe;*.img|"
+		        "All files (*.*)|*.*"),
 		    false);
 		return;
 	case ID_MENU_CDROM_ISO:
 		ForwardWithFileDialog(id, "Open ISO Image",
-		    "ISO images (*.iso)|*.iso|All files (*.*)|*.*", false);
+		    HostCaseInsensitiveWildcard(
+		        "ISO images (*.iso)|*.iso|All files (*.*)|*.*"), false);
 		return;
 	case ID_MENU_CREATE_DISC0:
 	case ID_MENU_CREATE_DISC1:

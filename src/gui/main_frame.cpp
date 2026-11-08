@@ -24,6 +24,7 @@
 #include "gui_resources.h"
 #include "main_frame.h"
 
+#include "file_wildcards.h"
 #include "guest_cursor.h"
 #include "reset_question.h"
 #include "window_owner.h"
@@ -1110,11 +1111,12 @@ void MainFrame::LoadDisc(int drive)
 	wxString path;
 
 	if (!AskForFile("Open Disc Image",
-	        "All disc images (*.adf;*.adl;*.hfe;*.img)|*.adf;*.adl;*.hfe;*.img|"
-	        "ADFS D/E/F Disc Image (*.adf)|*.adf|"
-	        "ADFS L Disc Image (*.adl)|*.adl|"
-	        "DOS Disc Image (*.img)|*.img|"
-	        "HFE Disc Image (*.hfe)|*.hfe", false, &path)) {
+	        HostCaseInsensitiveWildcard(
+	            "All disc images (*.adf;*.adl;*.hfe;*.img)|*.adf;*.adl;*.hfe;*.img|"
+	            "ADFS D/E/F Disc Image (*.adf)|*.adf|"
+	            "ADFS L Disc Image (*.adl)|*.adl|"
+	            "DOS Disc Image (*.img)|*.img|"
+	            "HFE Disc Image (*.hfe)|*.hfe"), false, &path)) {
 		return;
 	}
 
@@ -1278,7 +1280,8 @@ void MainFrame::OnCdromIso(wxCommandEvent &)
 	wxString iso_path;
 
 	if (!AskForFile("Open ISO Image",
-	        "ISO CD-ROM Image (*.iso)|*.iso|All Files (*.*)|*.*", false, &iso_path)) {
+	        HostCaseInsensitiveWildcard(
+	            "ISO CD-ROM Image (*.iso)|*.iso|All Files (*.*)|*.*"), false, &iso_path)) {
 		SyncCdromMenuChecks();
 		return;
 	}
