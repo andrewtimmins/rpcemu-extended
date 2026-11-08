@@ -65,11 +65,7 @@ static uint8_t membuf_seed[4096];
 /* The bits of R15 that are the PSR in 26-bit mode: NZCV, I, F and the mode. */
 #define R15_PSR    0xfc000003u
 
-/* Flag bits, in their 26-bit R15 positions. */
-#define NFLAG 0x80000000u
-#define ZFLAG 0x40000000u
-#define CFLAG 0x20000000u
-#define VFLAG 0x10000000u
+/* NFLAG, ZFLAG, CFLAG, VFLAG come from arm.h. */
 #define IFLAG 0x08000000u
 #define FFLAG 0x04000000u
 

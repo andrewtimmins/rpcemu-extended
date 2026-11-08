@@ -109,6 +109,7 @@ void callbackide(void);
 
 /* ATAPI Additional Sense Codes */
 #define ASC_ILLEGAL_OPCODE		0x20
+#define ASC_MEDIUM_MAY_HAVE_CHANGED	0x28
 #define ASC_MEDIUM_NOT_PRESENT		0x3a
 
 /* Tell RISC OS that we have a 4x CD-ROM drive (600kb/sec data, 706kb/sec raw).
@@ -122,14 +123,15 @@ void callbackide(void);
 /**
  * Is there anything at all on the currently selected drive?
  *
- * The register file below is shared between the two drives rather than being
- * duplicated per device as it is on real hardware, so a read taken while an
- * empty drive is selected returns whatever the other one last left there.
- * Guest software identifies a device by reading exactly those registers, so
- * without this an absent drive borrows its neighbour's identity.
+ * Each drive has its own register file, so an empty drive returns its own
+ * (zeroed or signature) values rather than borrowing its neighbour's.
+ * When the CD-ROM is enabled the IDE bus is always active — on real
+ * hardware the controller (IOMD) is always present — so both drives
+ * respond, even when drive 0 has no hard disc image.
  */
 #define IDE_DRIVE_PRESENT(ide) \
-	(ide_drive_is_hdd((ide).drive) || IDE_DRIVE_IS_CDROM(ide))
+	(ide_drive_is_hdd((ide).drive) || IDE_DRIVE_IS_CDROM(ide) || \
+	 config.cdromenabled)
 
 /** The register file of the drive currently selected by the guest. */
 #define IDE_R	(ide.regs[ide.drive])
@@ -168,6 +170,7 @@ static struct
         int spt[2], hpc[2];
         int packetstatus;
         int cdpos,cdlen;
+        unsigned char sense_key;
         unsigned char asc;
         int discchanged;
         int reset;
@@ -232,10 +235,23 @@ ide_apply_post_reset_signature(int d)
 		r->secount = 1;
 		r->sector = 1;
 		r->cylinder = 0xeb14;
+	} else if (config.cdromenabled && d == 0) {
+		/* No hard disc image, but the CD-ROM on drive 1 means the
+		   IDE bus is active.  Present an ATAPI signature so ADFS
+		   recognises a live device and initialises the IDE layer,
+		   but does not register a phantom hard disc on :4.
+		   IDENTIFY PACKET DEVICE will abort (drive 0 is not really
+		   ATAPI), so CDFSSoftATAPI moves on to drive 1 where the
+		   real CD-ROM is. */
+		r->atastat = READY_STAT;
+		r->error = 0x01;
+		r->secount = 1;
+		r->sector = 1;
+		r->cylinder = 0xeb14;
 	}
 
-	/* An empty drive keeps its zeroed registers, so the bus reads as having
-	   nothing on it rather than echoing the drive beside it. */
+	/* A truly empty bus (no HDD, no CD-ROM) keeps zeroed registers
+	   so the controller reads as absent. */
 }
 
 /** Controller state that is not per-drive, plus both drives' signatures. */
@@ -261,6 +277,7 @@ ide_reset_controller_state(void)
 	ide.fdisk = 0;
 	ide.lba_cmd[0] = ide.lba_cmd[1] = 0;
 	ide.discchanged = 0;
+	ide.sense_key = SENSE_NONE;
 	ide.asc = 0;
 	ide_reset_shared_state();
 }
@@ -1088,6 +1105,13 @@ void callbackide(void)
         case WIN_SETFEATURES:
         case WIN_STANDBY:
         case WIN_IDLEIMMEDIATE:
+                if (!IDE_DRIVE_PRESENT(ide)) {
+                        goto abort_cmd;
+                }
+                IDE_R.atastat = READY_STAT;
+                ide_irq_raise();
+                return;
+
         case WIN_CHECKPOWER:
         case WIN_SETMULT:
                 if (IDE_DRIVE_IS_CDROM(ide)) {
@@ -1259,7 +1283,7 @@ void callbackide(void)
                         IDE_R.secount=1;
                         IDE_R.sector=1;
                         IDE_R.cylinder=0xEB14;
-                        ide.drive=IDE_R.head=0;
+                        IDE_R.head=0;
                         goto abort_cmd;
                 }
                 if (!ide_drive_is_hdd(ide.drive)) {
@@ -1341,16 +1365,18 @@ abort_cmd:
 
 static void atapi_notready(void)
 {
-        /*Medium not present is 02/3A/--*/
-        /*cylprecomp is error number*/
         /*SENSE/ASC/ASCQ*/
         IDE_R.atastat = READY_STAT | ERR_STAT;    /*CHECK CONDITION*/
-        IDE_R.error = (SENSE_NOT_READY << 4) | ABRT_ERR;
         if (ide.discchanged) {
-                IDE_R.error |= MCR_ERR;
+                IDE_R.error = (SENSE_UNIT_ATTENTION << 4) | ABRT_ERR | MCR_ERR;
+                ide.sense_key = SENSE_UNIT_ATTENTION;
+                ide.asc = ASC_MEDIUM_MAY_HAVE_CHANGED;
+        } else {
+                IDE_R.error = (SENSE_NOT_READY << 4) | ABRT_ERR;
+                ide.sense_key = SENSE_NOT_READY;
+                ide.asc = ASC_MEDIUM_NOT_PRESENT;
         }
         ide.discchanged=0;
-        ide.asc = ASC_MEDIUM_NOT_PRESENT;
         ide.packetstatus=0x80;
         idecallback=50;
 }
@@ -1387,8 +1413,14 @@ static void atapicommand(void)
                 break;
 
         case GPCMD_REQUEST_SENSE: /* Used by ROS 4+ */
-                /*Will return 18 bytes of 0*/
                 memset(idebufferb,0,512);
+                idebufferb[0] = 0x70;          /* Current errors */
+                idebufferb[2] = ide.sense_key;
+                idebufferb[7] = 10;            /* Additional sense length */
+                idebufferb[12] = ide.asc;      /* ASC */
+                idebufferb[13] = 0;            /* ASCQ */
+                ide.sense_key = SENSE_NONE;
+                ide.asc = 0;
                 ide.packetstatus=3;
                 IDE_R.cylinder=18;
                 IDE_R.secount=2;
@@ -1646,6 +1678,7 @@ static void atapicommand(void)
                         IDE_R.error |= MCR_ERR;
                 }
                 ide.discchanged=0;
+                ide.sense_key = SENSE_ILLEGAL_REQUEST;
                 ide.asc = ASC_ILLEGAL_OPCODE;
                 ide.packetstatus=0x80;
                 idecallback=50;

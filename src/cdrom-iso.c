@@ -134,11 +134,11 @@ iso_open(const char *fn)
 
 	iso_file = fopen64(fn, "rb");
 	if (iso_file != NULL) {
-		/* Successfully opened ISO file */
 		iso_empty = 0;
+		rpclog("CD-ROM: opened '%s'\n", fn);
 	} else {
-		/* Failed to open ISO file - behave as if drive empty */
 		iso_empty = 1;
+		rpclog("CD-ROM: failed to open '%s'\n", fn);
 	}
 	iso_discchanged = 1;
 	return 0;

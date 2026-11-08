@@ -20,6 +20,7 @@ set(GUI_SOURCES
     gui_preferences.cpp
     gui_resources.cpp
     input_helpers.cpp
+    file_wildcards.cpp
     reset_question.cpp
     config_paths.cpp
     folder_transfer.cpp

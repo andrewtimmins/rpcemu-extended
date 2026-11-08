@@ -20,6 +20,7 @@
 
 #include "gui_resources.h"
 #include "manager_frame.h"
+#include "file_wildcards.h"
 #include "reset_question.h"
 
 #include "display_options.h"
@@ -821,6 +822,10 @@ void ManagerFrame::BuildMachineMenus(wxMenuBar *menu_bar)
 	    "Disabled");
 	cdrom_empty_item_ = cdrom_menu->AppendRadioItem(ID_MENU_CDROM_EMPTY, "Empty");
 	cdrom_iso_item_ = cdrom_menu->AppendRadioItem(ID_MENU_CDROM_ISO, "ISO Image...");
+#if defined(__linux__)
+	cdrom_ioctl_item_ = cdrom_menu->AppendRadioItem(ID_MENU_CDROM_IOCTL,
+	    "Host CD/DVD Drive");
+#endif
 	machine_disc_menu_->AppendSubMenu(cdrom_menu, "&CD-ROM");
 
 	machine_settings_menu_ = new wxMenu();
@@ -1221,7 +1226,8 @@ void ManagerFrame::SetDebugToolState(bool paused, bool pausing)
 
 void ManagerFrame::SetCdromMenuState(int source)
 {
-	wxMenuItem *item = (source == 2) ? cdrom_iso_item_
+	wxMenuItem *item = (source == 3) ? cdrom_ioctl_item_
+	    : (source == 2) ? cdrom_iso_item_
 	    : (source == 1) ? cdrom_empty_item_ : cdrom_disabled_item_;
 
 	if (item != nullptr) {
@@ -2771,12 +2777,15 @@ void ManagerFrame::OnMachineMenuCommand(wxCommandEvent &event)
 	case ID_MENU_LOAD_DISC0:
 	case ID_MENU_LOAD_DISC1:
 		ForwardWithFileDialog(id, "Load Disc Image",
-		    "Disc images (*.adf;*.hfe;*.img)|*.adf;*.hfe;*.img|All files (*.*)|*.*",
+		    HostCaseInsensitiveWildcard(
+		        "Disc images (*.adf;*.adl;*.hfe;*.img)|*.adf;*.adl;*.hfe;*.img|"
+		        "All files (*.*)|*.*"),
 		    false);
 		return;
 	case ID_MENU_CDROM_ISO:
 		ForwardWithFileDialog(id, "Open ISO Image",
-		    "ISO images (*.iso)|*.iso|All files (*.*)|*.*", false);
+		    HostCaseInsensitiveWildcard(
+		        "ISO images (*.iso)|*.iso|All files (*.*)|*.*"), false);
 		return;
 	case ID_MENU_CREATE_DISC0:
 	case ID_MENU_CREATE_DISC1:

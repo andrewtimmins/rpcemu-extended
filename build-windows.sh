@@ -8,8 +8,9 @@
 #   * Cross-compile from Linux (default). Prerequisite: run
 #     ./setup-cross-build-env.sh once to build the mingw dependencies
 #     (wxWidgets/SDL2/libvncserver/...) into /usr/x86_64-w64-mingw32.
-#   * Native on MSYS2/MINGW64 ($MSYSTEM set): uses the /mingw64 toolchain and
+#   * Native on MSYS2 ($MSYSTEM set): uses the MSYS2 toolchain and
 #     packages installed via pacman. This is what the Windows CI job runs.
+#     UCRT64 for amd64, CLANGARM64 for arm64 (MINGW64 still works).
 #
 # Usage:
 #   ./build-windows.sh          # build + stage releases/windows/amd64/
@@ -23,7 +24,8 @@ cd "$SCRIPT_DIR"
 # one, because that is what actually decides which compiler and which libraries
 # are on the path:
 #
-#   MINGW64      x86-64, GCC             -> releases/windows/amd64
+#   UCRT64       x86-64, GCC (ucrt)      -> releases/windows/amd64
+#   MINGW64      x86-64, GCC (msvcrt)   -> releases/windows/amd64
 #   CLANGARM64   ARM64, clang            -> releases/windows/arm64
 #   (neither)    the Linux cross build, x86-64 only
 #
@@ -35,6 +37,11 @@ CLANGARM64)
 	TARGET=aarch64-w64-mingw32
 	WIN_ARCH=arm64
 	MSYS_PREFIX=/clangarm64
+	;;
+UCRT64)
+	TARGET=x86_64-w64-mingw32
+	WIN_ARCH=amd64
+	MSYS_PREFIX=/ucrt64
 	;;
 *)
 	TARGET=x86_64-w64-mingw32
@@ -83,7 +90,7 @@ for arg in "$@"; do
 		--interpreter|-i) INTERPRETER=true ;;
 		--dynarec) INTERPRETER=false ;;
 		--both) BUILD_BOTH=true ;;
-		--help|-h) echo "Usage: $0 [--zip] [--interpreter|--dynarec|--both]"; echo "Target follows \$MSYSTEM: MINGW64 -> amd64, CLANGARM64 -> arm64 (interpreter by default)"; exit 0 ;;
+		--help|-h) echo "Usage: $0 [--zip] [--interpreter|--dynarec|--both]"; echo "Target follows \$MSYSTEM: UCRT64/MINGW64 -> amd64, CLANGARM64 -> arm64 (interpreter by default)"; exit 0 ;;
 		*) echo "unknown option: $arg"; exit 2 ;;
 	esac
 done
@@ -140,8 +147,8 @@ VERSION=$(get_version)
 
 njobs() { nproc 2>/dev/null || echo 4; }
 
-# Mode detection: native MSYS2/MINGW64 vs Linux->Windows cross.
-if [ "${MSYSTEM:-}" = "MINGW64" ] || [ "${MSYSTEM:-}" = "CLANGARM64" ]; then
+# Mode detection: native MSYS2 vs Linux->Windows cross.
+if [ "${MSYSTEM:-}" = "UCRT64" ] || [ "${MSYSTEM:-}" = "MINGW64" ] || [ "${MSYSTEM:-}" = "CLANGARM64" ]; then
 	MODE="native (MSYS2 $MSYSTEM, $WIN_ARCH)"
 	NATIVE=true
 	# CLANGARM64 ships LLVM's binutils rather than GNU's, and the DLL walk below

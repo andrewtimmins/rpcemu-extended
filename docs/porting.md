@@ -40,7 +40,7 @@ you meet is a bug, and worth reporting as one.
 | `src/arm_dynarec.c:34` | `<unistd.h>` and `<sys/mman.h>` are included only for `__linux__` or `__MACH__`, so the recompiler will not compile elsewhere | Add your platform |
 | `src/arm_dynarec.c:710` | `set_memory_executable()` calls `mprotect(PROT_READ\|PROT_WRITE\|PROT_EXEC)` | **See W^X below.** The real work |
 | `src/usb_host.c:47`, `:1717` | Host USB pass-through is Linux-only | Optional, degrades |
-| `src/gui/emulator_host.cpp:69`, `:986` | The real-drive CD-ROM ioctl backend is Linux-only, and already falls back to ISO images with a message | Optional, degrades |
+| `src/gui/emulator_host.cpp:70`, `:996` | The real-drive CD-ROM ioctl backend is Linux-only, and already falls back to ISO images with a message | Optional, degrades |
 | `src/hostfs-unix.c:14` | 64-bit `struct timespec` conversion is enabled for LP64 Linux only | Cosmetic. Costs timestamp precision, nothing else |
 
 Plus one gate outside `src/`:

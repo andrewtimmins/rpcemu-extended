@@ -282,8 +282,8 @@ See [COMPILE.md](COMPILE.md) for manual CMake, GhostPDL, and podule ROM rebuilds
 `build-windows.sh` builds the Windows package to `releases/windows/amd64/` and is
 dual-mode:
 
-- **Native, on Windows** — from an **MSYS2 MINGW64** shell (install the
-  `mingw-w64-x86_64-` toolchain, cmake, wxwidgets3.2-msw, SDL2, libvncserver, libusb),
+- **Native, on Windows** — from an **MSYS2 UCRT64** shell (install the
+  `mingw-w64-ucrt-x86_64-` toolchain, cmake, wxwidgets3.2-msw, SDL2, libvncserver, libusb),
   just run `./build-windows.sh --zip`.
 - **Cross-compile, from Linux** — run `./setup-cross-build-env.sh` once (builds
   wxWidgets/SDL2/libvncserver/libusb for the mingw target into the sysroot), then
@@ -571,6 +571,27 @@ Each machine is defined by a `.cfg` file in `configs/` and a data directory unde
 
 Configuration keys are stored under a `[General]` group (wxFileConfig INI format).
 NAT port-forward rules are stored in a separate `[nat_port_forward_rules]` group.
+
+---
+
+## CD-ROM
+
+The emulated machine has a single IDE CD-ROM drive (drive 1 on the primary
+channel). Three source modes are available from the Disc > CD-ROM menu:
+
+| Mode                 | What it does                                                        |
+| -------------------- | ------------------------------------------------------------------- |
+| **Disabled**         | No CD-ROM drive present; RISC OS does not see one on the IDE bus    |
+| **Empty**            | Drive present but no disc inserted                                  |
+| **ISO Image**        | Mount an ISO 9660 image file from the host                         |
+| **Host CD/DVD Drive** | Pass through the host's `/dev/cdrom` device (Linux only)           |
+
+ISO images can be switched at any time without restarting the machine.
+Recently used images appear in the Disc > CD-ROM > Recent Images submenu.
+
+The Host CD/DVD Drive option appears only on Linux, where the host's block
+device is read directly. The device must be readable by the user running
+RPCEmu (typically the `cdrom` group). On macOS and Windows, use ISO images.
 
 ---
 

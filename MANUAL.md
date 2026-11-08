@@ -213,8 +213,8 @@ dealing with it: if you read the notes and decide to update later, it asks again
 the next day.
 
 **Help ▸ Check for Updates...** asks there and then, whatever the setting says,
-and tells you either way. A development build never checks on its own, having no
-released version to compare itself with.
+and tells you either way. Development builds (e.g. from CI) check the same way,
+so testers are notified when a new release is cut.
 
 ### A less cluttered window
 

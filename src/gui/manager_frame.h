@@ -273,6 +273,7 @@ private:
 	wxMenuItem *cdrom_disabled_item_ = nullptr;
 	wxMenuItem *cdrom_empty_item_ = nullptr;
 	wxMenuItem *cdrom_iso_item_ = nullptr;
+	wxMenuItem *cdrom_ioctl_item_ = nullptr;
 	wxMenuItem *nat_list_item_ = nullptr;
 	wxMenuItem *netcap_item_ = nullptr;
 	wxMenuItem *machine_list_item_ = nullptr;

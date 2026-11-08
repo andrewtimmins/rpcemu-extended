@@ -103,7 +103,7 @@ was not.
 | Platform                  | How                                                                                |
 | ------------------------- | ----------------------------------------------------------------------------------- |
 | Linux                     | `./setup-build-env.sh` (installs `libusb-1.0-0-dev`)                                |
-| Windows, native MSYS2     | `pacman -S mingw-w64-x86_64-libusb` (or `mingw-w64-clang-aarch64-libusb` on ARM64)  |
+| Windows, native MSYS2     | `pacman -S mingw-w64-ucrt-x86_64-libusb` (or `mingw-w64-clang-aarch64-libusb` on ARM64) |
 | Windows, cross from Linux | `./setup-cross-build-env.sh` (builds libusb for the MinGW target)                   |
 | macOS                     | `brew install libusb` or `sudo port install libusb`                                 |
 

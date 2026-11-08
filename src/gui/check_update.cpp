@@ -20,8 +20,6 @@
 
 #include "check_update.h"
 
-#include <cstdlib>
-
 #include <wx/datetime.h>
 #include <wx/msgdlg.h>
 #include <wx/richmsgdlg.h>
@@ -101,13 +99,9 @@ public:
 
 void CheckForUpdateInBackground(wxWindow *parent)
 {
-	const bool testing = getenv("RPCEMU_UPDATE_TEST") != nullptr;
-	const wxString current = testing ? wxString("1.0.0") : wxString(VERSION);
+	const wxString current = VERSION;
 
 	if (!GetCheckForUpdates() || !RPCEMU_HAVE_HTTP) {
-		return;
-	}
-	if (!testing && current.Contains("-")) {
 		return;
 	}
 
@@ -122,7 +116,7 @@ void CheckForUpdateInBackground(wxWindow *parent)
 		SetLastUpdateCheck(0);
 	} else if (last > now) {
 		return;		/* postponed, and still is */
-	} else if (!testing && last != 0 && now - last < a_day) {
+	} else if (last != 0 && now - last < a_day) {
 		return;
 	}
 
@@ -170,20 +164,6 @@ void CheckForUpdateInBackground(wxWindow *parent)
 void CheckForUpdate(wxWindow *parent)
 {
 	const wxString current = VERSION;
-
-	/* A development build is ahead of the newest release, not behind it, so
-	   there is nothing useful to compare against. */
-	if (current.Contains("-")) {
-		if (wxMessageBox(
-		        wxString::Format(
-		            "This is a development build (%s), not a release.\n\n"
-		            "Open the releases page?", current),
-		        "RPCEmu Extended - Check for Update",
-		        wxOK | wxCANCEL | wxICON_INFORMATION, parent) == wxOK) {
-			wxLaunchDefaultBrowser(URL_RELEASES);
-		}
-		return;
-	}
 
 	if (!RPCEMU_HAVE_HTTP) {
 		wxMessageBox(HttpUnavailableMessage(), "RPCEmu Extended - Check for Update",

@@ -161,7 +161,9 @@ void MainFrame::BuildMenus()
 	cdrom_disabled_item_ = cdrom_menu->AppendRadioItem(ID_MENU_CDROM_DISABLED, "Disabled");
 	cdrom_empty_item_ = cdrom_menu->AppendRadioItem(ID_MENU_CDROM_EMPTY, "Empty");
 	cdrom_iso_item_ = cdrom_menu->AppendRadioItem(ID_MENU_CDROM_ISO, "ISO Image...");
+#if defined(__linux__)
 	cdrom_ioctl_item_ = cdrom_menu->AppendRadioItem(ID_MENU_CDROM_IOCTL, "Host CD/DVD Drive");
+#endif
 	cdrom_menu->AppendSeparator();
 
 	auto *recent_cdroms_menu = new wxMenu;
@@ -357,7 +359,9 @@ void MainFrame::BuildMenus()
 	BindMenuItem(cdrom_menu, ID_MENU_CDROM_DISABLED, this, &MainFrame::OnCdromDisabled);
 	BindMenuItem(cdrom_menu, ID_MENU_CDROM_EMPTY, this, &MainFrame::OnCdromEmpty);
 	BindMenuItem(cdrom_menu, ID_MENU_CDROM_ISO, this, &MainFrame::OnCdromIso);
+#if defined(__linux__)
 	BindMenuItem(cdrom_menu, ID_MENU_CDROM_IOCTL, this, &MainFrame::OnCdromIoctl);
+#endif
 	BindMenuItem(recent_cdroms_menu, ID_MENU_CLEAR_RECENT_CDROMS, this, &MainFrame::OnClearRecentCdroms);
 	for (int i = 0; i < MaxRecentCDROMs; ++i) {
 		BindMenuItem(recent_cdroms_menu, ID_MENU_RECENT_CDROM_0 + i, this, &MainFrame::OnRecentCdrom);
@@ -590,6 +594,8 @@ void MainFrame::SyncCdromMenuChecks()
 	if (config_copy_.cdromenabled) {
 		if (config_copy_.cdromtype == 2) {
 			selected_id = ID_MENU_CDROM_ISO;
+		} else if (config_copy_.cdromtype == 1) {
+			selected_id = ID_MENU_CDROM_IOCTL;
 		} else {
 			selected_id = ID_MENU_CDROM_EMPTY;
 		}

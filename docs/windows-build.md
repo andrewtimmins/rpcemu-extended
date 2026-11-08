@@ -8,15 +8,16 @@ so the Windows-specific code is confined to the C core (POSIX→Win32 shims) and
 the build system.
 
 `build-windows.sh` decides which of the two it is building from `$MSYSTEM`:
-`MINGW64` gives amd64, `CLANGARM64` gives arm64, and neither (on Linux) gives the
+`UCRT64` or `MINGW64` gives amd64, `CLANGARM64` gives arm64, and neither (on
+Linux) gives the
 amd64 cross build.
 
 ## Building
 
-### Native on MSYS2 / MinGW-w64 (recommended)
+### Native on MSYS2 / UCRT64 (recommended)
 
-This is what the CI `windows-amd64` job runs. From the **MINGW64** shell, install
-the toolchain and dependencies (packages are prefixed `mingw-w64-x86_64-`):
+This is what the CI `windows-amd64` job runs. From the **UCRT64** shell, install
+the toolchain and dependencies (packages are prefixed `mingw-w64-ucrt-x86_64-`):
 
 ```
 toolchain cmake pkgconf wxwidgets3.2-msw SDL2 libvncserver

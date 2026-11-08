@@ -304,7 +304,7 @@ elseif(RPCEMU_REQUIRE_LIBUSB)
         "USB passthrough was required (RPCEMU_REQUIRE_LIBUSB=ON) but libusb-1.0 "
         "was not found.\n"
         "  Linux:   ./setup-build-env.sh (libusb-1.0-0-dev)\n"
-        "  MSYS2:   pacman -S mingw-w64-x86_64-libusb\n"
+        "  MSYS2:   pacman -S mingw-w64-ucrt-x86_64-libusb\n"
         "  macOS:   brew install libusb, or sudo port install libusb\n"
         "  MinGW cross: ./setup-cross-build-env.sh\n"
         "Configure with -DRPCEMU_REQUIRE_LIBUSB=OFF to build without it.")
