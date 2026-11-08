@@ -333,7 +333,7 @@ Config config = {
 	0,			/* refresh */
 	1,			/* soundenabled */
 	1,			/* cdromenabled */
-	0,			/* cdromtype (0=disabled, 1=ISO, 2=ioctl) */
+	0,			/* cdromtype (0=empty, 1=ioctl, 2=ISO) */
 	"",			/* isoname */
 	1,			/* mousehackon */
 	0,			/* mousetwobutton */

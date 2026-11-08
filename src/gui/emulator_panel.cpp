@@ -147,6 +147,9 @@ void EmulatorPanel::UpdateMouseCursor()
 
 bool EmulatorPanel::IsMouseOverPanel() const
 {
+	if (!IsShownOnScreen()) {
+		return false;
+	}
 	const wxMouseState mouse = wxGetMouseState();
 	const wxPoint local = ScreenToClient(wxPoint(mouse.GetX(), mouse.GetY()));
 	return GetClientRect().Contains(local);

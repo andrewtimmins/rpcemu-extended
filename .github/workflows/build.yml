@@ -400,7 +400,7 @@ jobs:
   linux-amd64:
     needs: build-gate
     if: always() && needs.build-gate.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -626,7 +626,7 @@ jobs:
   windows-amd64:
     needs: build-gate
     if: always() && needs.build-gate.result == 'success'
-    # Native Windows build with MinGW-w64 via MSYS2 (MINGW64). Ships the
+    # Native Windows build with MinGW-w64 via MSYS2 (UCRT64). Ships the
     # recompiler (full-speed dynarec; the JIT supports the Windows x64 ABI).
     # Uses build-windows.sh (build.sh is apt/.deb-only).
     runs-on: windows-latest
@@ -641,18 +641,18 @@ jobs:
       - name: Set up MSYS2 / MinGW-w64
         uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: true
           install: >-
             git
-            mingw-w64-x86_64-toolchain
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-wxwidgets3.2-msw
-            mingw-w64-x86_64-SDL2
-            mingw-w64-x86_64-libvncserver
-            mingw-w64-x86_64-libusb
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-wxwidgets3.2-msw
+            mingw-w64-ucrt-x86_64-SDL2
+            mingw-w64-ucrt-x86_64-libvncserver
+            mingw-w64-ucrt-x86_64-libusb
 
       - name: Build and stage release (native MSYS2, both binaries)
         timeout-minutes: 14

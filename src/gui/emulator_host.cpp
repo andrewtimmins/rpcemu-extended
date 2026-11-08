@@ -929,16 +929,18 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 	case EmuCommandType::CdromEmpty:
 		if (!config.cdromenabled) {
 			config.cdromenabled = 1;
-			config_save(&config);
 			resetrpc();
 		}
+		config.cdromtype = 0;
+		config.isoname[0] = '\0';
+		config_save(&config);
 		atapi->exit();
 		iso_init();
+		atapi_discchanged();
 		break;
 	case EmuCommandType::CdromLoadIso:
 		if (!config.cdromenabled) {
 			config.cdromenabled = 1;
-			config_save(&config);
 			resetrpc();
 		}
 		if (snprintf(config.isoname, sizeof(config.isoname), "%s",
@@ -946,6 +948,8 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 			error("ISO image disk path '%s' too long", command.string_path.c_str());
 			break;
 		}
+		config.cdromtype = 2;
+		config_save(&config);
 		atapi->exit();
 		iso_open(config.isoname);
 		break;
@@ -953,9 +957,10 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 #if defined(__linux__)
 		if (!config.cdromenabled) {
 			config.cdromenabled = 1;
-			config_save(&config);
 			resetrpc();
 		}
+		config.cdromtype = 1;
+		config_save(&config);
 		atapi->exit();
 		ioctl_init();
 #else

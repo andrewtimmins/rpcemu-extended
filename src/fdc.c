@@ -88,6 +88,24 @@ static struct
 	int in_read;
 } fdc;
 
+/*
+ * The drive's disc-change line, reported by DIR bit 7: set when the media
+ * changes and cleared when the head next steps, as the drive's own latch
+ * behaves. Without it a guest goes on serving a cached directory from the disc
+ * that was swapped out.
+ *
+ * Deliberately outside the savestate: a restored machine has not had its disc
+ * changed, and the line is transient state the guest re-establishes by seeking.
+ */
+static uint8_t fdc_disc_changed;	/* one bit per drive */
+static int fdc_drivesel;
+
+static void
+fdc_disc_changed_clear(int drive)
+{
+	fdc_disc_changed &= (uint8_t)~(1u << (drive & 1));
+}
+
 /* This enumeration must be kept in sync with the formats[] array */
 typedef enum {
 	DISC_FORMAT_ADFS_DE_800K,
@@ -236,6 +254,10 @@ fdc_image_load(const char *fn, int drive)
 	}
 
 	rpclog("fdc_image_load: %s (%ld) loaded as '%s'\n", fn, len, is_hfe ? "HFE" : format->name);
+
+	/* New media in the drive: raise the change line for it. */
+	fdc_disc_changed |= (uint8_t)(1u << (drive & 1));
+
 	if (is_hfe)
 		hfe_load(drive, fn);
 	else
@@ -266,10 +288,13 @@ fdc_write(uint32_t addr, uint32_t val)
 			fdc.status = 0x80;
 		}
 		motoron = val & 0x30;
-		if (val & 0x10)
+		if (val & 0x10) {
+			fdc_drivesel = 0;
 			disc_set_drivesel(0);
-		else if (val & 0x20)
+		} else if (val & 0x20) {
+			fdc_drivesel = 1;
 			disc_set_drivesel(1);
+		}
 		break;
 
 	case 0x3f4: /* Data Rate Select Register (DSR) */
@@ -296,12 +321,14 @@ fdc_write(uint32_t addr, uint32_t val)
 				case FD_CMD_RECALIBRATE:
 					fdccallback = 500;
 					fdc.status |= 1;
+					fdc_disc_changed_clear(fdc.parameters[0] & 1);
 					disc_seek(fdc.parameters[0] & 1, 0);
 					break;
 
 				case FD_CMD_SEEK:
 					fdccallback = 500;
 					fdc.status |= 1;
+					fdc_disc_changed_clear(fdc.parameters[0] & 1);
 					disc_seek(fdc.parameters[0] & 1, fdc.parameters[1]);
 					break;
 
@@ -498,9 +525,8 @@ fdc_read(uint32_t addr)
 		return data;
 	}
 
-	// case 0x3f7: /* Digital Input Register (DIR) */
-		// TODO Disc changed flag
-		// return 0x80;
+	case 0x3f7: /* Digital Input Register (DIR) */
+		return (fdc_disc_changed & (1u << fdc_drivesel)) ? 0x80 : 0x00;
 
 	default:
 		UNIMPLEMENTED("FDC read", "Unknown register 0x%03x", addr);

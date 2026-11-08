@@ -102,6 +102,60 @@ const DiscTypeFileMap kDiscTypeFileMaps[] = {
 };
 
 
+/*
+ * GTK matches a file dialogue's filter patterns case-sensitively, so a
+ * FLOPPY.IMG or a CD.ISO is hidden by a *.img or *.iso filter and looks as
+ * though it is not there. Rewrite each letter of the pattern halves of a wx
+ * wildcard as a character class: *.img becomes *.[iI][mM][gG], which matches a
+ * mixed-case .Img too. The labels are left alone, so the dialogue still reads
+ * "DOS Disc Image (*.img)".
+ *
+ * Only the filter ever cared about case - fdc.c picks a format with strcasecmp,
+ * and an ISO is opened without consulting its name. The Windows and macOS
+ * dialogues ignore case already and understand no character classes, hence the
+ * guard.
+ */
+wxString CaseInsensitiveWildcard(const wxString &wildcard)
+{
+#ifndef __WXGTK__
+	return wildcard;
+#else
+	wxString out;
+	bool pattern = false;	/* halves alternate label, patterns, label, ... */
+
+	for (size_t i = 0; i < wildcard.length(); i++) {
+		const wxUniChar c = wildcard[i];
+
+		if (c == '|') {
+			pattern = !pattern;
+			out += c;
+			continue;
+		}
+
+		/*
+		 * ASCII arithmetic rather than tolower(): the letters here are
+		 * literals in this source, and a Turkish locale turning 'I'
+		 * into a dotless 'ı' would quietly stop .ISO matching.
+		 */
+		const wxUint32 u = c.GetValue();
+		const bool letter = (u >= 'a' && u <= 'z') || (u >= 'A' && u <= 'Z');
+
+		if (pattern && letter) {
+			const char lower = (char)(u | 0x20);
+
+			out += '[';
+			out += lower;
+			out += (char)(lower - 0x20);
+			out += ']';
+		} else {
+			out += c;
+		}
+	}
+
+	return out;
+#endif
+}
+
 bool HostResetQuestion(wxWindow *parent)
 {
 	return wxMessageBox(
@@ -665,11 +719,12 @@ void MainFrame::OnClearRecentMachines(wxCommandEvent &)
 void MainFrame::LoadDisc(int drive)
 {
 	wxFileDialog dlg(this, "Open Disc Image", wxEmptyString, wxEmptyString,
-	                 "All disc images (*.adf;*.adl;*.hfe;*.img)|*.adf;*.adl;*.hfe;*.img|"
-	                 "ADFS D/E/F Disc Image (*.adf)|*.adf|"
-	                 "ADFS L Disc Image (*.adl)|*.adl|"
-	                 "DOS Disc Image (*.img)|*.img|"
-	                 "HFE Disc Image (*.hfe)|*.hfe",
+	                 CaseInsensitiveWildcard(
+	                     "All disc images (*.adf;*.adl;*.hfe;*.img)|*.adf;*.adl;*.hfe;*.img|"
+	                     "ADFS D/E/F Disc Image (*.adf)|*.adf|"
+	                     "ADFS L Disc Image (*.adl)|*.adl|"
+	                     "DOS Disc Image (*.img)|*.img|"
+	                     "HFE Disc Image (*.hfe)|*.hfe"),
 	                 wxFD_OPEN | wxFD_FILE_MUST_EXIST);
 	if (dlg.ShowModal() != wxID_OK) {
 		return;
@@ -815,7 +870,8 @@ void MainFrame::OnCdromEmpty(wxCommandEvent &)
 void MainFrame::OnCdromIso(wxCommandEvent &)
 {
 	wxFileDialog dlg(this, "Open ISO Image", wxEmptyString, wxEmptyString,
-	                 "ISO CD-ROM Image (*.iso)|*.iso|All Files (*.*)|*.*",
+	                 CaseInsensitiveWildcard(
+	                     "ISO CD-ROM Image (*.iso)|*.iso|All Files (*.*)|*.*"),
 	                 wxFD_OPEN | wxFD_FILE_MUST_EXIST);
 	if (dlg.ShowModal() != wxID_OK) {
 		SyncCdromMenuChecks();

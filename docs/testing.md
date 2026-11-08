@@ -13,7 +13,7 @@ test run:
 
 ```
 ./build.sh              # Linux
-./build-windows.sh      # Windows, under MSYS2 MINGW64
+./build-windows.sh      # Windows, under MSYS2 UCRT64
 ./build-macos.sh        # macOS
 ```
 

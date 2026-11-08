@@ -28,6 +28,7 @@
    drive a disc changed, which has no bearing on handle lifetime. */
 ATAPI *atapi;
 void atapi_discchanged(void) { }
+void rpclog(const char *format, ...) { (void) format; }
 
 static int failures;
 
